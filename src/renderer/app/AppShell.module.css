@@ -350,7 +350,7 @@
 }
 
 .placeholderPage h2,
-.settingsPage h2 {
+.appearancePanel h2 {
   margin: 0 0 8px;
   font-size: 23px;
   font-weight: 610;
@@ -397,6 +397,15 @@
   background: var(--surface-subtle);
   color: var(--text-primary);
   font-weight: 590;
+}
+
+.settingsPage > aside button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.settingsContent {
+  min-width: 0;
 }
 
 .settingsDescription {
@@ -583,7 +592,12 @@
   }
 
   .settingsPage > aside {
-    display: none;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .settingsPage > aside button {
+    flex: 0 0 auto;
   }
 
   .schemePicker {

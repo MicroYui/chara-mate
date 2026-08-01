@@ -1,7 +1,9 @@
 import type {
   Approval,
+  Attachment,
   ArtifactReference,
   Chat,
+  ChatDataSnapshot,
   Message,
   ProviderSnapshot,
   Run,
@@ -12,6 +14,7 @@ import type {
 export const FIXTURE_IDS = {
   approval: "55555555-5555-4555-8555-555555555555",
   artifact: "66666666-6666-4666-8666-666666666666",
+  attachment: "99999999-9999-4999-8999-999999999999",
   chat: "11111111-1111-4111-8111-111111111111",
   item: "44444444-4444-4444-8444-444444444444",
   message: "33333333-3333-4333-8333-333333333333",
@@ -62,6 +65,19 @@ export const artifactFixture = {
   storageKey: "run/22222222/result.json",
 } satisfies ArtifactReference;
 
+export const attachmentFixture = {
+  byteLength: 42,
+  chatId: FIXTURE_IDS.chat,
+  createdAt: FIXTURE_TIMESTAMPS.created,
+  displayName: "reference.txt",
+  id: FIXTURE_IDS.attachment,
+  kind: "file",
+  mediaType: "text/plain",
+  messageId: FIXTURE_IDS.message,
+  sha256: "b".repeat(64),
+  storageKey: "attachments/99999999/reference.txt",
+} satisfies Attachment;
+
 export const runFixture = {
   chatId: FIXTURE_IDS.chat,
   createdAt: FIXTURE_TIMESTAMPS.created,
@@ -107,3 +123,12 @@ export const runEventEnvelopeFixture = {
   sequence: 1,
   streamId: FIXTURE_IDS.run,
 } satisfies RunEventEnvelope;
+
+export const chatDataSnapshotFixture = {
+  approvals: [approvalFixture],
+  attachments: [attachmentFixture],
+  chat: chatFixture,
+  messages: [messageFixture],
+  runItems: [runItemFixture],
+  runs: [runFixture],
+} satisfies ChatDataSnapshot;

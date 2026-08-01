@@ -4,27 +4,61 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
+import {
+  CURRENT_SCHEMA_SQL,
+  CURRENT_SCHEMA_VERSION,
+  METADATA_SCHEMA_SQL,
+} from "./schema/current";
+
 interface MetadataRow {
   value: string;
 }
 
-function openDatabase(databasePath: string): Database.Database {
+function initializeCurrentSchema(database: Database.Database): void {
+  database.exec(METADATA_SCHEMA_SQL);
+  const schemaVersion = database
+    .prepare("SELECT value FROM app_metadata WHERE key = ?")
+    .get("schema_version") as MetadataRow | undefined;
+
+  if (
+    schemaVersion !== undefined &&
+    schemaVersion.value !== CURRENT_SCHEMA_VERSION
+  ) {
+    throw new Error(
+      `Unsupported database schema version: ${schemaVersion.value}`,
+    );
+  }
+
+  const installSchema = database.transaction(() => {
+    database.exec(CURRENT_SCHEMA_SQL);
+    database
+      .prepare(
+        "INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('schema_version', ?)",
+      )
+      .run(CURRENT_SCHEMA_VERSION);
+  });
+  installSchema();
+}
+
+export function openApplicationDatabase(
+  databasePath: string,
+): Database.Database {
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const database = new Database(databasePath);
-  database.pragma("foreign_keys = ON");
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS app_metadata (
-      key TEXT PRIMARY KEY NOT NULL,
-      value TEXT NOT NULL
-    ) STRICT
-  `);
-  return database;
+  try {
+    database.pragma("foreign_keys = ON");
+    initializeCurrentSchema(database);
+    return database;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
 }
 
 export function verifyDatabaseRoundTrip(databasePath: string): true {
   const probeKey = `foundation-probe-${randomUUID()}`;
   const probeValue = randomUUID();
-  let database = openDatabase(databasePath);
+  let database = openApplicationDatabase(databasePath);
 
   const writeProbe = database.transaction(() => {
     database
@@ -34,7 +68,7 @@ export function verifyDatabaseRoundTrip(databasePath: string): true {
   writeProbe();
   database.close();
 
-  database = openDatabase(databasePath);
+  database = openApplicationDatabase(databasePath);
   const row = database
     .prepare("SELECT value FROM app_metadata WHERE key = ?")
     .get(probeKey) as MetadataRow | undefined;

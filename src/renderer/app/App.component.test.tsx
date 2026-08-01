@@ -20,6 +20,7 @@ afterEach(() => {
 
 function renderApp() {
   const markRendererReady = vi.fn();
+  const listProfiles = vi.fn().mockResolvedValue({ ok: true, value: [] });
   const desktopApi: DesktopApi = {
     foundation: {
       getSnapshot: vi.fn().mockResolvedValue({
@@ -32,6 +33,13 @@ function renderApp() {
       }),
       markRendererReady,
     },
+    provider: {
+      deleteProfile: vi.fn(),
+      discoverModels: vi.fn(),
+      listProfiles,
+      saveProfile: vi.fn(),
+      testConnection: vi.fn(),
+    },
   };
   Object.defineProperty(window, "charaMate", {
     configurable: true,
@@ -39,7 +47,7 @@ function renderApp() {
   });
 
   render(<App />);
-  return { markRendererReady };
+  return { listProfiles, markRendererReady };
 }
 
 describe("application shell", () => {
@@ -104,5 +112,19 @@ describe("application shell", () => {
       "warm",
     );
     expect(screen.getByRole("heading", { name: "界面背景" })).toBeVisible();
+  });
+
+  it("opens the integrated Provider settings from Models", async () => {
+    const { listProfiles } = renderApp();
+    await screen.findByRole("heading", { name: "Phase 1 UI" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Models" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Provider 与模型" }),
+    ).toBeVisible();
+    expect(screen.getByText("还没有 Provider。")).toBeVisible();
+    expect(listProfiles).toHaveBeenCalledOnce();
   });
 });

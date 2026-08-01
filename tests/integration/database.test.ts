@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { verifyDatabaseRoundTrip } from "../../src/main/db/database";
 import { serializeForPersistence } from "../../src/main/db/persistenceBoundary";
+import { CURRENT_SCHEMA_VERSION } from "../../src/main/db/schema/current";
 
 const temporaryDirectories: string[] = [];
 
@@ -32,13 +33,15 @@ describe("foundation database", () => {
     expect(verifyDatabaseRoundTrip(databasePath)).toBe(true);
 
     const database = new Database(databasePath, { readonly: true });
-    const metadataCount = database
-      .prepare("SELECT COUNT(*) AS count FROM app_metadata")
-      .get() as { count: number };
+    const metadata = database
+      .prepare("SELECT key, value FROM app_metadata ORDER BY key")
+      .all() as { key: string; value: string }[];
     const foreignKeys = database.pragma("foreign_keys", { simple: true });
     database.close();
 
-    expect(metadataCount.count).toBe(0);
+    expect(metadata).toEqual([
+      { key: "schema_version", value: CURRENT_SCHEMA_VERSION },
+    ]);
     expect(foreignKeys).toBe(1);
   });
 

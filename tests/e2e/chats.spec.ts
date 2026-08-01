@@ -34,7 +34,9 @@ test("covers the Chats fixture interaction journey", async () => {
     const petImage = page.getByRole("img", { name: "Mika 桌宠" });
     await expect(petImage).toHaveJSProperty("complete", true);
     expect(
-      await petImage.evaluate((image) => image.naturalWidth),
+      await petImage.evaluate(
+        (image) => (image as HTMLImageElement).naturalWidth,
+      ),
     ).toBeGreaterThan(0);
     const settingsBox = await page
       .getByRole("button", { name: "Settings" })

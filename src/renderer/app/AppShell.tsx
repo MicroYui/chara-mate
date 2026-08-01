@@ -13,12 +13,13 @@ import {
   Settings,
   SquarePen,
 } from "lucide-react";
-import type { Dispatch, ReactNode } from "react";
+import { useState, type Dispatch, type ReactNode } from "react";
 
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
 import { ChatsPage } from "../features/chats/ChatsPage";
 import { chatsFixture } from "../features/chats/fixtures";
 import { selectFilteredFixtureChats } from "../features/chats/state";
+import { ProviderSettingsPanel } from "../features/settings/ProviderSettingsPanel";
 import type {
   ChatsFixtureUiAction,
   ChatsFixtureUiState,
@@ -287,48 +288,79 @@ function SettingsPage({
   backgroundScheme,
   onBackgroundSchemeChange,
 }: Pick<AppShellProps, "backgroundScheme" | "onBackgroundSchemeChange">) {
+  const [activeSection, setActiveSection] = useState<"appearance" | "models">(
+    "appearance",
+  );
+
   return (
     <div className={styles["settingsPage"]}>
       <aside aria-label="设置分类">
-        <button type="button" aria-current="page">
+        <button
+          type="button"
+          aria-current={activeSection === "appearance" ? "page" : undefined}
+          onClick={() => setActiveSection("appearance")}
+        >
           Appearance
         </button>
-        <button type="button">Character</button>
-        <button type="button">Voice</button>
-        <button type="button">Models</button>
-        <button type="button">Agent</button>
-        <button type="button">Data</button>
+        <button type="button" disabled>
+          Character
+        </button>
+        <button type="button" disabled>
+          Voice
+        </button>
+        <button
+          type="button"
+          aria-current={activeSection === "models" ? "page" : undefined}
+          onClick={() => setActiveSection("models")}
+        >
+          Models
+        </button>
+        <button type="button" disabled>
+          Agent
+        </button>
+        <button type="button" disabled>
+          Data
+        </button>
       </aside>
-      <section>
-        <p className={styles["settingsEyebrow"]}>Appearance</p>
-        <h2>界面背景</h2>
-        <p className={styles["settingsDescription"]}>
-          选择更适合当前环境的背景。内容层级与交互保持不变。
-        </p>
-        <fieldset className={styles["schemePicker"]}>
-          <legend>背景方案</legend>
-          {backgroundSchemes.map((scheme) => (
-            <label
-              key={scheme.id}
-              data-selected={backgroundScheme === scheme.id || undefined}
-            >
-              <input
-                type="radio"
-                name="background-scheme"
-                value={scheme.id}
-                checked={backgroundScheme === scheme.id}
-                onChange={() => onBackgroundSchemeChange(scheme.id)}
-              />
-              <span className={styles["schemePreview"]} data-scheme={scheme.id}>
-                <i />
-                <i />
-              </span>
-              <strong>{scheme.label}</strong>
-              <small>{scheme.description}</small>
-            </label>
-          ))}
-        </fieldset>
-      </section>
+      <div className={styles["settingsContent"]}>
+        {activeSection === "appearance" ? (
+          <section className={styles["appearancePanel"]}>
+            <p className={styles["settingsEyebrow"]}>Appearance</p>
+            <h2>界面背景</h2>
+            <p className={styles["settingsDescription"]}>
+              选择更适合当前环境的背景。内容层级与交互保持不变。
+            </p>
+            <fieldset className={styles["schemePicker"]}>
+              <legend>背景方案</legend>
+              {backgroundSchemes.map((scheme) => (
+                <label
+                  key={scheme.id}
+                  data-selected={backgroundScheme === scheme.id || undefined}
+                >
+                  <input
+                    type="radio"
+                    name="background-scheme"
+                    value={scheme.id}
+                    checked={backgroundScheme === scheme.id}
+                    onChange={() => onBackgroundSchemeChange(scheme.id)}
+                  />
+                  <span
+                    className={styles["schemePreview"]}
+                    data-scheme={scheme.id}
+                  >
+                    <i />
+                    <i />
+                  </span>
+                  <strong>{scheme.label}</strong>
+                  <small>{scheme.description}</small>
+                </label>
+              ))}
+            </fieldset>
+          </section>
+        ) : (
+          <ProviderSettingsPanel />
+        )}
+      </div>
     </div>
   );
 }
