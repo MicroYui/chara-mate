@@ -63,7 +63,9 @@ export function normalizeProviderDraft(
   }
 
   const chatModel = normalizeOptionalText(draft.chatModel);
-  const imageEditEndpoint = normalizeOptionalText(draft.imageEditEndpoint);
+  const imageGenerationEndpoint = normalizeOptionalText(
+    draft.imageGenerationEndpoint,
+  );
   const imageModel = normalizeOptionalText(draft.imageModel);
   const realtimeEndpoint = normalizeOptionalText(draft.realtimeEndpoint);
   const realtimeModel = normalizeOptionalText(draft.realtimeModel);
@@ -71,11 +73,11 @@ export function normalizeProviderDraft(
     ...(draft.id ? { id: draft.id } : {}),
     baseUrl: normalizeUrl(draft.baseUrl, "Base URL", false),
     ...(chatModel ? { chatModel } : {}),
-    ...(imageEditEndpoint
+    ...(imageGenerationEndpoint
       ? {
-          imageEditEndpoint: normalizeUrl(
-            imageEditEndpoint,
-            "Image Edit Endpoint",
+          imageGenerationEndpoint: normalizeUrl(
+            imageGenerationEndpoint,
+            "Image Generation Endpoint",
             true,
           ),
         }

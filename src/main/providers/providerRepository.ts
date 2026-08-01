@@ -14,7 +14,7 @@ const recordProperties = {
   chatModel: Type.Optional(NonBlankStringSchema),
   createdAt: TimestampSchema,
   id: EntityIdSchema,
-  imageEditEndpoint: Type.Optional(NonBlankStringSchema),
+  imageGenerationEndpoint: Type.Optional(NonBlankStringSchema),
   imageModel: Type.Optional(NonBlankStringSchema),
   name: NonBlankStringSchema,
   realtimeEndpoint: Type.Optional(NonBlankStringSchema),
@@ -55,7 +55,7 @@ interface ProviderRow {
   chat_model: string | null;
   created_at: string;
   id: string;
-  image_edit_endpoint: string | null;
+  image_generation_endpoint: string | null;
   image_model: string | null;
   name: string;
   realtime_endpoint: string | null;
@@ -79,7 +79,10 @@ function mapRow(row: ProviderRow): ProviderRecord {
     ...optionalProperty("chatModel", row.chat_model),
     createdAt: row.created_at,
     id: row.id,
-    ...optionalProperty("imageEditEndpoint", row.image_edit_endpoint),
+    ...optionalProperty(
+      "imageGenerationEndpoint",
+      row.image_generation_endpoint,
+    ),
     ...optionalProperty("imageModel", row.image_model),
     name: row.name,
     ...optionalProperty("realtimeEndpoint", row.realtime_endpoint),
@@ -108,11 +111,11 @@ export class ProviderRepository implements ProviderProfileRepository {
     this.#upsertStatement = database.prepare(`
       INSERT INTO provider_profiles (
         id, name, api_style, base_url, api_version, api_key_ref, chat_model,
-        realtime_endpoint, realtime_model, image_edit_endpoint, image_model,
+        realtime_endpoint, realtime_model, image_generation_endpoint, image_model,
         created_at, updated_at
       ) VALUES (
         @id, @name, @apiStyle, @baseUrl, @apiVersion, @apiKeyRef, @chatModel,
-        @realtimeEndpoint, @realtimeModel, @imageEditEndpoint, @imageModel,
+        @realtimeEndpoint, @realtimeModel, @imageGenerationEndpoint, @imageModel,
         @createdAt, @updatedAt
       )
       ON CONFLICT(id) DO UPDATE SET
@@ -124,7 +127,7 @@ export class ProviderRepository implements ProviderProfileRepository {
         chat_model = excluded.chat_model,
         realtime_endpoint = excluded.realtime_endpoint,
         realtime_model = excluded.realtime_model,
-        image_edit_endpoint = excluded.image_edit_endpoint,
+        image_generation_endpoint = excluded.image_generation_endpoint,
         image_model = excluded.image_model,
         updated_at = excluded.updated_at
     `);
@@ -167,7 +170,7 @@ export class ProviderRepository implements ProviderProfileRepository {
       chatModel: value.chatModel ?? null,
       createdAt: value.createdAt,
       id: value.id,
-      imageEditEndpoint: value.imageEditEndpoint ?? null,
+      imageGenerationEndpoint: value.imageGenerationEndpoint ?? null,
       imageModel: value.imageModel ?? null,
       name: value.name,
       realtimeEndpoint: value.realtimeEndpoint ?? null,

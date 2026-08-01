@@ -16,7 +16,7 @@ interface ProviderFormState {
   apiVersion: string;
   baseUrl: string;
   chatModel: string;
-  imageEditEndpoint: string;
+  imageGenerationEndpoint: string;
   imageModel: string;
   name: string;
   realtimeEndpoint: string;
@@ -30,7 +30,7 @@ const emptyForm: ProviderFormState = {
   apiVersion: "",
   baseUrl: "https://api.openai.com/v1",
   chatModel: "",
-  imageEditEndpoint: "",
+  imageGenerationEndpoint: "",
   imageModel: "",
   name: "",
   realtimeEndpoint: "",
@@ -53,7 +53,7 @@ function profileToForm(profile: ProviderProfile): ProviderFormState {
       profile.apiStyle === "azure-openai" ? (profile.apiVersion ?? "") : "",
     baseUrl: profile.baseUrl,
     chatModel: profile.chatModel ?? "",
-    imageEditEndpoint: profile.imageEditEndpoint ?? "",
+    imageGenerationEndpoint: profile.imageGenerationEndpoint ?? "",
     imageModel: profile.imageModel ?? "",
     name: profile.name,
     realtimeEndpoint: profile.realtimeEndpoint ?? "",
@@ -67,7 +67,7 @@ function formToDraft(
   profileId?: string,
 ): ProviderProfileDraft {
   const chatModel = optionalText(form.chatModel);
-  const imageEditEndpoint = optionalText(form.imageEditEndpoint);
+  const imageGenerationEndpoint = optionalText(form.imageGenerationEndpoint);
   const imageModel = optionalText(form.imageModel);
   const realtimeEndpoint = optionalText(form.realtimeEndpoint);
   const realtimeModel = optionalText(form.realtimeModel);
@@ -76,7 +76,7 @@ function formToDraft(
     ...(profileId ? { id: profileId } : {}),
     baseUrl: form.baseUrl,
     ...(chatModel ? { chatModel } : {}),
-    ...(imageEditEndpoint ? { imageEditEndpoint } : {}),
+    ...(imageGenerationEndpoint ? { imageGenerationEndpoint } : {}),
     ...(imageModel ? { imageModel } : {}),
     name: form.name,
     ...(realtimeEndpoint ? { realtimeEndpoint } : {}),
@@ -538,14 +538,17 @@ export function ProviderSettingsPanel({
                 </header>
                 <div className={styles["detailsGrid"]}>
                   <label>
-                    Image Edit Endpoint
+                    Image Generation Endpoint
                     <input
                       inputMode="url"
                       onChange={(event) =>
-                        updateField("imageEditEndpoint", event.target.value)
+                        updateField(
+                          "imageGenerationEndpoint",
+                          event.target.value,
+                        )
                       }
-                      placeholder="https://api.openai.com/v1/images/edits"
-                      value={form.imageEditEndpoint}
+                      placeholder="https://api.openai.com/v1/images/generations"
+                      value={form.imageGenerationEndpoint}
                     />
                   </label>
                   <label>

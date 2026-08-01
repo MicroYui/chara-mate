@@ -276,7 +276,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 - 桌宠基础窗口和 Pet 导入可在 Phase 1 后并行开发；状态与审批投影依赖 Phase 2；
 - Memory 物件依赖 Phase 3，Activity 趋势候选依赖 Activity；
-- Image Edit 依赖 Provider Adapter 和真实 Azure Contract Test。
+- Image Generation 依赖 Provider Adapter 和真实 Azure Contract Test。
 
 ### 工作包
 
@@ -285,7 +285,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P6-PET-IMPORT`：Codex v1/v2 校验、复制安装、自有目录和缺失 look row 降级。
 - `P6-TERRITORY-BASE`：基础像素场景、图层、nav grid、角色移动、布置和收藏库。
 - `P6-TERRITORY-MEMORY`：Memory/Activity candidate、来源追溯、容量回收、版本与 pin。
-- `P6-TERRITORY-IMAGE`：canonical reference、mask、Image Edit、去背景/tile 处理、缓存和失败恢复。
+- `P6-TERRITORY-IMAGE`：统一 style prompt、Image Generation、去背景/tile 处理、缓存和失败恢复。
 
 ### 验收
 

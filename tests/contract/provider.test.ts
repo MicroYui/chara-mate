@@ -60,6 +60,22 @@ describe("Phase 1 Provider boundary contracts", () => {
           apiVersion: "2025-04-01-preview",
         }),
       ).toThrow();
+      const imageProfile = {
+        ...azureProfile,
+        imageGenerationEndpoint:
+          "https://example-resource.openai.azure.com/openai/deployments/gpt-image-2/images/generations",
+        imageModel: "gpt-image-2",
+      };
+      expect(parse(ProviderProfileDraftSchema, imageProfile)).toEqual(
+        imageProfile,
+      );
+      expect(() =>
+        parse(ProviderProfileDraftSchema, {
+          ...imageProfile,
+          imageEditEndpoint:
+            "https://example-resource.openai.azure.com/openai/deployments/gpt-image-2/images/edits",
+        }),
+      ).toThrow();
     },
   );
 

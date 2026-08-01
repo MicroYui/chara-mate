@@ -38,10 +38,10 @@ CharaMate 是一个由常驻二次元桌面角色承载的个人 AI Agent。她�
 
 ```text
 Realtime
-https://datasetannotator-openai.openai.azure.com/openai/v1/realtime?model=gpt-realtime-2.1-2
+https://datasetannotator-openai.openai.azure.com/openai/v1/realtime?model=gpt-realtime-2.1
 
-Image Edit
-https://datasetannotator-openai.openai.azure.com/openai/deployments/gpt-image-2/images/edits?api-version=2025-04-01-preview
+Image Generation
+https://datasetannotator-openai.openai.azure.com/openai/deployments/gpt-image-2/images/generations?api-version=2025-04-01-preview
 ```
 
 ---
@@ -996,16 +996,16 @@ interface TerritoryItemCandidate {
 
 ### 10.4 生成管线
 
-Image Edit Endpoint：
+Image Generation Endpoint：
 
 ```text
-https://datasetannotator-openai.openai.azure.com/openai/deployments/gpt-image-2/images/edits?api-version=2025-04-01-preview
+https://datasetannotator-openai.openai.azure.com/openai/deployments/gpt-image-2/images/generations?api-version=2025-04-01-preview
 ```
 
 为了保持画风和布局稳定，不每次重画整张领地：
 
-1. 每个基础场景有 canonical reference、palette、tile scale 和可放置 mask。
-2. 物件生成使用 reference + 局部 mask + 统一 style prompt。
+1. 每个基础场景有固定 palette、tile scale、可放置 mask 和统一 style prompt。
+2. 物件生成使用候选的 visual prompt、场景 style prompt 与冻结的尺寸/质量约束。
 3. 生成结果去背景、缩放到 tile、生成缩略图并缓存为 asset。
 4. 场景由底图、地面层、物件层、角色层和特效层确定性合成。
 5. 整体场景大改只在用户主动选择“场景演化”时生成预览，确认后应用。
@@ -1069,16 +1069,18 @@ interface ProviderProfile {
   chatModel?: string
   realtimeEndpoint?: string
   realtimeModel?: string
-  imageEditEndpoint?: string
+  imageGenerationEndpoint?: string
   imageModel?: string
 }
 ```
 
 一个 Provider Profile 只保存一个 `apiKeyRef`，Chat、Realtime 与 Image 能力共用该凭据。若某项能力由不同服务或不同密钥提供，用户应创建另一个 Provider Profile；普通设置与持久层都不增加能力级多密钥字段。
 
-2026-08-01 的实现前来源刷新确认：官方 OpenAI JavaScript SDK `6.49.0` 的 `OpenAI` client 支持显式 `baseURL`，OpenAI OpenAPI `2.3.0` 的 `GET /v1/models` 对应 `client.models.list()`；同一 SDK 的 `AzureOpenAI` client 在构造 HTTP client 时除 endpoint/baseURL 与 API Key 外还强制要求 `apiVersion`。这只是 SDK HTTP client 的构造约束，不代表 Azure GA Realtime 需要版本号。因此 `apiVersion` 在 `azure-openai` Profile 中为可选，在 `openai-compatible` Profile 中不存在；Adapter 仅在模型发现等 Azure HTTP 动作发生时构造 SDK client 并要求版本号，Realtime GA 握手不读取它，Image 验证优先使用 Image Edit Endpoint 自带的 `api-version`、否则使用 Profile 值。这些差异只存在于外部协议 Adapter 边界，不分叉 CharaMate Provider Service。Electron `43.2.0` 的正式类型与 API 文档同时确认 async `safeStorage` 需要在 app ready 后调用 `isAsyncEncryptionAvailable`、`encryptStringAsync` 与 `decryptStringAsync`，解密结果的 `shouldReEncrypt` 由 Secret Store 原位换钥处理。
+2026-08-01 的实现前来源刷新确认：官方 OpenAI JavaScript SDK `6.49.0` 的 `OpenAI` client 支持显式 `baseURL`，OpenAI OpenAPI `2.3.0` 的 `GET /v1/models` 对应 `client.models.list()`；同一 SDK 的 `AzureOpenAI` client 在构造 HTTP client 时除 endpoint/baseURL 与 API Key 外还强制要求 `apiVersion`。这只是 SDK HTTP client 的构造约束，不代表 Azure GA Realtime 需要版本号。因此 `apiVersion` 在 `azure-openai` Profile 中为可选，在 `openai-compatible` Profile 中不存在；Adapter 仅在模型发现等 Azure HTTP 动作发生时构造 SDK client 并要求版本号，Realtime GA 握手不读取它，Image 验证优先使用 Image Generation Endpoint 自带的 `api-version`、否则使用 Profile 值。这些差异只存在于外部协议 Adapter 边界，不分叉 CharaMate Provider Service。Electron `43.2.0` 的正式类型与 API 文档同时确认 async `safeStorage` 需要在 app ready 后调用 `isAsyncEncryptionAvailable`、`encryptStringAsync` 与 `decryptStringAsync`，解密结果的 `shouldReEncrypt` 由 Secret Store 原位换钥处理。
 
-同日针对分能力连接测试再次刷新一手来源：OpenAI Realtime GA 文档要求服务端 WebSocket 使用标准 API Key，通过 `/v1/realtime?model=...` 建立已认证连接，且不再发送 Beta header。Microsoft Learn 的 Azure Realtime WebSocket 文档（`ms.date=2026-07-13`，页面更新于 `2026-07-19`）要求 GA 地址使用 `/openai/v1`，明确禁止 date-based API Version 与 `api-version` 查询参数，并把 Azure deployment 名称放在 `model` 查询参数；API Key 通过 `api-key` header 发送。该 Microsoft 示例使用普通 `OpenAI` client 与 `/openai/v1` base URL；已安装 OpenAI SDK `6.49.0` 源码中的 `OpenAIRealtimeWS.azure` 仍会生成旧式 `api-version` 与 `deployment` 参数，这是已观察的 SDK 行为而不是当前协议约束。CharaMate 因此只实现当前 GA 路径：连接前清除 Endpoint 查询，以 Realtime Model 重建唯一 `model` 参数，不保留 Preview fallback。对目标 Azure resource 的无密钥/占位凭据探测进一步观察到：`api-key` header 的无效值返回 401，而错误使用 Bearer header 会返回 302，并把值迁入重定向 URL 的 `api-key` 查询参数；这是 2026-08-01 的目标端点实测行为，不是协议保证。为避免凭据进入 URL，CharaMate 在联网前拒绝把 `*.openai.azure.com` Endpoint 配为 `openai-compatible`，且永不跟随 Realtime 3xx。生产 Adapter 使用 SDK peer 范围内已核对的 `ws@8.21.1` 完成同一握手，以同时支持本机 `ws://` OpenAI-compatible Endpoint；该依赖只在 Main 中运行并作为 Forge runtime external 打包。OpenAI OpenAPI `2.3.0` 提供只读 `GET /v1/models/{model}`，但 Image Edit 只有需要图片、提示词并可能产生计费输出的 `POST /v1/images/edits`，没有独立只读健康端点。因此 Provider 测试固定为三种显式目标：Chat 请求模型列表；Realtime 只完成握手后立即关闭，不发送音频、文本或 `response.create`；Image 校验 Image Edit URL、凭据和 Image Model 可读取性，不发起生图，并在结果中明确该边界。“测试不得隐式产生图片费用”是 CharaMate 产品启发式，不等同于外部协议限制。若兼容服务不提供模型读取，Image 返回需要手动确认，而不是伪报端点已验证。
+同日针对分能力连接测试再次刷新一手来源：OpenAI Realtime GA 文档要求服务端 WebSocket 使用标准 API Key，通过 `/v1/realtime?model=...` 建立已认证连接，且不再发送 Beta header。Microsoft Learn 的 Azure Realtime WebSocket 文档（`ms.date=2026-07-13`，页面更新于 `2026-07-19`）要求 GA 地址使用 `/openai/v1`，明确禁止 date-based API Version 与 `api-version` 查询参数，并把 Azure deployment 名称放在 `model` 查询参数；API Key 通过 `api-key` header 发送。该 Microsoft 示例使用普通 `OpenAI` client 与 `/openai/v1` base URL；已安装 OpenAI SDK `6.49.0` 源码中的 `OpenAIRealtimeWS.azure` 仍会生成旧式 `api-version` 与 `deployment` 参数，这是已观察的 SDK 行为而不是当前协议约束。CharaMate 因此只实现当前 GA 路径：连接前清除 Endpoint 查询，以 Realtime Model 重建唯一 `model` 参数，不保留 Preview fallback。对目标 Azure resource 的无密钥/占位凭据探测进一步观察到：`api-key` header 的无效值返回 401，而错误使用 Bearer header 会返回 302，并把值迁入重定向 URL 的 `api-key` 查询参数；这是 2026-08-01 的目标端点实测行为，不是协议保证。为避免凭据进入 URL，CharaMate 在联网前拒绝把 `*.openai.azure.com` Endpoint 配为 `openai-compatible`，且永不跟随 Realtime 3xx。生产 Adapter 使用 SDK peer 范围内已核对的 `ws@8.21.1` 完成同一握手，以同时支持本机 `ws://` OpenAI-compatible Endpoint；该依赖只在 Main 中运行并作为 Forge runtime external 打包。
+
+同日 Image 协议来源刷新确认：OpenAI OpenAPI `2.3.0` 把 `POST /v1/images/generations` 定义为按文本提示生成图片，把 Edit 作为另一项需要图片输入的能力；OpenAI Image generation guide 明确列出 `gpt-image-2`。Microsoft Learn Azure OpenAI image REST reference `2025-04-01-preview`（`ms.date=2026-05-19`）给出的 Azure 路径为 `POST /openai/deployments/{deployment-id}/images/generations?api-version=2025-04-01-preview`，与用户提供的目标 URI 一致。CharaMate 当前唯一 Image 能力因此固定为 Generation，不接受 `/images/edits`，也不保留旧字段或兼容分支。Generation 端点需要提示词并可能产生计费输出，没有独立只读健康端点；Provider 测试只校验 URL 形状、凭据和 Image Model 可读取性，不发起生图，并在结果中明确该边界。“测试不得隐式产生图片费用”是 CharaMate 产品启发式，不等同于外部协议限制。若服务不提供模型读取，Image 返回需要手动确认，而不是伪报生成端点已通过。
 
 设置流程：
 
@@ -1807,7 +1809,7 @@ Phase 4 的实验与实现可在 Phase 2 稳定后和 Phase 3 后半段并行，
 - reply/progress/approval/proactive/automation/error 气泡投影，所有事实来自同一 Chat/Run/Approval；
 - 首次可见的基础像素场景、图层、nav grid、角色移动、游览/布置、收藏库和确定性恢复；
 - Memory/Activity → Territory candidate、来源追溯、pin、容量回收和版本；
-- Azure Image Edit canonical reference/mask、去背景、tile 缩放、cache、preview、确认和失败恢复。
+- Azure Image Generation 统一 style prompt、去背景、tile 缩放、cache、preview、确认和失败恢复。
 
 退出条件：桌宠和气泡跨重启可信，v1/v2 动画正确；领地无需等待生图即可完整使用；失败不损坏场景，超容量不删除 Memory 或资产版本。
 

@@ -20,7 +20,7 @@ export const CURRENT_SCHEMA_SQL = `
     chat_model TEXT,
     realtime_endpoint TEXT,
     realtime_model TEXT,
-    image_edit_endpoint TEXT,
+    image_generation_endpoint TEXT,
     image_model TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,

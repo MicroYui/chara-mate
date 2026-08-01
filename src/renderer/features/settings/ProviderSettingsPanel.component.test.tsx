@@ -163,10 +163,10 @@ describe("Provider Settings panel", () => {
     fireEvent.change(screen.getByLabelText("Realtime Model"), {
       target: { value: "realtime-deployment" },
     });
-    fireEvent.change(screen.getByLabelText("Image Edit Endpoint"), {
+    fireEvent.change(screen.getByLabelText("Image Generation Endpoint"), {
       target: {
         value:
-          "https://example.openai.azure.com/openai/deployments/image/images/edits",
+          "https://example.openai.azure.com/openai/deployments/image/images/generations",
       },
     });
     fireEvent.change(screen.getByLabelText("Image Model"), {
@@ -202,6 +202,9 @@ describe("Provider Settings panel", () => {
     );
     expect(imageRequest?.connection.profile.imageModel).toBe(
       "image-deployment",
+    );
+    expect(imageRequest?.connection.profile.imageGenerationEndpoint).toBe(
+      "https://example.openai.azure.com/openai/deployments/image/images/generations",
     );
   });
 

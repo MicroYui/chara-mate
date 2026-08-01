@@ -25,16 +25,16 @@ describe("Provider configuration normalization", () => {
         apiStyle: "azure-openai",
         apiVersion: " 2025-04-01-preview ",
         baseUrl: "https://example.openai.azure.com/",
-        imageEditEndpoint:
-          "https://example.openai.azure.com/openai/deployments/image/images/edits?api-version=2025-04-01-preview",
+        imageGenerationEndpoint:
+          "https://example.openai.azure.com/openai/deployments/image/images/generations?api-version=2025-04-01-preview",
         name: " Azure ",
       }),
     ).toEqual({
       apiStyle: "azure-openai",
       apiVersion: "2025-04-01-preview",
       baseUrl: "https://example.openai.azure.com",
-      imageEditEndpoint:
-        "https://example.openai.azure.com/openai/deployments/image/images/edits?api-version=2025-04-01-preview",
+      imageGenerationEndpoint:
+        "https://example.openai.azure.com/openai/deployments/image/images/generations?api-version=2025-04-01-preview",
       name: "Azure",
     });
   });

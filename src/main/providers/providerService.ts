@@ -36,8 +36,8 @@ function recordToDraft(record: ProviderRecord): ProviderProfileDraft {
     baseUrl: record.baseUrl,
     ...(record.chatModel ? { chatModel: record.chatModel } : {}),
     id: record.id,
-    ...(record.imageEditEndpoint
-      ? { imageEditEndpoint: record.imageEditEndpoint }
+    ...(record.imageGenerationEndpoint
+      ? { imageGenerationEndpoint: record.imageGenerationEndpoint }
       : {}),
     ...(record.imageModel ? { imageModel: record.imageModel } : {}),
     name: record.name,

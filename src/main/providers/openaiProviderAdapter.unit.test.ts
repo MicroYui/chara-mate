@@ -251,7 +251,7 @@ describe("OpenAI Provider adapter capability checks", () => {
     try {
       const adapter = new OpenAISdkProviderAdapter(
         profile({
-          imageEditEndpoint: `${listener.baseUrl}/v1/images/edits`,
+          imageGenerationEndpoint: `${listener.baseUrl}/v1/images/generations`,
           imageModel: "image-model",
         }),
         apiKey,
@@ -285,8 +285,9 @@ describe("OpenAI Provider adapter capability checks", () => {
     try {
       const adapter = new OpenAISdkProviderAdapter(
         azureProfile({
+          apiVersion: "profile-version-must-not-win",
           baseUrl: listener.baseUrl,
-          imageEditEndpoint: `${listener.baseUrl}/openai/deployments/gpt-image-2/images/edits?api-version=2025-04-01-preview`,
+          imageGenerationEndpoint: `${listener.baseUrl}/openai/deployments/gpt-image-2/images/generations?api-version=2025-04-01-preview`,
           imageModel: "gpt-image-2",
         }),
         apiKey,
@@ -302,12 +303,63 @@ describe("OpenAI Provider adapter capability checks", () => {
     }
   });
 
+  it("uses the Profile API Version when the Azure generation endpoint omits its query", async () => {
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(`${request.method ?? ""} ${request.url ?? ""}`);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          created: 1,
+          id: "gpt-image-2",
+          object: "model",
+          owned_by: "azure",
+        }),
+      );
+    });
+    const listener = await listen(server);
+
+    try {
+      const adapter = new OpenAISdkProviderAdapter(
+        azureProfile({
+          apiVersion: "2025-04-01-preview",
+          baseUrl: listener.baseUrl,
+          imageGenerationEndpoint: `${listener.baseUrl}/openai/deployments/gpt-image-2/images/generations`,
+          imageModel: "gpt-image-2",
+        }),
+        apiKey,
+      );
+
+      await expect(adapter.verifyImageConfiguration()).resolves.toBeUndefined();
+      expect(requests).toEqual([
+        "GET /openai/models/gpt-image-2?api-version=2025-04-01-preview",
+      ]);
+    } finally {
+      await listener.close();
+    }
+  });
+
   it("requires an API Version only when an Azure HTTP capability is tested", async () => {
     const adapter = new OpenAISdkProviderAdapter(azureProfile({}), apiKey);
 
     await expect(adapter.listModels()).rejects.toMatchObject({
       code: "PROVIDER.INVALID_CONFIGURATION",
       message: "该 Azure HTTP 能力需要 API Version；Realtime GA 不需要。",
+    });
+  });
+
+  it("rejects an Image Edit endpoint because the configured capability is generation", async () => {
+    const adapter = new OpenAISdkProviderAdapter(
+      profile({
+        imageGenerationEndpoint: "https://api.example.com/v1/images/edits",
+        imageModel: "gpt-image-2",
+      }),
+      apiKey,
+    );
+
+    await expect(adapter.verifyImageConfiguration()).rejects.toMatchObject({
+      code: "PROVIDER.INVALID_CONFIGURATION",
+      message: "Image Generation Endpoint 应以 /images/generations 结尾。",
     });
   });
 

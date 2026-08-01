@@ -316,9 +316,9 @@ export class OpenAISdkProviderAdapter implements ProviderHttpAdapter {
 
   async verifyImageConfiguration(): Promise<void> {
     const endpoint = requireEndpoint(
-      this.#profile.imageEditEndpoint,
-      "/images/edits",
-      "Image Edit Endpoint",
+      this.#profile.imageGenerationEndpoint,
+      "/images/generations",
+      "Image Generation Endpoint",
     );
     const model = this.#profile.imageModel?.trim();
     if (!model) {
@@ -334,7 +334,7 @@ export class OpenAISdkProviderAdapter implements ProviderHttpAdapter {
         this.#profile.apiStyle === "openai-compatible"
           ? {
               ...this.#profile,
-              baseUrl: endpointBaseUrl(endpoint, "/images/edits"),
+              baseUrl: endpointBaseUrl(endpoint, "/images/generations"),
             }
           : this.#profile;
       const endpointApiVersion = endpoint.searchParams

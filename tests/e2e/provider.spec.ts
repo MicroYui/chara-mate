@@ -70,6 +70,8 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
             apiStyle: "openai-compatible",
             baseUrl: url,
             chatModel: "e2e-model",
+            imageGenerationEndpoint: `${url}/images/generations`,
+            imageModel: "e2e-model",
             name: "E2E Provider",
           },
         }),
@@ -91,6 +93,8 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
       baseUrl,
       chatModel: "e2e-model",
       id: profileId,
+      imageGenerationEndpoint: `${baseUrl}/images/generations`,
+      imageModel: "e2e-model",
       name: "E2E Provider",
     };
     const discovery = await first.page.evaluate(
@@ -125,11 +129,16 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
     const database = new Database(databasePath, { readonly: true });
     const row = database
       .prepare(
-        "SELECT api_key_ref AS apiKeyRef, base_url AS baseUrl FROM provider_profiles WHERE id = ?",
+        "SELECT api_key_ref AS apiKeyRef, base_url AS baseUrl, image_generation_endpoint AS imageGenerationEndpoint FROM provider_profiles WHERE id = ?",
       )
-      .get(profileId) as { apiKeyRef: string; baseUrl: string };
+      .get(profileId) as {
+      apiKeyRef: string;
+      baseUrl: string;
+      imageGenerationEndpoint: string;
+    };
     database.close();
     expect(row.baseUrl).toBe(baseUrl);
+    expect(row.imageGenerationEndpoint).toBe(`${baseUrl}/images/generations`);
     expect(row.apiKeyRef).not.toBe(secret);
 
     const second = await launchApplication();
@@ -141,6 +150,11 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
     await expect(
       second.page.getByRole("button", { name: /E2E Provider/u }),
     ).toBeVisible();
+    await second.page.getByRole("button", { name: /E2E Provider/u }).click();
+    await second.page.getByText("Realtime 与 Image").click();
+    await expect(
+      second.page.getByLabel("Image Generation Endpoint"),
+    ).toHaveValue(`${baseUrl}/images/generations`);
     const profiles = await second.page.evaluate(() =>
       window.charaMate.provider.listProfiles(),
     );

@@ -232,7 +232,8 @@ describe("Provider Service", () => {
       apiKey: "draft-secret",
       profile: {
         ...baseDraft,
-        imageEditEndpoint: "https://api.example.com/v1/images/edits",
+        imageGenerationEndpoint:
+          "https://api.example.com/v1/images/generations",
         imageModel: "image-model",
         realtimeEndpoint: "https://api.example.com/v1/realtime",
         realtimeModel: "realtime-model",

@@ -41,6 +41,9 @@ describe("Provider Profile repository", () => {
       chatModel: "deployment-a",
       createdAt: "2026-08-01T08:00:00.000Z",
       id: "77777777-7777-4777-8777-777777777777",
+      imageGenerationEndpoint:
+        "https://example.openai.azure.com/openai/deployments/gpt-image-2/images/generations",
+      imageModel: "gpt-image-2",
       name: "Azure",
       updatedAt: "2026-08-01T08:00:00.000Z",
     } as const;
@@ -53,13 +56,14 @@ describe("Provider Profile repository", () => {
 
     const row = database
       .prepare(
-        "SELECT api_style, api_version, api_key_ref FROM provider_profiles WHERE id = ?",
+        "SELECT api_style, api_version, api_key_ref, image_generation_endpoint FROM provider_profiles WHERE id = ?",
       )
       .get(record.id);
     expect(row).toEqual({
       api_key_ref: record.apiKeyRef,
       api_style: "azure-openai",
       api_version: "2025-04-01-preview",
+      image_generation_endpoint: record.imageGenerationEndpoint,
     });
     expect((await readFile(databasePath)).includes(Buffer.from(secret))).toBe(
       false,
