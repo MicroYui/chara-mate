@@ -1,0 +1,320 @@
+# CharaMate 实施路线图
+
+> 状态：Specified
+> 日期：2026-08-01
+> 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
+
+本文件记录里程碑依赖、工作包边界和验收，不记录逐命令历史。Phase 编号表示产品集成与验收顺序，不要求所有开发工作全局串行；只有共享契约、Schema、IPC 和同一可变资源的写入必须串行。
+
+## 固定工程基线
+
+| 关注点 | 唯一生产选择 | 约束 |
+| --- | --- | --- |
+| 仓库与包 | 单 package、npm、精确 lockfile | 不建 monorepo，不维护第二套 package manager |
+| 桌面与打包 | Electron + Electron Forge + Forge Vite Plugin | 只保留一个构建路径；Plugin 精确锁版本并先做 packaged smoke |
+| 语言 | TypeScript strict、ESM | Main、Preload、Renderer 和共享契约统一使用 TypeScript |
+| 代码质量 | ESLint flat config + typescript-eslint/React Hooks + Prettier | 唯一 lint/format 路径；不同时维护 Biome 配置 |
+| Renderer | React、CSS Modules、CSS Custom Properties | Main 是业务状态真源；不引入第二套前端业务状态机 |
+| UI 基础 | Radix Primitives、Lucide、TanStack Virtual | 不使用完整主题型 UI 框架；Voice 波形和产品专用图标自绘 SVG |
+| 内容渲染 | `react-markdown`/remark/rehype、KaTeX、懒加载 Shiki/Mermaid | 源 Markdown 是复制真源；完成后确定性重渲染 |
+| 像素渲染 | PixiJS | 桌宠与领地共享 sprite/animation 语义，不引入完整游戏引擎 |
+| 契约 | TypeBox + Ajv、JSON Schema-first | Tool、IPC、事件和持久化边界复用同一 Schema 来源 |
+| IPC | typed `contextBridge` API | 每个领域暴露窄方法；Renderer 不直接拿 `ipcRenderer` |
+| 数据 | `better-sqlite3`、prepared SQL、领域 Repository | 不引入 ORM；journal、批量和向量布局仍由 Decision 决定 |
+| Agent | CharaMate 自有事件驱动 Harness | 不引入 LangChain/LangGraph 类总框架；Provider SDK 仅留在 Adapter 内 |
+| 外部协议 SDK | 官方 OpenAI JavaScript SDK、官方 MCP TypeScript SDK | 只在 Provider/MCP Adapter 边界使用，不拥有 Run、Tool 或 Approval 状态 |
+| Browser | `playwright-core` + 产品管理的固定 Chromium | 与 Electron E2E 的 Playwright runner 职责分开 |
+| Secrets | Electron async `safeStorage` + 统一 redaction | SQLite 只存引用；密钥不进入日志、Run、Memory 或错误 |
+| Observability | Pino + typed events/metrics | 不预建外部监控平台，不把研发指标放进产品 UI |
+| 测试 | Vitest、Testing Library、Playwright Electron E2E | 默认离线、确定性；Live 与 Benchmark 单独运行和报告 |
+
+算法、模型、数据库参数、Voice Transport、并行度和保留阈值不属于这张固定栈表，必须经过对应 Decision。
+
+## Phase DAG
+
+```mermaid
+flowchart TD
+    P0["Phase 0<br/>工程基线、来源版本、稳定契约"]
+
+    UI["P1-UI<br/>App Shell / Chats fixtures"]
+    DB["P1-DATA<br/>SQLite / IPC / 事件重放"]
+    PR["P1-PROVIDER<br/>Provider / Model / Secret"]
+    HD["HARNESS-LOOP<br/>TOOL-DISCOVERY"]
+    P1["Phase 1<br/>产品骨架与 Chats 集成"]
+    P2["Phase 2<br/>Agent Runtime 与能力"]
+
+    MD["Memory Decisions<br/>STORAGE / RETRIEVAL / CONTEXT / GRAPH"]
+    MEM["P3-MEMORY<br/>Memory / Profile"]
+    AD["Activity Decisions<br/>DISTILLATION / RETENTION"]
+    ACT["P3-ACTIVITY<br/>采集、Episode、Digest、清理"]
+
+    VD["Voice Decisions<br/>ARCHITECTURE / TRANSPORT / TOOL-JOIN"]
+    VOICE["Phase 4<br/>Realtime Voice"]
+
+    AUTO["P5-AUTO<br/>Reminder / Agent Task"]
+    PRO["P5-PROACTIVE<br/>主动聊天"]
+    MAD["MULTI-AGENT"]
+    MA["并行协作<br/>仅晋级后"]
+    SED["SELF-EVOLUTION"]
+    SE["自进化<br/>仅晋级后"]
+
+    PET["P6-PET<br/>桌宠窗口 / 气泡 / 导入"]
+    TERR["P6-TERRITORY<br/>场景 / 记忆物件 / 生图"]
+    P6["Phase 6<br/>桌宠与领地集成"]
+    P7["Phase 7<br/>整体体验收口"]
+
+    P0 --> UI
+    P0 --> DB
+    P0 --> PR
+    P0 --> HD
+    UI --> P1
+    DB --> P1
+    PR --> P1
+
+    P1 --> P2
+    HD --> P2
+    DB --> P2
+    PR --> P2
+
+    P2 --> MD
+    DB --> MD
+    MD --> MEM
+    MEM --> AD
+    AD --> ACT
+
+    P2 --> VD
+    PR --> VD
+    VD --> VOICE
+
+    P2 --> AUTO
+    P2 --> MAD
+    MAD --> MA
+    P2 --> SED
+    MEM --> SED
+    SED --> SE
+    MEM --> PRO
+    ACT --> PRO
+
+    P1 --> PET
+    P2 --> PET
+    MEM --> TERR
+    ACT --> TERR
+    PR --> TERR
+    PET --> P6
+    TERR --> P6
+
+    P1 --> P7
+    P2 --> P7
+    ACT --> P7
+    VOICE --> P7
+    AUTO --> P7
+    PRO --> P7
+    MA -.->|若晋级| P7
+    SE -.->|若晋级| P7
+    P6 --> P7
+```
+
+## 交付波次
+
+1. **Wave 0 — 串行入口**：来源刷新、工具链兼容性、共享 Contract/Schema 所有权和测试命令基线。
+2. **Wave 1 — Phase 1 并行**：UI fixture、持久化/IPC、Provider/Secret 三条所有权不重叠的路径并行，随后由一个集成 owner 收口 Chats。
+3. **Wave 2 — Phase 2 主干**：先完成 Harness/Tool Discovery 决策，再实现唯一 Agent Runtime、Tool、Approval 和恢复路径。
+4. **Wave 3 — 多支线并行**：Agent 主干稳定后，Memory 研究、Voice Contract/实验、Automation 基础、桌宠基础与 Multi-agent 实验可并行；候选代码只在隔离 worktree。
+5. **Wave 4 — 长期理解支线**：Memory 胜者进入生产后，Activity、主动聊天、Self-evolution 实验和 Territory 记忆物件可并行。
+6. **Wave 5 — 全产品收口**：只集成已通过 Gate 的路径，运行完整离线、打包、E2E 和明确要求的 Live 检查。
+
+## Phase 0 — 工程基线与稳定契约
+
+### 目标
+
+建立唯一可构建、可测试、可打包的 Electron 基线，以及所有后续领域共同依赖的最小稳定契约。
+
+### 工作包
+
+- `FND-TOOLCHAIN`：验证 Electron/Forge/Vite、React、`better-sqlite3` rebuild/ASAR、Playwright Electron、macOS package smoke；成功后精确锁定版本。
+- `FND-CONTRACTS`：定义 Chat、Message、Run、RunItem、Approval、Provider snapshot、错误和 sequence envelope 的 TypeBox Schema 与 TypeScript 类型。
+- `FND-IPC`：定义 typed Preload 请求/响应/订阅形状及 `afterSequence` 重放契约，不实现业务服务。
+- `FND-CORRECTNESS`：统一 ID/clock/AbortSignal、artifact 引用、redaction 和测试 fixture 约定。
+- `FND-QUALITY`：建立真实的 fast check、focused test、full offline、build/package、E2E 和 live/benchmark scripts，再把命令写回 `AGENTS.md`。
+
+### 验收
+
+- 开发窗口、Main/Preload/Renderer 构建、打包应用和 packaged smoke 均成功；
+- `better-sqlite3` 在开发与打包应用中完成一次事务、关闭并重开读取；
+- Renderer 只能通过窄 typed preload API 访问 Main；
+- Contract 正反例、redaction、sequence 和取消语义有确定性测试；
+- 没有业务空目录、ORM、通用 AI 框架、第二套构建路径或候选算法代码。
+
+## Phase 1 — 产品骨架与 Chats
+
+### 依赖
+
+Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享契约变更由唯一 integration owner 串行合入。
+
+### 工作包
+
+- `P1-APP-SHELL`：主窗口、融合标题栏、侧栏、六个一级页面占位、窗口状态恢复。
+- `P1-CHAT-DATA`：Chat/Message/Attachment/Run/RunItem 初始 Schema、领域 Repository、append-first 事件和重放。
+- `P1-CHAT-SERVICE`：多会话创建、重命名、置顶、搜索、归档、恢复、删除和同 Chat Turn 串行。
+- `P1-CHAT-UI`：消息列表、空状态、用户/助手消息、附件、Composer 模式/模型/权限位置。
+- `P1-CONTENT`：GFM、代码、KaTeX、表格、Mermaid、媒体/文件卡与各级复制；流式容错后确定性重渲染。
+- `P1-RUN-PROJECTION`：运行中展开、完成折叠、Tool 二级详情、停止反馈、刷新和重启恢复。
+- `P1-PROVIDER`：Provider Profile、模型发现/手填、连接测试、Model snapshot、async `safeStorage` 与 redaction。
+
+### 验收
+
+- Chat 模式不能执行外部效果 Tool，一键切 Agent 不丢输入；
+- Composer、Markdown/LaTeX、复制、Run 折叠与 Approval fixture 满足 UI 验收；
+- Main 先持久化再广播，Renderer 重载后按 sequence 恢复；
+- Provider Key 不出现在 SQLite、日志、错误或 IPC fixture；
+- 受影响的 L0/L1/L2、React component test、Electron Chats E2E 和 package smoke 通过。
+
+## Phase 2 — Agent Runtime 与能力
+
+### 依赖与 Gate
+
+- Phase 1 的 Run/Item、IPC、Provider 与持久化稳定；
+- `HARNESS-LOOP`、`TOOL-DISCOVERY` 完成中文 Decision Record；
+- 失败 Harness/Discovery Arms、Adapter、Schema 和依赖已删除。
+
+### 工作包
+
+- `P2-RUNTIME`：唯一循环、ContextCompiler 接口、steering、compaction、checkpoint、恢复与 Loop Guard。
+- `P2-TOOLS`：JSON Schema Tool Registry、结构化结果、AbortSignal、artifact、deadline 和错误分类。
+- `P2-APPROVAL`：三档权限、Chat/气泡共用 Approval Item、拒绝结果、过期与取消。
+- `P2-LOCAL`：File、Command、App Tool 与子进程生命周期。
+- `P2-BROWSER`：Managed Chromium Profile、Playwright DOM/AX 优先、上传下载和证据 artifact。
+- `P2-COMPUTER`：App Action/CLI/API 优先，Accessibility 其次，视觉坐标兜底的 OS Adapter。
+- `P2-EXTENSIONS`：MCP stdio/Streamable HTTP、Skills 渐进披露、重新发现与配置管理。
+- `P2-OBSERVABILITY`：Run/Tool/Approval/Context trace 与 Dev Dashboard 第一版。
+
+### 验收
+
+- Direct、File、Command、Browser、Computer、MCP、Long Run、Steering、Recovery、Approval 和 No-op 旅程通过；
+- 长任务不被固定全局步数、墙钟、Token 或成本静默截断；
+- 审批前副作用、取消后副作用和虚假完成均为零；
+- 进程中断后只恢复未完成边界，已完成副作用不重放；
+- Phase 2 领域测试、相关 contract/IPC integration、Electron Agent E2E、full offline 和 build 通过。
+
+## Phase 3 — Memory 与 Activity
+
+### 依赖与 Gate
+
+- Phase 2 提供稳定 Agent、ContextCompiler 接口、Tool/Run evidence；
+- `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH` 依研究依赖完成；
+- `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 在 Memory proposal/source 契约稳定后完成。
+
+### 工作包
+
+- `P3-MEMORY-SEMANTICS`：Memory/Revision/Source、validity、supersede、pin、archive/delete 和 Profile 投影。
+- `P3-MEMORY-RUNTIME`：唯一 Retrieval Pipeline、唯一 Context Recipe、获胜索引生命周期和 `search_memory`。
+- `P3-MEMORY-UI`：搜索、筛选、来源、Revision、画像、候选与领地入口；Graph 未晋级时没有入口。
+- `P3-ACTIVITY-CAPTURE`：Active App、Managed Browser、Screenshot/OCR metadata、Idle 和 Agent Run 区分。
+- `P3-ACTIVITY-DISTILL`：确定性 Episode 边界、获胜 Digest/候选流程、evidence 与冲突处理。
+- `P3-ACTIVITY-RETENTION`：获胜保留策略、文件/缩略图/OCR/索引/行一致清理、orphan sweep。
+- `P3-BENCHMARK`：LongMemEval、LoCoMo 与冻结中文产品集的 Retrieval、Answer、Storage 和 Activity 记录。
+
+### 验收
+
+- Memory 编辑产生 Revision，改口后旧事实不进入默认 Context，所有投影可追溯；
+- 发布物只加载一个 Retrieval/Context/Graph 结果，失败候选模型、依赖、表和设置不存在；
+- Activity 被压缩成少量 Episode/Digest，原始事件不进入普通长期检索；
+- 清理引用完整率达到 Decision 门槛，长期 Memory/Territory evidence 不随原始资产删除；
+- 相关 contract、DB/integration、UI、benchmark regression、full offline、build 和受影响 E2E 通过。
+
+## Phase 4 — Realtime Voice
+
+### 依赖与 Gate
+
+- Phase 2 的 Run、Tool、Approval、steering、generation 和 Provider Adapter 稳定；
+- 目标 Azure deployment Contract Test 已刷新；
+- `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT`、`VOICE-TOOL-JOIN` 全部完成，失败 Driver/Transport/Join 代码已删除。
+
+### 工作包
+
+- `P4-VOICE-DRIVER`：唯一媒体 Transport、鉴权、VAD、音频采集/播放和断线重连。
+- `P4-COORDINATOR`：VoiceRunCoordinator 将 transcript、response、Tool 和 interruption 映射到统一 Run。
+- `P4-VOICE-TOOLS`：获胜 Tool 调度/Join、结构化部分失败、单次 continuation 与迟到 generation 丢弃。
+- `P4-VOICE-DATA`：VoiceSession/Turn、实际播放边界、interrupted 标记与 Chat 草稿原子完成。
+- `P4-VOICE-UI`：Voice Dock、波形、连接/聆听/工具/批准/说话状态、静音和结束。
+- `P4-VOICE-SETTINGS`：音色试听、Persona 默认音色和 Realtime instructions。
+
+### 验收
+
+- 真实 endpoint、麦克风和扬声器满足预注册首音频、打断和一致性门槛；
+- 任一时刻只有一个 audible response，旧 generation 注入和重复副作用为零；
+- 实际听到的自然语言、Chat 文本、Tool Item 和重启恢复一致；
+- mock 测试只证明状态机，不代替 Live 体验结论；离线与 Live 结果分开报告。
+
+## Phase 5 — Automations、主动聊天与可选成长能力
+
+### 依赖与 Gate
+
+- Reminder/Agent Task 只依赖 Phase 2；
+- 主动聊天依赖 Phase 3 的 Digest/Memory；
+- `MULTI-AGENT`、`SELF-EVOLUTION` 各自决定能力是否存在，而不是决定默认开关。
+
+### 工作包
+
+- `P5-AUTOMATIONS`：一次/每天/每周/Cron、暂停/编辑/试跑、运行历史和普通 Chat Run。
+- `P5-PROACTIVE`：安静时段、主动程度、触发来源、普通 Chat 持久化和气泡投影。
+- `P5-MULTI-AGENT`：仅晋级后实现获胜 Dispatch、资源隔离、父 Join、Subtask Item 和 Composer 按轮授权。
+- `P5-EVOLUTION`：仅晋级后实现异步 Review、四类候选、Skill replay、版本、归档和恢复。
+
+### 验收
+
+- Automation 的 Tool、审批、取消、结果和失败与手动 Run 完全同构；
+- 后台 Approval 不被伪装为成功，气泡始终跳转同一 Chat Item；
+- 未晋级能力的表、协议、组件、设置、依赖和空入口不存在；
+- 晋级能力满足 Decision Record 的成功率、错误迁移、冲突、Token 和复杂度门槛。
+
+## Phase 6 — 桌宠与领地
+
+### 依赖
+
+- 桌宠基础窗口和 Pet 导入可在 Phase 1 后并行开发；状态与审批投影依赖 Phase 2；
+- Memory 物件依赖 Phase 3，Activity 趋势候选依赖 Activity；
+- Image Edit 依赖 Provider Adapter 和真实 Azure Contract Test。
+
+### 工作包
+
+- `P6-PET-WINDOW`：透明常驻窗口、自由拖动、多显示器、位置/尺寸/朝向恢复、托盘和 earcon。
+- `P6-PET-RUNTIME`：PixiJS sprite runtime、CompanionState 动画、气泡和 Voice envelope 联动。
+- `P6-PET-IMPORT`：Codex v1/v2 校验、复制安装、自有目录和缺失 look row 降级。
+- `P6-TERRITORY-BASE`：基础像素场景、图层、nav grid、角色移动、布置和收藏库。
+- `P6-TERRITORY-MEMORY`：Memory/Activity candidate、来源追溯、容量回收、版本与 pin。
+- `P6-TERRITORY-IMAGE`：canonical reference、mask、Image Edit、去背景/tile 处理、缓存和失败恢复。
+
+### 验收
+
+- 桌宠跨重启与显示器变化保持可见和位置语义，v1/v2 动画正确；
+- Approval 气泡、Voice 状态和 Chat Run 使用同一真源；
+- 首次领地无需等待生图即可完整显示，移动/放置/追溯/收回确定性；
+- 生图失败不损坏场景，超过容量只回收藏库，不删除 Memory 或资产版本。
+
+## Phase 7 — 整体体验收口
+
+### 工作包
+
+- 六个一级页面、Character Window、Tray、Managed Browser 和 Dev Dashboard 的完整旅程；
+- 多会话并发、崩溃恢复、取消、审批、资源引用、获胜存储/索引和 asset 长时观察；
+- Provider 自动发现与手填、Chat/Realtime/Image、MCP、Computer Use 和生图 Live 验证；
+- 浅/深主题、响应式、减少动态效果、键盘与可读性验收；
+- 首次体验、Persona、文案、错误恢复、展示脚本、签名/notarization 和安装包；
+- 单路径审计：无失败 Arm、兼容 flag、候选 Adapter、临时 Schema、未使用依赖或隐藏设置。
+
+### 退出条件
+
+- 产品设计的所有必测旅程和完成定义满足；
+- full offline、build/package、受影响 Electron E2E 全绿；
+- Live/Benchmark 按功能明确运行并单独报告，未运行项有原因；
+- 文档、共享契约、Schema、Decision Record 和实际产品路径一致。
+
+## 串行化与并行所有权
+
+- shared contract、IPC namespace、数据库 Schema 和跨领域 event 每次变更只能有一个 integration owner。
+- UI 使用冻结 fixture 后可与 Main 服务并行；契约变化先由 owner 更新 Schema 和 contract test，再通知消费者。
+- 同一源文件、迁移、SQLite fixture、可变 Browser Profile、真实音频设备和同一副作用账户不允许并发写。
+- 只读研究、独立 Provider Contract Test、不同 UI 页面和独立领域 Repository 可并行。
+- 候选实验使用独立 branch/worktree；胜者重新实现进生产，失败候选不通过 feature flag 留存。
+- 并行量由独立所有权、测试容量与集成 review 能力决定，不设置任意固定团队上限。
