@@ -12,6 +12,7 @@ import {
 } from "../../src/shared/schemas/ipc";
 import { FOUNDATION_CHANNELS } from "../../src/shared/contracts/foundation";
 import { ProviderSnapshotSchema } from "../../src/shared/schemas/provider";
+import { TimestampSchema } from "../../src/shared/schemas/primitives";
 import {
   ApprovalSchema,
   AppErrorSchema,
@@ -144,6 +145,23 @@ describe("Phase 0 domain contracts", () => {
       }
     },
   );
+
+  it.each(parsers)("validates real UTC timestamps through %s", (parse) => {
+    expect(parse(TimestampSchema, "2024-02-29T12:34:56.000Z")).toBe(
+      "2024-02-29T12:34:56.000Z",
+    );
+    expect(parse(TimestampSchema, "2024-02-29T12:34:56Z")).toBe(
+      "2024-02-29T12:34:56Z",
+    );
+
+    for (const timestamp of [
+      "2026-02-29T12:34:56.000Z",
+      "2026-13-01T12:34:56.000Z",
+      "2026-08-01T24:00:00.000Z",
+    ]) {
+      expect(() => parse(TimestampSchema, timestamp)).toThrow();
+    }
+  });
 
   it.each(parsers)(
     "rejects credentials in Provider snapshots through %s",

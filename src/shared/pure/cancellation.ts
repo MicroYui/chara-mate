@@ -47,14 +47,16 @@ export class RunCancelledError extends Error {
 export class RunCancellationController {
   readonly #controller = new AbortController();
 
+  constructor(readonly runId: EntityId) {}
+
   get signal(): AbortSignal {
     return this.#controller.signal;
   }
 
-  request(runId: EntityId, status: RunStatus): RunCancelResult {
-    const result = decideRunCancellation(runId, status);
+  request(status: RunStatus): RunCancelResult {
+    const result = decideRunCancellation(this.runId, status);
     if (result.outcome === "accepted" && !this.signal.aborted) {
-      this.#controller.abort(new RunCancelledError(runId));
+      this.#controller.abort(new RunCancelledError(this.runId));
     }
     return result;
   }

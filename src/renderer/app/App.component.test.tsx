@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DesktopApi } from "../../shared/contracts/foundation";
@@ -38,6 +38,8 @@ describe("foundation renderer", () => {
     expect(screen.getByTestId("foundation-status")).toHaveTextContent(
       "Electron 43.2.0",
     );
-    expect(markRendererReady).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(markRendererReady).toHaveBeenCalledOnce();
+    });
   });
 });

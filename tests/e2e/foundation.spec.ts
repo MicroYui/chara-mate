@@ -15,16 +15,17 @@ test("launches through the typed preload boundary", async () => {
   const userDataDirectory = await mkdtemp(
     path.join(os.tmpdir(), "chara-mate-e2e-"),
   );
-  const application = await electron.launch({
-    args: [projectRoot],
-    cwd: projectRoot,
-    env: {
-      ...process.env,
-      CHARAMATE_USER_DATA_DIR: userDataDirectory,
-    },
-  });
+  let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
 
   try {
+    application = await electron.launch({
+      args: [projectRoot],
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        CHARAMATE_USER_DATA_DIR: userDataDirectory,
+      },
+    });
     const page = await application.firstWindow();
     await expect(
       page.getByRole("heading", { name: "工程基线已就绪" }),
@@ -51,7 +52,10 @@ test("launches through the typed preload boundary", async () => {
       platform: "darwin",
     });
   } finally {
-    await application.close();
-    await rm(userDataDirectory, { force: true, recursive: true });
+    try {
+      await application?.close();
+    } finally {
+      await rm(userDataDirectory, { force: true, recursive: true });
+    }
   }
 });

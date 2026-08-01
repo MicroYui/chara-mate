@@ -14,32 +14,58 @@ const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const expectedPrefix = "CHARAMATE_SMOKE_RESULT ";
+
+function forceTerminateProcessTree(child) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return true;
+  }
+
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return true;
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ESRCH"
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return child.kill("SIGKILL");
+}
+
 const userDataDirectory = await mkdtemp(
   path.join(os.tmpdir(), `chara-mate-${mode}-`),
 );
 
-let executable = path.join(projectRoot, "node_modules/.bin/electron-forge");
-
-if (mode === "packaged") {
-  const packagedApplication = path.join(
-    projectRoot,
-    "out/CharaMate-darwin-arm64/CharaMate.app",
-  );
-  const isolatedApplication = path.join(userDataDirectory, "CharaMate.app");
-  await cp(packagedApplication, isolatedApplication, {
-    recursive: true,
-    verbatimSymlinks: true,
-  });
-  executable = path.join(isolatedApplication, "Contents/MacOS/CharaMate");
-}
-const args = mode === "dev" ? ["start"] : [];
-const expectedPrefix = "CHARAMATE_SMOKE_RESULT ";
-
 let result;
 try {
+  let executable = path.join(projectRoot, "node_modules/.bin/electron-forge");
+
+  if (mode === "packaged") {
+    const packagedApplication = path.join(
+      projectRoot,
+      "out/CharaMate-darwin-arm64/CharaMate.app",
+    );
+    const isolatedApplication = path.join(userDataDirectory, "CharaMate.app");
+    await cp(packagedApplication, isolatedApplication, {
+      recursive: true,
+      verbatimSymlinks: true,
+    });
+    executable = path.join(isolatedApplication, "Contents/MacOS/CharaMate");
+  }
+
+  const args = mode === "dev" ? ["start"] : [];
   result = await new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       cwd: projectRoot,
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
         CHARAMATE_SMOKE_TEST: "1",
@@ -50,10 +76,17 @@ try {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
+    let timeoutError;
 
     const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error(`${mode} smoke timed out.\n${output}`));
+      timeoutError = new Error(`${mode} smoke timed out.\n${output}`);
+      if (!forceTerminateProcessTree(child)) {
+        reject(
+          new Error(
+            `${mode} smoke timed out and could not be terminated.\n${output}`,
+          ),
+        );
+      }
     }, 120_000);
 
     child.stdout.on("data", (chunk) => {
@@ -70,8 +103,12 @@ try {
       clearTimeout(timeout);
       reject(error);
     });
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       clearTimeout(timeout);
+      if (timeoutError) {
+        reject(timeoutError);
+        return;
+      }
       if (code !== 0) {
         reject(
           new Error(
@@ -89,7 +126,11 @@ try {
         return;
       }
 
-      resolve(JSON.parse(resultLine.slice(expectedPrefix.length)));
+      try {
+        resolve(JSON.parse(resultLine.slice(expectedPrefix.length)));
+      } catch (error) {
+        reject(error);
+      }
     });
   });
 } finally {

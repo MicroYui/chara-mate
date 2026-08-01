@@ -33,7 +33,7 @@ Phase 1 已具备入口依赖，但尚未启动工作包。
 ## 最近绿色验证
 
 - 2026-08-01：`npm ci`，`17.6s`；从精确 lockfile 干净安装 698 个 package，lockfile 无变化，SHA-256 为 `f698ddaf57b10f07668016bb76eb87186d8bd03b04dd6d42490bab4e62d103ca`。
-- 2026-08-01：`npm run verify:phase0`，最终复跑 `17.8s`（干净安装后的首次运行 `24.3s`）；23 个 contract、15 个 focused、2 个 SQLite integration、Main/Preload/Renderer build、dev smoke、Forge package、隔离 packaged smoke 与 1 个 Electron E2E 全部通过。
+- 2026-08-01：`npm run verify:phase0`，质量修复后复跑 `18.4s`；25 个 contract、16 个 focused、2 个 SQLite integration、Main/Preload/Renderer build、dev smoke、Forge package、隔离 packaged smoke 与 1 个 Electron E2E 全部通过。时间戳日历校验、单 Run 取消绑定、smoke/E2E 失败清理与 Renderer readiness 异步断言均有对应实现或回归覆盖。
 - 2026-08-01：`npm run test:live && npm run test:benchmark`；两者按设计报告 `not-applicable`，Phase 0 没有外部 endpoint 或 Benchmark Decision owner，且未进入默认回归。
 - 2026-08-01：`npm ls --all --json` 无 missing、invalid 或 peer problem，30 个直接依赖均为精确版本，`npm audit --omit=dev` 为 0。
 - 2026-08-01：`rg`/`find`/ASAR 单路径审计，`<1s`；无第二 lockfile/build path、业务空目录、ORM、通用 Agent 框架或候选算法代码；产物包含唯一 ESM Main/Preload/Renderer 与已解包原生模块。

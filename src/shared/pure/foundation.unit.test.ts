@@ -73,18 +73,32 @@ describe("Phase 0 correctness primitives", () => {
   });
 
   it("turns an accepted cancellation into the shared AbortSignal", () => {
-    const cancellation = new RunCancellationController();
+    const cancellation = new RunCancellationController(FIXTURE_IDS.run);
     const linked = createLinkedAbortController(cancellation.signal);
 
-    expect(cancellation.request(FIXTURE_IDS.run, "waiting_approval")).toEqual({
+    expect(cancellation.request("waiting_approval")).toEqual({
       outcome: "accepted",
       runId: FIXTURE_IDS.run,
     });
     expect(cancellation.signal.aborted).toBe(true);
     expect(cancellation.signal.reason).toBeInstanceOf(RunCancelledError);
+    expect(cancellation.signal.reason).toMatchObject({
+      runId: FIXTURE_IDS.run,
+    });
     expect(linked.controller.signal.reason).toBe(cancellation.signal.reason);
 
     linked.dispose();
+  });
+
+  it("does not abort a Run that is already terminal", () => {
+    const cancellation = new RunCancellationController(FIXTURE_IDS.run);
+
+    expect(cancellation.request("completed")).toEqual({
+      outcome: "already_terminal",
+      runId: FIXTURE_IDS.run,
+      status: "completed",
+    });
+    expect(cancellation.signal.aborted).toBe(false);
   });
 
   it("applies only contiguous events from the requested sequence", () => {

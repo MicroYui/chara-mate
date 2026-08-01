@@ -1,12 +1,17 @@
 import Ajv from "ajv";
 import type { Static, TSchema } from "@sinclair/typebox";
 
-import { JsonValueSchema } from "./primitives";
+import {
+  isUtcTimestamp,
+  JsonValueSchema,
+  UTC_TIMESTAMP_FORMAT,
+} from "./primitives";
 
 const ajv = new Ajv({
   allErrors: true,
   strict: true,
 });
+ajv.addFormat(UTC_TIMESTAMP_FORMAT, isUtcTimestamp);
 ajv.addSchema(JsonValueSchema);
 const validators = new WeakMap<TSchema, ReturnType<typeof ajv.compile>>();
 const jsonValueValidator = ajv.getSchema(JsonValueSchema.$id ?? "");
