@@ -1,11 +1,21 @@
 import path from "node:path";
 
 import { app, BrowserWindow } from "electron";
+import type Database from "better-sqlite3";
 
 import type { FoundationSnapshot } from "../shared/contracts/foundation";
+import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
+import { RunEventService } from "./agent/runEventService";
+import { RunRepository } from "./agent/runRepository";
+import { registerChatDataIpc } from "./app/chatDataIpc";
 import { registerFoundationIpc } from "./app/foundationIpc";
 import { createMainWindow } from "./app/windows";
-import { verifyDatabaseRoundTrip } from "./db/database";
+import { ChatDataService } from "./chat/chatDataService";
+import { ChatRepository } from "./chat/chatRepository";
+import {
+  openApplicationDatabase,
+  verifyDatabaseRoundTrip,
+} from "./db/database";
 import { createAppLogger } from "./observability/logger";
 
 const logger = createAppLogger();
@@ -31,7 +41,18 @@ function getSupportedPlatform(): FoundationSnapshot["platform"] {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let applicationDatabase: Database.Database | undefined;
+let unregisterChatDataIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
+
+function stopApplicationInfrastructure(): void {
+  unregisterChatDataIpc?.();
+  unregisterChatDataIpc = undefined;
+  unregisterFoundationIpc?.();
+  unregisterFoundationIpc = undefined;
+  applicationDatabase?.close();
+  applicationDatabase = undefined;
+}
 
 async function startApplication(): Promise<void> {
   if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
@@ -53,6 +74,34 @@ async function startApplication(): Promise<void> {
     nodeVersion: process.versions.node,
     platform: getSupportedPlatform(),
   };
+
+  applicationDatabase = openApplicationDatabase(
+    path.join(app.getPath("userData"), "charamate.sqlite"),
+  );
+  const chatRepository = new ChatRepository(applicationDatabase);
+  const runRepository = new RunRepository(applicationDatabase);
+  const runEventService = new RunEventService(runRepository, {
+    publish(envelope) {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.webContents.isDestroyed()) {
+          continue;
+        }
+        try {
+          window.webContents.send(RUN_EVENT_CHANNELS.subscribe, envelope);
+        } catch (error) {
+          logger.warn("RUN_EVENT_BROADCAST_ERROR", {
+            error,
+            runId: envelope.streamId,
+            sequence: envelope.sequence,
+          });
+        }
+      }
+    },
+  });
+  unregisterChatDataIpc = registerChatDataIpc(
+    new ChatDataService(chatRepository, runRepository),
+    runEventService,
+  );
 
   let resolveRendererReady: (() => void) | undefined;
   const rendererReady = new Promise<void>((resolve) => {
@@ -87,6 +136,7 @@ void app
       "CHARAMATE_STARTUP_ERROR",
       error instanceof Error ? error : { error },
     );
+    stopApplicationInfrastructure();
     app.exit(1);
   });
 
@@ -105,5 +155,5 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  unregisterFoundationIpc?.();
+  stopApplicationInfrastructure();
 });

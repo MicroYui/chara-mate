@@ -1,7 +1,15 @@
 import type { TSchema } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 
-import { ChatSchema, MessageSchema } from "../../src/shared/schemas/chat";
+import {
+  AttachmentSchema,
+  ChatDataSnapshotRequestSchema,
+  ChatDataSnapshotResponseSchema,
+  ChatDataSnapshotSchema,
+  ChatSchema,
+  MessageSchema,
+} from "../../src/shared/schemas/chat";
+import { CHAT_DATA_CHANNELS } from "../../src/shared/contracts/chat";
 import {
   IpcChannelSchema,
   IpcRequestSchema,
@@ -11,6 +19,7 @@ import {
   RunEventReplayResponseSchema,
 } from "../../src/shared/schemas/ipc";
 import { FOUNDATION_CHANNELS } from "../../src/shared/contracts/foundation";
+import { RUN_EVENT_CHANNELS } from "../../src/shared/contracts/ipc";
 import { ProviderSnapshotSchema } from "../../src/shared/schemas/provider";
 import { TimestampSchema } from "../../src/shared/schemas/primitives";
 import {
@@ -26,7 +35,9 @@ import { parseSchema } from "../../src/shared/schemas/validation";
 import { parseSchemaWithoutCodeGeneration } from "../../src/shared/schemas/valueValidation";
 import {
   approvalFixture,
+  attachmentFixture,
   artifactFixture,
+  chatDataSnapshotFixture,
   chatFixture,
   FIXTURE_IDS,
   FIXTURE_TIMESTAMPS,
@@ -42,6 +53,19 @@ const parsers = [parseSchema, parseSchemaWithoutCodeGeneration] as const;
 const validCases: readonly [string, TSchema, unknown][] = [
   ["Chat", ChatSchema, chatFixture],
   ["Message", MessageSchema, messageFixture],
+  ["Attachment", AttachmentSchema, attachmentFixture],
+  ["Chat data snapshot", ChatDataSnapshotSchema, chatDataSnapshotFixture],
+  [
+    "Chat data snapshot request",
+    ChatDataSnapshotRequestSchema,
+    { chatId: FIXTURE_IDS.chat },
+  ],
+  [
+    "Chat data snapshot response",
+    ChatDataSnapshotResponseSchema,
+    chatDataSnapshotFixture,
+  ],
+  ["Missing chat data snapshot", ChatDataSnapshotResponseSchema, null],
   ["Provider snapshot", ProviderSnapshotSchema, providerSnapshotFixture],
   ["Run", RunSchema, runFixture],
   ["Run item", RunItemSchema, runItemFixture],
@@ -134,6 +158,15 @@ describe("Phase 0 domain contracts", () => {
       expect(parse(IpcChannelSchema, FOUNDATION_CHANNELS.rendererReady)).toBe(
         FOUNDATION_CHANNELS.rendererReady,
       );
+      expect(parse(IpcChannelSchema, RUN_EVENT_CHANNELS.replay)).toBe(
+        RUN_EVENT_CHANNELS.replay,
+      );
+      expect(parse(IpcChannelSchema, RUN_EVENT_CHANNELS.subscribe)).toBe(
+        RUN_EVENT_CHANNELS.subscribe,
+      );
+      expect(parse(IpcChannelSchema, CHAT_DATA_CHANNELS.getSnapshot)).toBe(
+        CHAT_DATA_CHANNELS.getSnapshot,
+      );
     },
   );
 
@@ -195,6 +228,15 @@ describe("Phase 0 domain contracts", () => {
       parse(ArtifactReferenceSchema, {
         ...artifactFixture,
         content: "large inline result",
+      }),
+    ).toThrow();
+  });
+
+  it.each(parsers)("keeps attachments reference-only through %s", (parse) => {
+    expect(() =>
+      parse(AttachmentSchema, {
+        ...attachmentFixture,
+        content: "large inline attachment",
       }),
     ).toThrow();
   });

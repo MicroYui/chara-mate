@@ -9,6 +9,8 @@ import type {
   RunEventSchema,
 } from "../schemas/ipc";
 
+export { RUN_EVENT_CHANNELS } from "../schemas/ipc";
+
 export type RunEvent = Static<typeof RunEventSchema>;
 export type RunEventEnvelope = Static<typeof RunEventEnvelopeSchema>;
 export type RunEventReplayRequest = Static<typeof RunEventReplayRequestSchema>;

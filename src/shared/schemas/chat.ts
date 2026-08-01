@@ -3,8 +3,10 @@ import { Type } from "@sinclair/typebox";
 import {
   EntityIdSchema,
   NonBlankStringSchema,
+  Sha256Schema,
   TimestampSchema,
 } from "./primitives";
+import { ApprovalSchema, RunItemSchema, RunSchema } from "./run";
 
 export const ChatStatusSchema = Type.Union([
   Type.Literal("active"),
@@ -50,3 +52,51 @@ export const MessageSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const AttachmentKindSchema = Type.Union([
+  Type.Literal("file"),
+  Type.Literal("directory"),
+  Type.Literal("image"),
+  Type.Literal("audio"),
+  Type.Literal("video"),
+]);
+
+export const AttachmentSchema = Type.Object(
+  {
+    byteLength: Type.Optional(Type.Integer({ minimum: 0 })),
+    chatId: EntityIdSchema,
+    createdAt: TimestampSchema,
+    displayName: NonBlankStringSchema,
+    id: EntityIdSchema,
+    kind: AttachmentKindSchema,
+    mediaType: Type.Optional(NonBlankStringSchema),
+    messageId: EntityIdSchema,
+    sha256: Type.Optional(Sha256Schema),
+    storageKey: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const ChatDataSnapshotRequestSchema = Type.Object(
+  {
+    chatId: EntityIdSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const ChatDataSnapshotSchema = Type.Object(
+  {
+    approvals: Type.Array(ApprovalSchema),
+    attachments: Type.Array(AttachmentSchema),
+    chat: ChatSchema,
+    messages: Type.Array(MessageSchema),
+    runItems: Type.Array(RunItemSchema),
+    runs: Type.Array(RunSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const ChatDataSnapshotResponseSchema = Type.Union([
+  ChatDataSnapshotSchema,
+  Type.Null(),
+]);

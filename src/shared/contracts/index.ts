@@ -1,5 +1,11 @@
 export type {
+  Attachment,
+  AttachmentKind,
   Chat,
+  ChatDataApi,
+  ChatDataSnapshot,
+  ChatDataSnapshotRequest,
+  ChatDataSnapshotResponse,
   ChatStatus,
   Message,
   MessageRole,

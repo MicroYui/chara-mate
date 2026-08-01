@@ -4,26 +4,29 @@
 
 ## 当前里程碑
 
-**Phase 0 — 工程基线与稳定契约：done**
+**Phase 1 — 产品骨架与 Chats：implementing**
 
-Phase 1 已具备入口依赖，但尚未启动工作包。
+Phase 0 已完成。Phase 1 的 Data/IPC 路径已完成，Renderer fixture 路径仍在实现；Provider/Secret 与真实 Chat Service 尚未启动。
 
 退出条件：
 
-- [x] 单 package Electron/Forge/Vite、strict TypeScript/React 工程已创建并精确锁定依赖；
-- [x] dev launch、Main/Preload/Renderer build、Forge package 和 packaged-app smoke 通过；
-- [x] `better-sqlite3` 在开发与打包产物中完成真实事务、关闭和重开读取；
-- [x] Chat/Message/Run/RunItem/Approval、IPC sequence、artifact、cancel 和 redaction 契约实现且正反例测试通过；
-- [x] fast check、focused test、full offline、build/package、E2E 和 live/benchmark scripts 已真实建立并写回 `AGENTS.md` Commands；
-- [x] 单路径审计确认没有业务空目录、第二构建路径或尚未晋级的算法、Transport 与参数默认值。
+- [ ] App Shell、六个一级页面入口、Chats 侧栏与空状态满足冻结 UI 方案；
+- [x] Chat/Message/Attachment/Run/RunItem/Approval 当前 Schema、领域 Repository 与 append-first 事件重放成为唯一数据路径；
+- [x] Main 对事件先事务持久化再广播，Renderer 可通过窄 typed Preload API 获取 Chat snapshot 并按 sequence 重放；
+- [ ] Chat Service 完成多会话管理与同 Chat Turn 串行，不绕过领域 Repository；
+- [ ] Provider URL/Key/Model、连接测试、快照、async `safeStorage` 与 redaction 完成；
+- [ ] Composer、内容渲染、Run projection 与 Approval fixture 满足 UI 验收；
+- [ ] 受影响的 L0/L1/L2、React component、Electron Chats E2E、full offline、build/package 与 packaged smoke 通过。
 
 ## 活动工作包
 
-- 当前无活动工作包。`FND-TOOLCHAIN`、`FND-CONTRACTS`、`FND-IPC`、`FND-CORRECTNESS` 与 `FND-QUALITY` 已完成；完成细节由本里程碑退出条件、测试和提交记录承载，不在此保留追加式任务历史。
+- `P1-APP-SHELL` + `P1-CHAT-UI` + `P1-CONTENT` + `P1-RUN-PROJECTION`（fixture lane）：owner `feat/phase1-chats-ui-fixtures` worktree，状态 `implementing`；只写 Renderer、冻结 fixture、component/E2E。
+- `P1-CHAT-DATA` + Data/IPC integration：owner `feat/phase1-data-ipc` worktree，状态 `done`；shared Chat/Run/IPC Schema 与 SQLite 当前 Schema 已冻结，后续消费者通过指定 integration owner 变更。非目标仍为 Chat CRUD Service、Renderer 产品 UI、Provider、Agent Runtime、迁移框架及 Decision-gated SQLite 参数。
 
 ## 依赖、阻塞与待决 Decision
 
 - Phase 0 无阻塞。2026-08-01 一手 npm/GitHub 核对发现预登记的 `better-sqlite3@13.0.2` 与 Playwright `1.62.1` 未发布，已在实现前把权威设计修正为已发布的 `13.0.1` 与 `1.62.0`。
+- Phase 1 Data/IPC 无 Decision 阻塞且已完成；shared Chat/Run/IPC Contract 与初始数据库 Schema 已由单一 integration owner 冻结。Renderer fixture lane 只消费该契约；后续真实 Chat Service 接入若需变更，必须重新指定唯一 owner。
 - 官方 Electron 43 ESM 文档要求 ESM Preload 使用 `.mjs`，并说明 sandboxed Preload 不支持 ESM；当前唯一配置保持 `contextIsolation: true`、`nodeIntegration: false`、`sandbox: false`。目标机实测顶层 `await app.whenReady()` 不继续执行，当前实现把 `app.setPath` 留在 ready 前并以 Promise 生命周期启动；这是 Electron `43.2.0`/Forge `7.11.2` 的实测行为，不是协议硬限制或产品启发式。
 - 生产 Agent Runtime 仍受 `HARNESS-LOOP`、`TOOL-DISCOVERY` 阻塞。
 - 生产 Memory/Activity 仍受 `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH`、`ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 阻塞。
@@ -34,6 +37,7 @@ Phase 1 已具备入口依赖，但尚未启动工作包。
 
 - 2026-08-01：`npm ci`，`17.6s`；从精确 lockfile 干净安装 698 个 package，lockfile 无变化，SHA-256 为 `f698ddaf57b10f07668016bb76eb87186d8bd03b04dd6d42490bab4e62d103ca`。
 - 2026-08-01：`npm run verify:phase0`，质量修复后复跑 `18.4s`；25 个 contract、16 个 focused、2 个 SQLite integration、Main/Preload/Renderer build、dev smoke、Forge package、隔离 packaged smoke 与 1 个 Electron E2E 全部通过。时间戳日历校验、单 Run 取消绑定、smoke/E2E 失败清理与 Renderer readiness 异步断言均有对应实现或回归覆盖。
+- 2026-08-01：Phase 1 Data/IPC 完成后 `npm run verify:phase0`，最终复跑 `19.2s`；27 个 contract、18 个 focused、10 个 SQLite/domain integration、Main/Preload/Renderer build、dev smoke、Forge package、隔离 packaged smoke 与 1 个 Electron snapshot/replay/reload E2E 全部通过。事件/投影同事务、持久化后广播、幂等 append、sequence gap、跨 Chat 外键、级联清理、redaction 与窄订阅包装均有回归覆盖。
 - 2026-08-01：`npm run test:live && npm run test:benchmark`；两者按设计报告 `not-applicable`，Phase 0 没有外部 endpoint 或 Benchmark Decision owner，且未进入默认回归。
 - 2026-08-01：`npm ls --all --json` 无 missing、invalid 或 peer problem，30 个直接依赖均为精确版本，`npm audit --omit=dev` 为 0。
 - 2026-08-01：`rg`/`find`/ASAR 单路径审计，`<1s`；无第二 lockfile/build path、业务空目录、ORM、通用 Agent 框架或候选算法代码；产物包含唯一 ESM Main/Preload/Renderer 与已解包原生模块。
