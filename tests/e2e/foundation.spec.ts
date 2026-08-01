@@ -56,16 +56,26 @@ test("launches through the typed preload boundary", async () => {
     const bridgeShape = await page.evaluate(() => ({
       chatDataKeys: Object.keys(window.charaMate.chatData).sort(),
       foundationKeys: Object.keys(window.charaMate.foundation).sort(),
+      providerKeys: Object.keys(window.charaMate.provider).sort(),
       rootKeys: Object.keys(window.charaMate).sort(),
       runEventKeys: Object.keys(window.charaMate.runEvents).sort(),
       exposesRawIpcRenderer: "ipcRenderer" in window.charaMate,
+      exposesSecretReader: "getApiKey" in window.charaMate.provider,
     }));
     expect(bridgeShape).toEqual({
       chatDataKeys: ["getSnapshot"],
       foundationKeys: ["getSnapshot", "markRendererReady"],
-      rootKeys: ["chatData", "foundation", "runEvents"],
+      providerKeys: [
+        "deleteProfile",
+        "discoverModels",
+        "listProfiles",
+        "saveProfile",
+        "testConnection",
+      ],
+      rootKeys: ["chatData", "foundation", "provider", "runEvents"],
       runEventKeys: ["replay", "subscribe"],
       exposesRawIpcRenderer: false,
+      exposesSecretReader: false,
     });
 
     const snapshot = await page.evaluate(() =>

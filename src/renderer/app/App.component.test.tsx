@@ -24,6 +24,13 @@ describe("foundation renderer", () => {
         }),
         markRendererReady,
       },
+      provider: {
+        deleteProfile: vi.fn(),
+        discoverModels: vi.fn(),
+        listProfiles: vi.fn(),
+        saveProfile: vi.fn(),
+        testConnection: vi.fn(),
+      },
     };
     Object.defineProperty(window, "charaMate", {
       configurable: true,

@@ -5,6 +5,8 @@ import type Database from "better-sqlite3";
 
 import type { FoundationSnapshot } from "../shared/contracts/foundation";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
+import { SystemClock } from "../shared/pure/clock";
+import { CryptoIdGenerator } from "../shared/pure/id";
 import { RunEventService } from "./agent/runEventService";
 import { RunRepository } from "./agent/runRepository";
 import { registerChatDataIpc } from "./app/chatDataIpc";
@@ -17,6 +19,11 @@ import {
   verifyDatabaseRoundTrip,
 } from "./db/database";
 import { createAppLogger } from "./observability/logger";
+import { ElectronSafeStorageEncryption } from "./providers/electronSecretEncryption";
+import { registerProviderIpc } from "./providers/providerIpc";
+import { ProviderRepository } from "./providers/providerRepository";
+import { ProviderService } from "./providers/providerService";
+import { SafeStorageSecretStore } from "./providers/secretStore";
 
 const logger = createAppLogger();
 
@@ -44,12 +51,17 @@ let mainWindow: BrowserWindow | null = null;
 let applicationDatabase: Database.Database | undefined;
 let unregisterChatDataIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
+let unregisterProviderIpc: (() => void) | undefined;
+let providerService: ProviderService | undefined;
 
 function stopApplicationInfrastructure(): void {
   unregisterChatDataIpc?.();
   unregisterChatDataIpc = undefined;
   unregisterFoundationIpc?.();
   unregisterFoundationIpc = undefined;
+  unregisterProviderIpc?.();
+  unregisterProviderIpc = undefined;
+  providerService = undefined;
   applicationDatabase?.close();
   applicationDatabase = undefined;
 }
@@ -59,9 +71,9 @@ async function startApplication(): Promise<void> {
     console.error("CHARAMATE_MAIN_STAGE app-ready");
   }
 
-  const databaseRoundTrip = verifyDatabaseRoundTrip(
-    path.join(app.getPath("userData"), "charamate.sqlite"),
-  );
+  const userDataPath = app.getPath("userData");
+  const databasePath = path.join(userDataPath, "charamate.sqlite");
+  const databaseRoundTrip = verifyDatabaseRoundTrip(databasePath);
   if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
     console.error("CHARAMATE_MAIN_STAGE database-ready");
   }
@@ -75,9 +87,7 @@ async function startApplication(): Promise<void> {
     platform: getSupportedPlatform(),
   };
 
-  applicationDatabase = openApplicationDatabase(
-    path.join(app.getPath("userData"), "charamate.sqlite"),
-  );
+  applicationDatabase = openApplicationDatabase(databasePath);
   const chatRepository = new ChatRepository(applicationDatabase);
   const runRepository = new RunRepository(applicationDatabase);
   const runEventService = new RunEventService(runRepository, {
@@ -102,6 +112,21 @@ async function startApplication(): Promise<void> {
     new ChatDataService(chatRepository, runRepository),
     runEventService,
   );
+
+  const idGenerator = new CryptoIdGenerator();
+  providerService = new ProviderService(
+    new ProviderRepository(applicationDatabase),
+    new SafeStorageSecretStore(
+      path.join(userDataPath, "secrets.bin"),
+      new ElectronSafeStorageEncryption(),
+      idGenerator,
+    ),
+    idGenerator,
+    new SystemClock(),
+    logger,
+  );
+  await providerService.initialize();
+  unregisterProviderIpc = registerProviderIpc(providerService);
 
   let resolveRendererReady: (() => void) | undefined;
   const rendererReady = new Promise<void>((resolve) => {

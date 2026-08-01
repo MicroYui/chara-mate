@@ -8,6 +8,28 @@ export const METADATA_SCHEMA_SQL = `
 `;
 
 export const CURRENT_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS provider_profiles (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    api_style TEXT NOT NULL CHECK (
+      api_style IN ('openai-compatible', 'azure-openai')
+    ),
+    base_url TEXT NOT NULL,
+    api_version TEXT,
+    api_key_ref TEXT,
+    chat_model TEXT,
+    realtime_endpoint TEXT,
+    realtime_model TEXT,
+    image_edit_endpoint TEXT,
+    image_model TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (
+      (api_style = 'azure-openai' AND api_version IS NOT NULL) OR
+      (api_style = 'openai-compatible' AND api_version IS NULL)
+    )
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS chats (
     id TEXT PRIMARY KEY NOT NULL,
     title TEXT NOT NULL,

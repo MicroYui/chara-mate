@@ -21,7 +21,27 @@ export type {
   RunEventsApi,
 } from "./ipc";
 export type { EntityId, JsonValue, Timestamp } from "./primitives";
-export type { ProviderApiStyle, ProviderSnapshot } from "./provider";
+export type {
+  ProviderApi,
+  ProviderApiStyle,
+  ProviderConnection,
+  ProviderConnectionTest,
+  ProviderCredentialUpdate,
+  ProviderDeleteProfileRequest,
+  ProviderDeleteProfileResponse,
+  ProviderDiscoverModelsRequest,
+  ProviderDiscoverModelsResponse,
+  ProviderListProfilesResponse,
+  ProviderModelDescriptor,
+  ProviderModelDiscovery,
+  ProviderProfile,
+  ProviderProfileDraft,
+  ProviderSaveProfileRequest,
+  ProviderSaveProfileResponse,
+  ProviderSnapshot,
+  ProviderTestConnectionRequest,
+  ProviderTestConnectionResponse,
+} from "./provider";
 export type {
   AppError,
   Approval,

@@ -1064,6 +1064,7 @@ interface ProviderProfile {
   name: string
   apiStyle: 'openai-compatible' | 'azure-openai'
   baseUrl: string
+  apiVersion?: string
   apiKeyRef: string
   chatModel?: string
   realtimeEndpoint?: string
@@ -1073,9 +1074,11 @@ interface ProviderProfile {
 }
 ```
 
+2026-08-01 的实现前来源刷新确认：官方 OpenAI JavaScript SDK `6.49.0` 的 `OpenAI` client 支持显式 `baseURL`，OpenAI OpenAPI `2.3.0` 的 `GET /v1/models` 对应 `client.models.list()`；同一 SDK 的 `AzureOpenAI` client 除 endpoint/baseURL 与 API Key 外还强制要求 `apiVersion`。因此 `apiVersion` 在 `azure-openai` Profile 中为必填，在 `openai-compatible` Profile 中不存在；这属于外部协议 Adapter 边界，不分叉 CharaMate Provider Service。Electron `43.2.0` 的正式类型与 API 文档同时确认 async `safeStorage` 需要在 app ready 后调用 `isAsyncEncryptionAvailable`、`encryptStringAsync` 与 `decryptStringAsync`，解密结果的 `shouldReEncrypt` 由 Secret Store 原位换钥处理。
+
 设置流程：
 
-1. 用户填写 Provider 名称、URL 和 API Key。
+1. 用户填写 Provider 名称、URL 和 API Key；Azure Profile 还填写目标 API Version。
 2. 应用请求标准模型列表端点并填充下拉框。
 3. Azure 或非标准服务无法列出时，允许用户手动输入 Model ID。
 4. 用户分别选择 Chat、Realtime 和 Image 模型；Memory 检索使用实验冻结的唯一产品实现，不在这里选择 embedding 档位。
@@ -1853,6 +1856,8 @@ CharaMate 达到首个完整产品版本时，应满足：
 - [Electron native Node modules](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)
 - [Electron context isolation](https://www.electronjs.org/docs/latest/tutorial/context-isolation)
 - [Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)
+- [OpenAI JavaScript SDK 6.49.0](https://github.com/openai/openai-node/tree/v6.49.0)
+- [OpenAI Models API](https://developers.openai.com/api/reference/resources/models/methods/list)
 - [Electron Forge Vite Plugin v7.11.2](https://github.com/electron/forge/tree/v7.11.2/packages/plugin/vite)
 - [React v19.2.8](https://github.com/facebook/react/releases/tag/v19.2.8)
 - [`better-sqlite3` v13.0.1](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.1)
