@@ -1,6 +1,6 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Specified
+> 状态：Phase 0 Done；Phase 1 Implementing
 > 日期：2026-08-01
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 

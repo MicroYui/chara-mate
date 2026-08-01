@@ -1,8 +1,8 @@
-import type { DesktopApi } from "../shared/contracts/foundation";
+import type { CharaMateApi } from "../shared/contracts/foundation";
 
 declare global {
   interface Window {
-    charaMate: DesktopApi;
+    charaMate: CharaMateApi;
   }
 }
 

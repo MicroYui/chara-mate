@@ -1472,6 +1472,8 @@ userData/
 7. Territory item 只引用 Memory，不成为 Memory 的事实来源。
 8. API Key 不进 SQLite、日志、消息、Tool Result 和 Memory。
 
+2026-08-01 的 Phase 1 Data 实现前来源刷新使用锁定发布物 `better-sqlite3@13.0.1` 随包源码：其 [`transaction`](https://github.com/WiseLibs/better-sqlite3/blob/v13.0.1/lib/methods/transaction.js) 在同步回调成功后提交、异常时回滚，并以 savepoint 支持嵌套事务。Phase 1 因此只把“事件行、当前投影与 sequence 水位必须在一个同步事务中提交”作为正确性约束；`journal_mode`、`synchronous`、busy timeout、batch 与 checkpoint 仍留给 `MEMORY-STORAGE`，本阶段不据 README 的性能建议提前选择 WAL 或固定数值。
+
 ### 14.4 Migration
 
 全新项目只维护一份当前 Schema，并记录版本；不编写旧产品迁移，也不为尚未发生的变化预建迁移层。首个可发布数据库之后发生真实 Schema 变化时，再添加对应的单向显式迁移：
@@ -1535,6 +1537,8 @@ Renderer 断线后传 `afterSequence` 补事件；不依赖“刚好在线”才
 5. 错误码与测试。
 
 事件名称和 payload 通过共享 Schema 校验，避免四处字符串漂移。
+
+2026-08-01 的 Phase 1 IPC 实现前来源刷新使用 Electron `43.2.0` 随包 `electron.d.ts` 及其指向的官方 [`ipcMain`](https://www.electronjs.org/docs/latest/api/ipc-main)、[`ipcRenderer`](https://www.electronjs.org/docs/latest/api/ipc-renderer)、[`webContents`](https://www.electronjs.org/docs/latest/api/web-contents) 与 [`contextBridge`](https://www.electronjs.org/docs/latest/api/context-bridge) API：`invoke/handle` 的参数和 `webContents.send` 的 payload 经过 Structured Clone；Main 抛出的 Error 不会透明保留；Renderer 订阅回调不得收到原始 IPC event。CharaMate 因此在 Main 与 Preload 两侧复用共享 Schema，Preload 只把已验证 payload 交给产品 listener，并通过明确 unsubscribe 移除包装后的 listener；这些是当前锁定源码的观测行为，不是 CharaMate 自定协议限制。实现升级 Electron 时需重新刷新该记录。
 
 ---
 
