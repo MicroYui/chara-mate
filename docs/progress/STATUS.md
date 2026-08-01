@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-**Phase 0 — 工程基线与稳定契约：specified**
+**Phase 0 — 工程基线与稳定契约：implementing**
 
 退出条件：
 
@@ -17,11 +17,12 @@
 
 ## 活动工作包
 
-当前没有实施中的工作包。`WP-DOC-STACK-001` 状态为 `done`；下一工作包应从 `ROADMAP.md` 的 `FND-TOOLCHAIN` 开始，但尚未启动。
+- `FND-TOOLCHAIN` — owner：Phase 0 integration owner；状态：`implementing`。正在建立并验证唯一 Electron/Forge/Vite、原生数据库、package 与 Electron E2E 路径。
+- `WP-DOC-STACK-001` — 状态：`done`。
 
 ## 依赖、阻塞与待决 Decision
 
-- 当前文档工作无外部阻塞。
+- `FND-TOOLCHAIN` 无外部阻塞。2026-08-01 一手 npm/GitHub 核对发现预登记的 `better-sqlite3@13.0.2` 与 Playwright `1.62.1` 未发布，已在实现前把权威设计修正为已发布的 `13.0.1` 与 `1.62.0`。
 - 生产 Agent Runtime 仍受 `HARNESS-LOOP`、`TOOL-DISCOVERY` 阻塞。
 - 生产 Memory/Activity 仍受 `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH`、`ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 阻塞。
 - 生产 Voice 仍受 `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT`、`VOICE-TOOL-JOIN` 阻塞。

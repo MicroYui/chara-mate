@@ -98,7 +98,7 @@
 
 用户已选择以下工程宿主作为所有实验与生产重写共享的固定环境：单 package npm；Electron + Electron Forge + 精确锁定的 Forge Vite Plugin；strict TypeScript/ESM；ESLint flat config + typescript-eslint/React Hooks + Prettier；React/CSS Modules；TypeBox + Ajv；`better-sqlite3`；Vitest/Testing Library/Playwright Electron；Pino；Browser 能力使用 `playwright-core` 管理固定 Chromium。UI 的 Radix/Lucide/TanStack Virtual、消息 remark/rehype/KaTeX/Shiki/Mermaid 管线和 PixiJS 像素渲染也不是算法候选。官方 OpenAI JavaScript SDK 与 MCP TypeScript SDK 固定在对应 Adapter 边界，不成为 Agent Runtime。
 
-2026-08-01 核对的 Phase 0 起始版本为 Electron `43.2.0`、Electron Forge/Forge Vite Plugin `7.11.2`、React `19.2.8`、`better-sqlite3` `13.0.2`、Playwright `1.62.1`、Vitest `4.1.10`。这些版本必须先通过 dev、native ABI/ASAR、package、packaged-app read/write 和 Electron E2E smoke，随后才精确锁入 `package-lock.json`。Forge Vite Plugin 当前官方仍声明 experimental，因此兼容性 smoke 是工程门槛；它不是保留 Webpack 或第二打包器的理由。
+2026-08-01 核对的 Phase 0 起始版本为 Electron `43.2.0`、Electron Forge/Forge Vite Plugin `7.11.2`、React `19.2.8`、`better-sqlite3` `13.0.1`、Playwright `1.62.0`、Vitest `4.1.10`。这些版本必须先通过 dev、native ABI/ASAR、package、packaged-app read/write 和 Electron E2E smoke，随后才精确锁入 `package-lock.json`。Forge Vite Plugin 当前官方仍声明 experimental，因此兼容性 smoke 是工程门槛；它不是保留 Webpack 或第二打包器的理由。
 
 实验公平性要求所有 Arm 在同一已锁宿主和同一稳定 domain contract 上运行。候选只有在研究变量确实需要时才能增加依赖、进程、表或模型；这些资源只存在于隔离 branch/worktree，Decision 完成后随失败 Arm 删除。候选不得把 Redux/Zustand、ORM、通用 Agent 框架、第二套 Browser runtime、第二套 build pipeline 或 UI theme system 带进生产。
 
@@ -1485,7 +1485,7 @@ Stage 0 只证明工程宿主可用，不证明 Harness、Storage、Retrieval、
 - [Electron Forge Vite Plugin](https://github.com/electron/forge/tree/v7.11.2/packages/plugin/vite)
 - [Electron native Node modules](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)
 - [Electron context isolation](https://www.electronjs.org/docs/latest/tutorial/context-isolation)
-- [`better-sqlite3` v13.0.2](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.2)
+- [`better-sqlite3` v13.0.1](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.1)
 - [Playwright Electron API](https://playwright.dev/docs/api/class-electron)
 - [Codex turn loop](https://github.com/openai/codex/blob/6751b54cae32b23786001e2414d749a9916201e1/codex-rs/core/src/session/turn.rs)
 - [Codex feature registry](https://github.com/openai/codex/blob/6751b54cae32b23786001e2414d749a9916201e1/codex-rs/features/src/lib.rs)

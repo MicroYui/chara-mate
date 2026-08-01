@@ -1165,8 +1165,8 @@ CharaMate 是一个单 package Electron 应用，不建设 monorepo。Main、Pre
 | Electron Forge | `7.11.2` | [Forge v7.11.2](https://github.com/electron/forge/releases/tag/v7.11.2) | 与所有 Forge Plugin 精确同组锁定 |
 | Forge Vite Plugin | `7.11.2` | [官方 Plugin README](https://github.com/electron/forge/tree/v7.11.2/packages/plugin/vite) | 只保留这一条 build path；必须先过 package smoke |
 | React | `19.2.8` | [React v19.2.8](https://github.com/facebook/react/releases/tag/v19.2.8) | 与 Renderer/component tests 一起锁定 |
-| `better-sqlite3` | `13.0.2` | [`better-sqlite3` v13.0.2](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.2) | 验证 Electron ABI rebuild、ASAR unpack 和 packaged read/write |
-| Playwright | `1.62.1` | [Playwright v1.62.1](https://github.com/microsoft/playwright/releases/tag/v1.62.1) | Browser runtime 与 Electron E2E 分别声明职责但版本统一锁定 |
+| `better-sqlite3` | `13.0.1` | [`better-sqlite3` v13.0.1](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.1) | 验证 Electron ABI rebuild、ASAR unpack 和 packaged read/write |
+| Playwright | `1.62.0` | [Playwright v1.62.0](https://github.com/microsoft/playwright/releases/tag/v1.62.0) | Browser runtime 与 Electron E2E 分别声明职责但版本统一锁定 |
 | Vitest | `4.1.10` | [Vitest v4.1.10](https://github.com/vitest-dev/vitest/releases/tag/v4.1.10) | 作为 L0/L1/L2 的唯一 JS/TS test runner |
 
 这些版本是已核对的兼容性起点，不是跳过验证的永久常量。Phase 0 必须在目标开发机完成 dev launch、Main/Preload/Renderer build、`better-sqlite3` 事务与重开、Forge package、packaged-app smoke 和 Playwright Electron 启动；通过后把完整依赖树精确锁入 `package-lock.json` 并在 `STATUS.md` 记录。升级时重新运行同一兼容性套件，不维护新旧两套构建配置。
@@ -1849,7 +1849,7 @@ CharaMate 达到首个完整产品版本时，应满足：
 - [Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)
 - [Electron Forge Vite Plugin v7.11.2](https://github.com/electron/forge/tree/v7.11.2/packages/plugin/vite)
 - [React v19.2.8](https://github.com/facebook/react/releases/tag/v19.2.8)
-- [`better-sqlite3` v13.0.2](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.2)
+- [`better-sqlite3` v13.0.1](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.1)
 - [Playwright Electron API](https://playwright.dev/docs/api/class-electron)
 - [Codex turn loop](https://github.com/openai/codex/blob/6751b54cae32b23786001e2414d749a9916201e1/codex-rs/core/src/session/turn.rs)
 - [Codex feature registry](https://github.com/openai/codex/blob/6751b54cae32b23786001e2414d749a9916201e1/codex-rs/features/src/lib.rs)
