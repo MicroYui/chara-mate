@@ -86,12 +86,23 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
     expect(JSON.stringify(saved)).not.toContain(secret);
     const profileId = saved.ok ? saved.value.id : "";
 
+    const savedProfile = {
+      apiStyle: "openai-compatible" as const,
+      baseUrl,
+      chatModel: "e2e-model",
+      id: profileId,
+      name: "E2E Provider",
+    };
     const discovery = await first.page.evaluate(
-      (id) =>
+      ({ id, profile }) =>
         window.charaMate.provider.discoverModels({
-          connection: { profileId: id, source: "saved_profile" },
+          connection: {
+            profile,
+            profileId: id,
+            source: "saved_profile",
+          },
         }),
-      profileId,
+      { id: profileId, profile: savedProfile },
     );
     expect(discovery).toEqual({
       ok: true,
@@ -140,15 +151,20 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
     expect(JSON.stringify(profiles)).not.toContain(secret);
     await expect(
       second.page.evaluate(
-        (id) =>
+        ({ id, profile }) =>
           window.charaMate.provider.testConnection({
-            connection: { profileId: id, source: "saved_profile" },
+            capability: "chat",
+            connection: {
+              profile,
+              profileId: id,
+              source: "saved_profile",
+            },
           }),
-        profileId,
+        { id: profileId, profile: savedProfile },
       ),
     ).resolves.toEqual({
       ok: true,
-      value: { modelCount: 1, status: "connected" },
+      value: { capability: "chat", modelCount: 1, status: "connected" },
     });
     await second.application.close();
   } finally {

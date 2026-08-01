@@ -16,6 +16,7 @@ const config: ForgeConfig = {
         "/.vite",
         "/node_modules/better-sqlite3",
         "/node_modules/node-addon-api",
+        "/node_modules/ws",
       ];
       const isAllowedRuntimePath = allowedRuntimePaths.some(
         (allowedPath) =>

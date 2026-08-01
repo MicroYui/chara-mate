@@ -8,6 +8,8 @@ import {
   ProviderProfileSchema,
   ProviderSaveProfileRequestSchema,
   ProviderSaveProfileResponseSchema,
+  ProviderTestConnectionRequestSchema,
+  ProviderTestConnectionResponseSchema,
 } from "../../src/shared/schemas/provider";
 import { parseSchema } from "../../src/shared/schemas/validation";
 import { parseSchemaWithoutCodeGeneration } from "../../src/shared/schemas/valueValidation";
@@ -125,6 +127,54 @@ describe("Phase 1 Provider boundary contracts", () => {
             retryable: false,
           },
           apiKey: "sk-leaked-key",
+        }),
+      ).toThrow();
+    },
+  );
+
+  it.each(parsers)(
+    "keeps Chat, Realtime and Image connection tests explicit through %s",
+    (parse) => {
+      for (const capability of ["chat", "realtime", "image"] as const) {
+        expect(
+          parse(ProviderTestConnectionRequestSchema, {
+            capability,
+            connection: {
+              apiKey: "sk-transient",
+              profile: openAIProfile,
+              source: "draft",
+            },
+          }),
+        ).toMatchObject({ capability });
+      }
+      expect(
+        parse(ProviderTestConnectionResponseSchema, {
+          ok: true,
+          value: { capability: "realtime", status: "connected" },
+        }),
+      ).toEqual({
+        ok: true,
+        value: { capability: "realtime", status: "connected" },
+      });
+      expect(
+        parse(ProviderTestConnectionResponseSchema, {
+          ok: true,
+          value: {
+            capability: "image",
+            reason: "model_verification_unsupported",
+            status: "manual_required",
+          },
+        }),
+      ).toMatchObject({
+        value: { capability: "image", status: "manual_required" },
+      });
+      expect(() =>
+        parse(ProviderTestConnectionRequestSchema, {
+          connection: {
+            apiKey: "sk-transient",
+            profile: openAIProfile,
+            source: "draft",
+          },
         }),
       ).toThrow();
     },

@@ -83,7 +83,10 @@ export function registerProviderIpc(service: ProviderService): () => void {
       const request = parseSchema(ProviderTestConnectionRequestSchema, value);
       return parseSchema(ProviderTestConnectionResponseSchema, {
         ok: true,
-        value: await service.testConnection(request.connection),
+        value: await service.testConnection(
+          request.connection,
+          request.capability,
+        ),
       });
     } catch (error) {
       return parseSchema(ProviderTestConnectionResponseSchema, {

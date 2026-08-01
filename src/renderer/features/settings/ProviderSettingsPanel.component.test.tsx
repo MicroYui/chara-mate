@@ -53,9 +53,23 @@ function createApi() {
   });
   const testConnection = vi
     .fn<ProviderApi["testConnection"]>()
-    .mockResolvedValue({
-      ok: true,
-      value: { modelCount: 1, status: "connected" },
+    .mockImplementation((request) => {
+      if (request.capability === "realtime") {
+        return Promise.resolve({
+          ok: true,
+          value: { capability: "realtime", status: "connected" },
+        });
+      }
+      if (request.capability === "image") {
+        return Promise.resolve({
+          ok: true,
+          value: { capability: "image", status: "connected" },
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        value: { capability: "chat", modelCount: 1, status: "connected" },
+      });
     });
   const api: ProviderApi = {
     deleteProfile,
@@ -107,7 +121,10 @@ describe("Provider Settings panel", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
-    expect(await screen.findByText("连接成功，发现 1 个模型。")).toBeVisible();
+    expect(
+      await screen.findByText("Chat 连接成功，发现 1 个模型。"),
+    ).toBeVisible();
+    expect(testConnection.mock.calls[0]?.[0].capability).toBe("chat");
     expect(testConnection.mock.calls[0]?.[0].connection).toMatchObject({
       apiKey: "sk-renderer-submission",
       source: "draft",
@@ -133,6 +150,59 @@ describe("Provider Settings panel", () => {
         name: "Local",
       });
     });
+  });
+
+  it("tests unsaved Realtime and Image fields with the saved credential", async () => {
+    const { api, testConnection } = createApi();
+    render(<ProviderSettingsPanel api={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Azure/u }));
+    fireEvent.click(screen.getByText("Realtime 与 Image"));
+    fireEvent.change(screen.getByLabelText("Realtime Endpoint"), {
+      target: { value: "https://example.openai.azure.com/openai/realtime" },
+    });
+    fireEvent.change(screen.getByLabelText("Realtime Model"), {
+      target: { value: "realtime-deployment" },
+    });
+    fireEvent.change(screen.getByLabelText("Image Edit Endpoint"), {
+      target: {
+        value:
+          "https://example.openai.azure.com/openai/deployments/image/images/edits",
+      },
+    });
+    fireEvent.change(screen.getByLabelText("Image Model"), {
+      target: { value: "image-deployment" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "测试 Realtime" }));
+    expect(
+      await screen.findByText("Realtime 握手成功，测试连接已关闭。"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "测试 Image" }));
+    expect(
+      await screen.findByText(
+        "Image 配置可用：凭据与模型验证成功，未发起生图。",
+      ),
+    ).toBeVisible();
+
+    expect(testConnection).toHaveBeenCalledTimes(2);
+    const realtimeRequest = testConnection.mock.calls[0]?.[0];
+    const imageRequest = testConnection.mock.calls[1]?.[0];
+    expect(realtimeRequest?.capability).toBe("realtime");
+    expect(imageRequest?.capability).toBe("image");
+    expect(realtimeRequest?.connection).toMatchObject({
+      profileId: profile.id,
+      source: "saved_profile",
+    });
+    expect(imageRequest?.connection).toMatchObject({
+      profileId: profile.id,
+      source: "saved_profile",
+    });
+    expect(realtimeRequest?.connection.profile.realtimeModel).toBe(
+      "realtime-deployment",
+    );
+    expect(imageRequest?.connection.profile.imageModel).toBe(
+      "image-deployment",
+    );
   });
 
   it("keeps manual Model ID available when discovery is unsupported", async () => {

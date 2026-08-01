@@ -123,7 +123,11 @@ export const ProviderDeleteProfileRequestSchema = Type.Object(
 
 export const ProviderConnectionSchema = Type.Union([
   Type.Object(
-    { profileId: EntityIdSchema, source: Type.Literal("saved_profile") },
+    {
+      profile: ProviderProfileDraftSchema,
+      profileId: EntityIdSchema,
+      source: Type.Literal("saved_profile"),
+    },
     { additionalProperties: false },
   ),
   Type.Object(
@@ -141,8 +145,17 @@ export const ProviderDiscoverModelsRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const ProviderTestCapabilitySchema = Type.Union([
+  Type.Literal("chat"),
+  Type.Literal("realtime"),
+  Type.Literal("image"),
+]);
+
 export const ProviderTestConnectionRequestSchema = Type.Object(
-  { connection: ProviderConnectionSchema },
+  {
+    capability: ProviderTestCapabilitySchema,
+    connection: ProviderConnectionSchema,
+  },
   { additionalProperties: false },
 );
 
@@ -175,6 +188,7 @@ export const ProviderModelDiscoverySchema = Type.Union([
 export const ProviderConnectionTestSchema = Type.Union([
   Type.Object(
     {
+      capability: Type.Literal("chat"),
       modelCount: Type.Integer({ minimum: 0 }),
       status: Type.Literal("connected"),
     },
@@ -182,7 +196,30 @@ export const ProviderConnectionTestSchema = Type.Union([
   ),
   Type.Object(
     {
+      capability: Type.Literal("chat"),
       reason: Type.Literal("model_list_unsupported"),
+      status: Type.Literal("manual_required"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      capability: Type.Literal("realtime"),
+      status: Type.Literal("connected"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      capability: Type.Literal("image"),
+      status: Type.Literal("connected"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      capability: Type.Literal("image"),
+      reason: Type.Literal("model_verification_unsupported"),
       status: Type.Literal("manual_required"),
     },
     { additionalProperties: false },

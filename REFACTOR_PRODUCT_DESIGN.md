@@ -1074,7 +1074,11 @@ interface ProviderProfile {
 }
 ```
 
+一个 Provider Profile 只保存一个 `apiKeyRef`，Chat、Realtime 与 Image 能力共用该凭据。若某项能力由不同服务或不同密钥提供，用户应创建另一个 Provider Profile；普通设置与持久层都不增加能力级多密钥字段。
+
 2026-08-01 的实现前来源刷新确认：官方 OpenAI JavaScript SDK `6.49.0` 的 `OpenAI` client 支持显式 `baseURL`，OpenAI OpenAPI `2.3.0` 的 `GET /v1/models` 对应 `client.models.list()`；同一 SDK 的 `AzureOpenAI` client 除 endpoint/baseURL 与 API Key 外还强制要求 `apiVersion`。因此 `apiVersion` 在 `azure-openai` Profile 中为必填，在 `openai-compatible` Profile 中不存在；这属于外部协议 Adapter 边界，不分叉 CharaMate Provider Service。Electron `43.2.0` 的正式类型与 API 文档同时确认 async `safeStorage` 需要在 app ready 后调用 `isAsyncEncryptionAvailable`、`encryptStringAsync` 与 `decryptStringAsync`，解密结果的 `shouldReEncrypt` 由 Secret Store 原位换钥处理。
+
+同日针对分能力连接测试再次刷新一手来源：OpenAI Realtime GA 文档要求服务端 WebSocket 使用标准 API Key，通过 `/v1/realtime?model=...` 建立已认证连接，且不再发送 Beta header；SDK `6.49.0` 的 `OpenAIRealtimeWS` / `OpenAIRealtimeWS.azure` 与该行为一致。生产 Adapter 使用 SDK peer 范围内已核对的 `ws@8.21.1` 完成同一握手，以同时支持本机 `ws://` OpenAI-compatible Endpoint；该依赖只在 Main 中运行并作为 Forge runtime external 打包。OpenAI OpenAPI `2.3.0` 提供只读 `GET /v1/models/{model}`，但 Image Edit 只有需要图片、提示词并可能产生计费输出的 `POST /v1/images/edits`，没有独立只读健康端点。因此 Provider 测试固定为三种显式目标：Chat 请求模型列表；Realtime 只完成握手后立即关闭，不发送音频、文本或 `response.create`；Image 校验 Image Edit URL、凭据和 Image Model 可读取性，不发起生图，并在结果中明确该边界。前两项是官方协议/SDK 的当前行为；“测试不得隐式产生图片费用”是 CharaMate 产品启发式，不等同于外部协议限制。若兼容服务不提供模型读取，Image 返回需要手动确认，而不是伪报端点已验证。
 
 设置流程：
 
@@ -1082,7 +1086,7 @@ interface ProviderProfile {
 2. 应用请求标准模型列表端点并填充下拉框。
 3. Azure 或非标准服务无法列出时，允许用户手动输入 Model ID。
 4. 用户分别选择 Chat、Realtime 和 Image 模型；Memory 检索使用实验冻结的唯一产品实现，不在这里选择 embedding 档位。
-5. 提供“测试连接”，展示简短成功/错误，不泄露 Key。
+5. Chat、Realtime 与 Image 分别提供紧邻配置的测试入口，展示简短成功/错误，不泄露 Key；Image 测试不生成图片并明确说明验证范围。
 6. 切换只影响新 Run；历史 Run 保存使用的 Provider/Model 快照。
 
 OpenAI-compatible 与 Azure HTTP Adapter 使用官方 OpenAI JavaScript SDK 能直接表达的标准能力，并在 Adapter 边界归一化 stream、Tool Call、usage 和错误；兼容服务确需协议差异时只在该外部 Adapter 内做有界映射，不能把 SDK 对象或 Provider 分支带入 Chat/Run/Memory。Realtime 连接仍遵守 `VOICE-TRANSPORT` 胜者，不因 HTTP SDK 选择提前固定媒体 Driver。

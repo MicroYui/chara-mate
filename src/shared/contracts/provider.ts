@@ -17,6 +17,7 @@ import type {
   ProviderSaveProfileRequestSchema,
   ProviderSaveProfileResponseSchema,
   ProviderSnapshotSchema,
+  ProviderTestCapabilitySchema,
   ProviderTestConnectionRequestSchema,
   ProviderTestConnectionResponseSchema,
 } from "../schemas/provider";
@@ -45,6 +46,9 @@ export type ProviderModelDiscovery = Static<
 >;
 export type ProviderConnectionTest = Static<
   typeof ProviderConnectionTestSchema
+>;
+export type ProviderTestCapability = Static<
+  typeof ProviderTestCapabilitySchema
 >;
 export type ProviderSaveProfileRequest = Static<
   typeof ProviderSaveProfileRequestSchema

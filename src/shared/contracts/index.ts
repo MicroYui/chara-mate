@@ -39,6 +39,7 @@ export type {
   ProviderSaveProfileRequest,
   ProviderSaveProfileResponse,
   ProviderSnapshot,
+  ProviderTestCapability,
   ProviderTestConnectionRequest,
   ProviderTestConnectionResponse,
 } from "./provider";

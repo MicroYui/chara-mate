@@ -6,6 +6,7 @@ import type {
   ProviderConnection,
   ProviderProfile,
   ProviderProfileDraft,
+  ProviderTestCapability,
 } from "../../../shared/contracts/provider";
 import styles from "./ProviderSettingsPanel.module.css";
 
@@ -167,24 +168,44 @@ export function ProviderSettingsPanel({
       };
     }
     if (selectedId && selectedProfile?.hasApiKey) {
-      return { profileId: selectedId, source: "saved_profile" };
+      return {
+        profile: formToDraft(form, selectedId),
+        profileId: selectedId,
+        source: "saved_profile",
+      };
     }
     setError("请先填写 API Key，或选择一个已保存密钥的 Provider。");
     return undefined;
   }
 
-  async function runConnectionTest(): Promise<void> {
+  async function runConnectionTest(
+    capability: ProviderTestCapability,
+  ): Promise<void> {
     const connection = connectionForCurrentForm();
     if (!connection) return;
     setBusy(true);
     setError(undefined);
     setStatus(undefined);
     try {
-      const result = await api.testConnection({ connection });
+      const result = await api.testConnection({ capability, connection });
       if (!result.ok) {
         setError(resultError(result));
+      } else if (
+        result.value.capability === "chat" &&
+        result.value.status === "connected"
+      ) {
+        setStatus(
+          `Chat 连接成功，发现 ${String(result.value.modelCount)} 个模型。`,
+        );
+      } else if (
+        result.value.capability === "realtime" &&
+        result.value.status === "connected"
+      ) {
+        setStatus("Realtime 握手成功，测试连接已关闭。");
       } else if (result.value.status === "connected") {
-        setStatus(`连接成功，发现 ${String(result.value.modelCount)} 个模型。`);
+        setStatus("Image 配置可用：凭据与模型验证成功，未发起生图。");
+      } else if (result.value.capability === "image") {
+        setStatus("该 Provider 不支持无生成验证，请手动确认 Image 配置。");
       } else {
         setStatus("连接端点未提供标准模型列表，请手动填写 Model ID。");
       }
@@ -289,8 +310,13 @@ export function ProviderSettingsPanel({
             配置 OpenAI-compatible 或 Azure OpenAI。密钥只写入系统密钥存储。
           </p>
         </div>
-        <button type="button" onClick={startNewProfile} disabled={busy}>
-          新建 Provider
+        <button
+          aria-label="新建 Provider"
+          type="button"
+          onClick={startNewProfile}
+          disabled={busy}
+        >
+          新建
         </button>
       </header>
 
@@ -404,23 +430,6 @@ export function ProviderSettingsPanel({
             </label>
           ) : null}
 
-          <div className={styles["actions"]}>
-            <button
-              disabled={busy}
-              onClick={() => void runConnectionTest()}
-              type="button"
-            >
-              测试连接
-            </button>
-            <button
-              disabled={busy}
-              onClick={() => void discoverModels()}
-              type="button"
-            >
-              加载模型
-            </button>
-          </div>
-
           <label>
             Chat Model
             <input
@@ -436,45 +445,112 @@ export function ProviderSettingsPanel({
             </datalist>
           </label>
 
-          <details>
-            <summary>Realtime 与 Image 配置</summary>
-            <div className={styles["detailsGrid"]}>
-              <label>
-                Realtime Endpoint
-                <input
-                  onChange={(event) =>
-                    updateField("realtimeEndpoint", event.target.value)
-                  }
-                  value={form.realtimeEndpoint}
-                />
-              </label>
-              <label>
-                Realtime Model
-                <input
-                  onChange={(event) =>
-                    updateField("realtimeModel", event.target.value)
-                  }
-                  value={form.realtimeModel}
-                />
-              </label>
-              <label>
-                Image Edit Endpoint
-                <input
-                  onChange={(event) =>
-                    updateField("imageEditEndpoint", event.target.value)
-                  }
-                  value={form.imageEditEndpoint}
-                />
-              </label>
-              <label>
-                Image Model
-                <input
-                  onChange={(event) =>
-                    updateField("imageModel", event.target.value)
-                  }
-                  value={form.imageModel}
-                />
-              </label>
+          <div className={styles["actions"]}>
+            <button
+              disabled={busy}
+              onClick={() => void runConnectionTest("chat")}
+              type="button"
+            >
+              测试连接
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => void discoverModels()}
+              type="button"
+            >
+              加载模型
+            </button>
+          </div>
+
+          <details className={styles["advanced"]}>
+            <summary>
+              <span>Realtime 与 Image</span>
+              <small>可选能力</small>
+            </summary>
+            <div className={styles["advancedContent"]}>
+              <section
+                aria-labelledby="provider-realtime-title"
+                className={styles["capabilitySection"]}
+              >
+                <header className={styles["capabilityHeader"]}>
+                  <div>
+                    <h3 id="provider-realtime-title">Realtime</h3>
+                    <p>使用上方 API Key；只做认证握手，不发送内容。</p>
+                  </div>
+                  <button
+                    disabled={busy}
+                    onClick={() => void runConnectionTest("realtime")}
+                    type="button"
+                  >
+                    测试 Realtime
+                  </button>
+                </header>
+                <div className={styles["detailsGrid"]}>
+                  <label>
+                    Realtime Endpoint
+                    <input
+                      inputMode="url"
+                      onChange={(event) =>
+                        updateField("realtimeEndpoint", event.target.value)
+                      }
+                      placeholder="https://api.openai.com/v1/realtime"
+                      value={form.realtimeEndpoint}
+                    />
+                  </label>
+                  <label>
+                    Realtime Model
+                    <input
+                      onChange={(event) =>
+                        updateField("realtimeModel", event.target.value)
+                      }
+                      placeholder="gpt-realtime"
+                      value={form.realtimeModel}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section
+                aria-labelledby="provider-image-title"
+                className={styles["capabilitySection"]}
+              >
+                <header className={styles["capabilityHeader"]}>
+                  <div>
+                    <h3 id="provider-image-title">Image</h3>
+                    <p>使用上方 API Key；验证 URL 与模型，不发起生图。</p>
+                  </div>
+                  <button
+                    disabled={busy}
+                    onClick={() => void runConnectionTest("image")}
+                    type="button"
+                  >
+                    测试 Image
+                  </button>
+                </header>
+                <div className={styles["detailsGrid"]}>
+                  <label>
+                    Image Edit Endpoint
+                    <input
+                      inputMode="url"
+                      onChange={(event) =>
+                        updateField("imageEditEndpoint", event.target.value)
+                      }
+                      placeholder="https://api.openai.com/v1/images/edits"
+                      value={form.imageEditEndpoint}
+                    />
+                  </label>
+                  <label>
+                    Image Model
+                    <input
+                      onChange={(event) =>
+                        updateField("imageModel", event.target.value)
+                      }
+                      placeholder="gpt-image-1"
+                      value={form.imageModel}
+                    />
+                  </label>
+                </div>
+              </section>
             </div>
           </details>
 
@@ -496,8 +572,13 @@ export function ProviderSettingsPanel({
             ) : (
               <span />
             )}
-            <button className={styles["primary"]} disabled={busy} type="submit">
-              {busy ? "处理中…" : "保存 Provider"}
+            <button
+              aria-label="保存 Provider"
+              className={styles["primary"]}
+              disabled={busy}
+              type="submit"
+            >
+              保存
             </button>
           </footer>
         </form>

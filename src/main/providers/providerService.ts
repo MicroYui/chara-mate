@@ -7,6 +7,7 @@ import type {
   ProviderProfileDraft,
   ProviderSaveProfileRequest,
   ProviderSnapshot,
+  ProviderTestCapability,
 } from "../../shared/contracts/provider";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
@@ -230,11 +231,41 @@ export class ProviderService {
 
   async testConnection(
     connection: ProviderConnection,
+    capability: ProviderTestCapability,
   ): Promise<ProviderConnectionTest> {
-    const discovery = await this.discoverModels(connection);
-    return discovery.status === "available"
-      ? { modelCount: discovery.models.length, status: "connected" }
-      : discovery;
+    if (capability === "chat") {
+      const discovery = await this.discoverModels(connection);
+      return discovery.status === "available"
+        ? {
+            capability: "chat",
+            modelCount: discovery.models.length,
+            status: "connected",
+          }
+        : { ...discovery, capability: "chat" };
+    }
+
+    const adapter = await this.#createAdapter(connection);
+    if (capability === "realtime") {
+      await adapter.testRealtimeConnection();
+      return { capability: "realtime", status: "connected" };
+    }
+
+    try {
+      await adapter.verifyImageConfiguration();
+      return { capability: "image", status: "connected" };
+    } catch (error) {
+      if (
+        error instanceof ProviderError &&
+        error.code === "PROVIDER.MODEL_DISCOVERY_UNAVAILABLE"
+      ) {
+        return {
+          capability: "image",
+          reason: "model_verification_unsupported",
+          status: "manual_required",
+        };
+      }
+      throw error;
+    }
   }
 
   async #createAdapter(
@@ -262,7 +293,15 @@ export class ProviderService {
       );
     }
     const apiKey = await this.secretStore.get(record.apiKeyRef);
-    return this.adapterFactory(recordToDraft(record), apiKey);
+    const profile = normalizeProviderDraft(connection.profile);
+    if (profile.id && profile.id !== connection.profileId) {
+      throw new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "Provider Profile 与已保存密钥不匹配。",
+        false,
+      );
+    }
+    return this.adapterFactory(profile, apiKey);
   }
 
   async #deleteOrphanedSecret(secretRef: string): Promise<void> {

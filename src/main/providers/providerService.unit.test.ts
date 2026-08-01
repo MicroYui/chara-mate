@@ -118,6 +118,8 @@ function createService(
       { createdAtUnixSeconds: 2, id: "model-b", ownedBy: "example" },
       { createdAtUnixSeconds: 1, id: "model-a", ownedBy: "example" },
     ]),
+    testRealtimeConnection: vi.fn().mockResolvedValue(undefined),
+    verifyImageConfiguration: vi.fn().mockResolvedValue(undefined),
   },
 ) {
   const repository = new MemoryProviderRepository();
@@ -169,6 +171,7 @@ describe("Provider Service", () => {
 
     await expect(
       service.discoverModels({
+        profile: { ...baseDraft, id: PROFILE_ID },
         profileId: PROFILE_ID,
         source: "saved_profile",
       }),
@@ -190,20 +193,94 @@ describe("Provider Service", () => {
             false,
           ),
         ),
+      testRealtimeConnection: vi.fn().mockResolvedValue(undefined),
+      verifyImageConfiguration: vi.fn().mockResolvedValue(undefined),
     };
     const { repository, service } = createService(manualAdapter);
 
     await expect(
-      service.testConnection({
-        apiKey: "draft-secret",
-        profile: baseDraft,
-        source: "draft",
-      }),
+      service.testConnection(
+        {
+          apiKey: "draft-secret",
+          profile: baseDraft,
+          source: "draft",
+        },
+        "chat",
+      ),
     ).resolves.toEqual({
+      capability: "chat",
       reason: "model_list_unsupported",
       status: "manual_required",
     });
     expect(repository.list()).toEqual([]);
+  });
+
+  it("tests Realtime and Image through the same transient connection boundary", async () => {
+    const testRealtimeConnection = vi
+      .fn<ProviderHttpAdapter["testRealtimeConnection"]>()
+      .mockResolvedValue(undefined);
+    const verifyImageConfiguration = vi
+      .fn<ProviderHttpAdapter["verifyImageConfiguration"]>()
+      .mockResolvedValue(undefined);
+    const adapter: ProviderHttpAdapter = {
+      listModels: vi.fn().mockResolvedValue([]),
+      testRealtimeConnection,
+      verifyImageConfiguration,
+    };
+    const { service } = createService(adapter);
+    const connection = {
+      apiKey: "draft-secret",
+      profile: {
+        ...baseDraft,
+        imageEditEndpoint: "https://api.example.com/v1/images/edits",
+        imageModel: "image-model",
+        realtimeEndpoint: "https://api.example.com/v1/realtime",
+        realtimeModel: "realtime-model",
+      },
+      source: "draft" as const,
+    };
+
+    await expect(
+      service.testConnection(connection, "realtime"),
+    ).resolves.toEqual({ capability: "realtime", status: "connected" });
+    await expect(service.testConnection(connection, "image")).resolves.toEqual({
+      capability: "image",
+      status: "connected",
+    });
+    expect(testRealtimeConnection).toHaveBeenCalledOnce();
+    expect(verifyImageConfiguration).toHaveBeenCalledOnce();
+  });
+
+  it("reports Image manual verification without claiming the endpoint passed", async () => {
+    const adapter: ProviderHttpAdapter = {
+      listModels: vi.fn().mockResolvedValue([]),
+      testRealtimeConnection: vi.fn().mockResolvedValue(undefined),
+      verifyImageConfiguration: vi
+        .fn()
+        .mockRejectedValue(
+          new ProviderError(
+            "PROVIDER.MODEL_DISCOVERY_UNAVAILABLE",
+            "manual",
+            false,
+          ),
+        ),
+    };
+    const { service } = createService(adapter);
+
+    await expect(
+      service.testConnection(
+        {
+          apiKey: "draft-secret",
+          profile: baseDraft,
+          source: "draft",
+        },
+        "image",
+      ),
+    ).resolves.toEqual({
+      capability: "image",
+      reason: "model_verification_unsupported",
+      status: "manual_required",
+    });
   });
 
   it("keeps, replaces, removes and deletes credential references deterministically", async () => {
