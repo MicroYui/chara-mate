@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { FoundationSnapshotSchema } from "../../src/shared/contracts/foundation";
+import {
+  FoundationRequestSchema,
+  FoundationSnapshotSchema,
+} from "../../src/shared/schemas/foundation";
 import { parseSchema } from "../../src/shared/schemas/validation";
 import { parseSchemaWithoutCodeGeneration } from "../../src/shared/schemas/valueValidation";
 
@@ -22,6 +25,16 @@ describe("foundation snapshot boundary", () => {
       parseSchemaWithoutCodeGeneration(FoundationSnapshotSchema, validSnapshot),
     ).toEqual(validSnapshot);
   });
+
+  it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
+    "accepts only an empty request through %s",
+    (parse) => {
+      expect(parse(FoundationRequestSchema, {})).toEqual({});
+      expect(() =>
+        parse(FoundationRequestSchema, { rawIpcRenderer: true }),
+      ).toThrow();
+    },
+  );
 
   it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
     "rejects unknown properties through %s",

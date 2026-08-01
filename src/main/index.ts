@@ -6,6 +6,9 @@ import type { FoundationSnapshot } from "../shared/contracts/foundation";
 import { registerFoundationIpc } from "./app/foundationIpc";
 import { createMainWindow } from "./app/windows";
 import { verifyDatabaseRoundTrip } from "./db/database";
+import { createAppLogger } from "./observability/logger";
+
+const logger = createAppLogger();
 
 const userDataOverride = process.env["CHARAMATE_USER_DATA_DIR"];
 if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
@@ -80,9 +83,9 @@ void app
   .whenReady()
   .then(startApplication)
   .catch((error: unknown) => {
-    console.error(
+    logger.error(
       "CHARAMATE_STARTUP_ERROR",
-      error instanceof Error ? error.message : "Unknown startup error",
+      error instanceof Error ? error : { error },
     );
     app.exit(1);
   });

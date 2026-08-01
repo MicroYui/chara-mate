@@ -3,9 +3,12 @@ import { ipcMain } from "electron";
 
 import {
   FOUNDATION_CHANNELS,
-  FoundationSnapshotSchema,
   type FoundationSnapshot,
 } from "../../shared/contracts/foundation";
+import {
+  FoundationRequestSchema,
+  FoundationSnapshotSchema,
+} from "../../shared/schemas/foundation";
 import { parseSchema } from "../../shared/schemas/validation";
 
 export function registerFoundationIpc(
@@ -13,8 +16,18 @@ export function registerFoundationIpc(
   onRendererReady: (sender: WebContents) => void,
 ): () => void {
   const validatedSnapshot = parseSchema(FoundationSnapshotSchema, snapshot);
-  const handleSnapshot = (): FoundationSnapshot => validatedSnapshot;
-  const handleRendererReady = (event: Electron.IpcMainEvent): void => {
+  const handleSnapshot = (
+    _event: Electron.IpcMainInvokeEvent,
+    request: unknown,
+  ): FoundationSnapshot => {
+    parseSchema(FoundationRequestSchema, request);
+    return validatedSnapshot;
+  };
+  const handleRendererReady = (
+    event: Electron.IpcMainEvent,
+    request: unknown,
+  ): void => {
+    parseSchema(FoundationRequestSchema, request);
     onRendererReady(event.sender);
   };
 

@@ -1,6 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 
+import { JsonValueSchema } from "./primitives";
+import { parseSchema } from "./validation";
 import { parseSchemaWithoutCodeGeneration } from "./valueValidation";
 
 describe("code-generation-free schema validation", () => {
@@ -17,4 +19,13 @@ describe("code-generation-free schema validation", () => {
       parseSchemaWithoutCodeGeneration(schema, { sequence: 0 }),
     ).toThrow(/sequence/u);
   });
+
+  it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
+    "validates the reusable recursive JSON schema through %s",
+    (parse) => {
+      const value = { nested: [null, true, 42, "text", { child: "value" }] };
+      expect(parse(JsonValueSchema, value)).toEqual(value);
+      expect(() => parse(JsonValueSchema, { invalid: undefined })).toThrow();
+    },
+  );
 });

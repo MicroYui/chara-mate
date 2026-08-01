@@ -1173,6 +1173,8 @@ CharaMate 是一个单 package Electron 应用，不建设 monorepo。Main、Pre
 
 [Electron 官方](https://www.electronjs.org/docs/latest/tutorial/forge-overview)使用 Forge 作为打包与分发工具；Forge 会自动调用 Electron rebuild 处理原生模块，但 `better-sqlite3` 仍必须经过开发和打包产物的真实读写检查。[Electron 原生模块文档](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)说明 Electron ABI 与普通 Node ABI 不同。Forge Vite Plugin 的官方 README 当前仍标记为 experimental，因此精确锁版本和 packaged smoke 是进入源码实现的门槛，而不是保留 Webpack 备用路径的理由。
 
+[Electron ESM 文档（2026-08-01 核对）](https://www.electronjs.org/docs/latest/tutorial/esm)规定 ESM Preload 使用 `.mjs`，并说明 sandboxed Preload 不支持 ESM。CharaMate 因此使用 `.mjs` Preload、`contextIsolation: true`、`nodeIntegration: false` 与 `sandbox: false`；这是一条受官方运行时约束的配置，不扩展为产品自有安全模式。
+
 固定库职责：
 
 | 领域 | 选择 | 设计约束 |

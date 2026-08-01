@@ -14,6 +14,21 @@ Read these documents completely before designing or changing code:
 
 Authority order is: current user request → product design → UI design → accepted benchmark Decision Record → research design. STATUS and ROADMAP track execution of those authorities; they do not override product behavior or an accepted Decision. The research document defines how to choose; it never defines a production default. If documents conflict, stop implementation at the conflict and update the authoritative document instead of supporting both interpretations.
 
+## Commands
+
+```text
+npm run check:fast        # L0 static + contract fast check
+npm run test:focused      # affected unit and component tests
+npm run test:integration  # domain and boundary integration tests
+npm run verify:offline    # complete deterministic offline verification
+npm run build             # Main/Preload/Renderer production build
+npm run package           # Electron Forge package
+npm run test:e2e          # Playwright Electron E2E
+npm run verify:phase0     # complete Phase 0 acceptance chain
+npm run test:live         # explicit live suite (not part of offline regression)
+npm run test:benchmark    # explicit benchmark suite (not part of offline regression)
+```
+
 ## Non-negotiable product rules
 
 - Text Chat, voice, automations and proactive conversations share one Run/Item runtime.
