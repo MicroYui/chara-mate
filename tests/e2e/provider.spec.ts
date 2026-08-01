@@ -55,7 +55,7 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
     });
     const page = await application.firstWindow();
     await expect(
-      page.getByRole("heading", { name: "工程基线已就绪" }),
+      page.getByRole("heading", { name: "Phase 1 UI" }),
     ).toBeVisible();
     return { application, page };
   }
@@ -122,6 +122,14 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
     expect(row.apiKeyRef).not.toBe(secret);
 
     const second = await launchApplication();
+    await second.page.getByRole("button", { name: "Settings" }).click();
+    await second.page.getByRole("button", { name: "Models" }).click();
+    await expect(
+      second.page.getByRole("heading", { name: "Provider 与模型" }),
+    ).toBeVisible();
+    await expect(
+      second.page.getByRole("button", { name: /E2E Provider/u }),
+    ).toBeVisible();
     const profiles = await second.page.evaluate(() =>
       window.charaMate.provider.listProfiles(),
     );

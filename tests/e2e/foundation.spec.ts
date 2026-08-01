@@ -50,7 +50,7 @@ test("launches through the typed preload boundary", async () => {
     });
     const page = await application.firstWindow();
     await expect(
-      page.getByRole("heading", { name: "工程基线已就绪" }),
+      page.getByRole("heading", { name: "Phase 1 UI" }),
     ).toBeVisible();
 
     const bridgeShape = await page.evaluate(() => ({
@@ -132,7 +132,7 @@ test("launches through the typed preload boundary", async () => {
 
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "工程基线已就绪" }),
+      page.getByRole("heading", { name: "Phase 1 UI" }),
     ).toBeVisible();
     const snapshotAfterReload = await page.evaluate(
       (chatId) => window.charaMate.chatData.getSnapshot({ chatId }),

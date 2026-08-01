@@ -1,0 +1,314 @@
+.composer {
+  position: relative;
+  width: min(var(--composer-max), 100%);
+  margin: 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  padding: 8px 9px 7px;
+  background: var(--surface-raised);
+  box-shadow: var(--composer-shadow);
+}
+
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--border-strong) 50%, var(--accent));
+}
+
+.composer[data-dragging] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 25px;
+  max-height: 154px;
+  resize: none;
+  overflow-y: auto;
+  border: 0;
+  outline: 0;
+  padding: 2px 4px 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13.5px;
+  line-height: 1.48;
+}
+
+.composer textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.controls,
+.leftControls,
+.rightControls {
+  display: flex;
+  align-items: center;
+}
+
+.controls {
+  min-height: 30px;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.leftControls {
+  min-width: 0;
+  gap: 1px;
+}
+
+.rightControls {
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.iconButton,
+.primaryButton,
+.controlButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.iconButton {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+}
+
+.iconButton:hover,
+.controlButton:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.controlButton {
+  height: 27px;
+  gap: 4px;
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.controlButton > span {
+  overflow: hidden;
+  max-width: 105px;
+  text-overflow: ellipsis;
+}
+
+.primaryButton {
+  width: 31px;
+  height: 31px;
+  border-radius: 50%;
+  background: #25282c;
+  color: #fff;
+}
+
+.primaryButton:hover {
+  background: #151719;
+}
+
+.primaryButton:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.voiceGlyph {
+  display: flex;
+  height: 14px;
+  align-items: center;
+  gap: 2px;
+}
+
+.voiceGlyph i {
+  display: block;
+  width: 2px;
+  height: 7px;
+  border-radius: 99px;
+  background: currentColor;
+}
+
+.voiceGlyph i:nth-child(2) {
+  height: 13px;
+}
+.voiceGlyph i:nth-child(3) {
+  height: 10px;
+}
+.voiceGlyph i:nth-child(4) {
+  height: 5px;
+}
+
+.composerAttachments {
+  display: flex;
+  overflow-x: auto;
+  gap: 5px;
+  padding: 0 1px 6px;
+}
+
+.composerAttachments > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 16px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 4px 5px 7px;
+  background: var(--surface-subtle);
+}
+
+.composerAttachments > div > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.composerAttachments strong {
+  overflow: hidden;
+  max-width: 170px;
+  font-size: 10.5px;
+  font-weight: 570;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composerAttachments small {
+  color: var(--text-secondary);
+  font-size: 9.5px;
+}
+
+.composerAttachments button {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.composerAttachments button:hover {
+  background: var(--surface-hover);
+}
+
+.menu,
+.attachmentMenu,
+.compactControls {
+  z-index: 20;
+  min-width: 220px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 5px;
+  background: var(--surface-raised);
+  box-shadow: 0 12px 32px rgba(30, 37, 43, 0.13);
+}
+
+.menuItem {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: 20px minmax(0, 1fr) 17px;
+  align-items: center;
+  gap: 7px;
+  border-radius: 7px;
+  padding: 5px 7px;
+  outline: 0;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.menuItem[data-highlighted] {
+  background: var(--surface-hover);
+}
+
+.menuItem > span {
+  display: flex;
+  flex-direction: column;
+}
+
+.menuItem strong {
+  font-size: 11.5px;
+  font-weight: 590;
+}
+
+.menuItem small {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.attachmentMenu {
+  display: grid;
+  min-width: 168px;
+}
+
+.attachmentMenu button,
+.compactControls button {
+  display: flex;
+  min-height: 31px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.attachmentMenu button:hover,
+.compactControls button:hover,
+.compactControls button[data-selected] {
+  background: var(--surface-hover);
+}
+
+.moreButton {
+  display: none;
+}
+
+.compactControls {
+  display: grid;
+  min-width: 180px;
+}
+
+.compactControls p {
+  margin: 5px 8px 3px;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  text-transform: uppercase;
+}
+
+.dropHint {
+  position: absolute;
+  inset: 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface) 90%, var(--accent-soft));
+  color: var(--accent);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+@media (max-width: 899px) {
+  .secondaryControl {
+    display: none;
+  }
+
+  .moreButton {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 520px) {
+  .controlButton > span {
+    max-width: 60px;
+  }
+}

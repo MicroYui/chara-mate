@@ -1,0 +1,244 @@
+.run {
+  width: 100%;
+  color: var(--text-secondary);
+}
+
+.summary {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.summary:hover {
+  color: var(--text-primary);
+}
+
+.summary > span {
+  font-weight: 540;
+}
+
+.summary > small {
+  font-size: 10.5px;
+}
+
+.summary > svg {
+  margin-left: auto;
+}
+
+.run[data-status="waiting_approval"] .summary > span {
+  color: var(--warning);
+}
+
+.items {
+  display: grid;
+  gap: 1px;
+  padding: 5px 0 2px;
+}
+
+.item > button {
+  display: grid;
+  width: 100%;
+  min-height: 29px;
+  grid-template-columns: 18px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  padding: 3px 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.item > button:not(:disabled) {
+  cursor: pointer;
+}
+
+.item > button:not(:disabled):hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.item > button > small {
+  font-size: 10px;
+}
+
+.itemIcon {
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+}
+
+.item[data-status="completed"] .itemIcon {
+  color: var(--success);
+}
+
+.item[data-status="failed"] .itemIcon {
+  color: var(--danger);
+}
+
+.itemDetails {
+  display: grid;
+  gap: 6px;
+  margin: 2px 4px 7px 23px;
+  border-left: 1px solid var(--border);
+  padding: 3px 0 3px 10px;
+}
+
+.detailBlock {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.detailBlock header {
+  display: flex;
+  min-height: 27px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding: 0 5px 0 9px;
+  font-size: 10.5px;
+}
+
+.detailBlock pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 9px;
+  background: var(--code-surface);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.itemError {
+  margin: 0;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.approvalCard {
+  display: grid;
+  grid-template-columns: 27px minmax(0, 1fr);
+  gap: 8px;
+  margin: 4px 0;
+  border: 1px solid var(--warning-border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--warning-surface);
+  color: var(--text-primary);
+}
+
+.approvalIcon {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.approvalContent {
+  min-width: 0;
+}
+
+.approvalContent > strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.approvalContent > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.approvalContent dl {
+  display: grid;
+  gap: 2px;
+  margin: 7px 0 0;
+  font-size: 10.5px;
+}
+
+.approvalContent dl > div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.approvalContent dt {
+  color: var(--text-secondary);
+}
+
+.approvalContent dd {
+  margin: 0;
+}
+
+.approvalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.approvalActions button {
+  min-height: 27px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 9px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.approvalActions .approveButton {
+  border-color: #23262a;
+  background: #23262a;
+  color: #fff;
+}
+
+.approvalResolved {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  border-radius: 7px;
+  padding: 0 7px;
+  color: var(--success);
+  font-size: 11.5px;
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

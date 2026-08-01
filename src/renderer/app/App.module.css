@@ -1,55 +1,52 @@
-.canvas {
-  min-height: 100%;
+.startup {
   display: grid;
-  place-items: center;
-  padding: 32px;
+  width: 100%;
+  height: 100%;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
   background: var(--canvas);
-  color: var(--text-primary);
-}
-
-.card {
-  width: min(560px, 100%);
-  padding: 36px;
-  border: 1px solid var(--border);
-  border-radius: 24px;
-  background: var(--surface);
-  box-shadow: 0 20px 60px rgba(32, 33, 36, 0.08);
-  text-align: center;
-}
-
-.avatar {
-  width: 56px;
-  height: 56px;
-  display: grid;
-  place-items: center;
-  margin: 0 auto 16px;
-  border-radius: 18px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 24px;
-  font-weight: 700;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.card h1 {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 650;
-}
-
-.card p:last-child {
-  margin: 14px 0 0;
   color: var(--text-secondary);
 }
 
-.card .error {
+.startup > span {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+.startup h1,
+.startup p {
+  margin: 0;
+}
+
+.startup h1 {
+  color: var(--text-primary);
+  font-size: 19px;
+  font-weight: 610;
+}
+
+.startup p {
+  font-size: 12px;
+}
+
+.startup .error {
+  max-width: 480px;
   color: var(--danger);
+  text-align: center;
+}
+
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .startup > span {
+    animation: none;
+  }
 }

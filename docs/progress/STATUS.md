@@ -6,23 +6,23 @@
 
 **Phase 1 — 产品骨架与 Chats：implementing**
 
-Phase 0 已完成。Phase 1 的 Data/IPC 与 Provider/Secret 路径已完成，Renderer fixture 路径仍在实现；真实 Chat Service 尚未启动。
+Phase 0 已完成。Phase 1 的 Renderer fixture、Data/IPC 与 Provider/Secret 三条路径已完成并通过集成验证；真实 Chat Service 尚未启动。
 
 退出条件：
 
-- [ ] App Shell、六个一级页面入口、Chats 侧栏与空状态满足冻结 UI 方案；
+- [x] App Shell、六个一级页面入口、Chats 侧栏与空状态满足冻结 UI 方案；
 - [x] Chat/Message/Attachment/Run/RunItem/Approval 当前 Schema、领域 Repository 与 append-first 事件重放成为唯一数据路径；
 - [x] Main 对事件先事务持久化再广播，Renderer 可通过窄 typed Preload API 获取 Chat snapshot 并按 sequence 重放；
 - [ ] Chat Service 完成多会话管理与同 Chat Turn 串行，不绕过领域 Repository；
 - [x] Provider URL/Key/Model、连接测试、Model snapshot、async `safeStorage` 与 redaction 完成，Key 不进入 SQLite、日志、错误或 IPC 响应；
-- [ ] Composer、内容渲染、Run projection 与 Approval fixture 满足 UI 验收；
-- [ ] 受影响的 L0/L1/L2、React component、Electron Chats E2E、full offline、build/package 与 packaged smoke 通过。
+- [x] Composer、内容渲染、Run projection 与 Approval fixture 满足 UI 验收；
+- [x] 受影响的 L0/L1/L2、React component、Electron Chats E2E、full offline、build/package 与 packaged smoke 通过。
 
 ## 活动工作包
 
-- `P1-APP-SHELL` + `P1-CHAT-UI` + `P1-CONTENT` + `P1-RUN-PROJECTION`（fixture lane）：owner `feat/phase1-chats-ui-fixtures` worktree，状态 `implementing`；只写 Renderer、冻结 fixture、component/E2E。
+- `P1-APP-SHELL` + `P1-CHAT-UI` + `P1-CONTENT` + `P1-RUN-PROJECTION`（fixture lane）：owner `feat/phase1-chats-ui-fixtures` worktree，状态 `done`。App Shell、Chats/Composer、无头像消息、紧凑 Run/Approval、GFM/代码/KaTeX/Mermaid、附件与复制均由冻结 fixture 驱动；背景可选，一级页面名统一英文，品牌位读取当前 Persona 的图片源。已接入 Provider Models，不实现真实 Chat Service 或 Agent Runtime。
 - `P1-CHAT-DATA` + Data/IPC integration：owner `feat/phase1-data-ipc` worktree，状态 `done`；shared Chat/Run/IPC Schema 与 SQLite 当前 Schema 已冻结，后续消费者通过指定 integration owner 变更。非目标仍为 Chat CRUD Service、Renderer 产品 UI、Provider、Agent Runtime、迁移框架及 Decision-gated SQLite 参数。
-- `P1-PROVIDER`：owner `feat/phase1-provider-secret` worktree，状态 `done`。已实现产品设计 §11.1 与 UI 设计 §11.5 的 Provider Profile、模型发现/手填、连接测试、Model snapshot、异步 `safeStorage` 和统一 redaction。范围为 `provider.*` shared contract/IPC、Provider 领域表/Repository/Service、官方 SDK HTTP Adapter、secret asset、typed Preload 与 Settings Models 组件；非目标为 Chat 推理、Realtime/Image Driver、Voice Transport、通用权限或安全框架。Decision 阻塞为无；无实验候选代码。Models 组件接入六页 App Shell 的路由由 `P1-APP-SHELL` owner 完成，本包不并发修改其入口文件。
+- `P1-PROVIDER`：owner `feat/phase1-provider-secret` worktree，状态 `done`。已实现产品设计 §11.1 与 UI 设计 §11.5 的 Provider Profile、模型发现/手填、连接测试、Model snapshot、异步 `safeStorage` 和统一 redaction。范围为 `provider.*` shared contract/IPC、Provider 领域表/Repository/Service、官方 SDK HTTP Adapter、secret asset、typed Preload 与 Settings Models 组件；非目标为 Chat 推理、Realtime/Image Driver、Voice Transport、通用权限或安全框架。Decision 阻塞为无；无实验候选代码。Models 组件已由 `P1-APP-SHELL` 接入同一 Settings 页面树。
 
 ## 依赖、阻塞与待决 Decision
 
@@ -37,6 +37,10 @@ Phase 0 已完成。Phase 1 的 Data/IPC 与 Provider/Secret 路径已完成，R
 
 ## 最近绿色验证
 
+- 2026-08-01：UI fixture 与当前 Data/IPC、Provider/Secret 集成后 `npm run verify:offline`，约 `6s`；37 个 contract、55 个 focused/component、16 个 SQLite/domain integration 全部通过。
+- 2026-08-01：`npm run test:e2e`，约 `10s`；Main/Preload/Renderer production build 与 3 个 Electron E2E 全部通过，覆盖 Chats fixture、typed preload/事件重放以及 Provider 加密持久化和 Settings Models 可达性。
+- 2026-08-01：`npm run smoke:dev`、`npm run package`、`npm run smoke:package`；开发窗口与 348 MB arm64 macOS 打包应用均完成 Renderer readiness、SQLite transaction/reopen。补齐受限的 `img-src`/`font-src` 后，桌宠图片与 KaTeX 内联资源在 packaged app 无 CSP 错误。
+- 2026-08-01：精确 lockfile SHA-256 为 `d9d3520520dbc5b91f6730253229b47bfc9b1a58c5595bcdd2a00b7246e3de05`；44 个直接依赖均为精确版本，`npm ls --all --json` 无问题，`npm audit --omit=dev` 为 0。
 - 2026-08-01：合入 `main` 后 `npm ci`，`15.9s`；从精确 lockfile 干净安装 699 个 package，lockfile 无变化，SHA-256 为 `d30687097535ac676e198db61b44d132721377ce8debbb53eb8436c292294ddb`。
 - 2026-08-01：Data/IPC 与 Provider/Secret 串行整合并合入 `main` 后 `npm run verify:phase0`，`25.7s`；35 个 contract、36 个 focused、16 个 SQLite/domain integration、Main/Preload/Renderer build、dev smoke、Forge package、隔离 packaged smoke 与 2 个 Electron E2E 全部通过。一次构建同时验证 Chat snapshot/replay/reload 与 Provider typed Preload、真实 async `safeStorage`、离线模型端点、重启读取，以及 SQLite、secret asset、IPC 响应无明文 Key。
 - 2026-08-01：`npm run test:live && npm run test:benchmark`；两者按设计报告 `not-applicable`，当前没有对应外部 endpoint 或 Benchmark Decision owner，且未进入默认回归。
@@ -46,6 +50,5 @@ Phase 0 已完成。Phase 1 的 Data/IPC 与 Provider/Secret 路径已完成，R
 ## 已知产品影响问题
 
 - Electron Forge Vite Plugin 在当前官方说明中仍标记为 experimental；已通过 Phase 0 的开发启动、原生模块、打包、隔离 packaged-app smoke 与 Electron E2E，并冻结为唯一构建路径。
-- Forge 打包当前携带 `better-sqlite3` 的多平台预构建二进制，macOS `.app` 约 307 MB；不阻塞当前正确性，发布优化需在不增加第二构建路径的前提下处理。
-- `P1-PROVIDER` 的 Models 表单组件已验证，但当前主窗口仍是 Phase 0 基线画面；只有 `P1-APP-SHELL` 合入后才会成为用户可导航页面，入口集成不由 Provider 包重复实现。
+- Forge 打包当前携带 `better-sqlite3` 的多平台预构建二进制及内容渲染依赖，macOS `.app` 约 348 MB；不阻塞当前正确性，发布优化需在不增加第二构建路径的前提下处理。
 - 完整 `npm audit` 报告 33 个仅开发工具链告警（4 low、28 high、1 critical），均来自精确锁定的 Forge/Vite 间接依赖；生产依赖审计为 0，且 npm 没有为 Forge `7.11.2` 给出兼容的直接修复。后续 Forge 升级必须重新通过完整工具链兼容性套件，不能用报告建议的旧版替换已验证路径。
