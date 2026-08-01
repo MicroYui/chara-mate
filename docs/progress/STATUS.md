@@ -37,8 +37,8 @@ Phase 0 已完成。Phase 1 的 Data/IPC 与 Provider/Secret 路径已完成，R
 
 ## 最近绿色验证
 
-- 2026-08-01：`npm ci`，`17.3s`；从精确 lockfile 干净安装 699 个 package，lockfile 无变化，SHA-256 为 `d30687097535ac676e198db61b44d132721377ce8debbb53eb8436c292294ddb`。
-- 2026-08-01：Data/IPC 与 Provider/Secret 串行整合后 `npm run verify:phase0`，`23.5s`；35 个 contract、36 个 focused、16 个 SQLite/domain integration、Main/Preload/Renderer build、dev smoke、Forge package、隔离 packaged smoke 与 2 个 Electron E2E 全部通过。一次构建同时验证 Chat snapshot/replay/reload 与 Provider typed Preload、真实 async `safeStorage`、离线模型端点、重启读取，以及 SQLite、secret asset、IPC 响应无明文 Key。
+- 2026-08-01：合入 `main` 后 `npm ci`，`15.9s`；从精确 lockfile 干净安装 699 个 package，lockfile 无变化，SHA-256 为 `d30687097535ac676e198db61b44d132721377ce8debbb53eb8436c292294ddb`。
+- 2026-08-01：Data/IPC 与 Provider/Secret 串行整合并合入 `main` 后 `npm run verify:phase0`，`25.7s`；35 个 contract、36 个 focused、16 个 SQLite/domain integration、Main/Preload/Renderer build、dev smoke、Forge package、隔离 packaged smoke 与 2 个 Electron E2E 全部通过。一次构建同时验证 Chat snapshot/replay/reload 与 Provider typed Preload、真实 async `safeStorage`、离线模型端点、重启读取，以及 SQLite、secret asset、IPC 响应无明文 Key。
 - 2026-08-01：`npm run test:live && npm run test:benchmark`；两者按设计报告 `not-applicable`，当前没有对应外部 endpoint 或 Benchmark Decision owner，且未进入默认回归。
 - 2026-08-01：`npm ls --all --json` 无 missing、invalid 或 peer problem，31 个直接依赖均为精确版本，`npm audit --omit=dev` 为 0。
 - 2026-08-01：`rg`/`find`/ASAR 单路径与密钥边界审计，`<1s`；无第二 lockfile/build path、Renderer 密钥读取 API、Renderer raw IPC、运行时代码密钥字面量、ORM、通用 Agent 框架或候选 Provider 分支；产物包含唯一 ESM Main/Preload/Renderer、官方 OpenAI SDK 与已解包原生模块。
