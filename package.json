@@ -1,0 +1,73 @@
+{
+  "name": "chara-mate",
+  "productName": "CharaMate",
+  "version": "0.1.0",
+  "description": "A desktop AI companion built on one Electron runtime.",
+  "private": true,
+  "type": "module",
+  "main": ".vite/build/main.mjs",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": "24.18.x",
+    "npm": "11.16.x"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.1": true,
+    "esbuild@0.27.7": true
+  },
+  "scripts": {
+    "start": "electron-forge start",
+    "build": "node scripts/build.mjs",
+    "package": "electron-forge package",
+    "smoke:dev": "node scripts/smoke-electron.mjs dev",
+    "smoke:package": "node scripts/smoke-electron.mjs packaged",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:contract": "vitest run --project contract",
+    "test:focused": "vitest run --project unit --project component",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "npm run build && playwright test",
+    "check:fast": "npm run typecheck && npm run lint && npm run format:check && npm run test:contract",
+    "verify:offline": "npm run check:fast && npm run test:focused && npm run test:integration",
+    "verify:phase0": "npm run verify:offline && npm run build && npm run smoke:dev && npm run package && npm run smoke:package && npm run test:e2e",
+    "test:live": "node scripts/optional-suite.mjs live",
+    "test:benchmark": "node scripts/optional-suite.mjs benchmark"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.52",
+    "ajv": "8.20.0",
+    "better-sqlite3": "13.0.1",
+    "pino": "10.3.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "7.11.2",
+    "@electron-forge/plugin-vite": "7.11.2",
+    "@electron-forge/shared-types": "7.11.2",
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.62.0",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/jest-dom": "7.0.0",
+    "@testing-library/react": "16.3.2",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "43.2.0",
+    "eslint": "10.8.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "jsdom": "29.1.1",
+    "playwright": "1.62.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0",
+    "vite": "7.3.5",
+    "vitest": "4.1.10"
+  }
+}
