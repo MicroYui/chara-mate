@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
+import type { IncomingMessage } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
+import type { Duplex } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
@@ -47,6 +49,40 @@ function profile(
   };
 }
 
+type AzureDraft = Extract<ProviderProfileDraft, { apiStyle: "azure-openai" }>;
+
+function azureProfile(
+  overrides: Partial<Omit<AzureDraft, "apiStyle">>,
+): AzureDraft {
+  return {
+    apiStyle: "azure-openai",
+    apiVersion: "2025-04-01-preview",
+    baseUrl: "https://example.openai.azure.com",
+    name: "Azure",
+    ...overrides,
+  };
+}
+
+function acceptWebSocketUpgrade(
+  request: IncomingMessage,
+  socket: Duplex,
+): void {
+  const key = request.headers["sec-websocket-key"];
+  const accept = createHash("sha1")
+    .update(`${String(key)}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest("base64");
+  socket.write(
+    [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${accept}`,
+      "",
+      "",
+    ].join("\r\n"),
+  );
+}
+
 describe("OpenAI Provider adapter capability checks", () => {
   it("opens an authenticated Realtime WebSocket and closes without sending content", async () => {
     let requestedUrl = "";
@@ -55,20 +91,7 @@ describe("OpenAI Provider adapter capability checks", () => {
     server.on("upgrade", (request, socket) => {
       requestedUrl = request.url ?? "";
       authorization = request.headers.authorization ?? "";
-      const key = request.headers["sec-websocket-key"];
-      const accept = createHash("sha1")
-        .update(`${String(key)}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
-        .digest("base64");
-      socket.write(
-        [
-          "HTTP/1.1 101 Switching Protocols",
-          "Upgrade: websocket",
-          "Connection: Upgrade",
-          `Sec-WebSocket-Accept: ${accept}`,
-          "",
-          "",
-        ].join("\r\n"),
-      );
+      acceptWebSocketUpgrade(request, socket);
     });
     const listener = await listen(server);
 
@@ -84,6 +107,65 @@ describe("OpenAI Provider adapter capability checks", () => {
       await expect(adapter.testRealtimeConnection()).resolves.toBeUndefined();
       expect(requestedUrl).toBe("/v1/realtime?model=realtime-model");
       expect(authorization).toBe(`Bearer ${apiKey}`);
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("uses the Azure GA model query and api-key header without legacy parameters", async () => {
+    let requestedUrl = "";
+    let azureApiKey = "";
+    let authorization = "";
+    const server = createServer();
+    server.on("upgrade", (request, socket) => {
+      requestedUrl = request.url ?? "";
+      azureApiKey = String(request.headers["api-key"] ?? "");
+      authorization = request.headers.authorization ?? "";
+      acceptWebSocketUpgrade(request, socket);
+    });
+    const listener = await listen(server);
+
+    try {
+      const adapter = new OpenAISdkProviderAdapter(
+        azureProfile({
+          realtimeEndpoint: `${listener.baseUrl}/openai/v1/realtime?model=gpt-realtime-2.1&api-version=legacy&deployment=legacy`,
+          realtimeModel: "gpt-realtime-2.1-2",
+        }),
+        apiKey,
+      );
+
+      await expect(adapter.testRealtimeConnection()).resolves.toBeUndefined();
+      expect(requestedUrl).toBe("/openai/v1/realtime?model=gpt-realtime-2.1-2");
+      expect(azureApiKey).toBe(apiKey);
+      expect(authorization).toBe("");
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("returns actionable Azure GA guidance for a missing route or deployment", async () => {
+    const server = createServer();
+    server.on("upgrade", (_request, socket) => {
+      socket.end(
+        "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+    });
+    const listener = await listen(server);
+
+    try {
+      const adapter = new OpenAISdkProviderAdapter(
+        azureProfile({
+          realtimeEndpoint: `${listener.baseUrl}/openai/v1/realtime`,
+          realtimeModel: "missing-deployment",
+        }),
+        apiKey,
+      );
+
+      await expect(adapter.testRealtimeConnection()).rejects.toMatchObject({
+        code: "PROVIDER.INVALID_CONFIGURATION",
+        message:
+          "Azure Realtime 路由或 deployment 不存在；Endpoint 应以 /openai/v1/realtime 结尾，Model 请填写 deployment 名称。",
+      });
     } finally {
       await listener.close();
     }

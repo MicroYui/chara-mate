@@ -475,7 +475,7 @@ export function ProviderSettingsPanel({
                 <header className={styles["capabilityHeader"]}>
                   <div>
                     <h3 id="provider-realtime-title">Realtime</h3>
-                    <p>使用上方 API Key；只做认证握手，不发送内容。</p>
+                    <p>使用上方 API Key；Azure Model 填 deployment 名称。</p>
                   </div>
                   <button
                     disabled={busy}
@@ -493,7 +493,11 @@ export function ProviderSettingsPanel({
                       onChange={(event) =>
                         updateField("realtimeEndpoint", event.target.value)
                       }
-                      placeholder="https://api.openai.com/v1/realtime"
+                      placeholder={
+                        form.apiStyle === "azure-openai"
+                          ? "https://resource.openai.azure.com/openai/v1/realtime"
+                          : "https://api.openai.com/v1/realtime"
+                      }
                       value={form.realtimeEndpoint}
                     />
                   </label>
@@ -503,7 +507,11 @@ export function ProviderSettingsPanel({
                       onChange={(event) =>
                         updateField("realtimeModel", event.target.value)
                       }
-                      placeholder="gpt-realtime"
+                      placeholder={
+                        form.apiStyle === "azure-openai"
+                          ? "Azure deployment 名称"
+                          : "gpt-realtime"
+                      }
                       value={form.realtimeModel}
                     />
                   </label>

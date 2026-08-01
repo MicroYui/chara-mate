@@ -794,7 +794,7 @@ Activity 不是永久事件仓库。原始数据完成蒸馏后由 `ActivityRete
 https://datasetannotator-openai.openai.azure.com/openai/v1/realtime?model=gpt-realtime-2.1-2
 ```
 
-该 URI 固定了 Azure resource 与 model/deployment。若 `VOICE-TRANSPORT` 选择 Direct WebSocket，连接时按协议转换为 `wss`；若选择 GA WebRTC，则从同一 resource/model 派生官方 `client_secrets` 与 `calls` 端点。Settings 仍只保存一个规范化 Realtime 配置，不让用户维护两套 URI。
+该 URI 固定了 Azure resource 与 model/deployment。Provider Settings 把它展示为不含查询参数的 Realtime Endpoint 与单独的 Realtime Model；Model 填 Azure deployment 名称，是连接时唯一的 `model` 查询值。用户粘贴包含 `?model=` 的完整 URI 时，连接前仍以 Realtime Model 字段覆盖它，避免同一 Profile 出现两个模型来源。若 `VOICE-TRANSPORT` 选择 Direct WebSocket，连接时按协议转换为 `wss`；若选择 GA WebRTC，则从同一 resource/model 派生官方 `client_secrets` 与 `calls` 端点。Settings 仍只保存一个规范化 Realtime 配置，不让用户维护两套 URI。
 
 公开 Realtime 协议提供 VAD、显式 `response.create`、Function Call 和 `function_call_output` 等构件，因此“Realtime 负责流式语音、应用持有统一 Run”具备可验证基础；目标 Azure deployment 是否完整支持以及该结构是否在体验上获胜，仍由 Contract Test 与 `VOICE-ARCHITECTURE` 实验决定。
 
@@ -1078,7 +1078,7 @@ interface ProviderProfile {
 
 2026-08-01 的实现前来源刷新确认：官方 OpenAI JavaScript SDK `6.49.0` 的 `OpenAI` client 支持显式 `baseURL`，OpenAI OpenAPI `2.3.0` 的 `GET /v1/models` 对应 `client.models.list()`；同一 SDK 的 `AzureOpenAI` client 除 endpoint/baseURL 与 API Key 外还强制要求 `apiVersion`。因此 `apiVersion` 在 `azure-openai` Profile 中为必填，在 `openai-compatible` Profile 中不存在；这属于外部协议 Adapter 边界，不分叉 CharaMate Provider Service。Electron `43.2.0` 的正式类型与 API 文档同时确认 async `safeStorage` 需要在 app ready 后调用 `isAsyncEncryptionAvailable`、`encryptStringAsync` 与 `decryptStringAsync`，解密结果的 `shouldReEncrypt` 由 Secret Store 原位换钥处理。
 
-同日针对分能力连接测试再次刷新一手来源：OpenAI Realtime GA 文档要求服务端 WebSocket 使用标准 API Key，通过 `/v1/realtime?model=...` 建立已认证连接，且不再发送 Beta header；SDK `6.49.0` 的 `OpenAIRealtimeWS` / `OpenAIRealtimeWS.azure` 与该行为一致。生产 Adapter 使用 SDK peer 范围内已核对的 `ws@8.21.1` 完成同一握手，以同时支持本机 `ws://` OpenAI-compatible Endpoint；该依赖只在 Main 中运行并作为 Forge runtime external 打包。OpenAI OpenAPI `2.3.0` 提供只读 `GET /v1/models/{model}`，但 Image Edit 只有需要图片、提示词并可能产生计费输出的 `POST /v1/images/edits`，没有独立只读健康端点。因此 Provider 测试固定为三种显式目标：Chat 请求模型列表；Realtime 只完成握手后立即关闭，不发送音频、文本或 `response.create`；Image 校验 Image Edit URL、凭据和 Image Model 可读取性，不发起生图，并在结果中明确该边界。前两项是官方协议/SDK 的当前行为；“测试不得隐式产生图片费用”是 CharaMate 产品启发式，不等同于外部协议限制。若兼容服务不提供模型读取，Image 返回需要手动确认，而不是伪报端点已验证。
+同日针对分能力连接测试再次刷新一手来源：OpenAI Realtime GA 文档要求服务端 WebSocket 使用标准 API Key，通过 `/v1/realtime?model=...` 建立已认证连接，且不再发送 Beta header。Microsoft Learn 的 Azure Realtime WebSocket 文档（`ms.date=2026-07-13`，页面更新于 `2026-07-19`）要求 GA 地址使用 `/openai/v1`，明确禁止 date-based API Version 与 `api-version` 查询参数，并把 Azure deployment 名称放在 `model` 查询参数；API Key 通过 `api-key` header 发送。该 Microsoft 示例使用普通 `OpenAI` client 与 `/openai/v1` base URL；已安装 OpenAI SDK `6.49.0` 源码中的 `OpenAIRealtimeWS.azure` 仍会生成旧式 `api-version` 与 `deployment` 参数，这是已观察的 SDK 行为而不是当前协议约束。CharaMate 因此只实现当前 GA 路径：连接前清除 Endpoint 查询，以 Realtime Model 重建唯一 `model` 参数，不保留 Preview fallback。生产 Adapter 使用 SDK peer 范围内已核对的 `ws@8.21.1` 完成同一握手，以同时支持本机 `ws://` OpenAI-compatible Endpoint；该依赖只在 Main 中运行并作为 Forge runtime external 打包。OpenAI OpenAPI `2.3.0` 提供只读 `GET /v1/models/{model}`，但 Image Edit 只有需要图片、提示词并可能产生计费输出的 `POST /v1/images/edits`，没有独立只读健康端点。因此 Provider 测试固定为三种显式目标：Chat 请求模型列表；Realtime 只完成握手后立即关闭，不发送音频、文本或 `response.create`；Image 校验 Image Edit URL、凭据和 Image Model 可读取性，不发起生图，并在结果中明确该边界。“测试不得隐式产生图片费用”是 CharaMate 产品启发式，不等同于外部协议限制。若兼容服务不提供模型读取，Image 返回需要手动确认，而不是伪报端点已验证。
 
 设置流程：
 

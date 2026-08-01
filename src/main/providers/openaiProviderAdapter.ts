@@ -107,8 +107,18 @@ class RealtimeHandshakeError extends Error {
   }
 }
 
-function mapRealtimeError(error: unknown): ProviderError {
+function mapRealtimeError(
+  error: unknown,
+  apiStyle: ProviderProfileDraft["apiStyle"],
+): ProviderError {
   if (error instanceof RealtimeHandshakeError) {
+    if (error.statusCode === 400) {
+      return new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "Realtime 拒绝了连接参数，请检查 Endpoint 与 Model。",
+        false,
+      );
+    }
     if (error.statusCode === 401) {
       return new ProviderError(
         "PROVIDER.AUTHENTICATION_FAILED",
@@ -120,6 +130,29 @@ function mapRealtimeError(error: unknown): ProviderError {
       return new ProviderError(
         "PROVIDER.PERMISSION_DENIED",
         "当前 API Key 没有访问 Realtime 的权限。",
+        false,
+      );
+    }
+    if (error.statusCode === 404) {
+      return new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        apiStyle === "azure-openai"
+          ? "Azure Realtime 路由或 deployment 不存在；Endpoint 应以 /openai/v1/realtime 结尾，Model 请填写 deployment 名称。"
+          : "Realtime 路由或模型不存在，请检查 Endpoint 与 Model。",
+        false,
+      );
+    }
+    if (error.statusCode === 429) {
+      return new ProviderError(
+        "PROVIDER.RATE_LIMITED",
+        "Realtime 暂时限制了连接，请稍后重试。",
+        true,
+      );
+    }
+    if (error.statusCode !== undefined) {
+      return new ProviderError(
+        "PROVIDER.REQUEST_FAILED",
+        `Realtime 握手失败（HTTP ${String(error.statusCode)}），请检查 Endpoint、Model 与 Provider 权限。`,
         false,
       );
     }
@@ -220,12 +253,9 @@ export class OpenAISdkProviderAdapter implements ProviderHttpAdapter {
     }
 
     endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
-    if (this.#profile.apiStyle === "azure-openai") {
-      endpoint.searchParams.set("api-version", this.#profile.apiVersion);
-      endpoint.searchParams.set("deployment", model);
-    } else {
-      endpoint.searchParams.set("model", model);
-    }
+    endpoint.hash = "";
+    endpoint.search = "";
+    endpoint.searchParams.set("model", model);
 
     let socket: WebSocket | undefined;
     try {
@@ -249,7 +279,7 @@ export class OpenAISdkProviderAdapter implements ProviderHttpAdapter {
       socket.close(1000, "configuration test");
     } catch (error) {
       socket?.terminate();
-      throw mapRealtimeError(error);
+      throw mapRealtimeError(error, this.#profile.apiStyle);
     }
   }
 
