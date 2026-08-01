@@ -49,7 +49,8 @@ function profileToForm(profile: ProviderProfile): ProviderFormState {
   return {
     apiKey: "",
     apiStyle: profile.apiStyle,
-    apiVersion: profile.apiStyle === "azure-openai" ? profile.apiVersion : "",
+    apiVersion:
+      profile.apiStyle === "azure-openai" ? (profile.apiVersion ?? "") : "",
     baseUrl: profile.baseUrl,
     chatModel: profile.chatModel ?? "",
     imageEditEndpoint: profile.imageEditEndpoint ?? "",
@@ -70,6 +71,7 @@ function formToDraft(
   const imageModel = optionalText(form.imageModel);
   const realtimeEndpoint = optionalText(form.realtimeEndpoint);
   const realtimeModel = optionalText(form.realtimeModel);
+  const apiVersion = optionalText(form.apiVersion);
   const common = {
     ...(profileId ? { id: profileId } : {}),
     baseUrl: form.baseUrl,
@@ -84,7 +86,7 @@ function formToDraft(
     ? {
         ...common,
         apiStyle: "azure-openai",
-        apiVersion: form.apiVersion,
+        ...(apiVersion ? { apiVersion } : {}),
       }
     : { ...common, apiStyle: "openai-compatible" };
 }
@@ -387,13 +389,12 @@ export function ProviderSettingsPanel({
 
           {form.apiStyle === "azure-openai" ? (
             <label>
-              Azure API Version
+              Azure API Version（Chat / Image 可选）
               <input
                 onChange={(event) =>
                   updateField("apiVersion", event.target.value)
                 }
-                placeholder="2025-04-01-preview"
-                required
+                placeholder="例如 2025-04-01-preview；Realtime GA 留空"
                 value={form.apiVersion}
               />
             </label>
@@ -475,7 +476,7 @@ export function ProviderSettingsPanel({
                 <header className={styles["capabilityHeader"]}>
                   <div>
                     <h3 id="provider-realtime-title">Realtime</h3>
-                    <p>使用上方 API Key；Azure Model 填 deployment 名称。</p>
+                    <p>Azure 请选择 Azure OpenAI；Model 填 deployment 名称。</p>
                   </div>
                   <button
                     disabled={busy}

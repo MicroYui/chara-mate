@@ -21,13 +21,27 @@ export interface ProviderHttpAdapter {
   verifyImageConfiguration(): Promise<void>;
 }
 
-function createClient(profile: ProviderProfileDraft, apiKey: string): OpenAI {
+function createClient(
+  profile: ProviderProfileDraft,
+  apiKey: string,
+  azureApiVersion = profile.apiStyle === "azure-openai"
+    ? profile.apiVersion
+    : undefined,
+): OpenAI {
   const common = {
     apiKey,
     logLevel: "off" as const,
   };
 
   if (profile.apiStyle === "azure-openai") {
+    const apiVersion = azureApiVersion?.trim();
+    if (!apiVersion) {
+      throw new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "该 Azure HTTP 能力需要 API Version；Realtime GA 不需要。",
+        false,
+      );
+    }
     const url = new URL(profile.baseUrl);
     const azureLocation =
       url.pathname === "/" || url.pathname === ""
@@ -36,7 +50,7 @@ function createClient(profile: ProviderProfileDraft, apiKey: string): OpenAI {
     return new AzureOpenAI({
       ...common,
       ...azureLocation,
-      apiVersion: profile.apiVersion,
+      apiVersion,
     });
   }
 
@@ -47,6 +61,7 @@ function mapSdkError(
   error: unknown,
   unavailableMessage = "该 Provider 没有标准模型列表端点，请手动填写 Model ID。",
 ): ProviderError {
+  if (error instanceof ProviderError) return error;
   if (error instanceof AuthenticationError) {
     return new ProviderError(
       "PROVIDER.AUTHENTICATION_FAILED",
@@ -112,6 +127,19 @@ function mapRealtimeError(
   apiStyle: ProviderProfileDraft["apiStyle"],
 ): ProviderError {
   if (error instanceof RealtimeHandshakeError) {
+    if (
+      error.statusCode === 301 ||
+      error.statusCode === 302 ||
+      error.statusCode === 303 ||
+      error.statusCode === 307 ||
+      error.statusCode === 308
+    ) {
+      return new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "Realtime Endpoint 返回了重定向；请填写最终 Endpoint。Azure 资源还必须选择 Azure OpenAI API 类型。",
+        false,
+      );
+    }
     if (error.statusCode === 400) {
       return new ProviderError(
         "PROVIDER.INVALID_CONFIGURATION",
@@ -197,27 +225,20 @@ function endpointBaseUrl(endpoint: URL, suffix: string): string {
 }
 
 export class OpenAISdkProviderAdapter implements ProviderHttpAdapter {
-  readonly #client: OpenAI;
   readonly #apiKey: string;
   readonly #profile: ProviderProfileDraft;
 
   constructor(profile: ProviderProfileDraft, apiKey: string) {
-    try {
-      this.#apiKey = apiKey;
-      this.#profile = profile;
-      this.#client = createClient(profile, apiKey);
-    } catch {
-      throw new ProviderError(
-        "PROVIDER.INVALID_CONFIGURATION",
-        "Provider SDK 配置无效，请检查 URL 与 API Version。",
-        false,
-      );
-    }
+    this.#apiKey = apiKey;
+    this.#profile = profile;
   }
 
   async listModels(): Promise<ProviderModelDescriptor[]> {
     try {
-      const page = await this.#client.models.list();
+      const page = await createClient(
+        this.#profile,
+        this.#apiKey,
+      ).models.list();
       const models = new Map<string, ProviderModelDescriptor>();
       for await (const model of page) {
         const id = model.id.trim();
@@ -243,6 +264,16 @@ export class OpenAISdkProviderAdapter implements ProviderHttpAdapter {
       "/realtime",
       "Realtime Endpoint",
     );
+    if (
+      endpoint.hostname.toLowerCase().endsWith(".openai.azure.com") &&
+      this.#profile.apiStyle !== "azure-openai"
+    ) {
+      throw new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "该 Realtime Endpoint 属于 Azure OpenAI；请把 API 类型改为 Azure OpenAI 后再测试。",
+        false,
+      );
+    }
     const model = this.#profile.realtimeModel?.trim();
     if (!model) {
       throw new ProviderError(
@@ -299,16 +330,24 @@ export class OpenAISdkProviderAdapter implements ProviderHttpAdapter {
     }
 
     try {
-      const client =
+      const imageProfile =
         this.#profile.apiStyle === "openai-compatible"
-          ? createClient(
-              {
-                ...this.#profile,
-                baseUrl: endpointBaseUrl(endpoint, "/images/edits"),
-              },
-              this.#apiKey,
-            )
-          : this.#client;
+          ? {
+              ...this.#profile,
+              baseUrl: endpointBaseUrl(endpoint, "/images/edits"),
+            }
+          : this.#profile;
+      const endpointApiVersion = endpoint.searchParams
+        .get("api-version")
+        ?.trim();
+      const client = createClient(
+        imageProfile,
+        this.#apiKey,
+        endpointApiVersion ||
+          (this.#profile.apiStyle === "azure-openai"
+            ? this.#profile.apiVersion
+            : undefined),
+      );
       await client.models.retrieve(model);
     } catch (error) {
       throw mapSdkError(

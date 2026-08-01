@@ -25,8 +25,7 @@ export const CURRENT_SCHEMA_SQL = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     CHECK (
-      (api_style = 'azure-openai' AND api_version IS NOT NULL) OR
-      (api_style = 'openai-compatible' AND api_version IS NULL)
+      api_style = 'azure-openai' OR api_version IS NULL
     )
   ) STRICT;
 

@@ -50,7 +50,7 @@ function recordToDraft(record: ProviderRecord): ProviderProfileDraft {
     ? {
         ...common,
         apiStyle: "azure-openai",
-        apiVersion: record.apiVersion,
+        ...(record.apiVersion ? { apiVersion: record.apiVersion } : {}),
       }
     : { ...common, apiStyle: "openai-compatible" };
 }

@@ -56,7 +56,6 @@ function azureProfile(
 ): AzureDraft {
   return {
     apiStyle: "azure-openai",
-    apiVersion: "2025-04-01-preview",
     baseUrl: "https://example.openai.azure.com",
     name: "Azure",
     ...overrides,
@@ -143,6 +142,61 @@ describe("OpenAI Provider adapter capability checks", () => {
     }
   });
 
+  it("rejects an Azure resource configured as OpenAI-compatible before networking", async () => {
+    const adapter = new OpenAISdkProviderAdapter(
+      profile({
+        realtimeEndpoint:
+          "https://datasetannotator-openai.openai.azure.com/openai/v1/realtime",
+        realtimeModel: "gpt-realtime-2.1",
+      }),
+      apiKey,
+    );
+
+    await expect(adapter.testRealtimeConnection()).rejects.toMatchObject({
+      code: "PROVIDER.INVALID_CONFIGURATION",
+      message:
+        "该 Realtime Endpoint 属于 Azure OpenAI；请把 API 类型改为 Azure OpenAI 后再测试。",
+    });
+  });
+
+  it("does not follow or expose a Realtime redirect", async () => {
+    let upgradeRequests = 0;
+    const server = createServer();
+    server.on("upgrade", (_request, socket) => {
+      upgradeRequests += 1;
+      socket.end(
+        [
+          "HTTP/1.1 302 Found",
+          "Connection: close",
+          "Content-Length: 0",
+          "Location: wss://example.invalid/realtime?api-key=must-not-return",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+    });
+    const listener = await listen(server);
+
+    try {
+      const adapter = new OpenAISdkProviderAdapter(
+        profile({
+          realtimeEndpoint: `${listener.baseUrl}/v1/realtime`,
+          realtimeModel: "realtime-model",
+        }),
+        apiKey,
+      );
+
+      await expect(adapter.testRealtimeConnection()).rejects.toMatchObject({
+        code: "PROVIDER.INVALID_CONFIGURATION",
+        message:
+          "Realtime Endpoint 返回了重定向；请填写最终 Endpoint。Azure 资源还必须选择 Azure OpenAI API 类型。",
+      });
+      expect(upgradeRequests).toBe(1);
+    } finally {
+      await listener.close();
+    }
+  });
+
   it("returns actionable Azure GA guidance for a missing route or deployment", async () => {
     const server = createServer();
     server.on("upgrade", (_request, socket) => {
@@ -208,6 +262,53 @@ describe("OpenAI Provider adapter capability checks", () => {
     } finally {
       await listener.close();
     }
+  });
+
+  it("uses the Image endpoint API Version for Azure model verification", async () => {
+    const requests: string[] = [];
+    let azureApiKey = "";
+    const server = createServer((request, response) => {
+      requests.push(`${request.method ?? ""} ${request.url ?? ""}`);
+      azureApiKey = String(request.headers["api-key"] ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          created: 1,
+          id: "gpt-image-2",
+          object: "model",
+          owned_by: "azure",
+        }),
+      );
+    });
+    const listener = await listen(server);
+
+    try {
+      const adapter = new OpenAISdkProviderAdapter(
+        azureProfile({
+          baseUrl: listener.baseUrl,
+          imageEditEndpoint: `${listener.baseUrl}/openai/deployments/gpt-image-2/images/edits?api-version=2025-04-01-preview`,
+          imageModel: "gpt-image-2",
+        }),
+        apiKey,
+      );
+
+      await expect(adapter.verifyImageConfiguration()).resolves.toBeUndefined();
+      expect(requests).toEqual([
+        "GET /openai/models/gpt-image-2?api-version=2025-04-01-preview",
+      ]);
+      expect(azureApiKey).toBe(apiKey);
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("requires an API Version only when an Azure HTTP capability is tested", async () => {
+    const adapter = new OpenAISdkProviderAdapter(azureProfile({}), apiKey);
+
+    await expect(adapter.listModels()).rejects.toMatchObject({
+      code: "PROVIDER.INVALID_CONFIGURATION",
+      message: "该 Azure HTTP 能力需要 API Version；Realtime GA 不需要。",
+    });
   });
 
   it("rejects incomplete capability configuration before networking", async () => {

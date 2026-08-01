@@ -31,7 +31,7 @@ const ProviderRecordSchema = Type.Union([
     {
       ...recordProperties,
       apiStyle: Type.Literal("azure-openai"),
-      apiVersion: NonBlankStringSchema,
+      apiVersion: Type.Optional(NonBlankStringSchema),
     },
     { additionalProperties: false },
   ),
@@ -161,7 +161,8 @@ export class ProviderRepository implements ProviderProfileRepository {
     this.#upsertStatement.run({
       apiKeyRef: value.apiKeyRef ?? null,
       apiStyle: value.apiStyle,
-      apiVersion: value.apiStyle === "azure-openai" ? value.apiVersion : null,
+      apiVersion:
+        value.apiStyle === "azure-openai" ? (value.apiVersion ?? null) : null,
       baseUrl: value.baseUrl,
       chatModel: value.chatModel ?? null,
       createdAt: value.createdAt,

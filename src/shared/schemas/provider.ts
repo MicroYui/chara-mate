@@ -45,7 +45,7 @@ export const AzureOpenAIProviderDraftSchema = Type.Object(
   {
     ...providerDraftProperties,
     apiStyle: Type.Literal("azure-openai"),
-    apiVersion: NonBlankStringSchema,
+    apiVersion: Type.Optional(NonBlankStringSchema),
   },
   { additionalProperties: false },
 );
@@ -81,7 +81,7 @@ export const AzureOpenAIProviderProfileSchema = Type.Object(
   {
     ...providerProfileProperties,
     apiStyle: Type.Literal("azure-openai"),
-    apiVersion: NonBlankStringSchema,
+    apiVersion: Type.Optional(NonBlankStringSchema),
   },
   { additionalProperties: false },
 );

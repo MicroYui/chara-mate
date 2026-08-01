@@ -20,7 +20,7 @@ Phase 0 已完成。Phase 1 的 Renderer fixture、Data/IPC 与 Provider/Secret 
 
 ## 活动工作包
 
-- `P1-AZURE-REALTIME-GA-FIX`：owner `main`，状态 `done`。Provider Realtime 测试已按 Azure GA `/openai/v1/realtime?model=<deployment>` 组装 URL：Realtime Model 是唯一模型来源并覆盖 Endpoint 中已有查询值，不再追加旧式 `deployment` 或 `api-version`；已补充安全的 HTTP 状态反馈、本机握手回归和来源记录。非目标为真实 Voice Driver、媒体事件或旧 Preview 协议兼容分支。
+- `P1-AZURE-REALTIME-GA-FIX`：owner `main`，状态 `done`。Provider Realtime 测试按 Azure GA `/openai/v1/realtime?model=<deployment>` 组装 URL，并以前置一致性校验阻止 Azure resource 误用 `OpenAI-compatible` Bearer 鉴权触发 302、把凭据迁入重定向 URL。能力级 API Version 已收口：Realtime GA 不读取版本号，Azure HTTP 能力按动作校验，Image 优先读取自身 Endpoint 查询。非目标为自动跟随重定向、真实 Voice Driver、媒体事件或旧 Preview 协议兼容分支。
 - `P1-PROVIDER-SETTINGS-REFINE`：owner `main`，状态 `done`。按产品设计 §11.1 与 UI 设计 §11.5 把 Models 设置收紧为 `30–32px` 控件、细分隔线和内容宽按钮，并把单一 `provider.testConnection` 契约扩展为 Chat、Realtime、Image 三个显式目标；已保存 Key 可以测试当前未保存表单。一个 Profile 仍只保存一套凭据，三项能力共用；不同密钥由另一个 Profile 承载。Realtime 只做认证握手，Image 只读验证 URL/凭据/模型且不发起计费生图。`ws@8.21.1` 仅作为 Main runtime external 打包；不实现 Voice Driver、Image Driver、Voice Transport 或第二套 Provider 路径。
 - `P1-APP-SHELL` + `P1-CHAT-UI` + `P1-CONTENT` + `P1-RUN-PROJECTION`（fixture lane）：owner `feat/phase1-chats-ui-fixtures` worktree，状态 `done`。App Shell、Chats/Composer、无头像消息、紧凑 Run/Approval、GFM/代码/KaTeX/Mermaid、附件与复制均由冻结 fixture 驱动；背景可选，一级页面名统一英文，品牌位读取当前 Persona 的图片源。已接入 Provider Models，不实现真实 Chat Service 或 Agent Runtime。
 - `P1-CHAT-DATA` + Data/IPC integration：owner `feat/phase1-data-ipc` worktree，状态 `done`；shared Chat/Run/IPC Schema 与 SQLite 当前 Schema 已冻结，后续消费者通过指定 integration owner 变更。非目标仍为 Chat CRUD Service、Renderer 产品 UI、Provider、Agent Runtime、迁移框架及 Decision-gated SQLite 参数。
@@ -30,7 +30,7 @@ Phase 0 已完成。Phase 1 的 Renderer fixture、Data/IPC 与 Provider/Secret 
 
 - Phase 0 无阻塞。2026-08-01 一手 npm/GitHub 核对发现预登记的 `better-sqlite3@13.0.2` 与 Playwright `1.62.1` 未发布，已在实现前把权威设计修正为已发布的 `13.0.1` 与 `1.62.0`。
 - Phase 1 Data/IPC 无 Decision 阻塞且已完成；shared Chat/Run/IPC Contract 与初始数据库 Schema 已由单一 integration owner 冻结。Provider 串行合入同一当前 Schema 与数据库连接，没有第二初始化路径。Renderer fixture lane 只消费已冻结契约；后续真实 Chat Service 接入若需变更，必须重新指定唯一 owner。
-- Provider 来源刷新记录为 OpenAI JavaScript SDK `6.49.0`、OpenAI OpenAPI `2.3.0` Models/Image API、OpenAI Realtime GA WebSocket 文档、Microsoft Learn Azure Realtime WebSocket 文档（`ms.date=2026-07-13`，更新于 `2026-07-19`）、`ws@8.21.1` 与 Electron `43.2.0` async `safeStorage`。Azure `apiVersion` 是 HTTP Profile 的外部协议必填项，但 Azure GA Realtime 明确不使用 date-based API Version 或 `api-version` 查询；Image 官方接口没有只读健康端点，因此配置测试明确不调用 Image Edit。
+- Provider 来源刷新记录为 OpenAI JavaScript SDK `6.49.0`、OpenAI OpenAPI `2.3.0` Models/Image API、OpenAI Realtime GA WebSocket 文档、Microsoft Learn Azure Realtime WebSocket 文档（`ms.date=2026-07-13`，更新于 `2026-07-19`）、`ws@8.21.1` 与 Electron `43.2.0` async `safeStorage`。Azure `apiVersion` 在 Profile 层可选：SDK 驱动的 HTTP 动作按需校验，Azure GA Realtime 明确不使用 date-based API Version 或 `api-version` 查询，Image 验证优先使用 Image Edit Endpoint 自带版本。Image 官方接口没有只读健康端点，因此配置测试明确不调用 Image Edit。
 - 官方 Electron 43 ESM 文档要求 ESM Preload 使用 `.mjs`，并说明 sandboxed Preload 不支持 ESM；当前唯一配置保持 `contextIsolation: true`、`nodeIntegration: false`、`sandbox: false`。目标机实测顶层 `await app.whenReady()` 不继续执行，当前实现把 `app.setPath` 留在 ready 前并以 Promise 生命周期启动；这是 Electron `43.2.0`/Forge `7.11.2` 的实测行为，不是协议硬限制或产品启发式。
 - 生产 Agent Runtime 仍受 `HARNESS-LOOP`、`TOOL-DISCOVERY` 阻塞。
 - 生产 Memory/Activity 仍受 `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH`、`ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 阻塞。
@@ -39,7 +39,7 @@ Phase 0 已完成。Phase 1 的 Renderer fixture、Data/IPC 与 Provider/Secret 
 
 ## 最近绿色验证
 
-- 2026-08-01：Azure Realtime GA 修复后 `npm run verify:offline` 与 `npm run build` 通过；39 个 contract、63 个 focused/component、16 个 integration 全绿。本机 WebSocket 用例确认 Azure 请求只有 `/openai/v1/realtime?model=<deployment>` 与 `api-key` header，不携带旧式 `deployment`/`api-version`，并覆盖 Endpoint 中过期的 `model` 查询值。开发服务已完整重启并加载新 Main bundle。
+- 2026-08-01：Azure Realtime GA 与能力级 API Version 修复后 `npm run verify:offline`、`npm run build`、`npm run test:e2e` 通过；39 个 contract、69 个 focused/component、16 个 integration 与 3 个 Electron E2E 全绿。本机协议用例确认 Realtime-only Azure Profile 无需版本号，握手只有 `/openai/v1/realtime?model=<deployment>` 与 `api-key` header；Image 验证保留 Endpoint 的 `api-version`。开发数据库保留原有 Profile 完成当前 Schema 调整，开发服务已完整重启并加载新 Main bundle。
 - 2026-08-01：Provider 设置 refinement 后 `test:contract` 39 项、`test:focused` 61 项、`test:integration` 16 项全部通过；覆盖三类 typed IPC 目标、真实本机 WebSocket 握手、Image 只读模型验证、未保存表单复用已保存密钥及组件反馈。
 - 2026-08-01：`npm run build`、`npm run package`、`npm run smoke:package` 与 `npm run test:e2e` 通过；打包应用完成数据库/Renderer smoke，3 个 Electron E2E 全绿，ASAR 只额外包含 Main 所需 `node_modules/ws` runtime。开发版通过 Computer Use 实际检查 Models 折叠/展开态，Realtime 与 Image 测试入口均可达且控件密度符合冻结规范。
 - 2026-08-01：UI fixture 合入 `main` 后 `npm ci`，`18.40s`；从精确 lockfile 干净安装 992 个 package，lockfile 无变化，SHA-256 为 `d9d3520520dbc5b91f6730253229b47bfc9b1a58c5595bcdd2a00b7246e3de05`。

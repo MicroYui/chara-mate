@@ -45,12 +45,15 @@ describe("Phase 1 Provider boundary contracts", () => {
       expect(parse(ProviderProfileDraftSchema, azureProfile)).toEqual(
         azureProfile,
       );
-      expect(() =>
-        parse(ProviderProfileDraftSchema, {
-          ...azureProfile,
-          apiVersion: undefined,
-        }),
-      ).toThrow();
+      const realtimeOnlyAzureProfile = {
+        apiStyle: azureProfile.apiStyle,
+        baseUrl: azureProfile.baseUrl,
+        chatModel: azureProfile.chatModel,
+        name: azureProfile.name,
+      };
+      expect(
+        parse(ProviderProfileDraftSchema, realtimeOnlyAzureProfile),
+      ).toEqual(realtimeOnlyAzureProfile);
       expect(() =>
         parse(ProviderProfileDraftSchema, {
           ...openAIProfile,

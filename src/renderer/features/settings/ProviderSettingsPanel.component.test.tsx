@@ -205,6 +205,52 @@ describe("Provider Settings panel", () => {
     );
   });
 
+  it("tests Azure Realtime without requiring an API Version", async () => {
+    const { api, testConnection } = createApi();
+    render(<ProviderSettingsPanel api={api} />);
+    fireEvent.click(screen.getByRole("button", { name: "新建 Provider" }));
+    fireEvent.change(screen.getByLabelText("名称"), {
+      target: { value: "Azure Realtime" },
+    });
+    fireEvent.change(screen.getByLabelText("API 类型"), {
+      target: { value: "azure-openai" },
+    });
+    fireEvent.change(screen.getByLabelText("Base URL"), {
+      target: { value: "https://example.openai.azure.com" },
+    });
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "azure-realtime-secret" },
+    });
+
+    const apiVersionInput = screen.getByLabelText(
+      "Azure API Version（Chat / Image 可选）",
+    );
+    expect(apiVersionInput).not.toBeRequired();
+    expect(apiVersionInput).toHaveValue("");
+
+    fireEvent.click(screen.getByText("Realtime 与 Image"));
+    fireEvent.change(screen.getByLabelText("Realtime Endpoint"), {
+      target: {
+        value: "https://example.openai.azure.com/openai/v1/realtime",
+      },
+    });
+    fireEvent.change(screen.getByLabelText("Realtime Model"), {
+      target: { value: "gpt-realtime-2.1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "测试 Realtime" }));
+
+    expect(
+      await screen.findByText("Realtime 握手成功，测试连接已关闭。"),
+    ).toBeVisible();
+    const request = testConnection.mock.calls.at(-1)?.[0];
+    expect(request?.capability).toBe("realtime");
+    expect(request?.connection).toMatchObject({
+      apiKey: "azure-realtime-secret",
+      source: "draft",
+    });
+    expect(request?.connection.profile).not.toHaveProperty("apiVersion");
+  });
+
   it("keeps manual Model ID available when discovery is unsupported", async () => {
     const { api, discoverModels } = createApi();
     discoverModels.mockResolvedValue({

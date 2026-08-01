@@ -39,6 +39,25 @@ describe("Provider configuration normalization", () => {
     });
   });
 
+  it("accepts a Realtime-only Azure profile without an API Version", () => {
+    expect(
+      normalizeProviderDraft({
+        apiStyle: "azure-openai",
+        apiVersion: "   ",
+        baseUrl: "https://example.openai.azure.com/",
+        name: " Azure Realtime ",
+        realtimeEndpoint: "https://example.openai.azure.com/openai/v1/realtime",
+        realtimeModel: " gpt-realtime-2.1 ",
+      }),
+    ).toEqual({
+      apiStyle: "azure-openai",
+      baseUrl: "https://example.openai.azure.com",
+      name: "Azure Realtime",
+      realtimeEndpoint: "https://example.openai.azure.com/openai/v1/realtime",
+      realtimeModel: "gpt-realtime-2.1",
+    });
+  });
+
   it.each([
     "file:///tmp/provider",
     "https://user:password@example.com/v1",

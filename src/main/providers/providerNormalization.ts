@@ -95,15 +95,12 @@ export function normalizeProviderDraft(
   };
 
   if (draft.apiStyle === "azure-openai") {
-    const apiVersion = draft.apiVersion.trim();
-    if (!apiVersion) {
-      throw new ProviderError(
-        "PROVIDER.INVALID_CONFIGURATION",
-        "Azure OpenAI API Version 不能为空。",
-        false,
-      );
-    }
-    return { ...common, apiStyle: "azure-openai", apiVersion };
+    const apiVersion = normalizeOptionalText(draft.apiVersion);
+    return {
+      ...common,
+      apiStyle: "azure-openai",
+      ...(apiVersion ? { apiVersion } : {}),
+    };
   }
 
   return { ...common, apiStyle: "openai-compatible" };

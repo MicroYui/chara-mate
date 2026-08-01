@@ -69,7 +69,7 @@ describe("Provider Profile repository", () => {
     expect(repository.get(record.id)).toBeUndefined();
   });
 
-  it("enforces the Azure API Version invariant in SQLite itself", async () => {
+  it("stores a Realtime-only Azure profile without an API Version", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "chara-mate-provider-check-"),
     );
@@ -77,20 +77,40 @@ describe("Provider Profile repository", () => {
     const databasePath = path.join(directory, "charamate.sqlite");
     const database = openApplicationDatabase(databasePath);
     databases.push(database);
-    new ProviderRepository(database);
+    const repository = new ProviderRepository(database);
+    const record = {
+      apiStyle: "azure-openai",
+      baseUrl: "https://example.openai.azure.com",
+      createdAt: "2026-08-01T08:00:00.000Z",
+      id: "77777777-7777-4777-8777-777777777777",
+      name: "Azure Realtime",
+      realtimeEndpoint: "https://example.openai.azure.com/openai/v1/realtime",
+      realtimeModel: "gpt-realtime-2.1",
+      updatedAt: "2026-08-01T08:00:00.000Z",
+    } as const;
+
+    expect(repository.save(record)).toEqual(record);
+    expect(
+      database
+        .prepare(
+          "SELECT api_style, api_version FROM provider_profiles WHERE id = ?",
+        )
+        .get(record.id),
+    ).toEqual({ api_style: "azure-openai", api_version: null });
 
     expect(() =>
       database
         .prepare(
           `INSERT INTO provider_profiles (
-            id, name, api_style, base_url, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
+            id, name, api_style, base_url, api_version, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
-          "77777777-7777-4777-8777-777777777777",
-          "Invalid Azure",
-          "azure-openai",
-          "https://example.openai.azure.com",
+          "88888888-8888-4888-8888-888888888888",
+          "Invalid Compatible",
+          "openai-compatible",
+          "https://api.example.com/v1",
+          "2025-04-01-preview",
           "2026-08-01T08:00:00.000Z",
           "2026-08-01T08:00:00.000Z",
         ),
