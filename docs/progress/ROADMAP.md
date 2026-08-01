@@ -1,6 +1,6 @@
 # CharaMate 实施路线图
 
-> 状态：Specified
+> 状态：Phase 0 Done；Phase 1 Specified
 > 日期：2026-08-01
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
@@ -116,7 +116,7 @@ flowchart TD
 
 ## 交付波次
 
-1. **Wave 0 — 串行入口**：来源刷新、工具链兼容性、共享 Contract/Schema 所有权和测试命令基线。
+1. **Wave 0 — 串行入口（已完成）**：来源刷新、工具链兼容性、共享 Contract/Schema 所有权和测试命令基线。
 2. **Wave 1 — Phase 1 并行**：UI fixture、持久化/IPC、Provider/Secret 三条所有权不重叠的路径并行，随后由一个集成 owner 收口 Chats。
 3. **Wave 2 — Phase 2 主干**：先完成 Harness/Tool Discovery 决策，再实现唯一 Agent Runtime、Tool、Approval 和恢复路径。
 4. **Wave 3 — 多支线并行**：Agent 主干稳定后，Memory 研究、Voice Contract/实验、Automation 基础、桌宠基础与 Multi-agent 实验可并行；候选代码只在隔离 worktree。
@@ -124,6 +124,8 @@ flowchart TD
 6. **Wave 5 — 全产品收口**：只集成已通过 Gate 的路径，运行完整离线、打包、E2E 和明确要求的 Live 检查。
 
 ## Phase 0 — 工程基线与稳定契约
+
+> 里程碑状态：Done（2026-08-01）；退出条件全部通过，最新证据见 `docs/progress/STATUS.md`。
 
 ### 目标
 
