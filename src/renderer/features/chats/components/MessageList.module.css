@@ -1,0 +1,168 @@
+.listRoot {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.scroller {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.virtualCanvas {
+  position: relative;
+  width: min(var(--content-max), calc(100% - 40px));
+  margin: 0 auto;
+}
+
+.virtualRow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding: 10px 0;
+}
+
+.virtualRow:first-child {
+  padding-top: 24px;
+}
+
+.message {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.message[data-role="user"] {
+  align-items: flex-end;
+}
+
+.messageBody {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.message[data-role="user"] .messageBody {
+  max-width: min(78%, 590px);
+  border-radius: 15px;
+  padding: 8px 12px;
+  background: var(--surface-subtle);
+}
+
+.message[data-role="assistant"] .messageBody {
+  width: 100%;
+}
+
+.messageActions {
+  display: flex;
+  min-height: 25px;
+  align-items: center;
+  gap: 0;
+  margin-top: 3px;
+  opacity: 0.7;
+}
+
+.message[data-role="user"] .messageActions {
+  justify-content: flex-end;
+}
+
+.messageActions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.messageActions > button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.attachments {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.attachment {
+  display: flex;
+  width: min(240px, 100%);
+  min-height: 45px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.attachment > span:first-child {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+}
+
+.attachment > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.attachment strong {
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment small {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.latestButton {
+  position: absolute;
+  right: 50%;
+  bottom: 8px;
+  translate: 50% 0;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 10px;
+  background: var(--surface-raised);
+  box-shadow: 0 4px 14px rgba(30, 35, 40, 0.08);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+@media (max-width: 680px) {
+  .virtualCanvas {
+    width: calc(100% - 24px);
+  }
+
+  .message[data-role="user"] .messageBody {
+    max-width: 88%;
+  }
+}

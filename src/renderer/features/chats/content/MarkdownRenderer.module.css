@@ -1,0 +1,242 @@
+.markdown {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.58;
+  overflow-wrap: anywhere;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  margin: 1.22em 0 0.45em;
+  line-height: 1.28;
+  font-weight: 630;
+}
+
+.markdown h1 {
+  font-size: 1.38em;
+}
+.markdown h2 {
+  font-size: 1.2em;
+}
+.markdown h3 {
+  font-size: 1.05em;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown blockquote {
+  margin: 0 0 0.68em;
+}
+
+.markdown li + li {
+  margin-top: 0.18em;
+}
+
+.markdown blockquote {
+  border-left: 3px solid var(--border-strong);
+  padding-left: 11px;
+  color: var(--text-secondary);
+}
+
+.markdown a {
+  color: var(--link);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.markdown :not(pre) > code {
+  border-radius: 5px;
+  padding: 0.12em 0.36em;
+  background: var(--surface-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.codeBlock,
+.mermaidBlock,
+.tableBlock {
+  overflow: hidden;
+  margin: 0.78em 0;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface);
+}
+
+.codeBlock > header,
+.mermaidBlock > header,
+.tableBlock > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  padding: 0 7px 0 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.codeBlock > header > span,
+.tableBlock > header > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.codeBlock pre,
+.mermaidBlock pre,
+.highlightedCode :global(pre) {
+  overflow-x: auto;
+  margin: 0;
+  border-radius: 0;
+  padding: 12px;
+  background: var(--code-surface) !important;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.codeBlock pre[data-highlight-failed="true"] {
+  color: var(--text-primary);
+}
+
+.highlightedCode :global(code) {
+  font-family: inherit;
+}
+
+.mermaidBlock > header > div {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mermaidBlock > header > div > button {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.mermaidBlock > header > div > button[aria-pressed="true"] {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+}
+
+.mermaidDiagram {
+  overflow-x: auto;
+  padding: 14px;
+  text-align: center;
+}
+
+.mermaidDiagram :global(svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.renderPending,
+.renderError {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 82px;
+  padding: 12px;
+  color: var(--text-secondary);
+}
+
+.renderError {
+  color: var(--danger);
+}
+
+.tableBlock > div {
+  overflow-x: auto;
+}
+
+.tableBlock table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.tableBlock th,
+.tableBlock td {
+  border-bottom: 1px solid var(--border);
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.tableBlock tr:last-child td {
+  border-bottom: 0;
+}
+
+.mathInline,
+.mathBlock {
+  position: relative;
+}
+
+.mathInline {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.mathBlock {
+  display: block;
+  overflow-x: auto;
+  margin: 0.75em 0;
+  padding: 7px 32px 7px 6px;
+}
+
+.mathCopy {
+  position: absolute;
+  top: 0;
+  right: 0;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.mathInline:hover > .mathCopy,
+.mathInline:focus-within > .mathCopy,
+.mathBlock:hover > .mathCopy,
+.mathBlock:focus-within > .mathCopy {
+  opacity: 1;
+}
+
+.imageBlock {
+  margin: 0.8em 0;
+}
+
+.imageBlock img {
+  display: block;
+  max-width: 100%;
+  max-height: 560px;
+  border-radius: 10px;
+}
+
+.imageBlock figcaption {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mathCopy {
+    transition: none;
+  }
+}

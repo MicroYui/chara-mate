@@ -4,22 +4,21 @@
 
 ## 当前里程碑
 
-**Phase 0 — 工程基线与稳定契约：done**
+**Phase 1 — 产品骨架与 Chats：implementing**
 
-Phase 1 已具备入口依赖，但尚未启动工作包。
+Phase 0 已完成。Phase 1 当前只启动 Renderer fixture lane；Chat 数据、Main 服务、Provider/Secret 与真实 IPC 接入尚未启动。
 
-退出条件：
+当前里程碑退出条件：
 
-- [x] 单 package Electron/Forge/Vite、strict TypeScript/React 工程已创建并精确锁定依赖；
-- [x] dev launch、Main/Preload/Renderer build、Forge package 和 packaged-app smoke 通过；
-- [x] `better-sqlite3` 在开发与打包产物中完成真实事务、关闭和重开读取；
-- [x] Chat/Message/Run/RunItem/Approval、IPC sequence、artifact、cancel 和 redaction 契约实现且正反例测试通过；
-- [x] fast check、focused test、full offline、build/package、E2E 和 live/benchmark scripts 已真实建立并写回 `AGENTS.md` Commands；
-- [x] 单路径审计确认没有业务空目录、第二构建路径或尚未晋级的算法、Transport 与参数默认值。
+- [ ] App Shell、六个一级页面入口、Chats 侧栏与空状态满足冻结 UI 方案；
+- [ ] Composer 的 Chat/Agent、Model、权限、附件、Voice/Send/Stop 位置与状态通过组件测试；
+- [ ] 用户/助手消息、内容渲染、复制、Run 折叠、Tool 二级详情和 Approval fixture 满足 UI 验收；
+- [ ] Renderer fixture 与共享 Contract/Schema 一致，不引入 Main、数据库或 Provider 的临时兼容路径；
+- [ ] 受影响的 L0/L1、React component test、Electron Chats fixture E2E、build 与 package smoke 通过。
 
 ## 活动工作包
 
-- 当前无活动工作包。`FND-TOOLCHAIN`、`FND-CONTRACTS`、`FND-IPC`、`FND-CORRECTNESS` 与 `FND-QUALITY` 已完成；完成细节由本里程碑退出条件、测试和提交记录承载，不在此保留追加式任务历史。
+- `P1-APP-SHELL` + `P1-CHAT-UI` + `P1-CONTENT` + `P1-RUN-PROJECTION`（fixture lane）：owner `feat/phase1-chats-ui-fixtures` worktree，状态 `implementing`。范围为 Renderer、冻结 fixture、component/E2E；非目标为真实 Chat Repository/Service、Provider、Agent Runtime 与业务 IPC。关键画面和组件外观需与用户逐项评审后冻结。
 
 ## 依赖、阻塞与待决 Decision
 

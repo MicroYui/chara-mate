@@ -1,17 +1,34 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
+import {
+  chatsFixtureUiReducer,
+  initialChatsFixtureUiState,
+} from "../features/chats/state";
 import styles from "./App.module.css";
+import { AppShell } from "./AppShell";
+import {
+  readBackgroundScheme,
+  writeBackgroundScheme,
+  type BackgroundScheme,
+} from "./appearance";
 
 type FoundationState =
-  | { status: "loading" }
-  | { status: "ready"; snapshot: FoundationSnapshot }
-  | { status: "failed"; message: string };
+  | { readonly status: "loading" }
+  | { readonly snapshot: FoundationSnapshot; readonly status: "ready" }
+  | { readonly message: string; readonly status: "failed" };
 
 export function App() {
   const [foundation, setFoundation] = useState<FoundationState>({
     status: "loading",
   });
+  const [uiState, dispatch] = useReducer(
+    chatsFixtureUiReducer,
+    initialChatsFixtureUiState,
+  );
+  const [backgroundScheme, setBackgroundScheme] = useState<BackgroundScheme>(
+    () => readBackgroundScheme(window.localStorage),
+  );
 
   useEffect(() => {
     let active = true;
@@ -20,14 +37,14 @@ export function App() {
       .getSnapshot()
       .then((snapshot) => {
         if (active) {
-          setFoundation({ status: "ready", snapshot });
+          setFoundation({ snapshot, status: "ready" });
         }
       })
       .catch((error: unknown) => {
         if (active) {
           setFoundation({
-            status: "failed",
             message: error instanceof Error ? error.message : "Unknown error",
+            status: "failed",
           });
         }
       });
@@ -44,26 +61,38 @@ export function App() {
     }
   }, [foundation.status]);
 
+  useEffect(() => {
+    document.documentElement.dataset["backgroundScheme"] = backgroundScheme;
+    writeBackgroundScheme(window.localStorage, backgroundScheme);
+  }, [backgroundScheme]);
+
+  if (foundation.status === "loading") {
+    return (
+      <main className={styles["startup"]} aria-live="polite">
+        <span />
+        <p>正在打开 CharaMate…</p>
+      </main>
+    );
+  }
+
+  if (foundation.status === "failed") {
+    return (
+      <main className={styles["startup"]} aria-live="polite">
+        <h1>CharaMate 无法启动</h1>
+        <p className={styles["error"]} role="alert">
+          {foundation.message}
+        </p>
+      </main>
+    );
+  }
+
   return (
-    <main className={styles["canvas"]}>
-      <section className={styles["card"]} aria-live="polite">
-        <div className={styles["avatar"]} aria-hidden="true">
-          C
-        </div>
-        <p className={styles["eyebrow"]}>CharaMate Greenfield</p>
-        <h1>工程基线{foundation.status === "ready" ? "已就绪" : "启动中"}</h1>
-        {foundation.status === "ready" ? (
-          <p data-testid="foundation-status">
-            Electron {foundation.snapshot.electronVersion} · SQLite
-            已完成事务与重开读取
-          </p>
-        ) : null}
-        {foundation.status === "failed" ? (
-          <p className={styles["error"]} role="alert">
-            {foundation.message}
-          </p>
-        ) : null}
-      </section>
-    </main>
+    <AppShell
+      backgroundScheme={backgroundScheme}
+      dispatch={dispatch}
+      foundation={foundation.snapshot}
+      state={uiState}
+      onBackgroundSchemeChange={setBackgroundScheme}
+    />
   );
 }
