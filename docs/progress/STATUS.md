@@ -37,14 +37,10 @@ Phase 0 已完成。Phase 1 的 Renderer fixture、Data/IPC 与 Provider/Secret 
 
 ## 最近绿色验证
 
-- 2026-08-01：UI fixture 与当前 Data/IPC、Provider/Secret 集成后 `npm run verify:offline`，约 `6s`；37 个 contract、55 个 focused/component、16 个 SQLite/domain integration 全部通过。
-- 2026-08-01：`npm run test:e2e`，约 `10s`；Main/Preload/Renderer production build 与 3 个 Electron E2E 全部通过，覆盖 Chats fixture、typed preload/事件重放以及 Provider 加密持久化和 Settings Models 可达性。
-- 2026-08-01：`npm run smoke:dev`、`npm run package`、`npm run smoke:package`；开发窗口与 348 MB arm64 macOS 打包应用均完成 Renderer readiness、SQLite transaction/reopen。补齐受限的 `img-src`/`font-src` 后，桌宠图片与 KaTeX 内联资源在 packaged app 无 CSP 错误。
+- 2026-08-01：UI fixture 合入 `main` 后 `npm ci`，`18.40s`；从精确 lockfile 干净安装 992 个 package，lockfile 无变化，SHA-256 为 `d9d3520520dbc5b91f6730253229b47bfc9b1a58c5595bcdd2a00b7246e3de05`。
+- 2026-08-01：合入 `main` 后 `npm run verify:phase0`，`52.06s`；37 个 contract、55 个 focused/component、16 个 SQLite/domain integration、Main/Preload/Renderer build、dev smoke、Forge package、隔离 packaged smoke 与 3 个 Electron E2E 全部通过。覆盖 Chats fixture、桌宠图片、背景选择、内容渲染、Run/Approval、typed preload/事件重放以及 Provider 加密持久化和 Settings Models 可达性；packaged app 无图片或 KaTeX 字体 CSP 错误。
 - 2026-08-01：精确 lockfile SHA-256 为 `d9d3520520dbc5b91f6730253229b47bfc9b1a58c5595bcdd2a00b7246e3de05`；44 个直接依赖均为精确版本，`npm ls --all --json` 无问题，`npm audit --omit=dev` 为 0。
-- 2026-08-01：合入 `main` 后 `npm ci`，`15.9s`；从精确 lockfile 干净安装 699 个 package，lockfile 无变化，SHA-256 为 `d30687097535ac676e198db61b44d132721377ce8debbb53eb8436c292294ddb`。
-- 2026-08-01：Data/IPC 与 Provider/Secret 串行整合并合入 `main` 后 `npm run verify:phase0`，`25.7s`；35 个 contract、36 个 focused、16 个 SQLite/domain integration、Main/Preload/Renderer build、dev smoke、Forge package、隔离 packaged smoke 与 2 个 Electron E2E 全部通过。一次构建同时验证 Chat snapshot/replay/reload 与 Provider typed Preload、真实 async `safeStorage`、离线模型端点、重启读取，以及 SQLite、secret asset、IPC 响应无明文 Key。
 - 2026-08-01：`npm run test:live && npm run test:benchmark`；两者按设计报告 `not-applicable`，当前没有对应外部 endpoint 或 Benchmark Decision owner，且未进入默认回归。
-- 2026-08-01：`npm ls --all --json` 无 missing、invalid 或 peer problem，31 个直接依赖均为精确版本，`npm audit --omit=dev` 为 0。
 - 2026-08-01：`rg`/`find`/ASAR 单路径与密钥边界审计，`<1s`；无第二 lockfile/build path、Renderer 密钥读取 API、Renderer raw IPC、运行时代码密钥字面量、ORM、通用 Agent 框架或候选 Provider 分支；产物包含唯一 ESM Main/Preload/Renderer、官方 OpenAI SDK 与已解包原生模块。
 
 ## 已知产品影响问题
