@@ -318,7 +318,7 @@ export class OpenAISdkProviderAdapter implements ProviderHttpAdapter {
     const endpoint = requireEndpoint(
       this.#profile.imageGenerationEndpoint,
       "/images/generations",
-      "Image Generation Endpoint",
+      "Image Endpoint（Generation 基准）",
     );
     const model = this.#profile.imageModel?.trim();
     if (!model) {

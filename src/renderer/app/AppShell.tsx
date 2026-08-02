@@ -1,6 +1,8 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Activity,
   Archive,
+  ArchiveRestore,
   Brain,
   CalendarClock,
   ChevronLeft,
@@ -9,22 +11,27 @@ import {
   Map,
   MessageCircle,
   PanelLeft,
+  Pencil,
+  Pin,
+  PinOff,
   Search,
   Settings,
   SquarePen,
+  Trash2,
 } from "lucide-react";
 import { useState, type Dispatch, type ReactNode } from "react";
 
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
+import type { ChatDomainState } from "../features/chats/chatStore";
 import { ChatsPage } from "../features/chats/ChatsPage";
-import { chatsFixture } from "../features/chats/fixtures";
-import { selectFilteredFixtureChats } from "../features/chats/state";
 import { ProviderSettingsPanel } from "../features/settings/ProviderSettingsPanel";
 import type {
-  ChatsFixtureUiAction,
-  ChatsFixtureUiState,
+  ChatView,
+  ChatsUiAction,
+  ChatsUiState,
   PrimaryPageId,
 } from "../features/chats/types";
+import mikaPetImage from "../assets/mika-pet.svg";
 import { backgroundSchemes, type BackgroundScheme } from "./appearance";
 import styles from "./AppShell.module.css";
 
@@ -64,11 +71,21 @@ const placeholderCopy = {
 } as const;
 
 interface AppShellProps {
+  readonly activeChat: ChatView | undefined;
   readonly backgroundScheme: BackgroundScheme;
-  readonly dispatch: Dispatch<ChatsFixtureUiAction>;
+  readonly chatDomain: ChatDomainState;
+  readonly dispatch: Dispatch<ChatsUiAction>;
   readonly foundation: FoundationSnapshot;
+  readonly onChatArchive: (chatId: string) => void;
+  readonly onChatCreate: () => void;
+  readonly onChatDelete: (chatId: string) => void;
+  readonly onChatRename: (chatId: string, title: string) => void;
+  readonly onChatRestore: (chatId: string) => void;
+  readonly onChatSetPinned: (chatId: string, pinned: boolean) => void;
+  readonly onClearChatError: () => void;
   readonly onBackgroundSchemeChange: (scheme: BackgroundScheme) => void;
-  readonly state: ChatsFixtureUiState;
+  readonly onProvidersChanged: () => void;
+  readonly state: ChatsUiState;
 }
 
 interface SidebarButtonProps {
@@ -105,10 +122,12 @@ function SidebarButton({
 }
 
 function Sidebar({
+  chatDomain,
   dispatch,
+  onChatCreate,
   state,
-}: Pick<AppShellProps, "dispatch" | "state">) {
-  const chats = selectFilteredFixtureChats(state);
+}: Pick<AppShellProps, "chatDomain" | "dispatch" | "onChatCreate" | "state">) {
+  const chats = chatDomain.chats;
   const collapsed = state.sidebarCollapsed;
 
   return (
@@ -119,10 +138,7 @@ function Sidebar({
       <div className={styles["sidebarDragRegion"]} />
       <div className={styles["brandRow"]}>
         <div className={styles["brandMark"]}>
-          <img
-            src={chatsFixture.persona.imageSource}
-            alt={`${chatsFixture.persona.displayName} 桌宠`}
-          />
+          <img src={mikaPetImage} alt="Mika 桌宠" />
         </div>
         {collapsed ? null : <strong>CharaMate</strong>}
       </div>
@@ -131,7 +147,7 @@ function Sidebar({
         className={styles["newChat"]}
         type="button"
         aria-label="新建对话"
-        onClick={() => dispatch({ type: "chat.new" })}
+        onClick={onChatCreate}
       >
         <SquarePen aria-hidden="true" size={17} />
         {collapsed ? null : <span>新建对话</span>}
@@ -169,9 +185,38 @@ function Sidebar({
               }
             />
           </label>
-          <p className={styles["sectionLabel"]}>最近</p>
+          <div className={styles["chatScopes"]} aria-label="会话范围">
+            <button
+              type="button"
+              aria-current={
+                state.chatListStatus === "active" ? "page" : undefined
+              }
+              onClick={() =>
+                dispatch({
+                  status: "active",
+                  type: "chat-list-status.changed",
+                })
+              }
+            >
+              最近
+            </button>
+            <button
+              type="button"
+              aria-current={
+                state.chatListStatus === "archived" ? "page" : undefined
+              }
+              onClick={() =>
+                dispatch({
+                  status: "archived",
+                  type: "chat-list-status.changed",
+                })
+              }
+            >
+              已归档
+            </button>
+          </div>
           <div className={styles["chatLinks"]}>
-            {chats.map(({ record }) => (
+            {chats.map((record) => (
               <button
                 key={record.id}
                 type="button"
@@ -181,13 +226,19 @@ function Sidebar({
                 }
               >
                 <span>{record.title}</span>
-                {"pinnedAt" in record && record.pinnedAt ? (
-                  <span aria-label="已置顶">·</span>
-                ) : null}
+                {record.pinnedAt ? <Pin aria-label="已置顶" size={11} /> : null}
               </button>
             ))}
             {chats.length === 0 ? (
-              <p className={styles["emptySearch"]}>没有匹配的会话</p>
+              <p className={styles["emptySearch"]}>
+                {chatDomain.status === "loading"
+                  ? "正在加载…"
+                  : state.searchQuery.trim()
+                    ? "没有匹配的会话"
+                    : state.chatListStatus === "archived"
+                      ? "没有已归档会话"
+                      : "还没有会话"}
+              </p>
             ) : null}
           </div>
         </section>
@@ -196,8 +247,8 @@ function Sidebar({
       <div className={styles["sidebarFooter"]}>
         {!collapsed ? (
           <div className={styles["persona"]}>
-            <span>{chatsFixture.persona.displayName}</span>
-            <small>{chatsFixture.persona.styleName}</small>
+            <span>Mika</span>
+            <small>元气开朗</small>
           </div>
         ) : null}
         <div className={styles["footerActions"]}>
@@ -231,18 +282,57 @@ function Sidebar({
 }
 
 function PageHeader({
+  activeChat,
+  chatDomain,
   dispatch,
+  onChatArchive,
+  onChatDelete,
+  onChatRename,
+  onChatRestore,
+  onChatSetPinned,
   state,
-}: Pick<AppShellProps, "dispatch" | "state">) {
-  const activeChat = chatsFixture.chats.find(
-    ({ record }) => record.id === state.activeChatId,
-  );
+}: Pick<
+  AppShellProps,
+  | "activeChat"
+  | "chatDomain"
+  | "dispatch"
+  | "onChatArchive"
+  | "onChatDelete"
+  | "onChatRename"
+  | "onChatRestore"
+  | "onChatSetPinned"
+  | "state"
+>) {
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const activeRecord =
+    activeChat?.record ??
+    chatDomain.chats.find(({ id }) => id === state.activeChatId);
+  const editingTitle = editingChatId === activeRecord?.id;
+
+  const commitTitle = () => {
+    const title = titleDraft.trim();
+    if (activeRecord && title && title !== activeRecord.title) {
+      onChatRename(activeRecord.id, title);
+    }
+    setEditingChatId(null);
+  };
+
   const title =
     state.activePage === "chats"
-      ? (activeChat?.record.title ?? "新对话")
+      ? (activeRecord?.title ?? "新对话")
       : state.activePage === "settings"
         ? "Settings"
         : placeholderCopy[state.activePage].title;
+
+  const confirmDelete = () => {
+    if (
+      activeRecord &&
+      window.confirm(`确定删除“${activeRecord.title}”吗？此操作无法撤销。`)
+    ) {
+      onChatDelete(activeRecord.id);
+    }
+  };
 
   return (
     <header className={styles["pageHeader"]}>
@@ -254,15 +344,88 @@ function PageHeader({
       >
         <PanelLeft aria-hidden="true" size={18} />
       </button>
-      <h1>{title}</h1>
-      {state.activePage === "chats" && activeChat ? (
+      {editingTitle && activeRecord ? (
+        <input
+          autoFocus
+          className={styles["titleInput"]}
+          aria-label="会话标题"
+          value={titleDraft}
+          onBlur={commitTitle}
+          onChange={(event) => setTitleDraft(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commitTitle();
+            if (event.key === "Escape") {
+              setTitleDraft(activeRecord.title);
+              setEditingChatId(null);
+            }
+          }}
+        />
+      ) : (
+        <h1>{title}</h1>
+      )}
+      {state.activePage === "chats" && activeRecord ? (
         <div className={styles["headerActions"]}>
-          <button type="button" aria-label="归档会话">
-            <Archive aria-hidden="true" size={16} />
+          <button
+            type="button"
+            aria-label={
+              activeRecord.status === "archived" ? "恢复会话" : "归档会话"
+            }
+            onClick={() =>
+              activeRecord.status === "archived"
+                ? onChatRestore(activeRecord.id)
+                : onChatArchive(activeRecord.id)
+            }
+          >
+            {activeRecord.status === "archived" ? (
+              <ArchiveRestore aria-hidden="true" size={16} />
+            ) : (
+              <Archive aria-hidden="true" size={16} />
+            )}
           </button>
-          <button type="button" aria-label="更多会话操作">
-            <CircleEllipsis aria-hidden="true" size={17} />
-          </button>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button type="button" aria-label="更多会话操作">
+                <CircleEllipsis aria-hidden="true" size={17} />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                className={styles["headerMenu"]}
+                sideOffset={6}
+              >
+                <DropdownMenu.Item
+                  onSelect={() => {
+                    setTitleDraft(activeRecord.title);
+                    setEditingChatId(activeRecord.id);
+                  }}
+                >
+                  <Pencil aria-hidden="true" size={14} />
+                  重命名
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={() =>
+                    onChatSetPinned(activeRecord.id, !activeRecord.pinnedAt)
+                  }
+                >
+                  {activeRecord.pinnedAt ? (
+                    <PinOff aria-hidden="true" size={14} />
+                  ) : (
+                    <Pin aria-hidden="true" size={14} />
+                  )}
+                  {activeRecord.pinnedAt ? "取消置顶" : "置顶"}
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item
+                  className={styles["dangerMenuItem"]}
+                  onSelect={confirmDelete}
+                >
+                  <Trash2 aria-hidden="true" size={14} />
+                  删除
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         </div>
       ) : null}
     </header>
@@ -287,7 +450,11 @@ function PlaceholderPage({
 function SettingsPage({
   backgroundScheme,
   onBackgroundSchemeChange,
-}: Pick<AppShellProps, "backgroundScheme" | "onBackgroundSchemeChange">) {
+  onProvidersChanged,
+}: Pick<
+  AppShellProps,
+  "backgroundScheme" | "onBackgroundSchemeChange" | "onProvidersChanged"
+>) {
   const [activeSection, setActiveSection] = useState<"appearance" | "models">(
     "appearance",
   );
@@ -358,7 +525,7 @@ function SettingsPage({
             </fieldset>
           </section>
         ) : (
-          <ProviderSettingsPanel />
+          <ProviderSettingsPanel onProfilesChanged={onProvidersChanged} />
         )}
       </div>
     </div>
@@ -366,24 +533,63 @@ function SettingsPage({
 }
 
 export function AppShell({
+  activeChat,
   backgroundScheme,
+  chatDomain,
   dispatch,
   foundation,
+  onChatArchive,
+  onChatCreate,
+  onChatDelete,
+  onChatRename,
+  onChatRestore,
+  onChatSetPinned,
+  onClearChatError,
   onBackgroundSchemeChange,
+  onProvidersChanged,
   state,
 }: AppShellProps) {
   return (
-    <div className={styles["shell"]}>
-      <Sidebar dispatch={dispatch} state={state} />
+    <div className={styles["shell"]} data-platform={foundation.platform}>
+      <Sidebar
+        chatDomain={chatDomain}
+        dispatch={dispatch}
+        onChatCreate={onChatCreate}
+        state={state}
+      />
       <main className={styles["main"]}>
-        <PageHeader dispatch={dispatch} state={state} />
+        <PageHeader
+          activeChat={activeChat}
+          chatDomain={chatDomain}
+          dispatch={dispatch}
+          onChatArchive={onChatArchive}
+          onChatDelete={onChatDelete}
+          onChatRename={onChatRename}
+          onChatRestore={onChatRestore}
+          onChatSetPinned={onChatSetPinned}
+          state={state}
+        />
+        {chatDomain.error ? (
+          <div className={styles["errorBanner"]} role="alert">
+            <span>{chatDomain.error}</span>
+            <button type="button" onClick={onClearChatError}>
+              关闭
+            </button>
+          </div>
+        ) : null}
         <div className={styles["page"]}>
           {state.activePage === "chats" ? (
-            <ChatsPage dispatch={dispatch} state={state} />
+            <ChatsPage
+              activeChat={activeChat}
+              dispatch={dispatch}
+              models={chatDomain.models}
+              state={state}
+            />
           ) : state.activePage === "settings" ? (
             <SettingsPage
               backgroundScheme={backgroundScheme}
               onBackgroundSchemeChange={onBackgroundSchemeChange}
+              onProvidersChanged={onProvidersChanged}
             />
           ) : (
             <PlaceholderPage page={state.activePage} />

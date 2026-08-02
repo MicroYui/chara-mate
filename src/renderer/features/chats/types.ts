@@ -22,71 +22,88 @@ export interface FixturePersona {
   readonly styleName: string;
 }
 
-export interface FixtureModel {
+export interface ChatModelOption {
   readonly displayName: string;
   readonly id: string;
   readonly provider: ProviderSnapshot;
 }
 
-export interface FixtureAttachment extends ArtifactReference {
+export interface ChatAttachmentView extends ArtifactReference {
   readonly description?: string;
 }
 
-export interface FixtureMessage {
-  readonly attachments: readonly FixtureAttachment[];
+export interface ChatMessageView {
+  readonly attachments: readonly ChatAttachmentView[];
   readonly record: Message;
 }
 
-export interface FixtureRun {
+export interface ChatRunView {
   readonly approvals: readonly Approval[];
   readonly items: readonly RunItem[];
   readonly record: Run;
 }
 
-export interface FixtureChat {
-  readonly messages: readonly FixtureMessage[];
+export interface ChatView {
+  readonly messages: readonly ChatMessageView[];
   readonly record: Chat;
-  readonly runs: readonly FixtureRun[];
+  readonly runs: readonly ChatRunView[];
 }
 
+export type FixtureModel = ChatModelOption;
+export type FixtureAttachment = ChatAttachmentView;
+export type FixtureMessage = ChatMessageView;
+export type FixtureRun = ChatRunView;
+export type FixtureChat = ChatView;
+
 export interface ChatsFixtureSnapshot {
-  readonly chats: readonly FixtureChat[];
-  readonly models: readonly FixtureModel[];
+  readonly chats: readonly ChatView[];
+  readonly models: readonly ChatModelOption[];
   readonly persona: FixturePersona;
 }
 
 export type ComposerPhase = "idle" | "running" | "stopping";
 
 export interface ComposerAttachment {
-  readonly artifact: FixtureAttachment;
+  readonly byteLength?: number;
+  readonly displayName: string;
+  readonly id: EntityId;
+  readonly mediaType?: string;
   readonly source: "file" | "folder" | "image" | "screenshot";
 }
 
-export interface ChatsFixtureUiState {
+export interface ChatsUiState {
   readonly activeChatId: EntityId | null;
   readonly activePage: PrimaryPageId;
   readonly approvalMode: ApprovalMode;
+  readonly chatListStatus: "active" | "archived";
   readonly composerAttachments: readonly ComposerAttachment[];
   readonly composerPhase: ComposerPhase;
   readonly draft: string;
   readonly expandedItemIds: readonly EntityId[];
   readonly expandedRunIds: readonly EntityId[];
   readonly mode: "chat" | "agent";
-  readonly modelId: string;
+  readonly modelId: string | undefined;
   readonly resolvedApprovals: Readonly<Record<string, "approved" | "rejected">>;
   readonly searchQuery: string;
   readonly sidebarCollapsed: boolean;
 }
 
-export type ChatsFixtureUiAction =
+export type ChatsUiAction =
   | { readonly type: "page.selected"; readonly page: PrimaryPageId }
   | { readonly type: "sidebar.toggled" }
   | { readonly type: "chat.selected"; readonly chatId: EntityId }
   | { readonly type: "chat.new" }
+  | {
+      readonly type: "chat-list-status.changed";
+      readonly status: "active" | "archived";
+    }
   | { readonly type: "search.changed"; readonly query: string }
   | { readonly type: "draft.changed"; readonly draft: string }
   | { readonly type: "mode.changed"; readonly mode: "chat" | "agent" }
-  | { readonly type: "model.changed"; readonly modelId: string }
+  | {
+      readonly type: "model.changed";
+      readonly modelId: string | undefined;
+    }
   | {
       readonly type: "approval-mode.changed";
       readonly approvalMode: ApprovalMode;
@@ -98,7 +115,7 @@ export type ChatsFixtureUiAction =
     }
   | {
       readonly type: "composer.attachment-removed";
-      readonly artifactId: EntityId;
+      readonly attachmentId: EntityId;
     }
   | { readonly type: "run.toggled"; readonly runId: EntityId }
   | { readonly type: "item.toggled"; readonly itemId: EntityId }
@@ -107,3 +124,6 @@ export type ChatsFixtureUiAction =
       readonly approvalId: EntityId;
       readonly decision: "approved" | "rejected";
     };
+
+export type ChatsFixtureUiState = ChatsUiState;
+export type ChatsFixtureUiAction = ChatsUiAction;

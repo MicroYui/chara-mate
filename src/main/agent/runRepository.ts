@@ -388,6 +388,21 @@ export class RunRepository {
     };
   }
 
+  getActiveRun(chatId: string): Run | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, chat_id, execution_json, provider_json, status,
+                latest_sequence, created_at, started_at, ended_at, error_json
+         FROM runs
+         WHERE chat_id = ?
+           AND status IN ('queued', 'running', 'waiting_approval')
+         ORDER BY created_at, id
+         LIMIT 1`,
+      )
+      .get(chatId) as RunRow | undefined;
+    return row ? readRun(row) : undefined;
+  }
+
   private applyProjection(currentRun: Run, envelope: RunEventEnvelope): void {
     const { event } = envelope;
     switch (event.type) {

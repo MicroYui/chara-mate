@@ -20,6 +20,7 @@ import {
 import {
   type Dispatch,
   type ComponentPropsWithoutRef,
+  type ChangeEvent,
   type KeyboardEvent,
   forwardRef,
   useEffect,
@@ -28,19 +29,19 @@ import {
 } from "react";
 
 import type { ApprovalMode } from "../../../../shared/contracts";
-import { composerAttachmentFixtures } from "../fixtures";
 import type {
-  ChatsFixtureUiAction,
-  ChatsFixtureUiState,
+  ChatModelOption,
+  ChatsUiAction,
+  ChatsUiState,
   ComposerAttachment,
-  FixtureModel,
 } from "../types";
 import styles from "./Composer.module.css";
 
 interface ComposerProps {
-  readonly dispatch: Dispatch<ChatsFixtureUiAction>;
-  readonly models: readonly FixtureModel[];
-  readonly state: ChatsFixtureUiState;
+  readonly dispatch: Dispatch<ChatsUiAction>;
+  readonly models: readonly ChatModelOption[];
+  readonly runtimeEnabled?: boolean;
+  readonly state: ChatsUiState;
 }
 
 const approvalOptions = [
@@ -137,11 +138,11 @@ function ModePicker({
 }
 
 function ModelPicker({ dispatch, models, state }: ComposerProps) {
-  const selected = models.find(({ id }) => id === state.modelId) ?? models[0];
+  const selected = models.find(({ id }) => id === state.modelId);
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <ControlButton icon={Bot}>
+        <ControlButton icon={Bot} disabled={models.length === 0}>
           {selected?.displayName ?? "Model"}
         </ControlButton>
       </DropdownMenu.Trigger>
@@ -228,63 +229,119 @@ function attachmentLabel(attachment: ComposerAttachment): string {
       : "文件";
 }
 
+function fileAttachment(file: globalThis.File): ComposerAttachment {
+  return {
+    byteLength: file.size,
+    displayName: file.name,
+    id: crypto.randomUUID(),
+    ...(file.type ? { mediaType: file.type } : {}),
+    source: file.type.startsWith("image/") ? "image" : "file",
+  };
+}
+
 function AttachmentPicker({ dispatch }: Pick<ComposerProps, "dispatch">) {
-  const choices = [
-    {
-      attachment: composerAttachmentFixtures.file,
-      icon: File,
-      label: "添加文件",
-    },
-    {
-      attachment: composerAttachmentFixtures.image,
-      icon: Image,
-      label: "添加图片",
-    },
-    {
-      attachment: composerAttachmentFixtures.folder,
-      icon: Folder,
-      label: "添加文件夹",
-    },
-  ] as const;
+  const fileInput = useRef<HTMLInputElement>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+
+  const addFiles = (event: ChangeEvent<HTMLInputElement>) => {
+    for (const file of event.currentTarget.files ?? []) {
+      dispatch({
+        attachment: fileAttachment(file),
+        type: "composer.attachment-added",
+      });
+    }
+    event.currentTarget.value = "";
+  };
+
+  const addFolder = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = [...(event.currentTarget.files ?? [])];
+    const first = files[0];
+    if (first) {
+      const displayName = first.webkitRelativePath.split("/")[0] || first.name;
+      dispatch({
+        attachment: {
+          byteLength: files.reduce((total, file) => total + file.size, 0),
+          displayName,
+          id: crypto.randomUUID(),
+          source: "folder",
+        },
+        type: "composer.attachment-added",
+      });
+    }
+    event.currentTarget.value = "";
+  };
+
+  const directoryInputProperties = {
+    directory: "",
+    webkitdirectory: "",
+  } as Record<string, string>;
+
   return (
-    <Popover.Root>
-      <Popover.Trigger asChild>
-        <button
-          className={styles["iconButton"]}
-          type="button"
-          aria-label="添加附件"
-        >
-          <Plus aria-hidden="true" size={17} />
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          className={styles["attachmentMenu"]}
-          sideOffset={6}
-          align="start"
-        >
-          {choices.map(({ attachment, icon: Icon, label }) => (
-            <Popover.Close key={label} asChild>
-              <button
-                type="button"
-                onClick={() =>
-                  dispatch({ attachment, type: "composer.attachment-added" })
-                }
-              >
-                <Icon aria-hidden="true" size={15} />
-                <span>{label}</span>
+    <>
+      <input ref={fileInput} hidden multiple type="file" onChange={addFiles} />
+      <input
+        ref={imageInput}
+        accept="image/*"
+        hidden
+        multiple
+        type="file"
+        onChange={addFiles}
+      />
+      <input
+        ref={folderInput}
+        {...directoryInputProperties}
+        hidden
+        multiple
+        type="file"
+        onChange={addFolder}
+      />
+      <Popover.Root>
+        <Popover.Trigger asChild>
+          <button
+            className={styles["iconButton"]}
+            type="button"
+            aria-label="添加附件"
+          >
+            <Plus aria-hidden="true" size={17} />
+          </button>
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            className={styles["attachmentMenu"]}
+            sideOffset={6}
+            align="start"
+          >
+            <Popover.Close asChild>
+              <button type="button" onClick={() => fileInput.current?.click()}>
+                <File aria-hidden="true" size={15} />
+                <span>添加文件</span>
               </button>
             </Popover.Close>
-          ))}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+            <Popover.Close asChild>
+              <button type="button" onClick={() => imageInput.current?.click()}>
+                <Image aria-hidden="true" size={15} />
+                <span>添加图片</span>
+              </button>
+            </Popover.Close>
+            <Popover.Close asChild>
+              <button
+                type="button"
+                onClick={() => folderInput.current?.click()}
+              >
+                <Folder aria-hidden="true" size={15} />
+                <span>添加文件夹</span>
+              </button>
+            </Popover.Close>
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+    </>
   );
 }
 
 function MoreControls({ dispatch, models, state }: ComposerProps) {
-  const selectedModel =
-    models.find(({ id }) => id === state.modelId) ?? models[0];
+  const selectedModel = models.find(({ id }) => id === state.modelId);
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
@@ -352,7 +409,12 @@ function VoiceGlyph() {
   );
 }
 
-export function Composer({ dispatch, models, state }: ComposerProps) {
+export function Composer({
+  dispatch,
+  models,
+  runtimeEnabled = true,
+  state,
+}: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [dragging, setDragging] = useState(false);
   const canSend =
@@ -368,7 +430,7 @@ export function Composer({ dispatch, models, state }: ComposerProps) {
   }, [state.draft]);
 
   const send = () => {
-    if (canSend && state.composerPhase === "idle") {
+    if (runtimeEnabled && canSend && state.composerPhase === "idle") {
       dispatch({ phase: "running", type: "composer.phase-changed" });
     }
   };
@@ -401,27 +463,29 @@ export function Composer({ dispatch, models, state }: ComposerProps) {
       onDrop={(event) => {
         event.preventDefault();
         setDragging(false);
-        dispatch({
-          attachment: composerAttachmentFixtures.file,
-          type: "composer.attachment-added",
-        });
+        for (const file of event.dataTransfer.files) {
+          dispatch({
+            attachment: fileAttachment(file),
+            type: "composer.attachment-added",
+          });
+        }
       }}
     >
       {state.composerAttachments.length > 0 ? (
         <div className={styles["composerAttachments"]} aria-label="待发送附件">
           {state.composerAttachments.map((attachment) => (
-            <div key={attachment.artifact.artifactId}>
+            <div key={attachment.id}>
               <Paperclip aria-hidden="true" size={13} />
               <span>
-                <strong>{attachment.artifact.displayName}</strong>
+                <strong>{attachment.displayName}</strong>
                 <small>{attachmentLabel(attachment)}</small>
               </span>
               <button
                 type="button"
-                aria-label={`移除 ${attachment.artifact.displayName}`}
+                aria-label={`移除 ${attachment.displayName}`}
                 onClick={() =>
                   dispatch({
-                    artifactId: attachment.artifact.artifactId,
+                    attachmentId: attachment.id,
                     type: "composer.attachment-removed",
                   })
                 }
@@ -492,6 +556,10 @@ export function Composer({ dispatch, models, state }: ComposerProps) {
               className={styles["primaryButton"]}
               type="button"
               aria-label="发送"
+              disabled={!runtimeEnabled}
+              title={
+                runtimeEnabled ? undefined : "Agent Runtime 将在 Phase 2 接入"
+              }
               onClick={send}
             >
               <ArrowUp aria-hidden="true" size={17} />

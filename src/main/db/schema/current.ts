@@ -39,6 +39,16 @@ export const CURRENT_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS window_placements (
+    window_id TEXT PRIMARY KEY NOT NULL,
+    x INTEGER NOT NULL,
+    y INTEGER NOT NULL,
+    width INTEGER NOT NULL CHECK (width > 0),
+    height INTEGER NOT NULL CHECK (height > 0),
+    is_maximized INTEGER NOT NULL CHECK (is_maximized IN (0, 1)),
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY NOT NULL,
     chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -186,6 +196,9 @@ export const CURRENT_SCHEMA_SQL = `
     ON attachments(message_id, created_at, id);
   CREATE INDEX IF NOT EXISTS runs_chat_idx
     ON runs(chat_id, created_at, id);
+  CREATE UNIQUE INDEX IF NOT EXISTS runs_one_active_turn_per_chat_idx
+    ON runs(chat_id)
+    WHERE status IN ('queued', 'running', 'waiting_approval');
   CREATE INDEX IF NOT EXISTS run_items_run_idx
     ON run_items(run_id, sequence);
   CREATE INDEX IF NOT EXISTS tool_artifacts_item_idx

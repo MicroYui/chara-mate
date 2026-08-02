@@ -19,6 +19,7 @@ export const backgroundSchemes = [
 export type BackgroundScheme = (typeof backgroundSchemes)[number]["id"];
 
 const storageKey = "chara-mate.background-scheme";
+const sidebarStorageKey = "chara-mate.sidebar-collapsed";
 
 function isBackgroundScheme(value: string | null): value is BackgroundScheme {
   return backgroundSchemes.some(({ id }) => id === value);
@@ -43,5 +44,26 @@ export function writeBackgroundScheme(
     storage.setItem(storageKey, scheme);
   } catch {
     // The visual choice still applies for this session when storage is blocked.
+  }
+}
+
+export function readSidebarCollapsed(
+  storage: Pick<Storage, "getItem">,
+): boolean {
+  try {
+    return storage.getItem(sidebarStorageKey) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function writeSidebarCollapsed(
+  storage: Pick<Storage, "setItem">,
+  collapsed: boolean,
+): void {
+  try {
+    storage.setItem(sidebarStorageKey, String(collapsed));
+  } catch {
+    // The layout choice still applies for this session when storage is blocked.
   }
 }

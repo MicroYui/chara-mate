@@ -1,9 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import {
-  CHAT_DATA_CHANNELS,
-  type ChatDataApi,
+  CHAT_CHANNELS,
+  type ChatApi,
+  type ChatCreateRequest,
   type ChatDataSnapshotRequest,
+  type ChatIdRequest,
+  type ChatListRequest,
+  type ChatRenameRequest,
+  type ChatSetPinnedRequest,
 } from "../shared/contracts/chat";
 import {
   type CharaMateApi,
@@ -24,8 +29,16 @@ import {
   type ProviderTestConnectionRequest,
 } from "../shared/contracts/provider";
 import {
+  ChatCreateRequestSchema,
   ChatDataSnapshotRequestSchema,
-  ChatDataSnapshotResponseSchema,
+  ChatDeleteResponseSchema,
+  ChatGetSnapshotResponseSchema,
+  ChatIdRequestSchema,
+  ChatListRequestSchema,
+  ChatListResponseSchema,
+  ChatMutationResponseSchema,
+  ChatRenameRequestSchema,
+  ChatSetPinnedRequestSchema,
 } from "../shared/schemas/chat";
 import { FoundationSnapshotSchema } from "../shared/schemas/foundation";
 import {
@@ -46,15 +59,85 @@ import {
 } from "../shared/schemas/provider";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
 
-const chatDataApi: ChatDataApi = Object.freeze({
+const chatApi: ChatApi = Object.freeze({
+  archive: async (input: ChatIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      ChatIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      ChatMutationResponseSchema,
+      await ipcRenderer.invoke(CHAT_CHANNELS.archive, request),
+    );
+  },
+  create: async (input: ChatCreateRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      ChatCreateRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      ChatMutationResponseSchema,
+      await ipcRenderer.invoke(CHAT_CHANNELS.create, request),
+    );
+  },
+  delete: async (input: ChatIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      ChatIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      ChatDeleteResponseSchema,
+      await ipcRenderer.invoke(CHAT_CHANNELS.delete, request),
+    );
+  },
   getSnapshot: async (input: ChatDataSnapshotRequest) => {
     const request = parseSchemaWithoutCodeGeneration(
       ChatDataSnapshotRequestSchema,
       input,
     );
     return parseSchemaWithoutCodeGeneration(
-      ChatDataSnapshotResponseSchema,
-      await ipcRenderer.invoke(CHAT_DATA_CHANNELS.getSnapshot, request),
+      ChatGetSnapshotResponseSchema,
+      await ipcRenderer.invoke(CHAT_CHANNELS.getSnapshot, request),
+    );
+  },
+  list: async (input: ChatListRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      ChatListRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      ChatListResponseSchema,
+      await ipcRenderer.invoke(CHAT_CHANNELS.list, request),
+    );
+  },
+  rename: async (input: ChatRenameRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      ChatRenameRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      ChatMutationResponseSchema,
+      await ipcRenderer.invoke(CHAT_CHANNELS.rename, request),
+    );
+  },
+  restore: async (input: ChatIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      ChatIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      ChatMutationResponseSchema,
+      await ipcRenderer.invoke(CHAT_CHANNELS.restore, request),
+    );
+  },
+  setPinned: async (input: ChatSetPinnedRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      ChatSetPinnedRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      ChatMutationResponseSchema,
+      await ipcRenderer.invoke(CHAT_CHANNELS.setPinned, request),
     );
   },
 });
@@ -137,7 +220,7 @@ const providerApi: ProviderApi = Object.freeze({
 });
 
 const desktopApi: CharaMateApi = Object.freeze({
-  chatData: chatDataApi,
+  chat: chatApi,
   foundation: Object.freeze({
     getSnapshot: async () =>
       parseSchemaWithoutCodeGeneration(

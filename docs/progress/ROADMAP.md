@@ -1,6 +1,6 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Implementing
+> 状态：Phase 0 Done；Phase 1 Done；Phase 2 等待 Decision Gate
 > 日期：2026-08-01
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
@@ -117,7 +117,7 @@ flowchart TD
 ## 交付波次
 
 1. **Wave 0 — 串行入口（已完成）**：来源刷新、工具链兼容性、共享 Contract/Schema 所有权和测试命令基线。
-2. **Wave 1 — Phase 1 并行**：UI fixture、持久化/IPC、Provider/Secret 三条所有权不重叠的路径并行，随后由一个集成 owner 收口 Chats。
+2. **Wave 1 — Phase 1 并行（已完成）**：UI fixture、持久化/IPC、Provider/Secret 三条所有权不重叠的路径并行，随后由一个集成 owner 收口 Chats。
 3. **Wave 2 — Phase 2 主干**：先完成 Harness/Tool Discovery 决策，再实现唯一 Agent Runtime、Tool、Approval 和恢复路径。
 4. **Wave 3 — 多支线并行**：Agent 主干稳定后，Memory 研究、Voice Contract/实验、Automation 基础、桌宠基础与 Multi-agent 实验可并行；候选代码只在隔离 worktree。
 5. **Wave 4 — 长期理解支线**：Memory 胜者进入生产后，Activity、主动聊天、Self-evolution 实验和 Territory 记忆物件可并行。
@@ -148,6 +148,8 @@ flowchart TD
 - 没有业务空目录、ORM、通用 AI 框架、第二套构建路径或候选算法代码。
 
 ## Phase 1 — 产品骨架与 Chats
+
+> 里程碑状态：Done（2026-08-01）；退出条件全部通过，最新证据见 `docs/progress/STATUS.md`。
 
 ### 依赖
 
@@ -276,7 +278,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 - 桌宠基础窗口和 Pet 导入可在 Phase 1 后并行开发；状态与审批投影依赖 Phase 2；
 - Memory 物件依赖 Phase 3，Activity 趋势候选依赖 Activity；
-- Image Generation 依赖 Provider Adapter 和真实 Azure Contract Test。
+- Image Generation/Edit 共用一套 deployment 配置，依赖 Provider Adapter 和真实 Azure Contract Test。
 
 ### 工作包
 
@@ -285,7 +287,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P6-PET-IMPORT`：Codex v1/v2 校验、复制安装、自有目录和缺失 look row 降级。
 - `P6-TERRITORY-BASE`：基础像素场景、图层、nav grid、角色移动、布置和收藏库。
 - `P6-TERRITORY-MEMORY`：Memory/Activity candidate、来源追溯、容量回收、版本与 pin。
-- `P6-TERRITORY-IMAGE`：统一 style prompt、Image Generation、去背景/tile 处理、缓存和失败恢复。
+- `P6-TERRITORY-IMAGE`：同一 deployment 的 Generation/Edit 路由、统一 style prompt、去背景/tile 处理、缓存和失败恢复。
 
 ### 验收
 

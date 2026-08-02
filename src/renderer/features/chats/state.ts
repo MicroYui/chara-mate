@@ -1,6 +1,5 @@
 import type { EntityId } from "../../../shared/contracts";
-import { chatsFixture, chatsFixtureIds } from "./fixtures";
-import type { ChatsFixtureUiAction, ChatsFixtureUiState } from "./types";
+import type { ChatsUiAction, ChatsUiState } from "./types";
 
 function toggleId(ids: readonly EntityId[], id: EntityId): readonly EntityId[] {
   return ids.includes(id)
@@ -8,26 +7,27 @@ function toggleId(ids: readonly EntityId[], id: EntityId): readonly EntityId[] {
     : [...ids, id];
 }
 
-export const initialChatsFixtureUiState: ChatsFixtureUiState = {
-  activeChatId: chatsFixtureIds.designChat,
+export const initialChatsUiState: ChatsUiState = {
+  activeChatId: null,
   activePage: "chats",
   approvalMode: "request_approval",
+  chatListStatus: "active",
   composerAttachments: [],
   composerPhase: "idle",
   draft: "",
   expandedItemIds: [],
   expandedRunIds: [],
-  mode: "agent",
-  modelId: chatsFixture.models[0].id,
+  mode: "chat",
+  modelId: undefined,
   resolvedApprovals: {},
   searchQuery: "",
   sidebarCollapsed: false,
 };
 
-export function chatsFixtureUiReducer(
-  state: ChatsFixtureUiState,
-  action: ChatsFixtureUiAction,
-): ChatsFixtureUiState {
+export function chatsUiReducer(
+  state: ChatsUiState,
+  action: ChatsUiAction,
+): ChatsUiState {
   switch (action.type) {
     case "page.selected":
       return { ...state, activePage: action.page };
@@ -53,6 +53,14 @@ export function chatsFixtureUiReducer(
         expandedRunIds: [],
         mode: "chat",
       };
+    case "chat-list-status.changed":
+      return {
+        ...state,
+        activeChatId: null,
+        chatListStatus: action.status,
+        expandedItemIds: [],
+        expandedRunIds: [],
+      };
     case "search.changed":
       return { ...state, searchQuery: action.query };
     case "draft.changed":
@@ -67,10 +75,7 @@ export function chatsFixtureUiReducer(
       return { ...state, composerPhase: action.phase };
     case "composer.attachment-added":
       if (
-        state.composerAttachments.some(
-          ({ artifact }) =>
-            artifact.artifactId === action.attachment.artifact.artifactId,
-        )
+        state.composerAttachments.some(({ id }) => id === action.attachment.id)
       ) {
         return state;
       }
@@ -82,7 +87,7 @@ export function chatsFixtureUiReducer(
       return {
         ...state,
         composerAttachments: state.composerAttachments.filter(
-          ({ artifact }) => artifact.artifactId !== action.artifactId,
+          ({ id }) => id !== action.attachmentId,
         ),
       };
     case "run.toggled":
@@ -106,18 +111,5 @@ export function chatsFixtureUiReducer(
   }
 }
 
-export function selectActiveFixtureChat(state: ChatsFixtureUiState) {
-  return state.activeChatId === null
-    ? undefined
-    : chatsFixture.chats.find(({ record }) => record.id === state.activeChatId);
-}
-
-export function selectFilteredFixtureChats(state: ChatsFixtureUiState) {
-  const query = state.searchQuery.trim().toLocaleLowerCase();
-  if (!query) {
-    return chatsFixture.chats;
-  }
-  return chatsFixture.chats.filter(({ record }) =>
-    record.title.toLocaleLowerCase().includes(query),
-  );
-}
+export const initialChatsFixtureUiState = initialChatsUiState;
+export const chatsFixtureUiReducer = chatsUiReducer;

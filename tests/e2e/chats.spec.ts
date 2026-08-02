@@ -11,14 +11,14 @@ const projectRoot = path.resolve(
   "../..",
 );
 
-test("covers the Chats fixture interaction journey", async () => {
+test("manages real Chats and restores product state after an Electron restart", async () => {
   const userDataDirectory = await mkdtemp(
     path.join(os.tmpdir(), "chara-mate-chats-e2e-"),
   );
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
 
-  try {
-    application = await electron.launch({
+  const launchApplication = async (expectedHeading = "新对话") => {
+    const launched = await electron.launch({
       args: [projectRoot],
       cwd: projectRoot,
       env: {
@@ -26,10 +26,17 @@ test("covers the Chats fixture interaction journey", async () => {
         CHARAMATE_USER_DATA_DIR: userDataDirectory,
       },
     });
-    const page = await application.firstWindow();
+    const page = await launched.firstWindow();
     await expect(
-      page.getByRole("heading", { name: "Phase 1 UI" }),
+      page.getByRole("heading", { name: expectedHeading }),
     ).toBeVisible();
+    return { launched, page };
+  };
+
+  try {
+    const first = await launchApplication();
+    application = first.launched;
+    const page = first.page;
     await expect(page.getByRole("button", { name: "Territory" })).toBeVisible();
     const petImage = page.getByRole("img", { name: "Mika 桌宠" });
     await expect(petImage).toHaveJSProperty("complete", true);
@@ -38,6 +45,7 @@ test("covers the Chats fixture interaction journey", async () => {
         (image) => (image as HTMLImageElement).naturalWidth,
       ),
     ).toBeGreaterThan(0);
+
     const settingsBox = await page
       .getByRole("button", { name: "Settings" })
       .boundingBox();
@@ -46,44 +54,129 @@ test("covers the Chats fixture interaction journey", async () => {
       .boundingBox();
     expect(settingsBox).not.toBeNull();
     expect(collapseBox).not.toBeNull();
-    const settingsCenter = settingsBox!.y + settingsBox!.height / 2;
-    const collapseCenter = collapseBox!.y + collapseBox!.height / 2;
-    expect(Math.abs(settingsCenter - collapseCenter)).toBeLessThan(1);
+    expect(
+      Math.abs(
+        settingsBox!.y +
+          settingsBox!.height / 2 -
+          (collapseBox!.y + collapseBox!.height / 2),
+      ),
+    ).toBeLessThan(1);
 
     await page.getByRole("button", { name: "新建对话" }).click();
     await expect(
-      page.getByRole("heading", { name: "今天想从哪里开始？" }),
+      page.getByRole("button", { exact: true, name: "新对话" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "聊聊今天发生的事" }).click();
-    await expect(page.getByRole("textbox", { name: "消息" })).toHaveValue(
-      "聊聊今天发生的事",
-    );
+    await page.getByRole("button", { name: "更多会话操作" }).click();
+    await page.getByRole("menuitem", { name: "重命名" }).click();
+    const titleInput = page.getByRole("textbox", { name: "会话标题" });
+    await titleInput.fill("Phase 1 真实会话");
+    await titleInput.press("Enter");
+    await expect(
+      page.getByRole("heading", { name: "Phase 1 真实会话" }),
+    ).toBeVisible();
 
+    await page.getByRole("button", { name: "更多会话操作" }).click();
+    await page.getByRole("menuitem", { name: "置顶" }).click();
+    await expect(page.getByLabel("已置顶")).toBeVisible();
+
+    await page.getByRole("button", { name: "聊聊今天发生的事" }).click();
+    const composer = page.getByRole("textbox", { name: "消息" });
+    await expect(composer).toHaveValue("聊聊今天发生的事");
+    await expect(page.getByRole("button", { name: "发送" })).toBeDisabled();
     await page.getByRole("button", { exact: true, name: "Chat" }).click();
     await page.getByRole("menuitem", { name: /^Agent/u }).click();
+    await expect(composer).toHaveValue("聊聊今天发生的事");
     await expect(page.getByRole("button", { name: /请求批准/u })).toBeVisible();
-    await page.getByRole("button", { name: "发送" }).click();
-    await expect(page.getByRole("button", { name: "停止" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "发送" })).toBeDisabled();
 
-    await page.getByRole("button", { name: /Phase 1 UI/u }).click();
-    const completedRun = page.getByRole("button", { name: /已处理/u });
-    await expect(completedRun).toHaveAttribute("aria-expanded", "false");
-    await completedRun.click();
-    await expect(page.getByText("已运行命令", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "新建对话" }).click();
+    await page.getByRole("button", { name: "更多会话操作" }).click();
+    await page.getByRole("menuitem", { name: "重命名" }).click();
+    await page.getByRole("textbox", { name: "会话标题" }).fill("临时会话");
+    await page.getByRole("textbox", { name: "会话标题" }).press("Enter");
+    await expect(page.getByRole("heading", { name: "临时会话" })).toBeVisible();
 
-    await page.getByRole("button", { name: "实现 Chats UI" }).click();
-    await expect(page.getByLabel("需要你的确认")).toBeVisible();
-    await page.getByRole("button", { name: "查看详情" }).click();
-    await expect(page.getByText("file.apply_patch")).toBeVisible();
-    await page.getByRole("button", { name: "允许一次" }).click();
-    await expect(page.getByRole("status")).toContainText("已允许一次");
-
-    await page.getByRole("button", { name: "Settings" }).click();
-    await page.getByRole("radio", { name: /暖灰/u }).check();
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-background-scheme",
-      "warm",
+    const search = page.getByRole("searchbox", { name: "搜索会话" });
+    await search.fill("真实");
+    await expect(
+      page.getByRole("button", { exact: true, name: /Phase 1 真实会话/u }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { exact: true, name: "临时会话" }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("button", { exact: true, name: /Phase 1 真实会话/u })
+      .click();
+    await page.getByRole("button", { name: "归档会话" }).click();
+    await expect(page.getByText("没有匹配的会话")).toBeVisible();
+    await page.getByRole("button", { name: "已归档" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Phase 1 真实会话" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "恢复会话" }).click();
+    await expect(page.getByRole("button", { name: "最近" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
+
+    await search.fill("");
+    await page.getByRole("button", { exact: true, name: "临时会话" }).click();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "更多会话操作" }).click();
+    await page.getByRole("menuitem", { name: "删除" }).click();
+    await expect(
+      page.getByRole("button", { exact: true, name: "临时会话" }),
+    ).toHaveCount(0);
+
+    const savedBounds = await application.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (!window) throw new Error("Missing main window");
+      const current = window.getBounds();
+      window.setBounds({
+        height: 700,
+        width: 1020,
+        x: current.x + 20,
+        y: current.y + 20,
+      });
+      return window.getBounds();
+    });
+    await page.getByRole("button", { name: "折叠侧栏" }).click();
+    await expect(page.getByRole("button", { name: "展开侧栏" })).toBeVisible();
+
+    await application.close();
+    application = undefined;
+    const second = await launchApplication("Phase 1 真实会话");
+    application = second.launched;
+    await expect(
+      second.page.getByRole("heading", { name: "Phase 1 真实会话" }),
+    ).toBeVisible();
+    await expect(
+      second.page.getByRole("button", { name: "展开侧栏" }),
+    ).toBeVisible();
+    const restoredBounds = await application.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (!window) throw new Error("Missing main window");
+      return window.getBounds();
+    });
+    expect(
+      Math.abs(restoredBounds.width - savedBounds.width),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(restoredBounds.height - savedBounds.height),
+    ).toBeLessThanOrEqual(2);
+    expect(Math.abs(restoredBounds.x - savedBounds.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(restoredBounds.y - savedBounds.y)).toBeLessThanOrEqual(2);
+
+    await second.page.getByRole("button", { name: "展开侧栏" }).click();
+    await expect(
+      second.page.getByRole("button", {
+        exact: true,
+        name: /Phase 1 真实会话/u,
+      }),
+    ).toBeVisible();
+    await expect(
+      second.page.getByRole("button", { exact: true, name: "临时会话" }),
+    ).toHaveCount(0);
   } finally {
     try {
       await application?.close();

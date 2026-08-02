@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { composerAttachmentFixtures } from "./fixtures";
-import {
-  chatsFixtureUiReducer,
-  initialChatsFixtureUiState,
-  selectActiveFixtureChat,
-  selectFilteredFixtureChats,
-} from "./state";
+import { chatsFixtureUiReducer, initialChatsFixtureUiState } from "./state";
 
 describe("Chats fixture UI state", () => {
   it("keeps the draft when switching between Chat and Agent", () => {
@@ -40,7 +35,7 @@ describe("Chats fixture UI state", () => {
       expandedRunIds: [],
       mode: "chat",
     });
-    expect(selectActiveFixtureChat(newChat)).toBeUndefined();
+    expect(newChat.activeChatId).toBeNull();
   });
 
   it("adds each attachment once and removes it by artifact ID", () => {
@@ -53,7 +48,7 @@ describe("Chats fixture UI state", () => {
       type: "composer.attachment-added",
     });
     const removed = chatsFixtureUiReducer(duplicate, {
-      artifactId: composerAttachmentFixtures.file.artifact.artifactId,
+      attachmentId: composerAttachmentFixtures.file.id,
       type: "composer.attachment-removed",
     });
 
@@ -83,15 +78,13 @@ describe("Chats fixture UI state", () => {
     });
   });
 
-  it("filters recent Chats without changing the active Chat", () => {
+  it("changes the repository-backed Chat list scope and clears the selection", () => {
     const state = chatsFixtureUiReducer(initialChatsFixtureUiState, {
-      query: "旅行",
-      type: "search.changed",
+      status: "archived",
+      type: "chat-list-status.changed",
     });
 
-    expect(
-      selectFilteredFixtureChats(state).map(({ record }) => record.title),
-    ).toEqual(["周末旅行计划"]);
-    expect(selectActiveFixtureChat(state)?.record.title).toBe("Phase 1 UI");
+    expect(state.chatListStatus).toBe("archived");
+    expect(state.activeChatId).toBeNull();
   });
 });

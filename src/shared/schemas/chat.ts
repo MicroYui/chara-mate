@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type, type TSchema } from "@sinclair/typebox";
 
 import {
   EntityIdSchema,
@@ -6,6 +6,7 @@ import {
   Sha256Schema,
   TimestampSchema,
 } from "./primitives";
+import { AppErrorSchema } from "./error";
 import { ApprovalSchema, RunItemSchema, RunSchema } from "./run";
 
 export const ChatStatusSchema = Type.Union([
@@ -100,3 +101,59 @@ export const ChatDataSnapshotResponseSchema = Type.Union([
   ChatDataSnapshotSchema,
   Type.Null(),
 ]);
+
+export const ChatListRequestSchema = Type.Object(
+  {
+    query: Type.Optional(Type.String()),
+    status: ChatStatusSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const ChatCreateRequestSchema = Type.Object(
+  { title: Type.Optional(NonBlankStringSchema) },
+  { additionalProperties: false },
+);
+
+export const ChatRenameRequestSchema = Type.Object(
+  {
+    chatId: EntityIdSchema,
+    title: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const ChatSetPinnedRequestSchema = Type.Object(
+  {
+    chatId: EntityIdSchema,
+    pinned: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export const ChatIdRequestSchema = Type.Object(
+  { chatId: EntityIdSchema },
+  { additionalProperties: false },
+);
+
+function operationResponse<TValue extends TSchema>(value: TValue) {
+  return Type.Union([
+    Type.Object(
+      { ok: Type.Literal(true), value },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      { error: AppErrorSchema, ok: Type.Literal(false) },
+      { additionalProperties: false },
+    ),
+  ]);
+}
+
+export const ChatListResponseSchema = operationResponse(Type.Array(ChatSchema));
+export const ChatMutationResponseSchema = operationResponse(ChatSchema);
+export const ChatDeleteResponseSchema = operationResponse(
+  Type.Object({ chatId: EntityIdSchema }, { additionalProperties: false }),
+);
+export const ChatGetSnapshotResponseSchema = operationResponse(
+  ChatDataSnapshotResponseSchema,
+);

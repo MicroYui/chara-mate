@@ -2,7 +2,12 @@ import { isDeepStrictEqual } from "node:util";
 
 import type Database from "better-sqlite3";
 
-import type { Attachment, Chat, Message } from "../../shared/contracts/chat";
+import type {
+  Attachment,
+  Chat,
+  ChatStatus,
+  Message,
+} from "../../shared/contracts/chat";
 import {
   AttachmentSchema,
   ChatSchema,
@@ -49,6 +54,11 @@ export interface ChatPersistenceSnapshot {
   attachments: Attachment[];
   chat: Chat;
   messages: Message[];
+}
+
+export interface ChatListFilter {
+  query?: string;
+  status: ChatStatus;
 }
 
 function readChat(row: ChatRow): Chat {
@@ -146,6 +156,41 @@ export class ChatRepository {
     );
   }
 
+  getChat(chatId: string): Chat | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, title, status, pinned_at, archived_at, created_at, updated_at
+         FROM chats
+         WHERE id = ?`,
+      )
+      .get(chatId) as ChatRow | undefined;
+    return row ? readChat(row) : undefined;
+  }
+
+  listChats(filter: ChatListFilter): Chat[] {
+    const query = filter.query?.trim();
+    const rows = (
+      query
+        ? this.database
+            .prepare(
+              `SELECT id, title, status, pinned_at, archived_at, created_at, updated_at
+               FROM chats
+               WHERE status = ? AND instr(lower(title), lower(?)) > 0
+               ORDER BY (pinned_at IS NULL), pinned_at DESC, updated_at DESC, id`,
+            )
+            .all(filter.status, query)
+        : this.database
+            .prepare(
+              `SELECT id, title, status, pinned_at, archived_at, created_at, updated_at
+               FROM chats
+               WHERE status = ?
+               ORDER BY (pinned_at IS NULL), pinned_at DESC, updated_at DESC, id`,
+            )
+            .all(filter.status)
+    ) as ChatRow[];
+    return rows.map(readChat);
+  }
+
   insertMessage(message: Message): Message {
     const persisted = sanitizeForPersistence(MessageSchema, message);
     this.database
@@ -237,14 +282,8 @@ export class ChatRepository {
   }
 
   getSnapshot(chatId: string): ChatPersistenceSnapshot | null {
-    const chatRow = this.database
-      .prepare(
-        `SELECT id, title, status, pinned_at, archived_at, created_at, updated_at
-         FROM chats
-         WHERE id = ?`,
-      )
-      .get(chatId) as ChatRow | undefined;
-    if (!chatRow) {
+    const chat = this.getChat(chatId);
+    if (!chat) {
       return null;
     }
 
@@ -268,7 +307,7 @@ export class ChatRepository {
 
     return {
       attachments: attachmentRows.map(readAttachment),
-      chat: readChat(chatRow),
+      chat,
       messages: messageRows.map(readMessage),
     };
   }

@@ -1,13 +1,65 @@
 import path from "node:path";
 
-import { BrowserWindow } from "electron";
+import { BrowserWindow, screen } from "electron";
 
-export async function createMainWindow(): Promise<BrowserWindow> {
+import type { Clock } from "../../shared/pure/clock";
+import type {
+  WindowPlacement,
+  WindowPlacementRepository,
+} from "./windowPlacementRepository";
+
+const MAIN_WINDOW_ID = "main-panel";
+const DEFAULT_WIDTH = 1180;
+const DEFAULT_HEIGHT = 800;
+const MIN_WIDTH = 900;
+const MIN_HEIGHT = 640;
+
+function normalizedBounds(saved: WindowPlacement | undefined) {
+  const desired = saved ?? {
+    height: DEFAULT_HEIGHT,
+    width: DEFAULT_WIDTH,
+    x: screen.getPrimaryDisplay().workArea.x,
+    y: screen.getPrimaryDisplay().workArea.y,
+  };
+  const workArea = screen.getDisplayMatching(desired).workArea;
+  const width = Math.min(Math.max(desired.width, MIN_WIDTH), workArea.width);
+  const height = Math.min(
+    Math.max(desired.height, MIN_HEIGHT),
+    workArea.height,
+  );
+  const centeredX = workArea.x + Math.round((workArea.width - width) / 2);
+  const centeredY = workArea.y + Math.round((workArea.height - height) / 2);
+  const x = saved
+    ? Math.min(
+        Math.max(saved.x, workArea.x),
+        workArea.x + workArea.width - width,
+      )
+    : centeredX;
+  const y = saved
+    ? Math.min(
+        Math.max(saved.y, workArea.y),
+        workArea.y + workArea.height - height,
+      )
+    : centeredY;
+  return { height, width, x, y };
+}
+
+export async function createMainWindow(
+  placements?: WindowPlacementRepository,
+  clock?: Clock,
+): Promise<BrowserWindow> {
+  const saved = placements?.get(MAIN_WINDOW_ID);
+  const bounds = normalizedBounds(saved);
   const window = new BrowserWindow({
-    width: 1180,
-    height: 800,
-    minWidth: 900,
-    minHeight: 640,
+    ...bounds,
+    ...(process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 14, y: 14 },
+        }
+      : {}),
+    minWidth: Math.min(MIN_WIDTH, bounds.width),
+    minHeight: Math.min(MIN_HEIGHT, bounds.height),
     show: false,
     title: "CharaMate",
     webPreferences: {
@@ -20,7 +72,20 @@ export async function createMainWindow(): Promise<BrowserWindow> {
   });
 
   window.once("ready-to-show", () => {
+    if (saved?.isMaximized) {
+      window.maximize();
+    }
     window.show();
+  });
+
+  window.on("close", () => {
+    if (!placements || !clock) return;
+    const normalBounds = window.getNormalBounds();
+    placements.save(MAIN_WINDOW_ID, {
+      ...normalBounds,
+      isMaximized: window.isMaximized(),
+      updatedAt: clock.now(),
+    });
   });
 
   if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {

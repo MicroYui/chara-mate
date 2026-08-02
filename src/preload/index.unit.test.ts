@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CharaMateApi } from "../shared/contracts/foundation";
-import { CHAT_DATA_CHANNELS } from "../shared/contracts/chat";
+import { CHAT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import {
   chatDataSnapshotFixture,
@@ -43,19 +43,19 @@ describe("Phase 1 typed preload data boundary", () => {
   it("validates Chat snapshot requests and Main responses", async () => {
     electron.ipcRenderer.invoke.mockImplementation(
       (channel: string, input: unknown) => {
-        expect(channel).toBe(CHAT_DATA_CHANNELS.getSnapshot);
+        expect(channel).toBe(CHAT_CHANNELS.getSnapshot);
         expect(input).toEqual({ chatId: FIXTURE_IDS.chat });
-        return Promise.resolve(chatDataSnapshotFixture);
+        return Promise.resolve({ ok: true, value: chatDataSnapshotFixture });
       },
     );
     const api = await loadApi();
 
     await expect(
-      api.chatData.getSnapshot({ chatId: FIXTURE_IDS.chat }),
-    ).resolves.toEqual(chatDataSnapshotFixture);
-    await expect(
-      api.chatData.getSnapshot({ chatId: "not-an-id" }),
-    ).rejects.toThrow(/chatId|pattern/u);
+      api.chat.getSnapshot({ chatId: FIXTURE_IDS.chat }),
+    ).resolves.toEqual({ ok: true, value: chatDataSnapshotFixture });
+    await expect(api.chat.getSnapshot({ chatId: "not-an-id" })).rejects.toThrow(
+      /chatId|pattern/u,
+    );
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });
 

@@ -54,9 +54,7 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
       },
     });
     const page = await application.firstWindow();
-    await expect(
-      page.getByRole("heading", { name: "Phase 1 UI" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "新对话" })).toBeVisible();
     return { application, page };
   }
 
@@ -142,6 +140,9 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
     expect(row.apiKeyRef).not.toBe(secret);
 
     const second = await launchApplication();
+    await expect(
+      second.page.getByRole("button", { name: "e2e-model" }),
+    ).toBeVisible();
     await second.page.getByRole("button", { name: "Settings" }).click();
     await second.page.getByRole("button", { name: "Models" }).click();
     await expect(
@@ -153,7 +154,7 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
     await second.page.getByRole("button", { name: /E2E Provider/u }).click();
     await second.page.getByText("Realtime 与 Image").click();
     await expect(
-      second.page.getByLabel("Image Generation Endpoint"),
+      second.page.getByLabel("Image Endpoint（Generation 基准）"),
     ).toHaveValue(`${baseUrl}/images/generations`);
     const profiles = await second.page.evaluate(() =>
       window.charaMate.provider.listProfiles(),

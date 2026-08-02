@@ -100,10 +100,12 @@ function resultError(result: {
 
 export interface ProviderSettingsPanelProps {
   api?: ProviderApi;
+  onProfilesChanged?: () => void;
 }
 
 export function ProviderSettingsPanel({
   api = window.charaMate.provider,
+  onProfilesChanged,
 }: ProviderSettingsPanelProps) {
   const [profiles, setProfiles] = useState<ProviderProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
@@ -205,7 +207,7 @@ export function ProviderSettingsPanel({
       ) {
         setStatus("Realtime 握手成功，测试连接已关闭。");
       } else if (result.value.status === "connected") {
-        setStatus("Image 配置可用：凭据与模型验证成功，未发起生图。");
+        setStatus("Image 配置可用：凭据与模型验证成功，未发起生成或编辑。");
       } else if (result.value.capability === "image") {
         setStatus("该 Provider 不支持无生成验证，请手动确认 Image 配置。");
       } else {
@@ -268,6 +270,7 @@ export function ProviderSettingsPanel({
         result.value,
         ...current.filter((profile) => profile.id !== result.value.id),
       ]);
+      onProfilesChanged?.();
       setStatus("Provider 已保存，API Key 不会回传到 Renderer。");
     } catch {
       setError(unexpectedRequestMessage);
@@ -290,6 +293,7 @@ export function ProviderSettingsPanel({
       setProfiles((current) =>
         current.filter((profile) => profile.id !== result.value.profileId),
       );
+      onProfilesChanged?.();
       startNewProfile();
       setStatus("Provider 已删除。关联的加密密钥也已清理。");
     } catch {
@@ -526,7 +530,10 @@ export function ProviderSettingsPanel({
                 <header className={styles["capabilityHeader"]}>
                   <div>
                     <h3 id="provider-image-title">Image</h3>
-                    <p>使用上方 API Key；验证 URL 与模型，不发起生图。</p>
+                    <p>
+                      使用上方 API
+                      Key；一套部署同时用于生成与编辑。测试不发起生图。
+                    </p>
                   </div>
                   <button
                     disabled={busy}
@@ -538,7 +545,7 @@ export function ProviderSettingsPanel({
                 </header>
                 <div className={styles["detailsGrid"]}>
                   <label>
-                    Image Generation Endpoint
+                    Image Endpoint（Generation 基准）
                     <input
                       inputMode="url"
                       onChange={(event) =>

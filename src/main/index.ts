@@ -9,11 +9,12 @@ import { SystemClock } from "../shared/pure/clock";
 import { CryptoIdGenerator } from "../shared/pure/id";
 import { RunEventService } from "./agent/runEventService";
 import { RunRepository } from "./agent/runRepository";
-import { registerChatDataIpc } from "./app/chatDataIpc";
+import { registerChatIpc } from "./app/chatIpc";
 import { registerFoundationIpc } from "./app/foundationIpc";
+import { WindowPlacementRepository } from "./app/windowPlacementRepository";
 import { createMainWindow } from "./app/windows";
-import { ChatDataService } from "./chat/chatDataService";
 import { ChatRepository } from "./chat/chatRepository";
+import { ChatService } from "./chat/chatService";
 import {
   openApplicationDatabase,
   verifyDatabaseRoundTrip,
@@ -49,19 +50,21 @@ function getSupportedPlatform(): FoundationSnapshot["platform"] {
 
 let mainWindow: BrowserWindow | null = null;
 let applicationDatabase: Database.Database | undefined;
-let unregisterChatDataIpc: (() => void) | undefined;
+let unregisterChatIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
 let unregisterProviderIpc: (() => void) | undefined;
 let providerService: ProviderService | undefined;
+let windowPlacementRepository: WindowPlacementRepository | undefined;
 
 function stopApplicationInfrastructure(): void {
-  unregisterChatDataIpc?.();
-  unregisterChatDataIpc = undefined;
+  unregisterChatIpc?.();
+  unregisterChatIpc = undefined;
   unregisterFoundationIpc?.();
   unregisterFoundationIpc = undefined;
   unregisterProviderIpc?.();
   unregisterProviderIpc = undefined;
   providerService = undefined;
+  windowPlacementRepository = undefined;
   applicationDatabase?.close();
   applicationDatabase = undefined;
 }
@@ -88,8 +91,13 @@ async function startApplication(): Promise<void> {
   };
 
   applicationDatabase = openApplicationDatabase(databasePath);
+  const idGenerator = new CryptoIdGenerator();
+  const clock = new SystemClock();
   const chatRepository = new ChatRepository(applicationDatabase);
   const runRepository = new RunRepository(applicationDatabase);
+  windowPlacementRepository = new WindowPlacementRepository(
+    applicationDatabase,
+  );
   const runEventService = new RunEventService(runRepository, {
     publish(envelope) {
       for (const window of BrowserWindow.getAllWindows()) {
@@ -108,12 +116,11 @@ async function startApplication(): Promise<void> {
       }
     },
   });
-  unregisterChatDataIpc = registerChatDataIpc(
-    new ChatDataService(chatRepository, runRepository),
+  unregisterChatIpc = registerChatIpc(
+    new ChatService(chatRepository, runRepository, idGenerator, clock),
     runEventService,
   );
 
-  const idGenerator = new CryptoIdGenerator();
   providerService = new ProviderService(
     new ProviderRepository(applicationDatabase),
     new SafeStorageSecretStore(
@@ -122,7 +129,7 @@ async function startApplication(): Promise<void> {
       idGenerator,
     ),
     idGenerator,
-    new SystemClock(),
+    clock,
     logger,
   );
   await providerService.initialize();
@@ -138,7 +145,7 @@ async function startApplication(): Promise<void> {
     }
   });
 
-  mainWindow = await createMainWindow();
+  mainWindow = await createMainWindow(windowPlacementRepository, clock);
   if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
     console.error("CHARAMATE_MAIN_STAGE window-loaded");
     await rendererReady;
@@ -167,9 +174,11 @@ void app
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    void createMainWindow().then((window) => {
-      mainWindow = window;
-    });
+    void createMainWindow(windowPlacementRepository, new SystemClock()).then(
+      (window) => {
+        mainWindow = window;
+      },
+    );
   }
 });
 

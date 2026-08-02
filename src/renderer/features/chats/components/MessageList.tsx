@@ -12,12 +12,12 @@ import { type Dispatch, useEffect, useMemo, useRef, useState } from "react";
 import type { EntityId } from "../../../../shared/contracts";
 import { MarkdownRenderer } from "../content/MarkdownRenderer";
 import type {
-  ChatsFixtureUiAction,
-  ChatsFixtureUiState,
-  FixtureAttachment,
-  FixtureChat,
-  FixtureMessage,
-  FixtureRun,
+  ChatAttachmentView,
+  ChatMessageView,
+  ChatRunView,
+  ChatsUiAction,
+  ChatsUiState,
+  ChatView,
 } from "../types";
 import { CopyButton } from "./CopyButton";
 import { RunProcess } from "./RunProcess";
@@ -27,14 +27,18 @@ type TimelineEntry =
   | {
       readonly id: EntityId;
       readonly kind: "message";
-      readonly value: FixtureMessage;
+      readonly value: ChatMessageView;
     }
-  | { readonly id: EntityId; readonly kind: "run"; readonly value: FixtureRun };
+  | {
+      readonly id: EntityId;
+      readonly kind: "run";
+      readonly value: ChatRunView;
+    };
 
 interface MessageListProps {
-  readonly chat: FixtureChat;
-  readonly dispatch: Dispatch<ChatsFixtureUiAction>;
-  readonly state: ChatsFixtureUiState;
+  readonly chat: ChatView;
+  readonly dispatch: Dispatch<ChatsUiAction>;
+  readonly state: ChatsUiState;
 }
 
 function formatBytes(byteLength: number | undefined): string | undefined {
@@ -53,7 +57,7 @@ function formatBytes(byteLength: number | undefined): string | undefined {
 function AttachmentCard({
   attachment,
 }: {
-  readonly attachment: FixtureAttachment;
+  readonly attachment: ChatAttachmentView;
 }) {
   const Icon =
     attachment.kind === "directory"
@@ -79,7 +83,7 @@ function AttachmentCard({
   );
 }
 
-function Message({ value }: { readonly value: FixtureMessage }) {
+function Message({ value }: { readonly value: ChatMessageView }) {
   const isUser = value.record.role === "user";
   return (
     <article
@@ -124,7 +128,7 @@ function Message({ value }: { readonly value: FixtureMessage }) {
   );
 }
 
-function buildTimeline(chat: FixtureChat): readonly TimelineEntry[] {
+function buildTimeline(chat: ChatView): readonly TimelineEntry[] {
   const runsById = new Map(chat.runs.map((run) => [run.record.id, run]));
   const entries: TimelineEntry[] = [];
 

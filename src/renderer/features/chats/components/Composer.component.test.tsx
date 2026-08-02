@@ -24,6 +24,19 @@ function ComposerHarness({
 }
 
 describe("Composer", () => {
+  it("requires an explicit choice when several Provider models are available", async () => {
+    render(<ComposerHarness />);
+
+    const modelButton = screen.getByRole("button", { name: "Model" });
+    expect(modelButton).toBeVisible();
+    fireEvent.pointerDown(modelButton, { button: 0, ctrlKey: false });
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "GPT-5OpenAI" }),
+    );
+
+    expect(screen.getByRole("button", { name: "GPT-5" })).toBeVisible();
+  });
+
   it("keeps the draft when switching from Agent to Chat and hides permission", async () => {
     render(
       <ComposerHarness initial={{ draft: "保留这段内容", mode: "agent" }} />,
@@ -48,19 +61,24 @@ describe("Composer", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("adds and removes a fixture attachment from the composer", async () => {
-    render(<ComposerHarness />);
+  it("adds and removes a selected local file from the composer", () => {
+    const { container } = render(<ComposerHarness />);
+    const fileInput = container.querySelector(
+      'input[type="file"]:not([accept])',
+    );
+    if (!(fileInput instanceof HTMLInputElement)) {
+      throw new Error("Missing file input");
+    }
+    const file = new File(["phase one"], "phase-1-ui-notes.md", {
+      type: "text/markdown",
+    });
+    fireEvent.change(fileInput, { target: { files: [file] } });
 
-    fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
-    fireEvent.click(await screen.findByRole("button", { name: "添加文件" }));
-
-    expect(screen.getByText("phase-1-ui-notes.md")).toBeVisible();
+    expect(screen.getByText(file.name)).toBeVisible();
     expect(screen.getByRole("button", { name: "发送" })).toBeVisible();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "移除 phase-1-ui-notes.md" }),
-    );
-    expect(screen.queryByText("phase-1-ui-notes.md")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: `移除 ${file.name}` }));
+    expect(screen.queryByText(file.name)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "开始语音对话" })).toBeVisible();
   });
 

@@ -3,13 +3,22 @@ import { describe, expect, it } from "vitest";
 
 import {
   AttachmentSchema,
+  ChatCreateRequestSchema,
   ChatDataSnapshotRequestSchema,
   ChatDataSnapshotResponseSchema,
   ChatDataSnapshotSchema,
+  ChatDeleteResponseSchema,
+  ChatGetSnapshotResponseSchema,
+  ChatIdRequestSchema,
+  ChatListRequestSchema,
+  ChatListResponseSchema,
+  ChatMutationResponseSchema,
+  ChatRenameRequestSchema,
   ChatSchema,
+  ChatSetPinnedRequestSchema,
   MessageSchema,
 } from "../../src/shared/schemas/chat";
-import { CHAT_DATA_CHANNELS } from "../../src/shared/contracts/chat";
+import { CHAT_CHANNELS } from "../../src/shared/contracts/chat";
 import {
   IpcChannelSchema,
   IpcRequestSchema,
@@ -66,6 +75,43 @@ const validCases: readonly [string, TSchema, unknown][] = [
     chatDataSnapshotFixture,
   ],
   ["Missing chat data snapshot", ChatDataSnapshotResponseSchema, null],
+  [
+    "Chat list request",
+    ChatListRequestSchema,
+    { query: "phase", status: "active" },
+  ],
+  ["Chat create request", ChatCreateRequestSchema, {}],
+  [
+    "Chat rename request",
+    ChatRenameRequestSchema,
+    { chatId: FIXTURE_IDS.chat, title: "Renamed" },
+  ],
+  [
+    "Chat pin request",
+    ChatSetPinnedRequestSchema,
+    { chatId: FIXTURE_IDS.chat, pinned: true },
+  ],
+  ["Chat ID request", ChatIdRequestSchema, { chatId: FIXTURE_IDS.chat }],
+  [
+    "Chat list response",
+    ChatListResponseSchema,
+    { ok: true, value: [chatFixture] },
+  ],
+  [
+    "Chat mutation response",
+    ChatMutationResponseSchema,
+    { ok: true, value: chatFixture },
+  ],
+  [
+    "Chat delete response",
+    ChatDeleteResponseSchema,
+    { ok: true, value: { chatId: FIXTURE_IDS.chat } },
+  ],
+  [
+    "Chat snapshot operation response",
+    ChatGetSnapshotResponseSchema,
+    { ok: true, value: chatDataSnapshotFixture },
+  ],
   ["Provider snapshot", ProviderSnapshotSchema, providerSnapshotFixture],
   ["Run", RunSchema, runFixture],
   ["Run item", RunItemSchema, runItemFixture],
@@ -164,9 +210,9 @@ describe("Phase 0 domain contracts", () => {
       expect(parse(IpcChannelSchema, RUN_EVENT_CHANNELS.subscribe)).toBe(
         RUN_EVENT_CHANNELS.subscribe,
       );
-      expect(parse(IpcChannelSchema, CHAT_DATA_CHANNELS.getSnapshot)).toBe(
-        CHAT_DATA_CHANNELS.getSnapshot,
-      );
+      for (const channel of Object.values(CHAT_CHANNELS)) {
+        expect(parse(IpcChannelSchema, channel)).toBe(channel);
+      }
     },
   );
 

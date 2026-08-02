@@ -4,23 +4,25 @@
 
 ## 当前里程碑
 
-**Phase 1 — 产品骨架与 Chats：implementing**
+**Phase 1 — 产品骨架与 Chats：done**
 
-Phase 0 已完成。Phase 1 的 Renderer fixture、Data/IPC 与 Provider/Secret 三条路径已完成并通过集成验证；真实 Chat Service 尚未启动。
+Phase 0 与 Phase 1 已完成。Chats 当前只走真实 Chat Service、领域 Repository、typed IPC 与 Renderer snapshot；冻结 fixture 仅保留为确定性测试输入。下一里程碑是 Phase 2，生产 Agent Runtime 在 `HARNESS-LOOP` 与 `TOOL-DISCOVERY` Decision 完成前不开始实现。
 
 退出条件：
 
 - [x] App Shell、六个一级页面入口、Chats 侧栏与空状态满足冻结 UI 方案；
 - [x] Chat/Message/Attachment/Run/RunItem/Approval 当前 Schema、领域 Repository 与 append-first 事件重放成为唯一数据路径；
 - [x] Main 对事件先事务持久化再广播，Renderer 可通过窄 typed Preload API 获取 Chat snapshot 并按 sequence 重放；
-- [ ] Chat Service 完成多会话管理与同 Chat Turn 串行，不绕过领域 Repository；
+- [x] Chat Service 完成多会话管理与同 Chat Turn 串行，不绕过领域 Repository；
 - [x] Provider URL/Key/Model、连接测试、Model snapshot、async `safeStorage` 与 redaction 完成，Key 不进入 SQLite、日志、错误或 IPC 响应；
 - [x] Composer、内容渲染、Run projection 与 Approval fixture 满足 UI 验收；
 - [x] 受影响的 L0/L1/L2、React component、Electron Chats E2E、full offline、build/package 与 packaged smoke 通过。
 
-## 活动工作包
+## 工作包状态
 
-- `P1-AZURE-IMAGE-GENERATION-ENDPOINT`：owner `main`，状态 `done`。按用户提供的 Azure `gpt-image-2` Target URI 与 Microsoft Learn 2025-04-01-preview Image REST reference（`ms.date=2026-05-19`），把产品唯一 Image HTTP 配置从 `/images/edits` 更正为 `/images/generations`，并同步 shared contract、当前 SQLite Schema、Renderer 与只读配置测试。非目标为实际生成图片、同时保留 Edit/Generation 两套字段或旧字段迁移层。
+- `P1-CHAT-SERVICE-INTEGRATION`：owner `main`，状态 `done`。多会话创建、重命名、置顶、搜索、归档、恢复、删除、同 Chat Turn 串行、真实 Chat/Run snapshot + sequence event 投影、Provider Chat Model 选择及窗口/侧栏恢复已经成为唯一产品路径；模型采样、Tool/Approval 执行、steering 合并与附件资产导入仍属于 Phase 2。
+- `P1-IMAGE-CAPABILITY-CORRECTION`：owner `main`，状态 `done`。依据 OpenAI Image guide 与 Microsoft Learn Azure image REST `2025-04-01-preview`（`ms.date=2026-05-19`，页面更新 `2026-06-24`）及目标 deployment 配对实测，文档与设置已统一为一套 Image deployment 配置确定性派生 `/images/generations` 与 `/images/edits`；Phase 6 才实现实际 Image Driver，不增加第二套密钥或静默 fallback。
+- `P1-AZURE-IMAGE-GENERATION-ENDPOINT`：owner `main`，状态 `done`。按用户提供的 Azure `gpt-image-2` Target URI 与 Microsoft Learn 2025-04-01-preview Image REST reference（`ms.date=2026-05-19`），把 Image deployment 的唯一配置基准更正为 `/images/generations`，并同步 shared contract、当前 SQLite Schema、Renderer 与只读配置测试。实际 Generation/Edit Driver 属于 Phase 6；不会保留两套字段、两套密钥或旧字段迁移层。
 - `P1-AZURE-REALTIME-GA-FIX`：owner `main`，状态 `done`。Provider Realtime 测试按 Azure GA `/openai/v1/realtime?model=<deployment>` 组装 URL，并以前置一致性校验阻止 Azure resource 误用 `OpenAI-compatible` Bearer 鉴权触发 302、把凭据迁入重定向 URL。能力级 API Version 已收口：Realtime GA 不读取版本号，Azure HTTP 能力按动作校验，Image 优先读取自身 Endpoint 查询。非目标为自动跟随重定向、真实 Voice Driver、媒体事件或旧 Preview 协议兼容分支。
 - `P1-PROVIDER-SETTINGS-REFINE`：owner `main`，状态 `done`。按产品设计 §11.1 与 UI 设计 §11.5 把 Models 设置收紧为 `30–32px` 控件、细分隔线和内容宽按钮，并把单一 `provider.testConnection` 契约扩展为 Chat、Realtime、Image 三个显式目标；已保存 Key 可以测试当前未保存表单。一个 Profile 仍只保存一套凭据，三项能力共用；不同密钥由另一个 Profile 承载。Realtime 只做认证握手，Image 只读验证 URL/凭据/模型且不发起计费生图。`ws@8.21.1` 仅作为 Main runtime external 打包；不实现 Voice Driver、Image Driver、Voice Transport 或第二套 Provider 路径。
 - `P1-APP-SHELL` + `P1-CHAT-UI` + `P1-CONTENT` + `P1-RUN-PROJECTION`（fixture lane）：owner `feat/phase1-chats-ui-fixtures` worktree，状态 `done`。App Shell、Chats/Composer、无头像消息、紧凑 Run/Approval、GFM/代码/KaTeX/Mermaid、附件与复制均由冻结 fixture 驱动；背景可选，一级页面名统一英文，品牌位读取当前 Persona 的图片源。已接入 Provider Models，不实现真实 Chat Service 或 Agent Runtime。
@@ -30,8 +32,8 @@ Phase 0 已完成。Phase 1 的 Renderer fixture、Data/IPC 与 Provider/Secret 
 ## 依赖、阻塞与待决 Decision
 
 - Phase 0 无阻塞。2026-08-01 一手 npm/GitHub 核对发现预登记的 `better-sqlite3@13.0.2` 与 Playwright `1.62.1` 未发布，已在实现前把权威设计修正为已发布的 `13.0.1` 与 `1.62.0`。
-- Phase 1 Data/IPC 无 Decision 阻塞且已完成；shared Chat/Run/IPC Contract 与初始数据库 Schema 已由单一 integration owner 冻结。Provider 串行合入同一当前 Schema 与数据库连接，没有第二初始化路径。Renderer fixture lane 只消费已冻结契约；后续真实 Chat Service 接入若需变更，必须重新指定唯一 owner。
-- Provider 来源刷新记录为 OpenAI JavaScript SDK `6.49.0`、OpenAI OpenAPI `2.3.0` Models/Image API、OpenAI Realtime GA WebSocket 文档、Microsoft Learn Azure Realtime WebSocket 文档（`ms.date=2026-07-13`，更新于 `2026-07-19`）、Microsoft Learn Azure Image REST reference `2025-04-01-preview`（`ms.date=2026-05-19`）、`ws@8.21.1` 与 Electron `43.2.0` async `safeStorage`。Azure `apiVersion` 在 Profile 层可选：SDK 驱动的 HTTP 动作按需校验，Azure GA Realtime 明确不使用 date-based API Version 或 `api-version` 查询，Image 验证优先使用 Image Generation Endpoint 自带版本。Image Generation 没有独立只读健康端点，因此配置测试明确不调用计费生图。
+- Phase 1 无 Decision 阻塞且已完成；shared Chat/Run/IPC Contract、当前数据库 Schema、Provider 与真实 Renderer 消费链已由单一 integration owner 收口，没有第二初始化或 fixture 运行路径。
+- Provider 来源刷新记录为 OpenAI JavaScript SDK `6.49.0`、OpenAI OpenAPI `2.3.0` Models/Image API、OpenAI Realtime GA WebSocket 文档、Microsoft Learn Azure Realtime WebSocket 文档（`ms.date=2026-07-13`，更新于 `2026-07-19`）、Microsoft Learn Azure Image REST reference `2025-04-01-preview`（`ms.date=2026-05-19`，更新于 `2026-06-24`）、`ws@8.21.1` 与 Electron `43.2.0` async `safeStorage`。Azure `apiVersion` 在 Profile 层可选：SDK 驱动的 HTTP 动作按需校验，Azure GA Realtime 明确不使用 date-based API Version 或 `api-version` 查询，Image 验证优先使用 Generation 基准 Endpoint 自带版本。Image Generation/Edit 没有独立只读健康端点，因此配置测试明确不调用可能计费的图片动作。
 - 官方 Electron 43 ESM 文档要求 ESM Preload 使用 `.mjs`，并说明 sandboxed Preload 不支持 ESM；当前唯一配置保持 `contextIsolation: true`、`nodeIntegration: false`、`sandbox: false`。目标机实测顶层 `await app.whenReady()` 不继续执行，当前实现把 `app.setPath` 留在 ready 前并以 Promise 生命周期启动；这是 Electron `43.2.0`/Forge `7.11.2` 的实测行为，不是协议硬限制或产品启发式。
 - 生产 Agent Runtime 仍受 `HARNESS-LOOP`、`TOOL-DISCOVERY` 阻塞。
 - 生产 Memory/Activity 仍受 `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH`、`ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 阻塞。
@@ -40,7 +42,8 @@ Phase 0 已完成。Phase 1 的 Renderer fixture、Data/IPC 与 Provider/Secret 
 
 ## 最近绿色验证
 
-- 2026-08-01：Azure Image Generation Endpoint 修正后 `npm run verify:offline`、`npm run build`、`npm run test:e2e` 通过；39 个 contract、71 个 focused/component、16 个 integration 与 3 个 Electron E2E 全绿。契约、持久化与真实 Electron 设置页只接受并显示 `/images/generations`；`/images/edits` 明确拒绝，不保留第二能力路径。开发数据库完整性为 `ok`，原有 1 个 Provider Profile 保留并切换到当前列名，开发服务已重启。
+- 2026-08-01：Phase 1 最终验收 `npm run verify:offline`，`8.33s`；39 个 contract、76 个 focused/component 与 19 个 integration 全绿。`npm run test:e2e`（含 production build），`10.97s`；真实 SQLite/typed IPC 会话 CRUD、搜索、归档/恢复/删除、Chat→Agent 草稿保留、窗口/侧栏重启恢复、Provider secret 与事件重放共 3 个 Electron E2E 全绿。`npm run package`，`9.18s`；`npm run smoke:package`，`2.53s`，结果为 `databaseRoundTrip=true`、`rendererReady=true`。最终单路径审计确认产品 Renderer 不读取冻结 fixture，模型采样与 Tool/Approval 执行未伪造并继续由 Phase 2 Gate 阻塞。
+- 2026-08-01：Azure Image 配置基准修正后 `npm run verify:offline`、`npm run build`、`npm run test:e2e` 通过；39 个 contract、71 个 focused/component、16 个 integration 与 3 个 Electron E2E 全绿。契约、持久化与真实 Electron 设置页只保存 `/images/generations` 规范地址，不增加 Edit 专用字段；后续配对实测已确认同一 deployment 可确定性派生 `/images/edits`。开发数据库完整性为 `ok`，原有 1 个 Provider Profile 保留并切换到当前列名。
 - 2026-08-01：Azure Realtime GA 与能力级 API Version 修复后 `npm run verify:offline`、`npm run build`、`npm run test:e2e` 通过；39 个 contract、69 个 focused/component、16 个 integration 与 3 个 Electron E2E 全绿。本机协议用例确认 Realtime-only Azure Profile 无需版本号，握手只有 `/openai/v1/realtime?model=<deployment>` 与 `api-key` header；Image 验证保留 Endpoint 的 `api-version`。开发数据库保留原有 Profile 完成当前 Schema 调整，开发服务已完整重启并加载新 Main bundle。
 - 2026-08-01：Provider 设置 refinement 后 `test:contract` 39 项、`test:focused` 61 项、`test:integration` 16 项全部通过；覆盖三类 typed IPC 目标、真实本机 WebSocket 握手、Image 只读模型验证、未保存表单复用已保存密钥及组件反馈。
 - 2026-08-01：`npm run build`、`npm run package`、`npm run smoke:package` 与 `npm run test:e2e` 通过；打包应用完成数据库/Renderer smoke，3 个 Electron E2E 全绿，ASAR 只额外包含 Main 所需 `node_modules/ws` runtime。开发版通过 Computer Use 实际检查 Models 折叠/展开态，Realtime 与 Image 测试入口均可达且控件密度符合冻结规范。

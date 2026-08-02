@@ -8,8 +8,21 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { DesktopApi } from "../../shared/contracts/foundation";
+import type {
+  Chat,
+  ChatApi,
+  ChatDataSnapshot,
+} from "../../shared/contracts/chat";
+import type { CharaMateApi } from "../../shared/contracts/foundation";
+import {
+  chatDataSnapshotFixture,
+  chatFixture,
+  FIXTURE_TIMESTAMPS,
+} from "../../../tests/fixtures/foundationContracts";
 import { App } from "./App";
+
+const CREATED_CHAT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const ACTIVE_CHAT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 afterEach(() => {
   cleanup();
@@ -18,10 +31,122 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-function renderApp() {
+function renderApp({
+  initialChats,
+  seeded = false,
+}: {
+  readonly initialChats?: readonly Chat[];
+  readonly seeded?: boolean;
+} = {}) {
+  let chats: Chat[] = [...(initialChats ?? (seeded ? [chatFixture] : []))];
+  const snapshots = new Map<string, ChatDataSnapshot>();
+  for (const chat of chats) {
+    snapshots.set(
+      chat.id,
+      seeded && chat.id === chatFixture.id
+        ? chatDataSnapshotFixture
+        : {
+            approvals: [],
+            attachments: [],
+            chat,
+            messages: [],
+            runItems: [],
+            runs: [],
+          },
+    );
+  }
   const markRendererReady = vi.fn();
   const listProfiles = vi.fn().mockResolvedValue({ ok: true, value: [] });
-  const desktopApi: DesktopApi = {
+  const create = vi.fn<ChatApi["create"]>(() => {
+    const chat: Chat = {
+      createdAt: FIXTURE_TIMESTAMPS.created,
+      id: CREATED_CHAT_ID,
+      status: "active",
+      title: "新对话",
+      updatedAt: FIXTURE_TIMESTAMPS.created,
+    };
+    chats = [chat, ...chats];
+    snapshots.set(chat.id, {
+      approvals: [],
+      attachments: [],
+      chat,
+      messages: [],
+      runItems: [],
+      runs: [],
+    });
+    return Promise.resolve({ ok: true as const, value: chat });
+  });
+  const update = (chat: Chat) => {
+    chats = chats.map((candidate) =>
+      candidate.id === chat.id ? chat : candidate,
+    );
+    const snapshot = snapshots.get(chat.id);
+    if (snapshot) snapshots.set(chat.id, { ...snapshot, chat });
+    return { ok: true as const, value: chat };
+  };
+  const findChat = (chatId: string) => {
+    const chat = chats.find(({ id }) => id === chatId);
+    if (!chat) throw new Error(`Missing test Chat ${chatId}`);
+    return chat;
+  };
+  const desktopApi: CharaMateApi = {
+    chat: {
+      archive: vi.fn<ChatApi["archive"]>(({ chatId }) => {
+        const chat = findChat(chatId);
+        return Promise.resolve(
+          update({
+            ...chat,
+            archivedAt: FIXTURE_TIMESTAMPS.updated,
+            status: "archived",
+            updatedAt: FIXTURE_TIMESTAMPS.updated,
+          }),
+        );
+      }),
+      create,
+      delete: vi.fn<ChatApi["delete"]>(({ chatId }) => {
+        chats = chats.filter(({ id }) => id !== chatId);
+        snapshots.delete(chatId);
+        return Promise.resolve({ ok: true as const, value: { chatId } });
+      }),
+      getSnapshot: vi.fn<ChatApi["getSnapshot"]>(({ chatId }) =>
+        Promise.resolve({
+          ok: true as const,
+          value: snapshots.get(chatId) ?? null,
+        }),
+      ),
+      list: vi.fn<ChatApi["list"]>(({ query = "", status }) =>
+        Promise.resolve({
+          ok: true as const,
+          value: chats.filter(
+            (chat) =>
+              chat.status === status &&
+              chat.title.toLowerCase().includes(query.trim().toLowerCase()),
+          ),
+        }),
+      ),
+      rename: vi.fn<ChatApi["rename"]>(({ chatId, title }) =>
+        Promise.resolve(update({ ...findChat(chatId), title })),
+      ),
+      restore: vi.fn<ChatApi["restore"]>(({ chatId }) => {
+        const chat = { ...findChat(chatId) };
+        delete chat.archivedAt;
+        return Promise.resolve(update({ ...chat, status: "active" }));
+      }),
+      setPinned: vi.fn<ChatApi["setPinned"]>(({ chatId, pinned }) => {
+        const current = findChat(chatId);
+        if (pinned) {
+          return Promise.resolve(
+            update({
+              ...current,
+              pinnedAt: FIXTURE_TIMESTAMPS.updated,
+            }),
+          );
+        }
+        const chat = { ...current };
+        delete chat.pinnedAt;
+        return Promise.resolve(update(chat));
+      }),
+    },
     foundation: {
       getSnapshot: vi.fn().mockResolvedValue({
         appName: "CharaMate",
@@ -40,6 +165,15 @@ function renderApp() {
       saveProfile: vi.fn(),
       testConnection: vi.fn(),
     },
+    runEvents: {
+      replay: ({ afterSequence, streamId }) =>
+        Promise.resolve({
+          events: [],
+          latestSequence: afterSequence,
+          streamId,
+        }),
+      subscribe: () => () => undefined,
+    },
   };
   Object.defineProperty(window, "charaMate", {
     configurable: true,
@@ -47,15 +181,15 @@ function renderApp() {
   });
 
   render(<App />);
-  return { listProfiles, markRendererReady };
+  return { create, listProfiles, markRendererReady };
 }
 
 describe("application shell", () => {
-  it("shows Chats after validating the runtime and reports readiness", async () => {
-    const { markRendererReady } = renderApp();
+  it("shows the persisted Chat after validating runtime and reports readiness", async () => {
+    const { markRendererReady } = renderApp({ seeded: true });
 
     expect(
-      await screen.findByRole("heading", { name: "Phase 1 UI" }),
+      await screen.findByRole("heading", { name: chatFixture.title }),
     ).toBeVisible();
     expect(screen.getByTestId("foundation-status")).toHaveTextContent(
       "Electron 43.2.0",
@@ -78,12 +212,18 @@ describe("application shell", () => {
     expect(settingsButton.parentElement).toBe(collapseButton.parentElement);
   });
 
-  it("starts a blank chat and fills a suggestion without sending it", async () => {
-    renderApp();
-    await screen.findByRole("heading", { name: "Phase 1 UI" });
+  it("creates a persisted blank Chat and fills a suggestion without faking a Run", async () => {
+    const { create } = renderApp();
+    await screen.findByRole("heading", { name: "新对话" });
 
     fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
-    expect(screen.getByRole("heading", { name: "新对话" })).toBeVisible();
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(
+      within(screen.getByRole("region", { name: "会话列表" })).getByRole(
+        "button",
+        { name: "新对话" },
+      ),
+    ).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "今天想从哪里开始？" }),
     ).toBeVisible();
@@ -92,12 +232,54 @@ describe("application shell", () => {
     expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(
       "聊聊今天发生的事",
     );
-    expect(screen.getByRole("button", { name: "发送" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送" })).toHaveAttribute(
+      "title",
+      "Agent Runtime 将在 Phase 2 接入",
+    );
+  });
+
+  it("starts a new Chat in Recent even when Archived is selected", async () => {
+    const activeChat: Chat = {
+      ...chatFixture,
+      id: ACTIVE_CHAT_ID,
+      title: "最近会话",
+    };
+    const archivedChat: Chat = {
+      ...chatFixture,
+      archivedAt: FIXTURE_TIMESTAMPS.updated,
+      status: "archived",
+    };
+    const { create } = renderApp({ initialChats: [activeChat, archivedChat] });
+    await screen.findByRole("heading", { name: activeChat.title });
+
+    fireEvent.click(screen.getByRole("button", { name: "已归档" }));
+    expect(
+      await screen.findByRole("heading", { name: archivedChat.title }),
+    ).toBeVisible();
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索会话" }), {
+      target: { value: "不会匹配新对话" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(screen.getByRole("button", { name: "最近" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("searchbox", { name: "搜索会话" })).toHaveValue("");
+    expect(
+      within(screen.getByRole("region", { name: "会话列表" })).getByRole(
+        "button",
+        { name: "新对话" },
+      ),
+    ).toBeVisible();
   });
 
   it("switches the user-selected background without changing the page tree", async () => {
     renderApp();
-    await screen.findByRole("heading", { name: "Phase 1 UI" });
+    await screen.findByRole("heading", { name: "新对话" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("radio", { name: /暖灰/u }));
@@ -116,7 +298,7 @@ describe("application shell", () => {
 
   it("opens the integrated Provider settings from Models", async () => {
     const { listProfiles } = renderApp();
-    await screen.findByRole("heading", { name: "Phase 1 UI" });
+    await screen.findByRole("heading", { name: "新对话" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Models" }));
@@ -125,6 +307,6 @@ describe("application shell", () => {
       await screen.findByRole("heading", { name: "Provider 与模型" }),
     ).toBeVisible();
     expect(screen.getByText("还没有 Provider。")).toBeVisible();
-    expect(listProfiles).toHaveBeenCalledOnce();
+    expect(listProfiles).toHaveBeenCalled();
   });
 });

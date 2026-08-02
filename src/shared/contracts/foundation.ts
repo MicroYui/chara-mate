@@ -1,7 +1,7 @@
 import type { Static } from "@sinclair/typebox";
 
 import type { FoundationSnapshotSchema } from "../schemas/foundation";
-import type { ChatDataApi } from "./chat";
+import type { ChatApi } from "./chat";
 import type { RunEventsApi } from "./ipc";
 import type { ProviderApi } from "./provider";
 
@@ -23,6 +23,6 @@ export interface DesktopApi {
 }
 
 export interface CharaMateApi extends DesktopApi {
-  chatData: ChatDataApi;
+  chat: ChatApi;
   runEvents: RunEventsApi;
 }

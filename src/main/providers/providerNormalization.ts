@@ -77,7 +77,7 @@ export function normalizeProviderDraft(
       ? {
           imageGenerationEndpoint: normalizeUrl(
             imageGenerationEndpoint,
-            "Image Generation Endpoint",
+            "Image Endpoint（Generation 基准）",
             true,
           ),
         }

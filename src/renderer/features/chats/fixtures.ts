@@ -441,9 +441,25 @@ export const chatsFixture = {
 } as const satisfies ChatsFixtureSnapshot;
 
 export const composerAttachmentFixtures = {
-  file: { artifact: fileArtifact, source: "file" },
-  folder: { artifact: folderArtifact, source: "folder" },
-  image: { artifact: imageArtifact, source: "image" },
+  file: {
+    byteLength: fileArtifact.byteLength,
+    displayName: fileArtifact.displayName,
+    id: fileArtifact.artifactId,
+    mediaType: fileArtifact.mediaType,
+    source: "file",
+  },
+  folder: {
+    displayName: folderArtifact.displayName,
+    id: folderArtifact.artifactId,
+    source: "folder",
+  },
+  image: {
+    byteLength: imageArtifact.byteLength,
+    displayName: imageArtifact.displayName,
+    id: imageArtifact.artifactId,
+    mediaType: imageArtifact.mediaType,
+    source: "image",
+  },
 } as const satisfies Record<string, ComposerAttachment>;
 
 export const chatsFixtureIds = ids;

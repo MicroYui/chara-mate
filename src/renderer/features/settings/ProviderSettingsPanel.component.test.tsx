@@ -163,12 +163,15 @@ describe("Provider Settings panel", () => {
     fireEvent.change(screen.getByLabelText("Realtime Model"), {
       target: { value: "realtime-deployment" },
     });
-    fireEvent.change(screen.getByLabelText("Image Generation Endpoint"), {
-      target: {
-        value:
-          "https://example.openai.azure.com/openai/deployments/image/images/generations",
+    fireEvent.change(
+      screen.getByLabelText("Image Endpoint（Generation 基准）"),
+      {
+        target: {
+          value:
+            "https://example.openai.azure.com/openai/deployments/image/images/generations",
+        },
       },
-    });
+    );
     fireEvent.change(screen.getByLabelText("Image Model"), {
       target: { value: "image-deployment" },
     });
@@ -180,7 +183,7 @@ describe("Provider Settings panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "测试 Image" }));
     expect(
       await screen.findByText(
-        "Image 配置可用：凭据与模型验证成功，未发起生图。",
+        "Image 配置可用：凭据与模型验证成功，未发起生成或编辑。",
       ),
     ).toBeVisible();
 

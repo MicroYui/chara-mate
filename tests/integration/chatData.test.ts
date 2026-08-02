@@ -7,12 +7,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RunEventService } from "../../src/main/agent/runEventService";
 import { RunRepository } from "../../src/main/agent/runRepository";
-import { ChatDataService } from "../../src/main/chat/chatDataService";
 import { ChatRepository } from "../../src/main/chat/chatRepository";
+import { ChatService } from "../../src/main/chat/chatService";
 import { openApplicationDatabase } from "../../src/main/db/database";
 import type { RunEventEnvelope } from "../../src/shared/contracts/ipc";
 import type { Run, RunItem } from "../../src/shared/contracts/run";
 import { REDACTED_VALUE } from "../../src/shared/pure/redaction";
+import { FakeClock } from "../fixtures/fakeClock";
 import {
   approvalFixture,
   attachmentFixture,
@@ -28,6 +29,8 @@ import {
 const temporaryDirectories: string[] = [];
 
 const OTHER_CHAT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const THIRD_CHAT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const FOURTH_CHAT_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -84,12 +87,180 @@ function startedItem(): RunItem {
   };
 }
 
+function chatService(
+  chats: ChatRepository,
+  runs: RunRepository,
+  generatedId = OTHER_CHAT_ID,
+): ChatService {
+  return new ChatService(
+    chats,
+    runs,
+    { generate: () => generatedId },
+    new FakeClock(FIXTURE_TIMESTAMPS.updated),
+  );
+}
+
 describe("Phase 1 Chat Data and Run event persistence", () => {
+  it("manages, orders, searches and restores multiple Chats through the domain service", async () => {
+    const { database, databasePath } = await createDatabase();
+    const clock = new FakeClock(FIXTURE_TIMESTAMPS.created);
+    const generatedIds = [FIXTURE_IDS.chat, OTHER_CHAT_ID, THIRD_CHAT_ID];
+    const service = new ChatService(
+      new ChatRepository(database),
+      new RunRepository(database),
+      { generate: () => generatedIds.shift() ?? FOURTH_CHAT_ID },
+      clock,
+    );
+
+    const alpha = service.create({ title: "Alpha notes" });
+    clock.advance(1_000);
+    const beta = service.create({ title: "Project Beta" });
+    clock.advance(1_000);
+    const gamma = service.create({ title: "Gamma" });
+    clock.advance(1_000);
+    const pinnedAlpha = service.setPinned({ chatId: alpha.id, pinned: true });
+
+    expect(service.list({ status: "active" }).map(({ id }) => id)).toEqual([
+      alpha.id,
+      gamma.id,
+      beta.id,
+    ]);
+    expect(service.list({ query: "  BETA ", status: "active" })).toEqual([
+      beta,
+    ]);
+    expect(pinnedAlpha.pinnedAt).toBe(clock.now());
+
+    clock.advance(1_000);
+    expect(
+      service.rename({ chatId: beta.id, title: "  Beta renamed  " }).title,
+    ).toBe("Beta renamed");
+    clock.advance(1_000);
+    const archived = service.archive({ chatId: alpha.id });
+    expect(archived).toMatchObject({ status: "archived" });
+    expect(service.list({ status: "active" }).map(({ id }) => id)).toEqual([
+      beta.id,
+      gamma.id,
+    ]);
+    expect(service.list({ status: "archived" })).toEqual([archived]);
+    await expect(
+      service.runSerializedTurn(alpha.id, () => Promise.resolve("never")),
+    ).rejects.toMatchObject({ code: "CHAT.ARCHIVED" });
+
+    clock.advance(1_000);
+    const restored = service.restore({ chatId: alpha.id });
+    expect(restored.status).toBe("active");
+    expect(restored).not.toHaveProperty("archivedAt");
+    expect(service.delete({ chatId: gamma.id })).toEqual({ chatId: gamma.id });
+    expect(service.getSnapshot({ chatId: gamma.id })).toBeNull();
+    database.close();
+
+    const reopened = openApplicationDatabase(databasePath);
+    const restoredService = chatService(
+      new ChatRepository(reopened),
+      new RunRepository(reopened),
+    );
+    expect(
+      restoredService.list({ status: "active" }).map(({ id, title }) => ({
+        id,
+        title,
+      })),
+    ).toEqual([
+      { id: alpha.id, title: "Alpha notes" },
+      { id: beta.id, title: "Beta renamed" },
+    ]);
+    expect(restoredService.list({ status: "archived" })).toEqual([]);
+    reopened.close();
+  });
+
+  it("serializes Turns within one Chat while allowing another Chat to proceed", async () => {
+    const { database } = await createDatabase();
+    const chats = new ChatRepository(database);
+    const runs = new RunRepository(database);
+    chats.insertChat(chatFixture);
+    chats.insertChat({ ...chatFixture, id: OTHER_CHAT_ID, title: "Other" });
+    const service = chatService(chats, runs);
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstEntered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => {
+      markFirstEntered = resolve;
+    });
+
+    const first = service.runSerializedTurn(FIXTURE_IDS.chat, async () => {
+      order.push("first:start");
+      markFirstEntered();
+      await firstGate;
+      order.push("first:end");
+      return "first";
+    });
+    await firstEntered;
+    const second = service.runSerializedTurn(FIXTURE_IDS.chat, () => {
+      order.push("second:start");
+      order.push("second:end");
+      return Promise.resolve("second");
+    });
+    const other = service.runSerializedTurn(OTHER_CHAT_ID, () => {
+      order.push("other:start");
+      order.push("other:end");
+      return Promise.resolve("other");
+    });
+
+    await expect(other).resolves.toBe("other");
+    expect(order).toEqual(["first:start", "other:start", "other:end"]);
+    releaseFirst();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      "first",
+      "second",
+    ]);
+    expect(order).toEqual([
+      "first:start",
+      "other:start",
+      "other:end",
+      "first:end",
+      "second:start",
+      "second:end",
+    ]);
+    database.close();
+  });
+
+  it("uses the durable Run projection to prevent two active Turns for one Chat", async () => {
+    const { database } = await createDatabase();
+    const chats = new ChatRepository(database);
+    const runs = new RunRepository(database);
+    chats.insertChat(chatFixture);
+    runs.appendEvent(envelope(1, { run: startedRun(), type: "run.started" }));
+    const service = chatService(chats, runs);
+
+    await expect(
+      service.runSerializedTurn(FIXTURE_IDS.chat, () =>
+        Promise.resolve("never"),
+      ),
+    ).rejects.toMatchObject({ code: "CHAT.TURN_ACTIVE" });
+
+    const secondRunId = FOURTH_CHAT_ID;
+    expect(() =>
+      runs.appendEvent({
+        event: {
+          run: { ...startedRun(), id: secondRunId },
+          type: "run.started",
+        },
+        occurredAt: eventTime(1),
+        sequence: 1,
+        streamId: secondRunId,
+      }),
+    ).toThrow(/UNIQUE/u);
+    expect(runs.getSnapshot(FIXTURE_IDS.chat).runs).toEqual([startedRun()]);
+    database.close();
+  });
+
   it("persists a complete Chat snapshot and restores it after reopen", async () => {
     const { database, databasePath } = await createDatabase();
     const chats = new ChatRepository(database);
     const runs = new RunRepository(database);
-    const service = new ChatDataService(chats, runs);
+    const service = chatService(chats, runs);
 
     chats.insertChat(chatFixture);
     runs.appendEvent(envelope(1, { run: startedRun(), type: "run.started" }));
@@ -108,7 +279,7 @@ describe("Phase 1 Chat Data and Run event persistence", () => {
     database.close();
 
     const reopened = openApplicationDatabase(databasePath);
-    const restored = new ChatDataService(
+    const restored = chatService(
       new ChatRepository(reopened),
       new RunRepository(reopened),
     ).getSnapshot({ chatId: FIXTURE_IDS.chat });

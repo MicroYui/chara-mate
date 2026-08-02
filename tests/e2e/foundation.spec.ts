@@ -50,11 +50,15 @@ test("launches through the typed preload boundary", async () => {
     });
     const page = await application.firstWindow();
     await expect(
-      page.getByRole("heading", { name: "Phase 1 UI" }),
+      page.getByRole("heading", { name: chatFixture.title }),
     ).toBeVisible();
+    await expect(page.getByText(messageFixture.content)).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /正在处理/u }),
+    ).toHaveAttribute("aria-expanded", "true");
 
     const bridgeShape = await page.evaluate(() => ({
-      chatDataKeys: Object.keys(window.charaMate.chatData).sort(),
+      chatKeys: Object.keys(window.charaMate.chat).sort(),
       foundationKeys: Object.keys(window.charaMate.foundation).sort(),
       providerKeys: Object.keys(window.charaMate.provider).sort(),
       rootKeys: Object.keys(window.charaMate).sort(),
@@ -63,7 +67,16 @@ test("launches through the typed preload boundary", async () => {
       exposesSecretReader: "getApiKey" in window.charaMate.provider,
     }));
     expect(bridgeShape).toEqual({
-      chatDataKeys: ["getSnapshot"],
+      chatKeys: [
+        "archive",
+        "create",
+        "delete",
+        "getSnapshot",
+        "list",
+        "rename",
+        "restore",
+        "setPinned",
+      ],
       foundationKeys: ["getSnapshot", "markRendererReady"],
       providerKeys: [
         "deleteProfile",
@@ -72,7 +85,7 @@ test("launches through the typed preload boundary", async () => {
         "saveProfile",
         "testConnection",
       ],
-      rootKeys: ["chatData", "foundation", "provider", "runEvents"],
+      rootKeys: ["chat", "foundation", "provider", "runEvents"],
       runEventKeys: ["replay", "subscribe"],
       exposesRawIpcRenderer: false,
       exposesSecretReader: false,
@@ -89,16 +102,19 @@ test("launches through the typed preload boundary", async () => {
     });
 
     const chatData = await page.evaluate(
-      (chatId) => window.charaMate.chatData.getSnapshot({ chatId }),
+      (chatId) => window.charaMate.chat.getSnapshot({ chatId }),
       FIXTURE_IDS.chat,
     );
     expect(chatData).toEqual({
-      approvals: [],
-      attachments: [attachmentFixture],
-      chat: chatFixture,
-      messages: [messageFixture],
-      runItems: [],
-      runs: [runFixture],
+      ok: true,
+      value: {
+        approvals: [],
+        attachments: [attachmentFixture],
+        chat: chatFixture,
+        messages: [messageFixture],
+        runItems: [],
+        runs: [runFixture],
+      },
     });
 
     const replay = await page.evaluate(
@@ -122,7 +138,7 @@ test("launches through the typed preload boundary", async () => {
 
     const invalidRequest = await page.evaluate(async () => {
       try {
-        await window.charaMate.chatData.getSnapshot({ chatId: "not-an-id" });
+        await window.charaMate.chat.getSnapshot({ chatId: "not-an-id" });
         return "accepted";
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
@@ -132,10 +148,11 @@ test("launches through the typed preload boundary", async () => {
 
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "Phase 1 UI" }),
+      page.getByRole("heading", { name: chatFixture.title }),
     ).toBeVisible();
+    await expect(page.getByText(messageFixture.content)).toBeVisible();
     const snapshotAfterReload = await page.evaluate(
-      (chatId) => window.charaMate.chatData.getSnapshot({ chatId }),
+      (chatId) => window.charaMate.chat.getSnapshot({ chatId }),
       FIXTURE_IDS.chat,
     );
     expect(snapshotAfterReload).toEqual(chatData);

@@ -14,18 +14,14 @@ import {
 import type { Dispatch } from "react";
 
 import type { Approval, RunItem } from "../../../../shared/contracts";
-import type {
-  ChatsFixtureUiAction,
-  ChatsFixtureUiState,
-  FixtureRun,
-} from "../types";
+import type { ChatRunView, ChatsUiAction, ChatsUiState } from "../types";
 import { CopyButton } from "./CopyButton";
 import styles from "./RunProcess.module.css";
 
 interface RunProcessProps {
-  readonly dispatch: Dispatch<ChatsFixtureUiAction>;
-  readonly run: FixtureRun;
-  readonly state: ChatsFixtureUiState;
+  readonly dispatch: Dispatch<ChatsUiAction>;
+  readonly run: ChatRunView;
+  readonly state: ChatsUiState;
 }
 
 function formatDuration(milliseconds: number): string {
@@ -38,7 +34,7 @@ function formatDuration(milliseconds: number): string {
   return rest === 0 ? `${minutes}分` : `${minutes}分${rest}秒`;
 }
 
-function runDuration(run: FixtureRun): number {
+function runDuration(run: ChatRunView): number {
   if (run.record.startedAt && run.record.endedAt) {
     return Date.parse(run.record.endedAt) - Date.parse(run.record.startedAt);
   }
@@ -135,7 +131,7 @@ function ItemDetails({ item }: { readonly item: RunItem }) {
 interface ApprovalCardProps {
   readonly approval: Approval;
   readonly decision: "approved" | "rejected" | undefined;
-  readonly dispatch: Dispatch<ChatsFixtureUiAction>;
+  readonly dispatch: Dispatch<ChatsUiAction>;
   readonly expanded: boolean;
   readonly item: RunItem;
 }
@@ -219,9 +215,9 @@ function RunItemRow({
   item,
   state,
 }: {
-  readonly dispatch: Dispatch<ChatsFixtureUiAction>;
+  readonly dispatch: Dispatch<ChatsUiAction>;
   readonly item: RunItem;
-  readonly state: ChatsFixtureUiState;
+  readonly state: ChatsUiState;
 }) {
   const expanded = state.expandedItemIds.includes(item.id);
   const expandable = hasDetails(item);

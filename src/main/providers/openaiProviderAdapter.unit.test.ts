@@ -348,7 +348,7 @@ describe("OpenAI Provider adapter capability checks", () => {
     });
   });
 
-  it("rejects an Image Edit endpoint because the configured capability is generation", async () => {
+  it("requires one canonical Generation baseline instead of a second Edit field", async () => {
     const adapter = new OpenAISdkProviderAdapter(
       profile({
         imageGenerationEndpoint: "https://api.example.com/v1/images/edits",
@@ -359,7 +359,8 @@ describe("OpenAI Provider adapter capability checks", () => {
 
     await expect(adapter.verifyImageConfiguration()).rejects.toMatchObject({
       code: "PROVIDER.INVALID_CONFIGURATION",
-      message: "Image Generation Endpoint 应以 /images/generations 结尾。",
+      message:
+        "Image Endpoint（Generation 基准） 应以 /images/generations 结尾。",
     });
   });
 
