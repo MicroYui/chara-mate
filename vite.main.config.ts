@@ -29,5 +29,7 @@ export default defineConfig((environment) => ({
       : {
           MAIN_WINDOW_VITE_DEV_SERVER_URL: "undefined",
           MAIN_WINDOW_VITE_NAME: JSON.stringify("main_window"),
+          CHARACTER_WINDOW_VITE_DEV_SERVER_URL: "undefined",
+          CHARACTER_WINDOW_VITE_NAME: JSON.stringify("character_window"),
         },
 }));

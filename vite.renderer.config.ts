@@ -7,6 +7,7 @@ import { defineConfig } from "vite";
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  cacheDir: path.join(projectRoot, "node_modules/.vite/main_window"),
   root: path.join(projectRoot, "src/renderer"),
   base: "./",
   build: {

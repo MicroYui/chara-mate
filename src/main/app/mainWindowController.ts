@@ -1,0 +1,109 @@
+import type { BrowserWindow, WebContents } from "electron";
+
+import type { PetMainTarget } from "../../shared/contracts/pet";
+
+export type MainWindowTarget = PetMainTarget;
+
+interface RendererReadyState {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+  readonly webContentsId: number;
+}
+
+export class MainWindowController {
+  private window: BrowserWindow | null = null;
+  private creation: Promise<BrowserWindow> | undefined;
+  private readyState: RendererReadyState | undefined;
+  private readonly earlyReadySenders = new Set<number>();
+
+  constructor(
+    private readonly createWindow: () => Promise<BrowserWindow>,
+    private readonly activateApplication: () => void,
+    private readonly navigate: (
+      window: BrowserWindow,
+      target: MainWindowTarget,
+    ) => void,
+  ) {}
+
+  getWindow(): BrowserWindow | null {
+    if (this.window?.isDestroyed()) this.window = null;
+    return this.window;
+  }
+
+  markRendererReady(sender: Pick<WebContents, "id">): void {
+    const readyState = this.readyState;
+    if (readyState?.webContentsId === sender.id) {
+      readyState.resolve();
+      return;
+    }
+    this.earlyReadySenders.add(sender.id);
+  }
+
+  async open(target?: MainWindowTarget): Promise<BrowserWindow> {
+    for (;;) {
+      const window = await this.ensureWindow();
+      if (window.isDestroyed()) continue;
+      this.reveal(window);
+      await this.waitUntilRendererReady(window);
+      if (window.isDestroyed()) continue;
+      if (target) this.navigate(window, target);
+      this.reveal(window);
+      return window;
+    }
+  }
+
+  private reveal(window: BrowserWindow): void {
+    if (window.isMinimized()) window.restore();
+    window.show();
+    this.activateApplication();
+    window.focus();
+  }
+
+  private async ensureWindow(): Promise<BrowserWindow> {
+    const existing = this.getWindow();
+    if (existing) return existing;
+    if (!this.creation) this.creation = this.createAndTrackWindow();
+    const creation = this.creation;
+    try {
+      return await creation;
+    } finally {
+      if (this.creation === creation) this.creation = undefined;
+    }
+  }
+
+  private async createAndTrackWindow(): Promise<BrowserWindow> {
+    const window = await this.createWindow();
+    if (window.isDestroyed()) {
+      throw new Error("Main window was destroyed while it was being created.");
+    }
+    this.window = window;
+    const webContentsId = window.webContents.id;
+    let resolveReady = (): void => undefined;
+    const promise = this.earlyReadySenders.delete(webContentsId)
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          resolveReady = resolve;
+        });
+    const readyState: RendererReadyState = {
+      promise,
+      resolve: resolveReady,
+      webContentsId,
+    };
+    this.readyState = readyState;
+
+    window.on("closed", () => {
+      if (this.window === window) this.window = null;
+      if (this.readyState === readyState) this.readyState = undefined;
+      this.earlyReadySenders.delete(webContentsId);
+      readyState.resolve();
+    });
+    return window;
+  }
+
+  private waitUntilRendererReady(window: BrowserWindow): Promise<void> {
+    const readyState = this.readyState;
+    return readyState?.webContentsId === window.webContents.id
+      ? readyState.promise
+      : Promise.resolve();
+  }
+}

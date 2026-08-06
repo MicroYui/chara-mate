@@ -90,13 +90,29 @@ test("manages real Chats and restores product state after an Electron restart", 
     await expect(page.getByRole("button", { name: "发送" })).toBeDisabled();
 
     await page.getByRole("button", { name: "新建对话" }).click();
-    await page.getByRole("button", { name: "更多会话操作" }).click();
+    await page
+      .getByRole("button", { exact: true, name: "新对话" })
+      .click({ button: "right" });
     await page.getByRole("menuitem", { name: "重命名" }).click();
     await page.getByRole("textbox", { name: "会话标题" }).fill("临时会话");
     await page.getByRole("textbox", { name: "会话标题" }).press("Enter");
     await expect(page.getByRole("heading", { name: "临时会话" })).toBeVisible();
 
     const search = page.getByRole("searchbox", { name: "搜索会话" });
+    await search.focus();
+    const searchFocusLayout = await search.evaluate((input) => {
+      const field = input.closest("label");
+      const navigation = input.closest("section");
+      if (!field || !navigation) throw new Error("Missing search layout");
+      const fieldBounds = field.getBoundingClientRect();
+      const navigationBounds = navigation.getBoundingClientRect();
+      return {
+        boxShadow: window.getComputedStyle(field).boxShadow,
+        topClearance: fieldBounds.top - navigationBounds.top,
+      };
+    });
+    expect(searchFocusLayout.boxShadow).not.toBe("none");
+    expect(searchFocusLayout.topClearance).toBeGreaterThanOrEqual(2);
     await search.fill("真实");
     await expect(
       page.getByRole("button", { exact: true, name: /Phase 1 真实会话/u }),
@@ -106,8 +122,8 @@ test("manages real Chats and restores product state after an Electron restart", 
     ).toHaveCount(0);
     await page
       .getByRole("button", { exact: true, name: /Phase 1 真实会话/u })
-      .click();
-    await page.getByRole("button", { name: "归档会话" }).click();
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: "归档" }).click();
     await expect(page.getByText("没有匹配的会话")).toBeVisible();
     await page.getByRole("button", { name: "已归档" }).click();
     await expect(
@@ -120,16 +136,19 @@ test("manages real Chats and restores product state after an Electron restart", 
     );
 
     await search.fill("");
-    await page.getByRole("button", { exact: true, name: "临时会话" }).click();
+    await page
+      .getByRole("button", { exact: true, name: "临时会话" })
+      .click({ button: "right" });
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "更多会话操作" }).click();
     await page.getByRole("menuitem", { name: "删除" }).click();
     await expect(
       page.getByRole("button", { exact: true, name: "临时会话" }),
     ).toHaveCount(0);
 
     const savedBounds = await application.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0];
+      const window = BrowserWindow.getAllWindows().find(
+        (candidate) => candidate.getTitle() === "CharaMate",
+      );
       if (!window) throw new Error("Missing main window");
       const current = window.getBounds();
       window.setBounds({
@@ -154,7 +173,9 @@ test("manages real Chats and restores product state after an Electron restart", 
       second.page.getByRole("button", { name: "展开侧栏" }),
     ).toBeVisible();
     const restoredBounds = await application.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0];
+      const window = BrowserWindow.getAllWindows().find(
+        (candidate) => candidate.getTitle() === "CharaMate",
+      );
       if (!window) throw new Error("Missing main window");
       return window.getBounds();
     });

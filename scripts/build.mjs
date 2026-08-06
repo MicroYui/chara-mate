@@ -19,7 +19,9 @@ await rm(buildDirectory, { force: true, recursive: true });
 for (const configFile of [
   "vite.main.config.ts",
   "vite.preload.config.ts",
+  "vite.character-preload.config.ts",
   "vite.renderer.config.ts",
+  "vite.character.config.ts",
 ]) {
   await build({
     configFile: path.join(projectRoot, configFile),

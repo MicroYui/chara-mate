@@ -49,6 +49,22 @@ export const CURRENT_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS pet_character_state (
+    state_id TEXT PRIMARY KEY NOT NULL CHECK (state_id = 'character'),
+    active_pet_id TEXT,
+    animation_speed REAL NOT NULL CHECK (
+      animation_speed >= 0.1 AND animation_speed <= 1.5
+    ),
+    display_id TEXT,
+    offset_x INTEGER NOT NULL,
+    offset_y INTEGER NOT NULL,
+    width INTEGER NOT NULL CHECK (width > 0),
+    height INTEGER NOT NULL CHECK (height > 0),
+    scale REAL NOT NULL CHECK (scale >= 0.3 AND scale <= 1.5),
+    facing TEXT NOT NULL CHECK (facing IN ('left', 'right')),
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY NOT NULL,
     chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,

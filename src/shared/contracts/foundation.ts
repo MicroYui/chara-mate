@@ -3,6 +3,7 @@ import type { Static } from "@sinclair/typebox";
 import type { FoundationSnapshotSchema } from "../schemas/foundation";
 import type { ChatApi } from "./chat";
 import type { RunEventsApi } from "./ipc";
+import type { PetManagementApi } from "./pet";
 import type { ProviderApi } from "./provider";
 
 export const FOUNDATION_CHANNELS = {
@@ -19,6 +20,7 @@ export interface FoundationApi {
 
 export interface DesktopApi {
   foundation: FoundationApi;
+  pet: PetManagementApi;
   provider: ProviderApi;
 }
 

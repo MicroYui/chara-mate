@@ -21,6 +21,15 @@ import {
   type RunEventsApi,
 } from "../shared/contracts/ipc";
 import {
+  PET_CHANNELS,
+  type PetAnimationSpeedRequest,
+  type PetLibrarySnapshot,
+  type PetMainTarget,
+  type PetManagementApi,
+  type PetScaleRequest,
+  type PetSelectRequest,
+} from "../shared/contracts/pet";
+import {
   type ProviderApi,
   type ProviderDeleteProfileRequest,
   type ProviderDiscoverModelsRequest,
@@ -46,6 +55,15 @@ import {
   RunEventReplayRequestSchema,
   RunEventReplayResponseSchema,
 } from "../shared/schemas/ipc";
+import {
+  PetAnimationSpeedRequestSchema,
+  PetImportResponseSchema,
+  PetLibraryResponseSchema,
+  PetLibrarySnapshotSchema,
+  PetMainNavigationSchema,
+  PetScaleRequestSchema,
+  PetSelectRequestSchema,
+} from "../shared/schemas/pet";
 import {
   ProviderDeleteProfileRequestSchema,
   ProviderDeleteProfileResponseSchema,
@@ -219,6 +237,67 @@ const providerApi: ProviderApi = Object.freeze({
     ),
 });
 
+const petApi: PetManagementApi = Object.freeze({
+  getLibrary: async () =>
+    parseSchemaWithoutCodeGeneration(
+      PetLibraryResponseSchema,
+      await ipcRenderer.invoke(PET_CHANNELS.getLibrary, {}),
+    ),
+  importFromFolder: async () =>
+    parseSchemaWithoutCodeGeneration(
+      PetImportResponseSchema,
+      await ipcRenderer.invoke(PET_CHANNELS.importFromFolder, {}),
+    ),
+  select: async (input: PetSelectRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      PetLibraryResponseSchema,
+      await ipcRenderer.invoke(
+        PET_CHANNELS.select,
+        parseSchemaWithoutCodeGeneration(PetSelectRequestSchema, input),
+      ),
+    ),
+  setAnimationSpeed: async (input: PetAnimationSpeedRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      PetLibraryResponseSchema,
+      await ipcRenderer.invoke(
+        PET_CHANNELS.setAnimationSpeed,
+        parseSchemaWithoutCodeGeneration(PetAnimationSpeedRequestSchema, input),
+      ),
+    ),
+  setScale: async (input: PetScaleRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      PetLibraryResponseSchema,
+      await ipcRenderer.invoke(
+        PET_CHANNELS.setScale,
+        parseSchemaWithoutCodeGeneration(PetScaleRequestSchema, input),
+      ),
+    ),
+  subscribeChanged: (listener: (snapshot: PetLibrarySnapshot) => void) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        parseSchemaWithoutCodeGeneration(PetLibrarySnapshotSchema, input),
+      );
+    };
+    ipcRenderer.on(PET_CHANNELS.libraryChanged, wrappedListener);
+    return () => ipcRenderer.off(PET_CHANNELS.libraryChanged, wrappedListener);
+  },
+  subscribeOpenMain: (listener: (target: PetMainTarget) => void) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        parseSchemaWithoutCodeGeneration(PetMainNavigationSchema, input).target,
+      );
+    };
+    ipcRenderer.on(PET_CHANNELS.openMain, wrappedListener);
+    return () => ipcRenderer.off(PET_CHANNELS.openMain, wrappedListener);
+  },
+});
+
 const desktopApi: CharaMateApi = Object.freeze({
   chat: chatApi,
   foundation: Object.freeze({
@@ -231,6 +310,7 @@ const desktopApi: CharaMateApi = Object.freeze({
       ipcRenderer.send(FOUNDATION_CHANNELS.rendererReady, {});
     },
   }),
+  pet: petApi,
   provider: providerApi,
   runEvents: runEventsApi,
 });

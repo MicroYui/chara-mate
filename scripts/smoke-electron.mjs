@@ -140,6 +140,7 @@ try {
 if (
   typeof result !== "object" ||
   result === null ||
+  result.characterRendererReady !== true ||
   result.databaseRoundTrip !== true ||
   result.rendererReady !== true ||
   result.mode !== mode

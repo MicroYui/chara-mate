@@ -31,6 +31,28 @@ export type {
 } from "./ipc";
 export type { EntityId, JsonValue, Timestamp } from "./primitives";
 export type {
+  CharacterWindowApi,
+  CodexPetManifest,
+  PetAnimation,
+  PetAnimationSpeedRequest,
+  PetCharacterSnapshot,
+  PetDescriptor,
+  PetDragPoint,
+  PetDragResult,
+  PetFacing,
+  PetImportResponse,
+  PetLibraryResponse,
+  PetLibrarySnapshot,
+  PetMainNavigation,
+  PetMainTarget,
+  PetManagementApi,
+  PetManifest,
+  PetScaleRequest,
+  PetSelectRequest,
+  PetSpriteVersion,
+  PetStoredState,
+} from "./pet";
+export type {
   ProviderApi,
   ProviderApiStyle,
   ProviderConnection,

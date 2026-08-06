@@ -5,12 +5,19 @@ import type Database from "better-sqlite3";
 
 import type { FoundationSnapshot } from "../shared/contracts/foundation";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
+import { PET_CHANNELS } from "../shared/contracts/pet";
 import { SystemClock } from "../shared/pure/clock";
 import { CryptoIdGenerator } from "../shared/pure/id";
+import { PetMainNavigationSchema } from "../shared/schemas/pet";
+import { parseSchema } from "../shared/schemas/validation";
 import { RunEventService } from "./agent/runEventService";
 import { RunRepository } from "./agent/runRepository";
 import { registerChatIpc } from "./app/chatIpc";
 import { registerFoundationIpc } from "./app/foundationIpc";
+import {
+  MainWindowController,
+  type MainWindowTarget,
+} from "./app/mainWindowController";
 import { WindowPlacementRepository } from "./app/windowPlacementRepository";
 import { createMainWindow } from "./app/windows";
 import { ChatRepository } from "./chat/chatRepository";
@@ -20,6 +27,12 @@ import {
   verifyDatabaseRoundTrip,
 } from "./db/database";
 import { createAppLogger } from "./observability/logger";
+import { CharacterWindowController } from "./pet/characterWindowController";
+import { registerPetIpc } from "./pet/petIpc";
+import { PetLibraryRepository } from "./pet/petLibraryRepository";
+import { registerPetProtocol, registerPetScheme } from "./pet/petProtocol";
+import { PetService } from "./pet/petService";
+import { PetStateRepository } from "./pet/petStateRepository";
 import { ElectronSafeStorageEncryption } from "./providers/electronSecretEncryption";
 import { registerProviderIpc } from "./providers/providerIpc";
 import { ProviderRepository } from "./providers/providerRepository";
@@ -27,6 +40,8 @@ import { ProviderService } from "./providers/providerService";
 import { SafeStorageSecretStore } from "./providers/secretStore";
 
 const logger = createAppLogger();
+
+registerPetScheme();
 
 const userDataOverride = process.env["CHARAMATE_USER_DATA_DIR"];
 if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
@@ -48,13 +63,26 @@ function getSupportedPlatform(): FoundationSnapshot["platform"] {
   return process.platform;
 }
 
-let mainWindow: BrowserWindow | null = null;
+let mainWindowController: MainWindowController | undefined;
 let applicationDatabase: Database.Database | undefined;
 let unregisterChatIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
 let unregisterProviderIpc: (() => void) | undefined;
+let unregisterPetIpc: (() => void) | undefined;
+let unregisterPetProtocol: (() => void) | undefined;
 let providerService: ProviderService | undefined;
-let windowPlacementRepository: WindowPlacementRepository | undefined;
+let characterWindowController: CharacterWindowController | undefined;
+
+function openMainWindow(target?: MainWindowTarget): void {
+  const controller = mainWindowController;
+  if (!controller) return;
+  void controller.open(target).catch((error: unknown) => {
+    logger.error(
+      "CHARAMATE_MAIN_WINDOW_OPEN_ERROR",
+      error instanceof Error ? error : { error },
+    );
+  });
+}
 
 function stopApplicationInfrastructure(): void {
   unregisterChatIpc?.();
@@ -63,8 +91,14 @@ function stopApplicationInfrastructure(): void {
   unregisterFoundationIpc = undefined;
   unregisterProviderIpc?.();
   unregisterProviderIpc = undefined;
+  unregisterPetIpc?.();
+  unregisterPetIpc = undefined;
+  unregisterPetProtocol?.();
+  unregisterPetProtocol = undefined;
+  characterWindowController?.destroy();
+  characterWindowController = undefined;
+  mainWindowController = undefined;
   providerService = undefined;
-  windowPlacementRepository = undefined;
   applicationDatabase?.close();
   applicationDatabase = undefined;
 }
@@ -95,7 +129,7 @@ async function startApplication(): Promise<void> {
   const clock = new SystemClock();
   const chatRepository = new ChatRepository(applicationDatabase);
   const runRepository = new RunRepository(applicationDatabase);
-  windowPlacementRepository = new WindowPlacementRepository(
+  const windowPlacementRepository = new WindowPlacementRepository(
     applicationDatabase,
   );
   const runEventService = new RunEventService(runRepository, {
@@ -135,22 +169,60 @@ async function startApplication(): Promise<void> {
   await providerService.initialize();
   unregisterProviderIpc = registerProviderIpc(providerService);
 
+  const petLibrary = new PetLibraryRepository(path.join(userDataPath, "pets"));
+  const petService = new PetService(
+    petLibrary,
+    new PetStateRepository(applicationDatabase),
+    clock,
+  );
+  await petService.initialize();
+  unregisterPetProtocol = registerPetProtocol(petLibrary);
+
+  const mainWindows = new MainWindowController(
+    () => createMainWindow(windowPlacementRepository, clock),
+    () => {
+      if (process.platform === "darwin") app.focus({ steal: true });
+      else app.focus();
+    },
+    (window, target) => {
+      window.webContents.send(
+        PET_CHANNELS.openMain,
+        parseSchema(PetMainNavigationSchema, { target }),
+      );
+    },
+  );
+  mainWindowController = mainWindows;
+
   let resolveRendererReady: (() => void) | undefined;
   const rendererReady = new Promise<void>((resolve) => {
     resolveRendererReady = resolve;
   });
-  unregisterFoundationIpc = registerFoundationIpc(snapshot, (sender) => {
-    if (mainWindow && sender.id === mainWindow.webContents.id) {
-      resolveRendererReady?.();
-    }
+  let resolveCharacterRendererReady: (() => void) | undefined;
+  const characterRendererReady = new Promise<void>((resolve) => {
+    resolveCharacterRendererReady = resolve;
   });
-
-  mainWindow = await createMainWindow(windowPlacementRepository, clock);
+  unregisterFoundationIpc = registerFoundationIpc(snapshot, (sender) => {
+    mainWindows.markRendererReady(sender);
+    resolveRendererReady?.();
+  });
+  characterWindowController = new CharacterWindowController(
+    petService,
+    openMainWindow,
+  );
+  unregisterPetIpc = registerPetIpc(
+    petService,
+    characterWindowController,
+    () => mainWindows.getWindow(),
+    () => resolveCharacterRendererReady?.(),
+  );
+  await mainWindows.open();
+  await characterWindowController.create();
   if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
     console.error("CHARAMATE_MAIN_STAGE window-loaded");
-    await rendererReady;
+    await Promise.all([rendererReady, characterRendererReady]);
     console.log(
       `CHARAMATE_SMOKE_RESULT ${JSON.stringify({
+        characterRendererReady: true,
         databaseRoundTrip,
         mode: process.env["CHARAMATE_SMOKE_KIND"],
         rendererReady: true,
@@ -173,13 +245,7 @@ void app
   });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    void createMainWindow(windowPlacementRepository, new SystemClock()).then(
-      (window) => {
-        mainWindow = window;
-      },
-    );
-  }
+  openMainWindow();
 });
 
 app.on("window-all-closed", () => {

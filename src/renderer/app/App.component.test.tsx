@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -14,6 +15,10 @@ import type {
   ChatDataSnapshot,
 } from "../../shared/contracts/chat";
 import type { CharaMateApi } from "../../shared/contracts/foundation";
+import type {
+  PetLibrarySnapshot,
+  PetMainTarget,
+} from "../../shared/contracts/pet";
 import {
   chatDataSnapshotFixture,
   chatFixture,
@@ -23,6 +28,26 @@ import { App } from "./App";
 
 const CREATED_CHAT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ACTIVE_CHAT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const PETS = [
+  {
+    description: "Directional v2 pet",
+    displayName: "Columbinya",
+    id: "columbinya",
+    spriteHeight: 2288,
+    spriteUrl: "chara-mate-pet://asset/columbinya/spritesheet.webp",
+    spriteVersionNumber: 2 as const,
+    spriteWidth: 1536,
+  },
+  {
+    description: "Legacy v1 pet",
+    displayName: "Linnea",
+    id: "linnea",
+    spriteHeight: 1872,
+    spriteUrl: "chara-mate-pet://asset/linnea/spritesheet.webp",
+    spriteVersionNumber: 1 as const,
+    spriteWidth: 1536,
+  },
+] satisfies PetLibrarySnapshot["pets"];
 
 afterEach(() => {
   cleanup();
@@ -39,6 +64,14 @@ function renderApp({
   readonly seeded?: boolean;
 } = {}) {
   let chats: Chat[] = [...(initialChats ?? (seeded ? [chatFixture] : []))];
+  let petLibrary: PetLibrarySnapshot = {
+    activePetId: "columbinya",
+    animationSpeed: 0.75,
+    pets: PETS,
+    scale: 1,
+  };
+  let petLibraryListener: ((snapshot: PetLibrarySnapshot) => void) | undefined;
+  let petMainListener: ((target: PetMainTarget) => void) | undefined;
   const snapshots = new Map<string, ChatDataSnapshot>();
   for (const chat of chats) {
     snapshots.set(
@@ -158,6 +191,29 @@ function renderApp({
       }),
       markRendererReady,
     },
+    pet: {
+      getLibrary: vi.fn(() =>
+        Promise.resolve({ ok: true as const, value: petLibrary }),
+      ),
+      importFromFolder: vi.fn(),
+      select: vi.fn(),
+      setAnimationSpeed: vi.fn(),
+      setScale: vi.fn(),
+      subscribeChanged: vi.fn(
+        (listener: (snapshot: PetLibrarySnapshot) => void) => {
+          petLibraryListener = listener;
+          return () => {
+            if (petLibraryListener === listener) petLibraryListener = undefined;
+          };
+        },
+      ),
+      subscribeOpenMain: vi.fn((listener: (target: PetMainTarget) => void) => {
+        petMainListener = listener;
+        return () => {
+          if (petMainListener === listener) petMainListener = undefined;
+        };
+      }),
+    },
     provider: {
       deleteProfile: vi.fn(),
       discoverModels: vi.fn(),
@@ -181,7 +237,16 @@ function renderApp({
   });
 
   render(<App />);
-  return { create, listProfiles, markRendererReady };
+  return {
+    create,
+    listProfiles,
+    markRendererReady,
+    openMain: (target: PetMainTarget) => petMainListener?.(target),
+    selectPet: (petId: string) => {
+      petLibrary = { ...petLibrary, activePetId: petId };
+      petLibraryListener?.(petLibrary);
+    },
+  };
 }
 
 describe("application shell", () => {
@@ -203,13 +268,41 @@ describe("application shell", () => {
       within(navigation).getByRole("button", { name: "Territory" }),
     ).toBeVisible();
     expect(screen.queryByText("领地")).not.toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Mika 桌宠" })).toHaveAttribute(
-      "src",
-    );
+    expect(
+      await screen.findByRole("img", { name: "Columbinya 桌宠缩略图" }),
+    ).toHaveAttribute("style", expect.stringContaining("columbinya"));
     const settingsButton = screen.getByRole("button", { name: "Settings" });
     const collapseButton = screen.getByRole("button", { name: "折叠侧栏" });
     expect(settingsButton).toBeVisible();
     expect(settingsButton.parentElement).toBe(collapseButton.parentElement);
+  });
+
+  it("updates the CharaMate brand thumbnail with the selected pet", async () => {
+    const { selectPet } = renderApp();
+    await screen.findByRole("img", { name: "Columbinya 桌宠缩略图" });
+
+    act(() => selectPet("linnea"));
+
+    expect(
+      await screen.findByRole("img", { name: "Linnea 桌宠缩略图" }),
+    ).toHaveAttribute("style", expect.stringContaining("linnea"));
+    expect(
+      screen.queryByRole("img", { name: "Columbinya 桌宠缩略图" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("routes Character menu requests to Chat or Character settings", async () => {
+    const { openMain } = renderApp();
+    await screen.findByRole("heading", { name: "新对话" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("heading", { name: "界面背景" })).toBeVisible();
+
+    act(() => openMain("chat"));
+    expect(screen.getByRole("heading", { name: "新对话" })).toBeVisible();
+
+    act(() => openMain("character"));
+    expect(screen.getByRole("heading", { name: "桌面角色" })).toBeVisible();
   });
 
   it("creates a persisted blank Chat and fills a suggestion without faking a Run", async () => {
@@ -275,6 +368,34 @@ describe("application shell", () => {
         { name: "新对话" },
       ),
     ).toBeVisible();
+  });
+
+  it("opens the complete Chat action menu from a sidebar context click", async () => {
+    const contextChat: Chat = {
+      ...chatFixture,
+      id: ACTIVE_CHAT_ID,
+      title: "右键会话",
+    };
+    renderApp({ initialChats: [chatFixture, contextChat] });
+    await screen.findByRole("heading", { name: chatFixture.title });
+
+    const chatButton = within(
+      screen.getByRole("region", { name: "会话列表" }),
+    ).getByRole("button", { name: contextChat.title });
+    fireEvent.contextMenu(chatButton, { clientX: 80, clientY: 120 });
+
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu).getByRole("menuitem", { name: "重命名" }),
+    ).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "置顶" })).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "归档" })).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "删除" })).toBeVisible();
+
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "重命名" }));
+    expect(
+      await screen.findByRole("textbox", { name: "会话标题" }),
+    ).toHaveValue(contextChat.title);
   });
 
   it("switches the user-selected background without changing the page tree", async () => {

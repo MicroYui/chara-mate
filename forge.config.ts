@@ -43,11 +43,20 @@ const config: ForgeConfig = {
           config: "vite.preload.config.ts",
           target: "preload",
         },
+        {
+          entry: "src/preload/character.ts",
+          config: "vite.character-preload.config.ts",
+          target: "preload",
+        },
       ],
       renderer: [
         {
           name: "main_window",
           config: "vite.renderer.config.ts",
+        },
+        {
+          name: "character_window",
+          config: "vite.character.config.ts",
         },
       ],
     }),

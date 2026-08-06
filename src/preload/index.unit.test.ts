@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CharaMateApi } from "../shared/contracts/foundation";
 import { CHAT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
+import { PET_CHANNELS } from "../shared/contracts/pet";
 import {
   chatDataSnapshotFixture,
   FIXTURE_IDS,
@@ -24,6 +25,23 @@ const electron = vi.hoisted(() => ({
 }));
 
 vi.mock("electron", () => electron);
+
+const petLibrarySnapshot = {
+  activePetId: "columbinya",
+  animationSpeed: 0.75,
+  pets: [
+    {
+      description: "A sleepy cat companion.",
+      displayName: "Columbinya",
+      id: "columbinya",
+      spriteHeight: 2288,
+      spriteUrl: "chara-mate-pet://asset/columbinya/spritesheet.webp" as const,
+      spriteVersionNumber: 2 as const,
+      spriteWidth: 1536,
+    },
+  ],
+  scale: 1,
+};
 
 async function loadApi(): Promise<CharaMateApi> {
   await import("./index");
@@ -88,6 +106,121 @@ describe("Phase 1 typed preload data boundary", () => {
     unsubscribe();
     expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
       RUN_EVENT_CHANNELS.subscribe,
+      registeredListener,
+    );
+  });
+
+  it("validates Character library commands on both sides of IPC", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(PET_CHANNELS.select);
+        expect(input).toEqual({ petId: "columbinya" });
+        return Promise.resolve({ ok: true, value: petLibrarySnapshot });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(api.pet.select({ petId: "columbinya" })).resolves.toEqual({
+      ok: true,
+      value: petLibrarySnapshot,
+    });
+    await expect(api.pet.select({ petId: "../outside" })).rejects.toThrow(
+      /petId|pattern/u,
+    );
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("validates the 30% Character size boundary", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(PET_CHANNELS.setScale);
+        expect(input).toEqual({ scale: 0.3 });
+        return Promise.resolve({
+          ok: true,
+          value: { ...petLibrarySnapshot, scale: 0.3 },
+        });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(api.pet.setScale({ scale: 0.3 })).resolves.toMatchObject({
+      ok: true,
+      value: { scale: 0.3 },
+    });
+    await expect(api.pet.setScale({ scale: 0.29 })).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("validates continuous Character animation speed requests", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(PET_CHANNELS.setAnimationSpeed);
+        expect(input).toEqual({ animationSpeed: 0.1 });
+        return Promise.resolve({
+          ok: true,
+          value: { ...petLibrarySnapshot, animationSpeed: 0.1 },
+        });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.pet.setAnimationSpeed({ animationSpeed: 0.1 }),
+    ).resolves.toMatchObject({ ok: true, value: { animationSpeed: 0.1 } });
+    await expect(
+      api.pet.setAnimationSpeed({ animationSpeed: 0.09 }),
+    ).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("validates Character library events and detaches the wrapped listener", async () => {
+    let registeredListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(PET_CHANNELS.libraryChanged);
+        registeredListener = listener;
+      },
+    );
+    const api = await loadApi();
+    const listener = vi.fn();
+    const unsubscribe = api.pet.subscribeChanged(listener);
+    if (!registeredListener) {
+      throw new Error("Pet library listener was not registered");
+    }
+
+    registeredListener({ rawElectronEvent: true }, petLibrarySnapshot);
+    expect(listener).toHaveBeenCalledWith(petLibrarySnapshot);
+    expect(() => registeredListener?.({}, { pets: "invalid" })).toThrow();
+
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      PET_CHANNELS.libraryChanged,
+      registeredListener,
+    );
+  });
+
+  it("validates Main navigation events and exposes only the target", async () => {
+    let registeredListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(PET_CHANNELS.openMain);
+        registeredListener = listener;
+      },
+    );
+    const api = await loadApi();
+    const listener = vi.fn();
+    const unsubscribe = api.pet.subscribeOpenMain(listener);
+    if (!registeredListener) {
+      throw new Error("Main navigation listener was not registered");
+    }
+
+    registeredListener({ rawElectronEvent: true }, { target: "character" });
+    expect(listener).toHaveBeenCalledWith("character");
+    expect(() => registeredListener?.({}, { target: "unsupported" })).toThrow();
+
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      PET_CHANNELS.openMain,
       registeredListener,
     );
   });

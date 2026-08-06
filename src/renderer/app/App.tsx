@@ -7,6 +7,10 @@ import {
 } from "react";
 
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
+import type {
+  PetDescriptor,
+  PetLibrarySnapshot,
+} from "../../shared/contracts/pet";
 import { chatsUiReducer, initialChatsUiState } from "../features/chats/state";
 import { ChatDomainStore } from "../features/chats/chatStore";
 import { projectChatSnapshot } from "../features/chats/projection";
@@ -36,6 +40,9 @@ export function App() {
   const [backgroundScheme, setBackgroundScheme] = useState<BackgroundScheme>(
     () => readBackgroundScheme(window.localStorage),
   );
+  const [petLibrary, setPetLibrary] = useState<PetLibrarySnapshot | null>(null);
+  const [openCharacterSettingsToken, setOpenCharacterSettingsToken] =
+    useState(0);
   const chatStore = useMemo(
     () =>
       new ChatDomainStore(
@@ -51,6 +58,43 @@ export function App() {
   );
 
   useEffect(() => chatStore.start(), [chatStore]);
+
+  useEffect(
+    () =>
+      window.charaMate.pet.subscribeOpenMain((target) => {
+        dispatch({
+          page: target === "chat" ? "chats" : "settings",
+          type: "page.selected",
+        });
+        if (target === "character") {
+          setOpenCharacterSettingsToken((token) => token + 1);
+        }
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    let active = true;
+    let receivedChange = false;
+    const unsubscribe = window.charaMate.pet.subscribeChanged((snapshot) => {
+      receivedChange = true;
+      if (active) setPetLibrary(snapshot);
+    });
+
+    void window.charaMate.pet
+      .getLibrary()
+      .then((response) => {
+        if (active && !receivedChange && response.ok) {
+          setPetLibrary(response.value);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -144,6 +188,9 @@ export function App() {
     chatDomain.activeSnapshot?.chat.id === uiState.activeChatId
       ? projectChatSnapshot(chatDomain.activeSnapshot)
       : undefined;
+  const activePet: PetDescriptor | undefined = petLibrary?.pets.find(
+    ({ id }) => id === petLibrary.activePetId,
+  );
 
   const createChat = () => {
     dispatch({ type: "chat.new" });
@@ -158,6 +205,7 @@ export function App() {
   return (
     <AppShell
       activeChat={activeChat}
+      activePet={activePet}
       backgroundScheme={backgroundScheme}
       chatDomain={chatDomain}
       dispatch={dispatch}
@@ -194,6 +242,7 @@ export function App() {
       state={uiState}
       onBackgroundSchemeChange={setBackgroundScheme}
       onProvidersChanged={() => void chatStore.refreshModels()}
+      openCharacterSettingsToken={openCharacterSettingsToken}
     />
   );
 }
