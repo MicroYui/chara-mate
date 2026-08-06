@@ -106,6 +106,8 @@ flowchart LR
 | Dev Dashboard | 仅开发时启动的本地浏览器看板，不出现在产品导航 |
 | Tray | 显示/隐藏角色、打开主面板、语音静音、暂停活动感知、退出 |
 
+主面板关闭只销毁该窗口，不结束仍由 Character Window 承载的常驻应用。桌宠、Tray 与 macOS `activate` 等入口必须经过同一个主窗口生命周期 owner：已有窗口就恢复、显示并聚焦，窗口已销毁就单飞重建；需要打开特定页面时，必须等新 Renderer 报告 ready 后再发送导航事件。来源基线：2026-08-06 检查项目锁定的 Electron `43.2.0` 类型与 API 说明，使用 `BrowserWindow.closed/isDestroyed/restore/show/focus` 和 macOS `app.focus` 的当前语义；重建与导航时序属于 CharaMate 的产品生命周期约束。
+
 ### 2.2 主面板一级页面
 
 | 页面 | 用户看到的内容 |

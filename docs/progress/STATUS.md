@@ -1,6 +1,6 @@
 # CharaMate 当前状态
 
-> 更新日期：2026-08-01
+> 更新日期：2026-08-06
 
 ## 当前里程碑
 
@@ -28,6 +28,7 @@ Phase 0 与 Phase 1 已完成。Chats 当前只走真实 Chat Service、领域 R
 - `P1-APP-SHELL` + `P1-CHAT-UI` + `P1-CONTENT` + `P1-RUN-PROJECTION`（fixture lane）：owner `feat/phase1-chats-ui-fixtures` worktree，状态 `done`。App Shell、Chats/Composer、无头像消息、紧凑 Run/Approval、GFM/代码/KaTeX/Mermaid、附件与复制均由冻结 fixture 驱动；背景可选，一级页面名统一英文，品牌位读取当前 Persona 的图片源。已接入 Provider Models，不实现真实 Chat Service 或 Agent Runtime。
 - `P1-CHAT-DATA` + Data/IPC integration：owner `feat/phase1-data-ipc` worktree，状态 `done`；shared Chat/Run/IPC Schema 与 SQLite 当前 Schema 已冻结，后续消费者通过指定 integration owner 变更。非目标仍为 Chat CRUD Service、Renderer 产品 UI、Provider、Agent Runtime、迁移框架及 Decision-gated SQLite 参数。
 - `P1-PROVIDER`：owner `feat/phase1-provider-secret` worktree，状态 `done`。已实现产品设计 §11.1 与 UI 设计 §11.5 的 Provider Profile、模型发现/手填、连接测试、Model snapshot、异步 `safeStorage` 和统一 redaction。范围为 `provider.*` shared contract/IPC、Provider 领域表/Repository/Service、官方 SDK HTTP Adapter、secret asset、typed Preload 与 Settings Models 组件；非目标为 Chat 推理、Realtime/Image Driver、Voice Transport、通用权限或安全框架。Decision 阻塞为无；无实验候选代码。Models 组件已由 `P1-APP-SHELL` 接入同一 Settings 页面树。
+- `P6-PET-FOUNDATION`：owner `main`，状态 `done`，提交 `7e61a03` 已快进合并。已实现透明 Character Window、自由拖动与多屏 DIP 恢复、PixiJS v1/v2 动画和 CharaMate 自有目录导入；验收修正跨原生窗口拖动的非有限坐标异常，方向改按相邻采样点判定，Character 设置收紧为真实图像预览列表，大小使用 `30%–150%`、速度使用 `10%–150%` 的连续滑杆且不显示比例文本，并细化轨道、滑块和聚焦反馈；左上角 CharaMate 品牌图标实时使用当前桌宠的首帧缩略图，v1 悬停动作播放三轮。主面板入口统一交给一个生命周期 owner，销毁后单飞重建，等待 Renderer ready 后再发送 typed 页面导航。Chats 搜索框聚焦描边不再被裁切；标题栏继续保留会话操作，左侧会话支持鼠标右键及键盘上下文菜单，可重命名、置顶/取消置顶、归档/恢复和删除，并避免菜单关闭时的焦点恢复立即提交重命名。不接入仍受 Phase 2 阻塞的 Run/Approval/Voice 状态投影，也不改 Harness 实验文件、共享 Run/Item Schema 或现有数据库迁移。
 
 ## 依赖、阻塞与待决 Decision
 
@@ -35,6 +36,7 @@ Phase 0 与 Phase 1 已完成。Chats 当前只走真实 Chat Service、领域 R
 - Phase 1 无 Decision 阻塞且已完成；shared Chat/Run/IPC Contract、当前数据库 Schema、Provider 与真实 Renderer 消费链已由单一 integration owner 收口，没有第二初始化或 fixture 运行路径。
 - Provider 来源刷新记录为 OpenAI JavaScript SDK `6.49.0`、OpenAI OpenAPI `2.3.0` Models/Image API、OpenAI Realtime GA WebSocket 文档、Microsoft Learn Azure Realtime WebSocket 文档（`ms.date=2026-07-13`，更新于 `2026-07-19`）、Microsoft Learn Azure Image REST reference `2025-04-01-preview`（`ms.date=2026-05-19`，更新于 `2026-06-24`）、`ws@8.21.1` 与 Electron `43.2.0` async `safeStorage`。Azure `apiVersion` 在 Profile 层可选：SDK 驱动的 HTTP 动作按需校验，Azure GA Realtime 明确不使用 date-based API Version 或 `api-version` 查询，Image 验证优先使用 Generation 基准 Endpoint 自带版本。Image Generation/Edit 没有独立只读健康端点，因此配置测试明确不调用可能计费的图片动作。
 - 官方 Electron 43 ESM 文档要求 ESM Preload 使用 `.mjs`，并说明 sandboxed Preload 不支持 ESM；当前唯一配置保持 `contextIsolation: true`、`nodeIntegration: false`、`sandbox: false`。目标机实测顶层 `await app.whenReady()` 不继续执行，当前实现把 `app.setPath` 留在 ready 前并以 Promise 生命周期启动；这是 Electron `43.2.0`/Forge `7.11.2` 的实测行为，不是协议硬限制或产品启发式。
+- 桌宠基础来源刷新于 `2026-08-06`：锁定 Electron `43.2.0` 的透明/无边框 `BrowserWindow`、`screen` DIP 显示器坐标与自定义 `protocol.handle` 行为，Forge Vite Plugin `7.11.2` 的多 Renderer 构建，以及 PixiJS `8.19.0` 的 `Application.init`、`Assets`、`AnimatedSprite` 与 strict-CSP static uniform sync。真实兼容样本为 Columbinya v2 manifest/atlas `bf7208f2…1a4` / `22013dd1…194` 与 Linnea v1 `fc9a5f5b…500` / `ac20b759…049`；样本只复制到隔离临时 `userData/pets` 验证，没有进入仓库。
 - 生产 Agent Runtime 仍受 `HARNESS-LOOP`、`TOOL-DISCOVERY` 阻塞。
 - 生产 Memory/Activity 仍受 `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH`、`ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 阻塞。
 - 生产 Voice 仍受 `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT`、`VOICE-TOOL-JOIN` 阻塞。
@@ -42,6 +44,7 @@ Phase 0 与 Phase 1 已完成。Chats 当前只走真实 Chat Service、领域 R
 
 ## 最近绿色验证
 
+- 2026-08-06：`P6-PET-FOUNDATION` 最新 `npm run verify:offline` 全绿：49 个 contract、102 个 focused/component 与 21 个 integration tests；`npm run test:e2e` 的 4 个 Electron E2E 全绿，覆盖双窗口、透明 Pixi canvas、v1/v2 切换、连续滑杆与持久化、品牌缩略图、拖动/窗口恢复、主面板单飞重建，以及 Chats 搜索框聚焦边界和侧栏右键重命名/归档/删除。`npm run build`、Forge package 与 `npm run smoke:package` 通过，packaged smoke 为 `characterRendererReady=true`、`databaseRoundTrip=true`、`rendererReady=true`。打包后的 `.app` 使用隔离目录中的 Columbinya v2/Linnea v1 WebP 实机确认桌宠入口重建导航正常，并确认搜索框四边聚焦描边完整、右键菜单含重命名/置顶/归档/删除、重命名输入框保持焦点；终端无异常。提交 `7e61a03` 已快进合并到 `main`。
 - 2026-08-01：Phase 1 最终验收 `npm run verify:offline`，`8.33s`；39 个 contract、76 个 focused/component 与 19 个 integration 全绿。`npm run test:e2e`（含 production build），`10.97s`；真实 SQLite/typed IPC 会话 CRUD、搜索、归档/恢复/删除、Chat→Agent 草稿保留、窗口/侧栏重启恢复、Provider secret 与事件重放共 3 个 Electron E2E 全绿。`npm run package`，`9.18s`；`npm run smoke:package`，`2.53s`，结果为 `databaseRoundTrip=true`、`rendererReady=true`。最终单路径审计确认产品 Renderer 不读取冻结 fixture，模型采样与 Tool/Approval 执行未伪造并继续由 Phase 2 Gate 阻塞。
 - 2026-08-01：Azure Image 配置基准修正后 `npm run verify:offline`、`npm run build`、`npm run test:e2e` 通过；39 个 contract、71 个 focused/component、16 个 integration 与 3 个 Electron E2E 全绿。契约、持久化与真实 Electron 设置页只保存 `/images/generations` 规范地址，不增加 Edit 专用字段；后续配对实测已确认同一 deployment 可确定性派生 `/images/edits`。开发数据库完整性为 `ok`，原有 1 个 Provider Profile 保留并切换到当前列名。
 - 2026-08-01：Azure Realtime GA 与能力级 API Version 修复后 `npm run verify:offline`、`npm run build`、`npm run test:e2e` 通过；39 个 contract、69 个 focused/component、16 个 integration 与 3 个 Electron E2E 全绿。本机协议用例确认 Realtime-only Azure Profile 无需版本号，握手只有 `/openai/v1/realtime?model=<deployment>` 与 `api-key` header；Image 验证保留 Endpoint 的 `api-version`。开发数据库保留原有 Profile 完成当前 Schema 调整，开发服务已完整重启并加载新 Main bundle。
