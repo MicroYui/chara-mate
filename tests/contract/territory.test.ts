@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  TerritoryInstallGeneratedItemInputSchema,
   TerritoryMovePetRequestSchema,
   TerritoryMoveResponseSchema,
   TerritoryPlaceItemRequestSchema,
@@ -13,6 +14,7 @@ import {
   activeTerritorySnapshot,
   emptyTerritorySnapshot,
 } from "../fixtures/territory";
+import { territoryCupManifest } from "../fixtures/territoryItemManifests";
 
 describe("Territory IPC contracts", () => {
   it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
@@ -54,11 +56,23 @@ describe("Territory IPC contracts", () => {
           flipped: true,
           itemId: "forest-cabin.desk",
           rotation: 90,
-          sceneId: "forest-cabin",
-          x: 6,
-          y: 5,
+          target: {
+            kind: "ground",
+            sceneId: "forest-cabin",
+            x: 6,
+            y: 5,
+          },
         }),
       ).toMatchObject({ flipped: true, rotation: 90 });
+      expect(
+        parse(TerritoryInstallGeneratedItemInputSchema, {
+          itemId: "generated.ceramic-cup",
+          manifest: territoryCupManifest,
+          sourceImagePath: "/tmp/generated-cup.png",
+        }),
+      ).toMatchObject({
+        manifest: { visual: { source: { kind: "asset" } } },
+      });
       expect(
         parse(TerritoryMoveResponseSchema, {
           ok: true,
@@ -97,9 +111,12 @@ describe("Territory IPC contracts", () => {
           flipped: false,
           itemId: "../outside",
           rotation: 45,
-          sceneId: "forest-cabin",
-          x: 1,
-          y: 1,
+          target: {
+            kind: "ground",
+            sceneId: "forest-cabin",
+            x: 1,
+            y: 1,
+          },
         }),
       ).toThrow();
       expect(() =>

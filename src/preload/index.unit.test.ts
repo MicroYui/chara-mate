@@ -161,9 +161,12 @@ describe("Phase 1 typed preload data boundary", () => {
           flipped: true,
           itemId: "forest-cabin.desk",
           rotation: 90,
-          sceneId: "forest-cabin",
-          x: 6,
-          y: 5,
+          target: {
+            kind: "ground",
+            sceneId: "forest-cabin",
+            x: 6,
+            y: 5,
+          },
         });
         return Promise.resolve({ ok: true, value: activeTerritorySnapshot });
       },
@@ -175,9 +178,12 @@ describe("Phase 1 typed preload data boundary", () => {
         flipped: true,
         itemId: "forest-cabin.desk",
         rotation: 90,
-        sceneId: "forest-cabin",
-        x: 6,
-        y: 5,
+        target: {
+          kind: "ground",
+          sceneId: "forest-cabin",
+          x: 6,
+          y: 5,
+        },
       }),
     ).resolves.toEqual({ ok: true, value: activeTerritorySnapshot });
     await expect(
@@ -185,9 +191,12 @@ describe("Phase 1 typed preload data boundary", () => {
         flipped: false,
         itemId: "../escape",
         rotation: 0,
-        sceneId: "forest-cabin",
-        x: 0,
-        y: 0,
+        target: {
+          kind: "ground",
+          sceneId: "forest-cabin",
+          x: 0,
+          y: 0,
+        },
       }),
     ).rejects.toThrow(/itemId|pattern/u);
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();

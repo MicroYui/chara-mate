@@ -1,4 +1,5 @@
 import type { TerritorySnapshot } from "../../src/shared/contracts/territory";
+import { territoryHearthManifest } from "./territoryItemManifests";
 
 const basePalette = {
   accent: "#e8bb67",
@@ -82,26 +83,19 @@ export const activeTerritorySnapshot: TerritorySnapshot = {
     pet: { facing: "right", x: 8, y: 6 },
     placements: [
       {
-        blocksMovement: true,
-        catalogId: "cabin-hearth",
-        description: "炉火不急不缓，给木屋留下一圈暖光。",
         flipped: false,
-        flippable: false,
-        height: 2,
         id: "forest-cabin.hearth",
-        layer: 2,
-        location: "scene",
-        name: "苔石壁炉",
+        manifest: territoryHearthManifest,
         pinned: false,
         placedAt: "2026-08-06T08:00:00.000Z",
-        rotatable: false,
         rotation: 0,
-        sceneId: "forest-cabin",
+        target: {
+          kind: "ground",
+          sceneId: "forest-cabin",
+          x: 1,
+          y: 4,
+        },
         updatedAt: "2026-08-06T08:00:00.000Z",
-        visual: "cabin-hearth",
-        width: 3,
-        x: 1,
-        y: 4,
       },
     ],
   },

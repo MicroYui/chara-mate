@@ -1,6 +1,9 @@
 import type { AppError } from "../../shared/contracts/run";
 
 export type TerritoryErrorCode =
+  | "TERRITORY.ASSET_CONFLICT"
+  | "TERRITORY.INVALID_ASSET"
+  | "TERRITORY.INVALID_MANIFEST"
   | "TERRITORY.INVALID_PLACEMENT"
   | "TERRITORY.ITEM_NOT_FOUND"
   | "TERRITORY.NO_PATH"

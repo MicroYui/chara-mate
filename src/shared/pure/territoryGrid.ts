@@ -4,6 +4,11 @@ import type {
   TerritoryRotation,
   TerritorySceneDefinition,
 } from "../contracts/territory";
+import type {
+  TerritoryGridCell,
+  TerritoryPositiveSize,
+} from "../contracts/territoryItemManifest";
+import { transformTerritoryGridCell } from "./territoryItemGeometry";
 
 const neighborOffsets = [
   { x: 0, y: -1 },
@@ -12,7 +17,7 @@ const neighborOffsets = [
   { x: 0, y: 1 },
 ] as const;
 
-function pointKey(point: TerritoryPoint): string {
+export function territoryPointKey(point: TerritoryPoint): string {
   return `${String(point.x)},${String(point.y)}`;
 }
 
@@ -24,29 +29,43 @@ function isMaskCell(rows: readonly string[], point: TerritoryPoint): boolean {
   return rows[point.y]?.[point.x] === "1";
 }
 
-export function rotatedItemSize(
-  item: Pick<TerritoryItem, "height" | "width">,
-  rotation: TerritoryRotation,
-): { readonly height: number; readonly width: number } {
-  return rotation === 90 || rotation === 270
-    ? { height: item.width, width: item.height }
-    : { height: item.height, width: item.width };
-}
-
-export function placementCells(
-  item: Pick<TerritoryItem, "height" | "width">,
+export function transformedTerritoryMaskCells(
+  cells: readonly TerritoryGridCell[],
+  size: TerritoryPositiveSize,
   x: number,
   y: number,
+  flipped: boolean,
   rotation: TerritoryRotation,
 ): TerritoryPoint[] {
-  const size = rotatedItemSize(item, rotation);
-  const cells: TerritoryPoint[] = [];
-  for (let offsetY = 0; offsetY < size.height; offsetY += 1) {
-    for (let offsetX = 0; offsetX < size.width; offsetX += 1) {
-      cells.push({ x: x + offsetX, y: y + offsetY });
-    }
+  return cells.map((cell) => {
+    const transformed = transformTerritoryGridCell(
+      cell,
+      size,
+      flipped,
+      rotation,
+    );
+    return { x: x + transformed.x, y: y + transformed.y };
+  });
+}
+
+function groundMaskCells(
+  item: TerritoryItem,
+  mask: "collisionCells" | "occupancyCells",
+): TerritoryPoint[] {
+  if (
+    item.target.kind !== "ground" ||
+    item.manifest.placement.mode !== "ground"
+  ) {
+    return [];
   }
-  return cells;
+  return transformedTerritoryMaskCells(
+    item.manifest.placement[mask],
+    item.manifest.placement.gridSize,
+    item.target.x,
+    item.target.y,
+    item.flipped,
+    item.rotation,
+  );
 }
 
 export function blockedMovementCells(
@@ -54,16 +73,8 @@ export function blockedMovementCells(
 ): ReadonlySet<string> {
   const blocked = new Set<string>();
   for (const item of placements) {
-    if (
-      item.location !== "scene" ||
-      !item.blocksMovement ||
-      item.x === null ||
-      item.y === null
-    ) {
-      continue;
-    }
-    for (const cell of placementCells(item, item.x, item.y, item.rotation)) {
-      blocked.add(pointKey(cell));
+    for (const cell of groundMaskCells(item, "collisionCells")) {
+      blocked.add(territoryPointKey(cell));
     }
   }
   return blocked;
@@ -75,8 +86,8 @@ function reconstructPath(
 ): TerritoryPoint[] {
   const path = [destination];
   let cursor = destination;
-  while (cameFrom.has(pointKey(cursor))) {
-    cursor = cameFrom.get(pointKey(cursor)) as TerritoryPoint;
+  while (cameFrom.has(territoryPointKey(cursor))) {
+    cursor = cameFrom.get(territoryPointKey(cursor)) as TerritoryPoint;
     path.push(cursor);
   }
   return path.reverse();
@@ -88,8 +99,8 @@ function findPathToDestination(
   destination: TerritoryPoint,
   blocked: ReadonlySet<string>,
 ): TerritoryPoint[] | undefined {
-  const startKey = pointKey(start);
-  const destinationKey = pointKey(destination);
+  const startKey = territoryPointKey(start);
+  const destinationKey = territoryPointKey(destination);
   const open = new Map<string, TerritoryPoint>([[startKey, start]]);
   const cameFrom = new Map<string, TerritoryPoint>();
   const cost = new Map<string, number>([[startKey, 0]]);
@@ -97,10 +108,10 @@ function findPathToDestination(
   while (open.size > 0) {
     const current = [...open.values()].sort((left, right) => {
       const leftCost =
-        (cost.get(pointKey(left)) ?? Number.POSITIVE_INFINITY) +
+        (cost.get(territoryPointKey(left)) ?? Number.POSITIVE_INFINITY) +
         manhattan(left, destination);
       const rightCost =
-        (cost.get(pointKey(right)) ?? Number.POSITIVE_INFINITY) +
+        (cost.get(territoryPointKey(right)) ?? Number.POSITIVE_INFINITY) +
         manhattan(right, destination);
       return (
         leftCost - rightCost ||
@@ -111,7 +122,7 @@ function findPathToDestination(
     })[0];
     if (!current) break;
 
-    const currentKey = pointKey(current);
+    const currentKey = territoryPointKey(current);
     open.delete(currentKey);
     if (currentKey === destinationKey) {
       return reconstructPath(cameFrom, current);
@@ -119,7 +130,7 @@ function findPathToDestination(
 
     for (const offset of neighborOffsets) {
       const neighbor = { x: current.x + offset.x, y: current.y + offset.y };
-      const neighborKey = pointKey(neighbor);
+      const neighborKey = territoryPointKey(neighbor);
       if (
         !isMaskCell(scene.walkableRows, neighbor) ||
         (neighborKey !== startKey && blocked.has(neighborKey))
@@ -152,7 +163,8 @@ export function findTerritoryPath(
       const point = { x, y };
       if (
         isMaskCell(scene.walkableRows, point) &&
-        (!blocked.has(pointKey(point)) || pointKey(point) === pointKey(start))
+        (!blocked.has(territoryPointKey(point)) ||
+          territoryPointKey(point) === territoryPointKey(start))
       ) {
         candidates.push(point);
       }
@@ -173,44 +185,57 @@ export function findTerritoryPath(
   return undefined;
 }
 
-export function isPlacementValid(
+export function isGroundPlacementValid(
   scene: TerritorySceneDefinition,
   item: TerritoryItem,
   x: number,
   y: number,
   rotation: TerritoryRotation,
+  flipped: boolean,
   placements: readonly TerritoryItem[],
   pet: TerritoryPoint,
 ): boolean {
-  const requestedCells = placementCells(item, x, y, rotation);
+  const placement = item.manifest.placement;
+  if (placement.mode !== "ground") return false;
+
+  const requestedCells = transformedTerritoryMaskCells(
+    placement.occupancyCells,
+    placement.gridSize,
+    x,
+    y,
+    flipped,
+    rotation,
+  );
+  const requestedCollisionCells = transformedTerritoryMaskCells(
+    placement.collisionCells,
+    placement.gridSize,
+    x,
+    y,
+    flipped,
+    rotation,
+  );
   if (
-    requestedCells.some(
-      (cell) =>
-        !isMaskCell(scene.placeableRows, cell) ||
-        (item.blocksMovement && cell.x === pet.x && cell.y === pet.y),
-    )
+    requestedCells.some((cell) => !isMaskCell(scene.placeableRows, cell)) ||
+    requestedCollisionCells.some((cell) => cell.x === pet.x && cell.y === pet.y)
   ) {
     return false;
   }
 
-  const occupied = new Set<string>();
+  const occupiedOnSamePlane = new Set<string>();
   for (const other of placements) {
     if (
       other.id === item.id ||
-      other.location !== "scene" ||
-      other.x === null ||
-      other.y === null
+      other.target.kind !== "ground" ||
+      other.manifest.placement.mode !== "ground" ||
+      other.manifest.placement.plane !== placement.plane
     ) {
       continue;
     }
-    for (const cell of placementCells(
-      other,
-      other.x,
-      other.y,
-      other.rotation,
-    )) {
-      occupied.add(pointKey(cell));
+    for (const cell of groundMaskCells(other, "occupancyCells")) {
+      occupiedOnSamePlane.add(territoryPointKey(cell));
     }
   }
-  return requestedCells.every((cell) => !occupied.has(pointKey(cell)));
+  return requestedCells.every(
+    (cell) => !occupiedOnSamePlane.has(territoryPointKey(cell)),
+  );
 }

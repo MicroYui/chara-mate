@@ -1,52 +1,49 @@
 import { describe, expect, it } from "vitest";
 
+import type { TerritoryItem } from "../contracts/territory";
 import {
-  describeTerritoryItem,
+  getTerritoryItemDefinition,
   TERRITORY_SCENE_ORDER,
   TERRITORY_SCENES,
 } from "../../main/territory/catalog";
 import {
   blockedMovementCells,
   findTerritoryPath,
-  isPlacementValid,
-  placementCells,
-  rotatedItemSize,
+  isGroundPlacementValid,
+  transformedTerritoryMaskCells,
 } from "./territoryGrid";
+import { rotatedTerritorySize } from "./territoryItemGeometry";
 
 const timestamp = "2026-08-06T08:00:00.000Z" as const;
 
 function sceneItems(sceneId: (typeof TERRITORY_SCENE_ORDER)[number]) {
-  return TERRITORY_SCENES[sceneId].defaults.map((item) =>
-    describeTerritoryItem({
-      catalogId: item.catalogId,
-      flipped: item.flipped ?? false,
-      id: item.id,
-      layer: item.layer,
-      location: "scene",
-      pinned: false,
-      placedAt: timestamp,
-      rotation: item.rotation ?? 0,
-      sceneId,
-      updatedAt: timestamp,
-      x: item.x,
-      y: item.y,
-    }),
-  );
+  return TERRITORY_SCENES[sceneId].defaults.map((item): TerritoryItem => ({
+    flipped: item.flipped ?? false,
+    id: item.id,
+    manifest: getTerritoryItemDefinition(item.definitionId),
+    pinned: false,
+    placedAt: timestamp,
+    rotation: item.rotation ?? 0,
+    target: { kind: "ground", sceneId, x: item.x, y: item.y },
+    updatedAt: timestamp,
+  }));
 }
 
-describe("Territory nav grid", () => {
-  it("keeps every built-in scene placement valid and non-overlapping", () => {
+describe("Territory 2.5D nav grid", () => {
+  it("keeps every built-in ground placement valid on its semantic plane", () => {
     for (const sceneId of TERRITORY_SCENE_ORDER) {
       const scene = TERRITORY_SCENES[sceneId];
       const items = sceneItems(sceneId);
       for (const item of items) {
+        if (item.target.kind !== "ground") throw new Error("Expected ground");
         expect(
-          isPlacementValid(
+          isGroundPlacementValid(
             scene.definition,
             item,
-            item.x ?? 0,
-            item.y ?? 0,
+            item.target.x,
+            item.target.y,
             item.rotation,
+            item.flipped,
             items.filter(({ id }) => id !== item.id),
             scene.definition.entry,
           ),
@@ -56,42 +53,53 @@ describe("Territory nav grid", () => {
     }
   });
 
-  it("finds a deterministic route to the closest cell beside an obstacle", () => {
+  it("walks straight behind the upper visual row of a desk", () => {
     const scene = TERRITORY_SCENES["forest-cabin"];
     const items = sceneItems("forest-cabin");
+    const blocked = blockedMovementCells(items);
     const path = findTerritoryPath(
       scene.definition,
-      scene.definition.entry,
-      { x: 1, y: 4 },
-      blockedMovementCells(items),
+      { x: 10, y: 4 },
+      { x: 14, y: 4 },
+      blocked,
     );
 
-    expect(path?.[0]).toEqual(scene.definition.entry);
-    expect(path?.at(-1)).toEqual({ x: 1, y: 6 });
-    const blocked = blockedMovementCells(items);
-    expect(path?.every((point) => !blocked.has(`${point.x},${point.y}`))).toBe(
-      true,
-    );
+    expect(blocked.has("11,4")).toBe(false);
+    expect(blocked.has("11,5")).toBe(true);
+    expect(path).toEqual([
+      { x: 10, y: 4 },
+      { x: 11, y: 4 },
+      { x: 12, y: 4 },
+      { x: 13, y: 4 },
+      { x: 14, y: 4 },
+    ]);
   });
 
-  it("uses one transform-aware footprint for rotation and collision", () => {
+  it("rotates the declared footprint mask instead of a whole rectangle", () => {
     const desk = sceneItems("forest-cabin").find(
-      ({ catalogId }) => catalogId === "cabin-desk",
+      ({ manifest }) => manifest.definitionId === "builtin.cabin-desk",
     );
-    if (!desk) throw new Error("Missing desk fixture");
+    if (!desk || desk.manifest.placement.mode !== "ground") {
+      throw new Error("Missing desk fixture");
+    }
 
-    expect(rotatedItemSize(desk, 90)).toEqual({ height: 3, width: 2 });
-    expect(placementCells(desk, 4, 5, 90)).toHaveLength(6);
+    expect(rotatedTerritorySize(desk.manifest.placement.gridSize, 90)).toEqual({
+      height: 3,
+      width: 2,
+    });
     expect(
-      isPlacementValid(
-        TERRITORY_SCENES["forest-cabin"].definition,
-        desk,
-        7,
+      transformedTerritoryMaskCells(
+        desk.manifest.placement.collisionCells,
+        desk.manifest.placement.gridSize,
+        4,
         5,
+        false,
         90,
-        sceneItems("forest-cabin"),
-        { x: 8, y: 6 },
       ),
-    ).toBe(false);
+    ).toEqual([
+      { x: 4, y: 5 },
+      { x: 4, y: 6 },
+      { x: 4, y: 7 },
+    ]);
   });
 });

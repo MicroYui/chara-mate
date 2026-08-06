@@ -14,6 +14,7 @@ import { RunEventService } from "./agent/runEventService";
 import { RunRepository } from "./agent/runRepository";
 import { registerChatIpc } from "./app/chatIpc";
 import { registerFoundationIpc } from "./app/foundationIpc";
+import { registerApplicationSchemes } from "./app/protocolSchemes";
 import {
   MainWindowController,
   type MainWindowTarget,
@@ -30,7 +31,7 @@ import { createAppLogger } from "./observability/logger";
 import { CharacterWindowController } from "./pet/characterWindowController";
 import { registerPetIpc } from "./pet/petIpc";
 import { PetLibraryRepository } from "./pet/petLibraryRepository";
-import { registerPetProtocol, registerPetScheme } from "./pet/petProtocol";
+import { registerPetProtocol } from "./pet/petProtocol";
 import { PetService } from "./pet/petService";
 import { PetStateRepository } from "./pet/petStateRepository";
 import { ElectronSafeStorageEncryption } from "./providers/electronSecretEncryption";
@@ -39,12 +40,15 @@ import { ProviderRepository } from "./providers/providerRepository";
 import { ProviderService } from "./providers/providerService";
 import { SafeStorageSecretStore } from "./providers/secretStore";
 import { registerTerritoryIpc } from "./territory/territoryIpc";
+import { TerritoryAssetStore } from "./territory/territoryAssetStore";
+import { ElectronTerritoryImageNormalizer } from "./territory/electronTerritoryImageNormalizer";
+import { registerTerritoryProtocol } from "./territory/territoryProtocol";
 import { TerritoryRepository } from "./territory/territoryRepository";
 import { TerritoryService } from "./territory/territoryService";
 
 const logger = createAppLogger();
 
-registerPetScheme();
+registerApplicationSchemes();
 
 const userDataOverride = process.env["CHARAMATE_USER_DATA_DIR"];
 if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
@@ -74,6 +78,7 @@ let unregisterProviderIpc: (() => void) | undefined;
 let unregisterPetIpc: (() => void) | undefined;
 let unregisterPetProtocol: (() => void) | undefined;
 let unregisterTerritoryIpc: (() => void) | undefined;
+let unregisterTerritoryProtocol: (() => void) | undefined;
 let providerService: ProviderService | undefined;
 let characterWindowController: CharacterWindowController | undefined;
 
@@ -101,6 +106,8 @@ function stopApplicationInfrastructure(): void {
   unregisterPetProtocol = undefined;
   unregisterTerritoryIpc?.();
   unregisterTerritoryIpc = undefined;
+  unregisterTerritoryProtocol?.();
+  unregisterTerritoryProtocol = undefined;
   characterWindowController?.destroy();
   characterWindowController = undefined;
   mainWindowController = undefined;
@@ -183,8 +190,17 @@ async function startApplication(): Promise<void> {
   );
   await petService.initialize();
   unregisterPetProtocol = registerPetProtocol(petLibrary);
+  const territoryRepository = new TerritoryRepository(applicationDatabase);
+  const territoryAssets = new TerritoryAssetStore(
+    path.join(userDataPath, "territory", "assets"),
+    new ElectronTerritoryImageNormalizer(),
+  );
+  unregisterTerritoryProtocol = registerTerritoryProtocol(
+    territoryRepository,
+    territoryAssets,
+  );
   unregisterTerritoryIpc = registerTerritoryIpc(
-    new TerritoryService(new TerritoryRepository(applicationDatabase), clock),
+    new TerritoryService(territoryRepository, territoryAssets, clock),
   );
 
   const mainWindows = new MainWindowController(

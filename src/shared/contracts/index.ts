@@ -94,10 +94,13 @@ export type {
 export type {
   TerritoryActiveScene,
   TerritoryApi,
-  TerritoryCatalogItemId,
   TerritoryCollectItemRequest,
+  TerritoryCollectionTarget,
   TerritoryFacing,
+  TerritoryGroundTarget,
+  TerritoryInstallGeneratedItemInput,
   TerritoryItem,
+  TerritoryItemTarget,
   TerritoryMovePetRequest,
   TerritoryMoveResponse,
   TerritoryMoveResult,
@@ -108,7 +111,18 @@ export type {
   TerritorySceneDefinition,
   TerritorySceneId,
   TerritorySceneSummary,
+  TerritorySceneTarget,
   TerritorySelectSceneRequest,
   TerritorySnapshot,
   TerritorySnapshotResponse,
+  TerritorySurfaceTarget,
 } from "./territory";
+export type {
+  TerritoryGridCell,
+  TerritoryGroundPlane,
+  TerritoryItemManifestV1,
+  TerritoryPixelPoint,
+  TerritoryPositiveSize,
+  TerritorySurfaceKind,
+  TerritorySurfaceSlot,
+} from "./territoryItemManifest";

@@ -1023,6 +1023,113 @@ https://datasetannotator-openai.openai.azure.com/openai/deployments/gpt-image-2/
 - 可为少量物件配置一条互动动画，不建设复杂游戏战斗或经济系统。
 - 场景变化由季节、时间或长期行为摘要驱动的视觉候选表达，用户可预览。
 
+#### 10.5.1 2.5D 物件语义
+
+领地使用 2.5D 场景图，不引入真正 3D、物理引擎或自由堆叠。一个物件的视觉范围、地面占用、行走碰撞、深度锚点和承载能力必须分别声明：
+
+- `underlay` 是地毯等地面覆盖物；同一格允许再放一个 `object`，角色是否可走由碰撞 mask 决定；
+- `object` 是桌子、壁炉、床等地面物件；视觉可以向地面锚点上方延伸，只有碰撞 mask 阻止角色；
+- 角色与地面物件按各自脚底/深度锚点的世界 Y 排序，因此角色可从桌面或壁炉上半部后方经过并被遮挡，但不是站到桌面上；
+- `surface` 物件没有独立地面坐标，只能附着到承载物件的一个结构化插槽；v1 每个插槽最多一个物件，且不允许插槽物件继续提供插槽；
+- 移动、旋转或翻转承载物件时，插槽物件随父物件的局部坐标变换；收回承载物件时，已附着物件在同一事务中一并回到收藏库。
+
+物件定义使用一个可由未来 Skill/Tool 直接生成并由 TypeBox/Ajv 校验的不可变 manifest。当前唯一版本为 `schemaVersion: 1`；它是资产协议版本，不是产品运行模式或兼容开关：
+
+```ts
+type TerritorySurfaceKind = "tabletop"
+type TerritoryGroundPlane = "underlay" | "object"
+type TerritoryRotation = 0 | 90 | 180 | 270
+
+interface TerritoryPixelPoint {
+  x: number
+  y: number
+}
+
+interface TerritoryGridCell {
+  x: number
+  y: number
+}
+
+interface TerritorySurfaceSlot {
+  id: string
+  kind: TerritorySurfaceKind
+  anchorPx: TerritoryPixelPoint
+  maxItemSizePx: { width: number; height: number }
+}
+
+interface TerritoryItemManifestV1 {
+  schemaVersion: 1
+  definitionId: string
+  revision: number
+  name: string
+  description: string
+  visual: {
+    source:
+      | { kind: "builtin"; key: string }
+      | { kind: "asset"; assetId: string }
+    sizePx: { width: number; height: number }
+  }
+  placement:
+    | {
+        mode: "ground"
+        plane: TerritoryGroundPlane
+        gridSize: { width: number; height: number }
+        occupancyCells: TerritoryGridCell[]
+        collisionCells: TerritoryGridCell[]
+        depthAnchorPx: TerritoryPixelPoint
+      }
+    | {
+        mode: "surface"
+        allowedSurfaceKinds: TerritorySurfaceKind[]
+        attachmentAnchorPx: TerritoryPixelPoint
+      }
+  transforms: {
+    rotations: TerritoryRotation[]
+    flippable: boolean
+  }
+  surfaceSlots: TerritorySurfaceSlot[]
+}
+```
+
+所有 `Px` 点共享物件图片左上角为原点的规范局部坐标；`depthAnchorPx`、插槽锚点和附件锚点都位于这个坐标系内。附件把自己的 `attachmentAnchorPx` 对齐到父物件的插槽锚点，不保存推导后的世界坐标。资产进入自有目录前先归一化到场景的固定 tile scale 和明确 `sizePx`，原始生图像素不直接成为运行时坐标。
+
+manifest 还必须通过领域语义校验：ID/插槽唯一；尺寸为正；所有 mask 单元位于 `gridSize` 内；`collisionCells` 是 `occupancyCells` 的子集；`underlay` 不阻挡行走；插槽锚点位于视觉范围内；附件视觉不超过插槽声明的范围；旋转集合包含 `0`。翻转先作用于规范朝向，再顺时针旋转，视觉、mask、深度锚点和插槽使用同一变换，不能分别解释。
+
+典型定义如下：
+
+| 物件 | placement | occupancy / collision | 插槽 |
+| --- | --- | --- | --- |
+| 地毯 | `ground/underlay` | 完整铺地范围 / 空 | 无 |
+| 桌子 | `ground/object` | 桌脚所在底行 / 桌脚所在底行 | 若干 `tabletop` |
+| 壁炉 | `ground/object` | 底座所在底行 / 底座所在底行 | 无 |
+| 杯子 | `surface` | 无地面 mask | 允许附着 `tabletop` |
+
+#### 10.5.2 结构化生成边界
+
+未来生成 Skill/Tool 的产物是 `item.json + sprite asset`，而不是 SQL、Pixi `zIndex`、世界坐标或任意脚本。管线先校验 manifest，再生成带占用、碰撞、深度锚点和插槽叠层的预览；只有通过校验并经产品流程接受后，才由 Territory Service 创建不可变 definition revision 与 item instance。Skill 可以负责图像与结构化草案，Tool 只消费同一 Schema 和领域 API；在 Agent Runtime/Tool Discovery 稳定前不注册生产 Tool，也不修改 Harness 实验路径。
+
+Territory 领域入口固定为一个异步调用：
+
+```ts
+interface TerritoryInstallGeneratedItemInput {
+  itemId: string
+  sourceImagePath: string
+  manifest: TerritoryItemManifestV1
+}
+
+interface TerritoryService {
+  installGeneratedItem(
+    input: TerritoryInstallGeneratedItemInput,
+  ): Promise<TerritorySnapshot>
+}
+```
+
+`sourceImagePath` 指向 Image Driver 或 Tool Artifact 已落盘的候选图片，只在 Main 进程安装期间使用，不进入 SQLite、Renderer projection 或 manifest。领域入口按 `manifest.visual.sizePx` 使用 Electron `nativeImage` 解码和缩放，统一编码为 PNG，复核输出尺寸后写入 Territory 自有 asset 目录；随后计算 SHA-256，并把 media type、尺寸、字节数、hash 和相对 storage key 与 definition/item 在一个 SQLite 事务中登记。相同 `assetId + 归一化内容 + manifest revision + itemId` 重试是幂等的；同 assetId 不同内容、同 definition revision 不同 manifest 或同 itemId 不同 definition 都拒绝覆盖。文件先通过独立 staging 目录落盘，数据库失败时回滚本次新建文件，已存在资产不删除。
+
+Renderer 只通过受控 `chara-mate-territory://asset/<assetId>/sprite.png` URL 读取已登记资产；收藏库缩略图与 Pixi Sprite 消费同一 PNG，不读取任意文件路径。当前入口已经适合未来 Agent Tool 调用，但 Tool 注册、图片生成/编辑请求、style prompt、去背景和候选确认仍分别属于 Agent Runtime/Tool Discovery 与 `P6-TERRITORY-IMAGE`，本阶段不伪造这些能力。
+
+PixiJS `8.19.0` 当前发布包的 `Container.sortableChildren`/`zIndex` 与父子局部坐标变换足以承载上述语义。CharaMate 选择的 mask、插槽和单层附件是产品约束，不是 Pixi 协议硬限制。
+
 ### 10.6 容量与记忆库
 
 - 同屏物件上限由目标窗口和视觉密度可用性测试一次选定并冻结，不提供多档容量模式。
@@ -1036,6 +1143,7 @@ https://datasetannotator-openai.openai.azure.com/openai/deployments/gpt-image-2/
 ```text
 territory_scenes
 territory_scene_revisions
+territory_item_definitions
 territory_items
 territory_item_sources
 territory_placements
@@ -1043,7 +1151,9 @@ territory_generation_jobs
 territory_assets
 ```
 
-`placement` 只保存场景 ID、item ID、坐标、层、朝向和 pin。图像在 asset 目录，数据库不存大 BLOB。
+`territory_assets` 保存归一化 PNG 的 media type、宽高、字节数、SHA-256 和相对 storage key；图片字节位于 Territory 自有 asset 目录，表中不存 BLOB 或原始外部路径。`territory_item_definitions` 保存不可变 manifest revision 与可空 asset 外键，并用数据库约束保证 asset 外键与 manifest 的 `visual.source` 一致；内置和生成物件都通过同一 manifest 投影进入 Renderer。`territory_items` 是实例并引用确定的 definition revision。
+
+`placement` 保存场景 ID、item ID、朝向和 pin，并使用互斥目标：地面物件保存网格坐标，附件保存 `supportItemId + slotId`。渲染平面和深度由 manifest 推导，不保存任意 `zIndex`；同一插槽最多一个附件。图像在 asset 目录，数据库不存大 BLOB。
 
 ### 10.8 领地验收
 
@@ -1051,6 +1161,8 @@ territory_assets
 - 记忆候选可以预览、生成、放置、点击追溯和收回。
 - 生图失败不损坏现有场景。
 - 角色可绕过障碍走到点击位置和物件附近。
+- 地毯可被角色和地面物件覆盖；桌子/壁炉按碰撞 mask 阻挡，角色在其前后正确遮挡。
+- 杯子等附件只能进入兼容且空闲的插槽；父物件移动、变换、收回和重启后关系保持确定。
 - 超过物件上限时只回收藏库，不丢失记忆或生成图。
 - 同一场景重启后位置、层级、角色和物件版本完全一致。
 

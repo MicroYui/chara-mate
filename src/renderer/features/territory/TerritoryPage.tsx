@@ -25,11 +25,18 @@ import type {
   TerritoryItem,
   TerritoryPoint,
   TerritoryRotation,
+  TerritorySceneTarget,
   TerritorySceneId,
   TerritorySceneSummary,
   TerritorySnapshot,
 } from "../../../shared/contracts/territory";
+import { territoryAssetUrl } from "../../../shared/pure/territoryAsset";
 import styles from "./TerritoryPage.module.css";
+import type { TerritoryItemTransform as ItemTransform } from "./territoryItemLayer";
+import type {
+  RenderedPetPosition,
+  TerritoryMovement,
+} from "./territoryPetLayer";
 
 const PixiTerritoryCanvas = lazy(async () => {
   const module = await import("./PixiTerritoryCanvas");
@@ -40,21 +47,6 @@ interface TerritoryPageProps {
   readonly activePet: PetDescriptor | undefined;
   readonly animationSpeed: number;
   readonly api?: TerritoryApi;
-}
-
-interface ItemTransform {
-  readonly flipped: boolean;
-  readonly rotation: TerritoryRotation;
-}
-
-interface TerritoryMovement {
-  readonly id: number;
-  readonly path: readonly RenderedPetPosition[];
-}
-
-interface RenderedPetPosition {
-  readonly x: number;
-  readonly y: number;
 }
 
 function scenePreviewStyle(scene: TerritorySceneSummary): CSSProperties {
@@ -146,8 +138,43 @@ function findItem(snapshot: TerritorySnapshot, itemId: string | null) {
   );
 }
 
-function nextRotation(rotation: TerritoryRotation): TerritoryRotation {
-  return ((rotation + 90) % 360) as TerritoryRotation;
+function nextRotation(
+  item: TerritoryItem,
+  rotation: TerritoryRotation,
+): TerritoryRotation {
+  const rotations = item.manifest.transforms.rotations;
+  const index = rotations.indexOf(rotation);
+  return rotations[(index + 1) % rotations.length] ?? 0;
+}
+
+function visualKey(item: TerritoryItem): string {
+  const source = item.manifest.visual.source;
+  return source.kind === "builtin" ? source.key : "generated-asset";
+}
+
+function itemKindLabel(item: TerritoryItem): string {
+  if (item.target.kind === "collection") return "收藏库物件";
+  return item.manifest.placement.mode === "surface" ? "桌面小物" : "场景物件";
+}
+
+function ItemSwatch({ item }: { readonly item: TerritoryItem }) {
+  const source = item.manifest.visual.source;
+  return (
+    <span
+      className={styles["itemSwatch"]}
+      data-kind={visualKey(item)}
+      data-placement={item.manifest.placement.mode}
+      data-source={source.kind}
+    >
+      {source.kind === "asset" ? (
+        <img
+          alt=""
+          aria-hidden="true"
+          src={territoryAssetUrl(source.assetId)}
+        />
+      ) : null}
+    </span>
+  );
 }
 
 export function TerritoryPage({
@@ -206,6 +233,12 @@ export function TerritoryPage({
           flipped: item.flipped,
           rotation: item.rotation,
         });
+        if (
+          item.target.kind === "collection" &&
+          item.manifest.placement.mode === "surface"
+        ) {
+          setDrawerOpen(false);
+        }
       }
     },
     [snapshot],
@@ -272,7 +305,9 @@ export function TerritoryPage({
             first &&
             (Math.abs(first.x - visualStart.x) > 0.001 ||
               Math.abs(first.y - visualStart.y) > 0.001)
-              ? [visualStart, ...response.value.path]
+              ? response.value.path.length > 1
+                ? [visualStart, ...response.value.path.slice(1)]
+                : [visualStart, first]
               : response.value.path;
           setSnapshot(response.value.snapshot);
           if (path.length <= 1) {
@@ -299,7 +334,7 @@ export function TerritoryPage({
   const placeItem = useCallback(
     async (
       item: TerritoryItem,
-      point: TerritoryPoint,
+      target: TerritorySceneTarget,
       transform: ItemTransform,
     ): Promise<boolean> => {
       const sceneId = snapshot?.activeScene?.definition.id;
@@ -312,8 +347,7 @@ export function TerritoryPage({
           flipped: transform.flipped,
           itemId: item.id,
           rotation: transform.rotation,
-          sceneId,
-          ...point,
+          target,
         });
         if (!response.ok) {
           setError(response.error.message);
@@ -360,16 +394,8 @@ export function TerritoryPage({
   const transformSelected = (transform: ItemTransform) => {
     if (!selectedItem) return;
     setSelectedTransform(transform);
-    if (
-      selectedItem.location === "scene" &&
-      selectedItem.x !== null &&
-      selectedItem.y !== null
-    ) {
-      void placeItem(
-        selectedItem,
-        { x: selectedItem.x, y: selectedItem.y },
-        transform,
-      );
+    if (selectedItem.target.kind !== "collection") {
+      void placeItem(selectedItem, selectedItem.target, transform);
     }
   };
 
@@ -498,19 +524,42 @@ export function TerritoryPage({
             >
               <X aria-hidden="true" size={14} />
             </button>
-            <p>{selectedItem.location === "scene" ? "场景物件" : "收藏库"}</p>
-            <h3>{selectedItem.name}</h3>
-            <span>{selectedItem.description}</span>
+            <p>{itemKindLabel(selectedItem)}</p>
+            <h3>{selectedItem.manifest.name}</h3>
+            <span>{selectedItem.manifest.description}</span>
+            <div className={styles["itemMeta"]}>
+              <small>
+                {selectedItem.manifest.visual.source.kind === "builtin"
+                  ? "CharaMate 内置"
+                  : "图片资产生成"}
+              </small>
+              {selectedItem.manifest.placement.mode === "surface" ? (
+                <small>适用于桌面插槽</small>
+              ) : selectedItem.manifest.surfaceSlots.length > 0 ? (
+                <small>
+                  {selectedItem.manifest.surfaceSlots.length} 个桌面插槽
+                </small>
+              ) : (
+                <small>
+                  {selectedItem.manifest.placement.plane === "underlay"
+                    ? "可踩踏覆盖物"
+                    : "脚点碰撞物件"}
+                </small>
+              )}
+            </div>
             {mode === "edit" ? (
               <div className={styles["itemActions"]}>
-                {selectedItem.rotatable ? (
+                {selectedItem.manifest.transforms.rotations.length > 1 ? (
                   <button
                     disabled={busy}
                     type="button"
                     onClick={() =>
                       transformSelected({
                         ...selectedTransform,
-                        rotation: nextRotation(selectedTransform.rotation),
+                        rotation: nextRotation(
+                          selectedItem,
+                          selectedTransform.rotation,
+                        ),
                       })
                     }
                   >
@@ -518,7 +567,7 @@ export function TerritoryPage({
                     旋转
                   </button>
                 ) : null}
-                {selectedItem.flippable ? (
+                {selectedItem.manifest.transforms.flippable ? (
                   <button
                     disabled={busy}
                     type="button"
@@ -533,7 +582,7 @@ export function TerritoryPage({
                     翻转
                   </button>
                 ) : null}
-                {selectedItem.location === "scene" ? (
+                {selectedItem.target.kind !== "collection" ? (
                   <button
                     disabled={busy}
                     type="button"
@@ -543,7 +592,11 @@ export function TerritoryPage({
                     收回
                   </button>
                 ) : (
-                  <span>选择高亮网格即可放入场景</span>
+                  <span>
+                    {selectedItem.manifest.placement.mode === "surface"
+                      ? "点击场景中发光的桌面插槽"
+                      : "选择高亮网格即可放入场景"}
+                  </span>
                 )}
               </div>
             ) : null}
@@ -555,7 +608,7 @@ export function TerritoryPage({
             <header>
               <span>
                 <strong>收藏库</strong>
-                <small>拖动场景物件，或选择物件后点击网格。</small>
+                <small>拖动地面物件，或把小物放到发光的桌面插槽。</small>
               </span>
               <button
                 type="button"
@@ -575,13 +628,16 @@ export function TerritoryPage({
                     type="button"
                     onClick={() => selectItem(item.id)}
                   >
-                    <span
-                      className={styles["itemSwatch"]}
-                      data-kind={item.visual}
-                    />
+                    <ItemSwatch item={item} />
                     <span>
-                      <strong>{item.name}</strong>
-                      <small>{item.description}</small>
+                      <strong>{item.manifest.name}</strong>
+                      <small>
+                        {item.manifest.placement.mode === "surface"
+                          ? "桌面小物 · 点击查看"
+                          : item.manifest.surfaceSlots.length > 0
+                            ? `${String(item.manifest.surfaceSlots.length)} 个桌面插槽`
+                            : item.manifest.description}
+                      </small>
                     </span>
                   </button>
                 ))}
@@ -598,13 +654,14 @@ export function TerritoryPage({
                       type="button"
                       onClick={() => selectItem(item.id)}
                     >
-                      <span
-                        className={styles["itemSwatch"]}
-                        data-kind={item.visual}
-                      />
+                      <ItemSwatch item={item} />
                       <span>
-                        <strong>{item.name}</strong>
-                        <small>选择后点击场景中的高亮网格</small>
+                        <strong>{item.manifest.name}</strong>
+                        <small>
+                          {item.manifest.placement.mode === "surface"
+                            ? "小插件 · 选择后点击桌面插槽"
+                            : "选择后点击场景中的高亮网格"}
+                        </small>
                       </span>
                     </button>
                   ))}

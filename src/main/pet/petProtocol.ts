@@ -3,21 +3,7 @@ import { pathToFileURL } from "node:url";
 
 import type { PetLibraryRepository } from "./petLibraryRepository";
 
-const PET_SCHEME = "chara-mate-pet";
-
-export function registerPetScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      privileges: {
-        corsEnabled: true,
-        secure: true,
-        standard: true,
-        supportFetchAPI: true,
-      },
-      scheme: PET_SCHEME,
-    },
-  ]);
-}
+export const PET_SCHEME = "chara-mate-pet";
 
 export function registerPetProtocol(library: PetLibraryRepository): () => void {
   protocol.handle(PET_SCHEME, async (request) => {

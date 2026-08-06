@@ -2,6 +2,10 @@ import { Type, type TSchema } from "@sinclair/typebox";
 
 import { AppErrorSchema } from "./error";
 import { NonBlankStringSchema, TimestampSchema } from "./primitives";
+import { TerritoryItemManifestV1Schema } from "./territoryItemManifest";
+import { TerritoryRotationSchema } from "./territoryPrimitives";
+
+export { TerritoryRotationSchema } from "./territoryPrimitives";
 
 export const TerritorySceneIdSchema = Type.Union([
   Type.Literal("forest-cabin"),
@@ -15,37 +19,9 @@ export const TerritoryItemIdSchema = Type.String({
   pattern: "^[a-z0-9]+(?:[.-][a-z0-9]+)*$",
 });
 
-export const TerritoryCatalogItemIdSchema = Type.Union([
-  Type.Literal("cabin-hearth"),
-  Type.Literal("cabin-desk"),
-  Type.Literal("fern-pot"),
-  Type.Literal("moss-rug"),
-  Type.Literal("seaside-bed"),
-  Type.Literal("shell-table"),
-  Type.Literal("potted-palm"),
-  Type.Literal("wave-rug"),
-  Type.Literal("rooftop-bench"),
-  Type.Literal("sunset-planter"),
-  Type.Literal("brass-telescope"),
-  Type.Literal("roof-lantern"),
-  Type.Literal("star-workbench"),
-  Type.Literal("astral-bookshelf"),
-  Type.Literal("moon-crystal"),
-  Type.Literal("constellation-rug"),
-]);
-
-export const TerritoryItemVisualSchema = TerritoryCatalogItemIdSchema;
-
 export const TerritoryFacingSchema = Type.Union([
   Type.Literal("left"),
   Type.Literal("right"),
-]);
-
-export const TerritoryRotationSchema = Type.Union([
-  Type.Literal(0),
-  Type.Literal(90),
-  Type.Literal(180),
-  Type.Literal(270),
 ]);
 
 export const TerritoryPointSchema = Type.Object(
@@ -104,28 +80,55 @@ export const TerritorySceneDefinitionSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const TerritoryCollectionTargetSchema = Type.Object(
+  { kind: Type.Literal("collection") },
+  { additionalProperties: false },
+);
+
+export const TerritoryGroundTargetSchema = Type.Object(
+  {
+    kind: Type.Literal("ground"),
+    sceneId: TerritorySceneIdSchema,
+    x: Type.Integer({ minimum: 0 }),
+    y: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+
+export const TerritorySurfaceTargetSchema = Type.Object(
+  {
+    kind: Type.Literal("surface"),
+    sceneId: TerritorySceneIdSchema,
+    slotId: Type.String({
+      maxLength: 48,
+      pattern: "^[a-z][a-z0-9-]*$",
+    }),
+    supportItemId: TerritoryItemIdSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritorySceneTargetSchema = Type.Union([
+  TerritoryGroundTargetSchema,
+  TerritorySurfaceTargetSchema,
+]);
+
+export const TerritoryItemTargetSchema = Type.Union([
+  TerritoryCollectionTargetSchema,
+  TerritoryGroundTargetSchema,
+  TerritorySurfaceTargetSchema,
+]);
+
 export const TerritoryItemSchema = Type.Object(
   {
-    blocksMovement: Type.Boolean(),
-    catalogId: TerritoryCatalogItemIdSchema,
-    description: NonBlankStringSchema,
     flipped: Type.Boolean(),
-    flippable: Type.Boolean(),
-    height: Type.Integer({ minimum: 1 }),
     id: TerritoryItemIdSchema,
-    layer: Type.Integer({ minimum: 0 }),
-    location: Type.Union([Type.Literal("scene"), Type.Literal("collection")]),
-    name: NonBlankStringSchema,
+    manifest: TerritoryItemManifestV1Schema,
     pinned: Type.Boolean(),
     placedAt: Type.Union([TimestampSchema, Type.Null()]),
-    rotatable: Type.Boolean(),
     rotation: TerritoryRotationSchema,
-    sceneId: Type.Union([TerritorySceneIdSchema, Type.Null()]),
+    target: TerritoryItemTargetSchema,
     updatedAt: TimestampSchema,
-    visual: TerritoryItemVisualSchema,
-    width: Type.Integer({ minimum: 1 }),
-    x: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
-    y: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
   },
   { additionalProperties: false },
 );
@@ -185,9 +188,7 @@ export const TerritoryPlaceItemRequestSchema = Type.Object(
     flipped: Type.Boolean(),
     itemId: TerritoryItemIdSchema,
     rotation: TerritoryRotationSchema,
-    sceneId: TerritorySceneIdSchema,
-    x: Type.Integer({ minimum: 0 }),
-    y: Type.Integer({ minimum: 0 }),
+    target: TerritorySceneTargetSchema,
   },
   { additionalProperties: false },
 );
@@ -196,6 +197,15 @@ export const TerritoryCollectItemRequestSchema = Type.Object(
   {
     itemId: TerritoryItemIdSchema,
     sceneId: TerritorySceneIdSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryInstallGeneratedItemInputSchema = Type.Object(
+  {
+    itemId: TerritoryItemIdSchema,
+    manifest: TerritoryItemManifestV1Schema,
+    sourceImagePath: Type.String({ maxLength: 4096, minLength: 1 }),
   },
   { additionalProperties: false },
 );

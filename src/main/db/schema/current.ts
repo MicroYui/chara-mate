@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "1";
+export const CURRENT_SCHEMA_VERSION = "3";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -82,30 +82,44 @@ export const CURRENT_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS territory_assets (
+    asset_id TEXT PRIMARY KEY NOT NULL,
+    media_type TEXT NOT NULL CHECK (media_type = 'image/png'),
+    width INTEGER NOT NULL CHECK (width > 0),
+    height INTEGER NOT NULL CHECK (height > 0),
+    byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    storage_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS territory_item_definitions (
+    definition_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    asset_id TEXT REFERENCES territory_assets(asset_id),
+    manifest_json TEXT NOT NULL CHECK (json_valid(manifest_json)),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (definition_id, revision),
+    CHECK (
+      (
+        asset_id IS NULL AND
+        json_extract(manifest_json, '$.visual.source.kind') = 'builtin'
+      ) OR (
+        asset_id IS NOT NULL AND
+        json_extract(manifest_json, '$.visual.source.kind') = 'asset' AND
+        json_extract(manifest_json, '$.visual.source.assetId') = asset_id
+      )
+    )
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS territory_items (
     item_id TEXT PRIMARY KEY NOT NULL,
-    catalog_id TEXT NOT NULL CHECK (
-      catalog_id IN (
-        'cabin-hearth',
-        'cabin-desk',
-        'fern-pot',
-        'moss-rug',
-        'seaside-bed',
-        'shell-table',
-        'potted-palm',
-        'wave-rug',
-        'rooftop-bench',
-        'sunset-planter',
-        'brass-telescope',
-        'roof-lantern',
-        'star-workbench',
-        'astral-bookshelf',
-        'moon-crystal',
-        'constellation-rug'
-      )
-    ),
-    initial_scene_id TEXT NOT NULL REFERENCES territory_scenes(scene_id),
-    created_at TEXT NOT NULL
+    definition_id TEXT NOT NULL,
+    definition_revision INTEGER NOT NULL CHECK (definition_revision >= 1),
+    initial_scene_id TEXT REFERENCES territory_scenes(scene_id),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (definition_id, definition_revision)
+      REFERENCES territory_item_definitions(definition_id, revision)
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS territory_placements (
@@ -113,9 +127,11 @@ export const CURRENT_SCHEMA_SQL = `
       REFERENCES territory_items(item_id) ON DELETE CASCADE,
     location TEXT NOT NULL CHECK (location IN ('scene', 'collection')),
     scene_id TEXT REFERENCES territory_scenes(scene_id),
+    placement_kind TEXT CHECK (placement_kind IN ('ground', 'surface')),
     grid_x INTEGER CHECK (grid_x IS NULL OR grid_x >= 0),
     grid_y INTEGER CHECK (grid_y IS NULL OR grid_y >= 0),
-    layer INTEGER NOT NULL CHECK (layer >= 0),
+    support_item_id TEXT REFERENCES territory_items(item_id),
+    slot_id TEXT,
     rotation INTEGER NOT NULL CHECK (rotation IN (0, 90, 180, 270)),
     flipped INTEGER NOT NULL CHECK (flipped IN (0, 1)),
     pinned INTEGER NOT NULL CHECK (pinned IN (0, 1)),
@@ -124,10 +140,23 @@ export const CURRENT_SCHEMA_SQL = `
     CHECK (
       (
         location = 'scene' AND scene_id IS NOT NULL AND
-        grid_x IS NOT NULL AND grid_y IS NOT NULL AND placed_at IS NOT NULL
+        placed_at IS NOT NULL AND
+        (
+          (
+            placement_kind = 'ground' AND
+            grid_x IS NOT NULL AND grid_y IS NOT NULL AND
+            support_item_id IS NULL AND slot_id IS NULL
+          ) OR (
+            placement_kind = 'surface' AND
+            grid_x IS NULL AND grid_y IS NULL AND
+            support_item_id IS NOT NULL AND slot_id IS NOT NULL AND
+            support_item_id <> item_id
+          )
+        )
       ) OR (
         location = 'collection' AND scene_id IS NULL AND
-        grid_x IS NULL AND grid_y IS NULL
+        placement_kind IS NULL AND grid_x IS NULL AND grid_y IS NULL AND
+        support_item_id IS NULL AND slot_id IS NULL AND placed_at IS NULL
       )
     )
   ) STRICT;
@@ -292,7 +321,10 @@ export const CURRENT_SCHEMA_SQL = `
     ON territory_scenes(is_active)
     WHERE is_active = 1;
   CREATE INDEX IF NOT EXISTS territory_placements_scene_idx
-    ON territory_placements(scene_id, layer, grid_y, grid_x, item_id);
+    ON territory_placements(scene_id, placement_kind, grid_y, grid_x, item_id);
   CREATE INDEX IF NOT EXISTS territory_placements_collection_idx
     ON territory_placements(location, updated_at, item_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS territory_one_item_per_surface_slot_idx
+    ON territory_placements(support_item_id, slot_id)
+    WHERE location = 'scene' AND placement_kind = 'surface';
 `;

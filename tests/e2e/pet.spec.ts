@@ -202,6 +202,9 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
         return movementId !== "idle" && x > 2.5 && x < 7.5;
       })
       .toBe(true);
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-facing"))
+      .toBe("left");
     const beforeReroute = await territoryCanvas.evaluate((canvas) => ({
       movementId: canvas.dataset["petMovementId"],
       x: Number(canvas.dataset["petGridX"]),
@@ -211,6 +214,9 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
     await expect
       .poll(() => territoryCanvas.getAttribute("data-pet-movement-id"))
       .not.toBe(beforeReroute.movementId);
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-facing"))
+      .toBe("right");
     const afterReroute = await territoryCanvas.evaluate((canvas) => ({
       x: Number(canvas.dataset["petGridX"]),
       y: Number(canvas.dataset["petGridY"]),

@@ -1,7 +1,7 @@
 import type {
   TerritoryCollectItemRequest,
   TerritoryFacing,
-  TerritoryItem,
+  TerritoryInstallGeneratedItemInput,
   TerritoryMovePetRequest,
   TerritoryMoveResult,
   TerritoryPlaceItemRequest,
@@ -9,55 +9,39 @@ import type {
   TerritorySelectSceneRequest,
   TerritorySnapshot,
 } from "../../shared/contracts/territory";
+import type { TerritoryItemManifestV1 } from "../../shared/contracts/territoryItemManifest";
 import type { Clock } from "../../shared/pure/clock";
 import {
-  describeTerritoryItem,
-  getTerritoryScene,
-  listTerritorySceneSummaries,
-  type TerritoryCatalogItem,
-  TERRITORY_ITEMS,
-} from "./catalog";
+  isTerritorySurfacePlacementValid,
+  validateTerritoryItemManifestSemantics,
+} from "../../shared/pure/territoryItemGeometry";
 import {
   blockedMovementCells,
   findTerritoryPath,
-  isPlacementValid,
+  isGroundPlacementValid,
 } from "../../shared/pure/territoryGrid";
+import { TerritoryInstallGeneratedItemInputSchema } from "../../shared/schemas/territory";
+import { parseSchema } from "../../shared/schemas/validation";
+import { getTerritoryScene, listTerritorySceneSummaries } from "./catalog";
 import { TerritoryError } from "./territoryError";
+import type { TerritoryAssetStore } from "./territoryAssetStore";
 import type {
-  TerritoryItemRecord,
   TerritoryRepository,
   TerritorySceneRecord,
 } from "./territoryRepository";
 
-function mapItem(record: TerritoryItemRecord): TerritoryItem {
-  return describeTerritoryItem({
-    catalogId: record.catalogId,
-    flipped: record.flipped,
-    id: record.id,
-    layer: record.layer,
-    location: record.location,
-    pinned: record.pinned,
-    placedAt: record.placedAt,
-    rotation: record.rotation,
-    sceneId: record.sceneId,
-    updatedAt: record.updatedAt,
-    x: record.x,
-    y: record.y,
-  });
-}
-
 function requireTransform(
-  definition: TerritoryCatalogItem,
+  manifest: TerritoryItemManifestV1,
   request: TerritoryPlaceItemRequest,
 ): void {
-  if (!definition.rotatable && request.rotation !== 0) {
+  if (!manifest.transforms.rotations.includes(request.rotation)) {
     throw new TerritoryError(
       "TERRITORY.INVALID_PLACEMENT",
-      "这个物件不能旋转。",
+      "这个物件不支持当前旋转方向。",
       false,
     );
   }
-  if (!definition.flippable && request.flipped) {
+  if (!manifest.transforms.flippable && request.flipped) {
     throw new TerritoryError(
       "TERRITORY.INVALID_PLACEMENT",
       "这个物件不能翻转。",
@@ -69,6 +53,7 @@ function requireTransform(
 export class TerritoryService {
   constructor(
     private readonly repository: TerritoryRepository,
+    private readonly assets: TerritoryAssetStore,
     private readonly clock: Clock,
   ) {}
 
@@ -95,13 +80,11 @@ export class TerritoryService {
               x: active.petX,
               y: active.petY,
             },
-            placements: this.repository
-              .listSceneItems(active.sceneId)
-              .map(mapItem),
+            placements: this.repository.listSceneItems(active.sceneId),
           }
         : null,
       availableScenes: listTerritorySceneSummaries(),
-      collection: this.repository.listCollectionItems().map(mapItem),
+      collection: this.repository.listCollectionItems(),
     };
   }
 
@@ -110,6 +93,58 @@ export class TerritoryService {
       getTerritoryScene(request.sceneId),
       this.clock.now(),
     );
+    return this.getSnapshot();
+  }
+
+  async installGeneratedItem(
+    input: TerritoryInstallGeneratedItemInput,
+  ): Promise<TerritorySnapshot> {
+    const parsed = parseSchema(TerritoryInstallGeneratedItemInputSchema, input);
+    const issues = validateTerritoryItemManifestSemantics(parsed.manifest);
+    if (issues.length > 0) {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_MANIFEST",
+        `物件清单不完整：${issues[0]?.message ?? "请检查物件定义。"}`,
+        false,
+      );
+    }
+    if (parsed.manifest.visual.source.kind !== "asset") {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_MANIFEST",
+        "生成物件的 manifest 必须引用图片 assetId。",
+        false,
+      );
+    }
+
+    const prepared = await this.assets.prepareInstall({
+      assetId: parsed.manifest.visual.source.assetId,
+      size: parsed.manifest.visual.sizePx,
+      sourceImagePath: parsed.sourceImagePath,
+    });
+    try {
+      this.repository.installGeneratedCollectionItem({
+        asset: prepared.record,
+        itemId: parsed.itemId,
+        manifest: parsed.manifest,
+        now: this.clock.now(),
+      });
+    } catch (error) {
+      try {
+        await this.assets.rollbackCreatedAsset(prepared);
+      } catch {
+        throw new TerritoryError(
+          "TERRITORY.STORAGE_FAILED",
+          "领地图片已生成，但安装失败且无法清理临时资产。",
+          true,
+        );
+      }
+      if (error instanceof TerritoryError) throw error;
+      throw new TerritoryError(
+        "TERRITORY.STORAGE_FAILED",
+        "无法保存生成的领地物件。",
+        true,
+      );
+    }
     return this.getSnapshot();
   }
 
@@ -136,9 +171,7 @@ export class TerritoryService {
       );
     }
 
-    const placements = this.repository
-      .listSceneItems(active.sceneId)
-      .map(mapItem);
+    const placements = this.repository.listSceneItems(active.sceneId);
     const path = findTerritoryPath(
       scene,
       request.from,
@@ -178,7 +211,7 @@ export class TerritoryService {
   }
 
   placeItem(request: TerritoryPlaceItemRequest): TerritorySnapshot {
-    const active = this.requireActiveScene(request.sceneId);
+    const active = this.requireActiveScene(request.target.sceneId);
     const record = this.repository.getItem(request.itemId);
     if (!record) {
       throw new TerritoryError(
@@ -187,7 +220,10 @@ export class TerritoryService {
         false,
       );
     }
-    if (record.location === "scene" && record.sceneId !== active.sceneId) {
+    if (
+      record.target.kind !== "collection" &&
+      record.target.sceneId !== active.sceneId
+    ) {
       throw new TerritoryError(
         "TERRITORY.INVALID_PLACEMENT",
         "请先把物件收回收藏库，再放到另一个场景。",
@@ -195,39 +231,45 @@ export class TerritoryService {
       );
     }
 
-    const definition = TERRITORY_ITEMS[record.catalogId];
-    requireTransform(definition, request);
-    const item = mapItem(record);
-    const placements = this.repository
-      .listSceneItems(active.sceneId)
-      .map(mapItem);
-    if (
-      !isPlacementValid(
-        getTerritoryScene(active.sceneId).definition,
-        item,
-        request.x,
-        request.y,
-        request.rotation,
-        placements,
-        { x: active.petX, y: active.petY },
-      )
-    ) {
-      throw new TerritoryError(
-        "TERRITORY.INVALID_PLACEMENT",
-        "这里放不下这个物件，请选择高亮网格。",
-        false,
-      );
+    requireTransform(record.manifest, request);
+    const item = record;
+    const placements = this.repository.listSceneItems(active.sceneId);
+    if (request.target.kind === "ground") {
+      if (
+        record.manifest.placement.mode !== "ground" ||
+        !isGroundPlacementValid(
+          getTerritoryScene(active.sceneId).definition,
+          item,
+          request.target.x,
+          request.target.y,
+          request.rotation,
+          request.flipped,
+          placements,
+          { x: active.petX, y: active.petY },
+        )
+      ) {
+        throw new TerritoryError(
+          "TERRITORY.INVALID_PLACEMENT",
+          "这里放不下这个物件，请选择高亮网格。",
+          false,
+        );
+      }
+    } else {
+      if (!isTerritorySurfacePlacementValid(item, request.target, placements)) {
+        throw new TerritoryError(
+          "TERRITORY.INVALID_PLACEMENT",
+          "这个桌面插槽不能放置当前小物。",
+          false,
+        );
+      }
     }
 
     this.repository.placeItem({
       flipped: request.flipped,
       itemId: record.id,
-      layer: record.layer,
       now: this.clock.now(),
       rotation: request.rotation,
-      sceneId: active.sceneId,
-      x: request.x,
-      y: request.y,
+      target: request.target,
     });
     return this.getSnapshot();
   }
@@ -242,7 +284,10 @@ export class TerritoryService {
         false,
       );
     }
-    if (item.location !== "scene" || item.sceneId !== request.sceneId) {
+    if (
+      item.target.kind === "collection" ||
+      item.target.sceneId !== request.sceneId
+    ) {
       throw new TerritoryError(
         "TERRITORY.INVALID_PLACEMENT",
         "这个物件已经在收藏库里。",

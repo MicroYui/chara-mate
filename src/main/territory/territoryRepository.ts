@@ -1,13 +1,25 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type Database from "better-sqlite3";
 
 import type {
-  TerritoryCatalogItemId,
   TerritoryFacing,
+  TerritoryItem,
+  TerritoryItemTarget,
   TerritoryRotation,
   TerritorySceneId,
+  TerritorySceneTarget,
 } from "../../shared/contracts/territory";
+import type { TerritoryItemManifestV1 } from "../../shared/contracts/territoryItemManifest";
 import type { Timestamp } from "../../shared/contracts/primitives";
-import type { TerritorySceneCatalogEntry } from "./catalog";
+import { TerritoryItemManifestV1Schema } from "../../shared/schemas/territoryItemManifest";
+import { parseSchema } from "../../shared/schemas/validation";
+import {
+  getTerritoryItemDefinition,
+  TERRITORY_COLLECTION_DEFAULTS,
+  type TerritorySceneCatalogEntry,
+} from "./catalog";
+import { TerritoryError } from "./territoryError";
 
 interface TerritorySceneRow {
   initialized_at: string;
@@ -20,18 +32,44 @@ interface TerritorySceneRow {
 }
 
 interface TerritoryItemRow {
-  catalog_id: TerritoryCatalogItemId;
+  asset_id: string | null;
+  definition_id: string;
+  definition_revision: number;
   flipped: number;
-  item_id: string;
-  layer: number;
-  location: "collection" | "scene";
-  pinned: number;
-  placed_at: string | null;
-  rotation: TerritoryRotation;
-  scene_id: TerritorySceneId | null;
-  updated_at: string;
   grid_x: number | null;
   grid_y: number | null;
+  item_id: string;
+  location: "collection" | "scene";
+  manifest_json: string;
+  pinned: number;
+  placed_at: string | null;
+  placement_kind: "ground" | "surface" | null;
+  rotation: TerritoryRotation;
+  scene_id: TerritorySceneId | null;
+  slot_id: string | null;
+  support_item_id: string | null;
+  updated_at: string;
+}
+
+interface TerritoryDefinitionRow {
+  asset_id: string | null;
+  manifest_json: string;
+}
+
+interface TerritoryAssetRow {
+  asset_id: string;
+  byte_length: number;
+  created_at: string;
+  height: number;
+  media_type: "image/png";
+  sha256: string;
+  storage_key: string;
+  width: number;
+}
+
+interface TerritoryIdentityRow {
+  definition_id: string;
+  definition_revision: number;
 }
 
 export interface TerritorySceneRecord {
@@ -44,19 +82,17 @@ export interface TerritorySceneRecord {
   readonly updatedAt: Timestamp;
 }
 
-export interface TerritoryItemRecord {
-  readonly catalogId: TerritoryCatalogItemId;
-  readonly flipped: boolean;
-  readonly id: string;
-  readonly layer: number;
-  readonly location: "collection" | "scene";
-  readonly pinned: boolean;
-  readonly placedAt: Timestamp | null;
-  readonly rotation: TerritoryRotation;
-  readonly sceneId: TerritorySceneId | null;
-  readonly updatedAt: Timestamp;
-  readonly x: number | null;
-  readonly y: number | null;
+export type TerritoryItemRecord = TerritoryItem;
+
+export interface TerritoryAssetRecord {
+  readonly assetId: string;
+  readonly byteLength: number;
+  readonly createdAt: Timestamp;
+  readonly height: number;
+  readonly mediaType: "image/png";
+  readonly sha256: string;
+  readonly storageKey: string;
+  readonly width: number;
 }
 
 function mapScene(row: TerritorySceneRow): TerritorySceneRecord {
@@ -71,33 +107,156 @@ function mapScene(row: TerritorySceneRow): TerritorySceneRecord {
   };
 }
 
+function parseManifest(serialized: string): TerritoryItemManifestV1 {
+  return parseSchema(TerritoryItemManifestV1Schema, JSON.parse(serialized));
+}
+
+function mapTarget(row: TerritoryItemRow): TerritoryItemTarget {
+  if (row.location === "collection") return { kind: "collection" };
+  if (
+    row.placement_kind === "ground" &&
+    row.scene_id &&
+    row.grid_x !== null &&
+    row.grid_y !== null
+  ) {
+    return {
+      kind: "ground",
+      sceneId: row.scene_id,
+      x: row.grid_x,
+      y: row.grid_y,
+    };
+  }
+  if (
+    row.placement_kind === "surface" &&
+    row.scene_id &&
+    row.slot_id &&
+    row.support_item_id
+  ) {
+    return {
+      kind: "surface",
+      sceneId: row.scene_id,
+      slotId: row.slot_id,
+      supportItemId: row.support_item_id,
+    };
+  }
+  throw new Error(`Invalid Territory placement row: ${row.item_id}`);
+}
+
 function mapItem(row: TerritoryItemRow): TerritoryItemRecord {
+  const manifest = parseManifest(row.manifest_json);
+  const manifestAssetId =
+    manifest.visual.source.kind === "asset"
+      ? manifest.visual.source.assetId
+      : null;
+  if (
+    manifest.definitionId !== row.definition_id ||
+    manifest.revision !== row.definition_revision ||
+    manifestAssetId !== row.asset_id
+  ) {
+    throw new Error(`Territory definition identity mismatch: ${row.item_id}`);
+  }
   return {
-    catalogId: row.catalog_id,
     flipped: row.flipped === 1,
     id: row.item_id,
-    layer: row.layer,
-    location: row.location,
+    manifest,
     pinned: row.pinned === 1,
     placedAt: row.placed_at,
     rotation: row.rotation,
-    sceneId: row.scene_id,
+    target: mapTarget(row),
     updatedAt: row.updated_at,
-    x: row.grid_x,
-    y: row.grid_y,
   };
 }
 
 const itemSelect = `
-  SELECT i.item_id, i.catalog_id, p.location, p.scene_id, p.grid_x,
-         p.grid_y, p.layer, p.rotation, p.flipped, p.pinned, p.placed_at,
-         p.updated_at
+  SELECT i.item_id, i.definition_id, i.definition_revision,
+         d.asset_id, d.manifest_json, p.location, p.scene_id, p.placement_kind,
+         p.grid_x, p.grid_y, p.support_item_id, p.slot_id, p.rotation,
+         p.flipped, p.pinned, p.placed_at, p.updated_at
   FROM territory_items i
+  JOIN territory_item_definitions d
+    ON d.definition_id = i.definition_id
+   AND d.revision = i.definition_revision
   JOIN territory_placements p ON p.item_id = i.item_id
 `;
 
 export class TerritoryRepository {
   constructor(private readonly database: Database.Database) {}
+
+  private ensureDefinition(
+    manifest: TerritoryItemManifestV1,
+    now: Timestamp,
+  ): void {
+    const assetId =
+      manifest.visual.source.kind === "asset"
+        ? manifest.visual.source.assetId
+        : null;
+    const serialized = JSON.stringify(manifest);
+    this.database
+      .prepare(
+        `INSERT OR IGNORE INTO territory_item_definitions (
+           definition_id, revision, asset_id, manifest_json, created_at
+         ) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(manifest.definitionId, manifest.revision, assetId, serialized, now);
+    const stored = this.database
+      .prepare(
+        `SELECT asset_id, manifest_json
+         FROM territory_item_definitions
+         WHERE definition_id = ? AND revision = ?`,
+      )
+      .get(manifest.definitionId, manifest.revision) as TerritoryDefinitionRow;
+    if (
+      stored.asset_id !== assetId ||
+      !isDeepStrictEqual(parseManifest(stored.manifest_json), manifest)
+    ) {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_MANIFEST",
+        "物件 definition revision 已存在且内容不同。",
+        false,
+      );
+    }
+  }
+
+  private insertItem(
+    itemId: string,
+    manifest: TerritoryItemManifestV1,
+    initialSceneId: TerritorySceneId | null,
+    now: Timestamp,
+  ): boolean {
+    this.ensureDefinition(manifest, now);
+    const result = this.database
+      .prepare(
+        `INSERT OR IGNORE INTO territory_items (
+           item_id, definition_id, definition_revision, initial_scene_id,
+           created_at
+         ) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        itemId,
+        manifest.definitionId,
+        manifest.revision,
+        initialSceneId,
+        now,
+      );
+    const identity = this.database
+      .prepare(
+        `SELECT definition_id, definition_revision
+         FROM territory_items
+         WHERE item_id = ?`,
+      )
+      .get(itemId) as TerritoryIdentityRow;
+    if (
+      identity.definition_id !== manifest.definitionId ||
+      identity.definition_revision !== manifest.revision
+    ) {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_MANIFEST",
+        "物件实例 ID 已存在且引用了不同 definition。",
+        false,
+      );
+    }
+    return result.changes === 1;
+  }
 
   getActiveScene(): TerritorySceneRecord | undefined {
     const row = this.database
@@ -118,13 +277,37 @@ export class TerritoryRepository {
     return row ? mapItem(row) : undefined;
   }
 
+  getAsset(assetId: string): TerritoryAssetRecord | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT asset_id, media_type, width, height, byte_length, sha256,
+                storage_key, created_at
+         FROM territory_assets
+         WHERE asset_id = ?`,
+      )
+      .get(assetId) as TerritoryAssetRow | undefined;
+    return row
+      ? {
+          assetId: row.asset_id,
+          byteLength: row.byte_length,
+          createdAt: row.created_at,
+          height: row.height,
+          mediaType: row.media_type,
+          sha256: row.sha256,
+          storageKey: row.storage_key,
+          width: row.width,
+        }
+      : undefined;
+  }
+
   listSceneItems(sceneId: TerritorySceneId): TerritoryItemRecord[] {
     return (
       this.database
         .prepare(
           `${itemSelect}
            WHERE p.location = 'scene' AND p.scene_id = ?
-           ORDER BY p.layer, p.grid_y, p.grid_x, i.item_id`,
+           ORDER BY p.placement_kind, p.grid_y, p.grid_x,
+                    p.support_item_id, p.slot_id, i.item_id`,
         )
         .all(sceneId) as TerritoryItemRow[]
     ).map(mapItem);
@@ -166,36 +349,111 @@ export class TerritoryRepository {
           now,
         );
 
-      const insertItem = this.database.prepare(
-        `INSERT OR IGNORE INTO territory_items (
-           item_id, catalog_id, initial_scene_id, created_at
-         ) VALUES (?, ?, ?, ?)`,
-      );
-      const insertPlacement = this.database.prepare(
+      const insertGroundPlacement = this.database.prepare(
         `INSERT OR IGNORE INTO territory_placements (
-           item_id, location, scene_id, grid_x, grid_y, layer, rotation,
-           flipped, pinned, placed_at, updated_at
-         ) VALUES (?, 'scene', ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+           item_id, location, scene_id, placement_kind, grid_x, grid_y,
+           support_item_id, slot_id, rotation, flipped, pinned, placed_at,
+           updated_at
+         ) VALUES (?, 'scene', ?, 'ground', ?, ?, NULL, NULL, ?, ?, 0, ?, ?)`,
       );
       for (const item of entry.defaults) {
-        insertItem.run(item.id, item.catalogId, entry.definition.id, now);
-        insertPlacement.run(
+        const manifest = getTerritoryItemDefinition(item.definitionId);
+        this.insertItem(item.id, manifest, entry.definition.id, now);
+        insertGroundPlacement.run(
           item.id,
           entry.definition.id,
           item.x,
           item.y,
-          item.layer,
           item.rotation ?? 0,
           item.flipped ? 1 : 0,
           now,
           now,
         );
       }
+
+      const insertCollectionPlacement = this.database.prepare(
+        `INSERT OR IGNORE INTO territory_placements (
+           item_id, location, scene_id, placement_kind, grid_x, grid_y,
+           support_item_id, slot_id, rotation, flipped, pinned, placed_at,
+           updated_at
+         ) VALUES (?, 'collection', NULL, NULL, NULL, NULL, NULL, NULL,
+                   0, 0, 0, NULL, ?)`,
+      );
+      for (const item of TERRITORY_COLLECTION_DEFAULTS) {
+        const manifest = getTerritoryItemDefinition(item.definitionId);
+        this.insertItem(item.id, manifest, null, now);
+        insertCollectionPlacement.run(item.id, now);
+      }
     });
     transaction();
     const selected = this.getActiveScene();
     if (!selected) throw new Error("Selected territory scene was not stored.");
     return selected;
+  }
+
+  installGeneratedCollectionItem(input: {
+    readonly asset: Omit<TerritoryAssetRecord, "createdAt">;
+    readonly itemId: string;
+    readonly manifest: TerritoryItemManifestV1;
+    readonly now: Timestamp;
+  }): void {
+    const transaction = this.database.transaction(() => {
+      const { asset, itemId, manifest, now } = input;
+      this.database
+        .prepare(
+          `INSERT OR IGNORE INTO territory_assets (
+             asset_id, media_type, width, height, byte_length, sha256,
+             storage_key, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          asset.assetId,
+          asset.mediaType,
+          asset.width,
+          asset.height,
+          asset.byteLength,
+          asset.sha256,
+          asset.storageKey,
+          now,
+        );
+      const storedAsset = this.getAsset(asset.assetId);
+      if (
+        !storedAsset ||
+        !isDeepStrictEqual(
+          {
+            assetId: storedAsset.assetId,
+            byteLength: storedAsset.byteLength,
+            height: storedAsset.height,
+            mediaType: storedAsset.mediaType,
+            sha256: storedAsset.sha256,
+            storageKey: storedAsset.storageKey,
+            width: storedAsset.width,
+          },
+          asset,
+        )
+      ) {
+        throw new TerritoryError(
+          "TERRITORY.ASSET_CONFLICT",
+          `图片资产 ${asset.assetId} 已存在且登记内容不同。`,
+          false,
+        );
+      }
+
+      const inserted = this.insertItem(itemId, manifest, null, now);
+      if (inserted) {
+        this.database
+          .prepare(
+            `INSERT INTO territory_placements (
+               item_id, location, scene_id, placement_kind, grid_x, grid_y,
+               support_item_id, slot_id, rotation, flipped, pinned, placed_at,
+               updated_at
+             ) VALUES (?, 'collection', NULL, NULL, NULL, NULL, NULL, NULL,
+                       0, 0, 0, NULL, ?)`,
+          )
+          .run(itemId, now);
+      }
+    });
+    transaction();
   }
 
   savePet(
@@ -219,43 +477,78 @@ export class TerritoryRepository {
   placeItem(input: {
     readonly flipped: boolean;
     readonly itemId: string;
-    readonly layer: number;
     readonly now: Timestamp;
     readonly rotation: TerritoryRotation;
-    readonly sceneId: TerritorySceneId;
-    readonly x: number;
-    readonly y: number;
+    readonly target: TerritorySceneTarget;
   }): void {
-    const result = this.database
-      .prepare(
-        `UPDATE territory_placements
-         SET location = 'scene', scene_id = ?, grid_x = ?, grid_y = ?,
-             layer = ?, rotation = ?, flipped = ?, placed_at = ?, updated_at = ?
-         WHERE item_id = ?`,
-      )
-      .run(
-        input.sceneId,
-        input.x,
-        input.y,
-        input.layer,
-        input.rotation,
-        input.flipped ? 1 : 0,
-        input.now,
-        input.now,
-        input.itemId,
-      );
+    const target = input.target;
+    const result =
+      target.kind === "ground"
+        ? this.database
+            .prepare(
+              `UPDATE territory_placements
+               SET location = 'scene', scene_id = ?, placement_kind = 'ground',
+                   grid_x = ?, grid_y = ?, support_item_id = NULL,
+                   slot_id = NULL, rotation = ?, flipped = ?, placed_at = ?,
+                   updated_at = ?
+               WHERE item_id = ?`,
+            )
+            .run(
+              target.sceneId,
+              target.x,
+              target.y,
+              input.rotation,
+              input.flipped ? 1 : 0,
+              input.now,
+              input.now,
+              input.itemId,
+            )
+        : this.database
+            .prepare(
+              `UPDATE territory_placements
+               SET location = 'scene', scene_id = ?, placement_kind = 'surface',
+                   grid_x = NULL, grid_y = NULL, support_item_id = ?,
+                   slot_id = ?, rotation = ?, flipped = ?, placed_at = ?,
+                   updated_at = ?
+               WHERE item_id = ?`,
+            )
+            .run(
+              target.sceneId,
+              target.supportItemId,
+              target.slotId,
+              input.rotation,
+              input.flipped ? 1 : 0,
+              input.now,
+              input.now,
+              input.itemId,
+            );
     if (result.changes !== 1) throw new Error("Territory item missing.");
   }
 
   collectItem(itemId: string, now: Timestamp): void {
-    const result = this.database
-      .prepare(
-        `UPDATE territory_placements
-         SET location = 'collection', scene_id = NULL, grid_x = NULL,
-             grid_y = NULL, updated_at = ?
-         WHERE item_id = ?`,
-      )
-      .run(now, itemId);
-    if (result.changes !== 1) throw new Error("Territory item missing.");
+    const transaction = this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE territory_placements
+           SET location = 'collection', scene_id = NULL,
+               placement_kind = NULL, grid_x = NULL, grid_y = NULL,
+               support_item_id = NULL, slot_id = NULL, placed_at = NULL,
+               updated_at = ?
+           WHERE support_item_id = ?`,
+        )
+        .run(now, itemId);
+      const result = this.database
+        .prepare(
+          `UPDATE territory_placements
+           SET location = 'collection', scene_id = NULL,
+               placement_kind = NULL, grid_x = NULL, grid_y = NULL,
+               support_item_id = NULL, slot_id = NULL, placed_at = NULL,
+               updated_at = ?
+           WHERE item_id = ?`,
+        )
+        .run(now, itemId);
+      if (result.changes !== 1) throw new Error("Territory item missing.");
+    });
+    transaction();
   }
 }

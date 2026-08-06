@@ -1,4 +1,4 @@
-import { Container, Graphics } from "pixi.js";
+import { Container, Graphics, Sprite, type Texture } from "pixi.js";
 
 import type {
   TerritoryItem,
@@ -224,124 +224,175 @@ function drawRug(
   rectangle(parent, 15, height - 22, width - 30, 4, "#f5e0a5", 0.46);
 }
 
-export function createTerritoryItemGraphic(item: TerritoryItem): Container {
+export function createTerritoryItemGraphic(
+  item: TerritoryItem,
+  assetTexture?: Texture,
+): Container {
   const graphic = new Container();
-  const width = item.width * TERRITORY_TILE_SIZE;
-  const height = item.height * TERRITORY_TILE_SIZE;
+  const art = new Container();
+  graphic.addChild(art);
+  const { height, width } = item.manifest.visual.sizePx;
+  const source = item.manifest.visual.source;
+  const visualKey = source.kind === "builtin" ? source.key : source.assetId;
   const shadow = "#293143";
 
-  if (item.catalogId.endsWith("rug")) {
+  if (visualKey.endsWith("rug")) {
     drawRug(
-      graphic,
+      art,
       width,
       height,
-      item.catalogId === "moss-rug"
+      visualKey === "moss-rug"
         ? "#69875f"
-        : item.catalogId === "wave-rug"
+        : visualKey === "wave-rug"
           ? "#61aab9"
           : "#5b4f91",
     );
     return graphic;
   }
 
-  rectangle(graphic, 6, height - 12, width - 12, 9, shadow, 0.28);
-  switch (item.catalogId) {
+  if (visualKey === "ceramic-cup") {
+    rectangle(art, 4, 9, 16, 16, "#c47759");
+    rectangle(art, 7, 11, 10, 11, "#e5a77f");
+    circle(art, 20, 15, 5, "#c47759");
+    circle(art, 20, 15, 2, "#845744");
+    rectangle(art, 4, 24, 16, 3, shadow, 0.25);
+    return graphic;
+  }
+  if (visualKey === "folded-letter") {
+    rectangle(art, 1, 2, 28, 13, "#f2dfad");
+    const fold = new Graphics()
+      .poly([2, 3, 15, 11, 28, 3])
+      .stroke({ alpha: 0.55, color: "#b68d61", width: 1 });
+    art.addChild(fold);
+    rectangle(art, 3, 14, 24, 2, shadow, 0.2);
+    return graphic;
+  }
+  if (visualKey === "tiny-succulent") {
+    rectangle(art, 6, 21, 14, 11, "#b76f52");
+    rectangle(art, 8, 30, 10, 3, shadow, 0.26);
+    for (const [x, y, radius] of [
+      [13, 17, 7],
+      [8, 13, 6],
+      [18, 12, 6],
+      [13, 7, 7],
+    ] as const) {
+      circle(art, x, y, radius, "#6e9a72");
+    }
+    return graphic;
+  }
+
+  if (source.kind === "asset") {
+    if (assetTexture) {
+      const sprite = new Sprite(assetTexture);
+      sprite.width = width;
+      sprite.height = height;
+      art.addChild(sprite);
+      return graphic;
+    }
+    rectangle(art, 1, 1, width - 2, height - 2, "#7669a9", 0.32);
+    rectangle(art, 5, 5, width - 10, height - 10, "#e7ddff", 0.34);
+    circle(
+      art,
+      width / 2,
+      height / 2,
+      Math.min(width, height) / 5,
+      "#f2d883",
+      0.8,
+    );
+    return graphic;
+  }
+
+  rectangle(art, 6, height - 12, width - 12, 9, shadow, 0.28);
+  switch (visualKey) {
     case "cabin-hearth": {
-      rectangle(graphic, 10, 14, width - 20, height - 18, "#6c6258");
+      rectangle(art, 10, 14, width - 20, height - 18, "#6c6258");
       for (let y = 19; y < height - 8; y += 19) {
         for (let x = 15 + ((y / 19) % 2) * 10; x < width - 15; x += 31) {
-          rectangle(graphic, x, y, 22, 11, "#a59a85", 0.78);
+          rectangle(art, x, y, 22, 11, "#a59a85", 0.78);
         }
       }
-      rectangle(graphic, 42, 45, width - 84, height - 48, "#3a2e2d");
-      circle(graphic, width / 2, height - 25, 17, "#e56f3b");
-      circle(graphic, width / 2, height - 30, 9, "#ffd56a");
+      rectangle(art, 42, 45, width - 84, height - 48, "#3a2e2d");
+      circle(art, width / 2, height - 25, 17, "#e56f3b");
+      circle(art, width / 2, height - 30, 9, "#ffd56a");
       break;
     }
     case "cabin-desk":
     case "star-workbench": {
-      const top = item.catalogId === "star-workbench" ? "#5d527b" : "#865d40";
-      rectangle(graphic, 6, 34, width - 12, 19, top);
-      rectangle(graphic, 14, 51, 13, height - 56, shadow, 0.82);
-      rectangle(graphic, width - 27, 51, 13, height - 56, shadow, 0.82);
-      rectangle(graphic, 24, 18, 34, 16, "#e8d8a6");
-      rectangle(graphic, 70, 11, 9, 23, "#d4a85d");
-      circle(graphic, 74, 10, 7, "#f3cb68");
-      if (item.catalogId === "star-workbench") {
-        circle(graphic, width - 35, 23, 14, "#8bcbd4");
-        circle(graphic, width - 35, 23, 5, "#f4dda0");
-      }
+      const top = visualKey === "star-workbench" ? "#5d527b" : "#865d40";
+      rectangle(art, 6, 34, width - 12, 19, top);
+      rectangle(art, 14, 51, 13, height - 56, shadow, 0.82);
+      rectangle(art, width - 27, 51, 13, height - 56, shadow, 0.82);
+      rectangle(art, 10, 28, width - 20, 6, "#d5b57a", 0.35);
       break;
     }
     case "fern-pot":
     case "potted-palm": {
-      const leaf = item.catalogId === "fern-pot" ? "#64895d" : "#4f9a82";
-      rectangle(graphic, 13, 56, width - 26, height - 62, "#b76f52");
+      const leaf = visualKey === "fern-pot" ? "#64895d" : "#4f9a82";
+      rectangle(art, 13, 56, width - 26, height - 62, "#b76f52");
       for (const [x, y, radius] of [
         [24, 46, 16],
         [13, 37, 13],
         [35, 31, 14],
         [22, 18, 15],
       ] as const) {
-        circle(graphic, x, y, radius, leaf);
+        circle(art, x, y, radius, leaf);
       }
-      rectangle(graphic, 21, 27, 5, 35, "#45694f");
+      rectangle(art, 21, 27, 5, 35, "#45694f");
       break;
     }
     case "seaside-bed": {
-      rectangle(graphic, 5, 32, width - 10, height - 37, "#8f725c");
-      rectangle(graphic, 10, 18, width - 15, 57, "#dfe8df");
-      rectangle(graphic, 18, 24, 43, 23, "#f7f0d9");
-      rectangle(graphic, 65, 22, width - 75, 49, "#7fb8c5", 0.8);
-      rectangle(graphic, 10, 70, width - 15, 8, "#efcc88", 0.7);
+      rectangle(art, 5, 32, width - 10, height - 37, "#8f725c");
+      rectangle(art, 10, 18, width - 15, 57, "#dfe8df");
+      rectangle(art, 18, 24, 43, 23, "#f7f0d9");
+      rectangle(art, 65, 22, width - 75, 49, "#7fb8c5", 0.8);
+      rectangle(art, 10, 70, width - 15, 8, "#efcc88", 0.7);
       break;
     }
     case "shell-table": {
-      rectangle(graphic, 7, 22, width - 14, 18, "#c28a64");
-      rectangle(graphic, 19, 40, 12, height - 44, "#795c52");
-      rectangle(graphic, width - 31, 40, 12, height - 44, "#795c52");
-      circle(graphic, width / 2, 17, 12, "#f2d6bc");
-      rectangle(graphic, width / 2 - 2, 7, 4, 20, "#d79f91", 0.6);
+      rectangle(art, 7, 22, width - 14, 18, "#c28a64");
+      rectangle(art, 19, 40, 12, height - 44, "#795c52");
+      rectangle(art, width - 31, 40, 12, height - 44, "#795c52");
+      rectangle(art, 12, 17, width - 24, 5, "#f2d6bc", 0.45);
       break;
     }
     case "rooftop-bench": {
-      rectangle(graphic, 5, 11, width - 10, 13, "#986e56");
-      rectangle(graphic, 10, 29, width - 20, 11, "#b88662");
-      rectangle(graphic, 17, 39, 11, height - 43, shadow, 0.8);
-      rectangle(graphic, width - 28, 39, 11, height - 43, shadow, 0.8);
+      rectangle(art, 5, 11, width - 10, 13, "#986e56");
+      rectangle(art, 10, 29, width - 20, 11, "#b88662");
+      rectangle(art, 17, 39, 11, height - 43, shadow, 0.8);
+      rectangle(art, width - 28, 39, 11, height - 43, shadow, 0.8);
       break;
     }
     case "sunset-planter": {
-      rectangle(graphic, 7, 20, width - 14, height - 24, "#91634f");
+      rectangle(art, 7, 20, width - 14, height - 24, "#91634f");
       for (let x = 17; x < width - 10; x += 18) {
-        circle(graphic, x, 17, 9, x % 3 === 0 ? "#f0ae6d" : "#d86e78");
-        rectangle(graphic, x - 2, 19, 4, 12, "#5d865e");
+        circle(art, x, 17, 9, x % 3 === 0 ? "#f0ae6d" : "#d86e78");
+        rectangle(art, x - 2, 19, 4, 12, "#5d865e");
       }
       break;
     }
     case "brass-telescope": {
-      rectangle(graphic, 27, 17, width - 38, 18, "#d6a650");
-      circle(graphic, 26, 26, 15, "#6b5361");
-      rectangle(graphic, 46, 37, 8, height - 42, "#8f6e4d");
-      rectangle(graphic, 26, height - 12, 55, 6, shadow, 0.7);
+      rectangle(art, 27, 17, width - 38, 18, "#d6a650");
+      circle(art, 26, 26, 15, "#6b5361");
+      rectangle(art, 46, 37, 8, height - 42, "#8f6e4d");
+      rectangle(art, 26, height - 12, 55, 6, shadow, 0.7);
       break;
     }
     case "roof-lantern": {
-      rectangle(graphic, 13, 9, width - 26, height - 14, "#5a4450");
-      rectangle(graphic, 18, 14, width - 36, height - 24, "#f5b85d");
-      rectangle(graphic, 20, 2, width - 40, 8, "#3c3b4a");
+      rectangle(art, 13, 9, width - 26, height - 14, "#5a4450");
+      rectangle(art, 18, 14, width - 36, height - 24, "#f5b85d");
+      rectangle(art, 20, 2, width - 40, 8, "#3c3b4a");
       break;
     }
     case "astral-bookshelf": {
-      rectangle(graphic, 7, 5, width - 14, height - 10, "#4e4164");
+      rectangle(art, 7, 5, width - 14, height - 10, "#4e4164");
       for (const y of [31, 60]) {
-        rectangle(graphic, 12, y, width - 24, 6, "#2d2946");
+        rectangle(art, 12, y, width - 24, 6, "#2d2946");
       }
       const bookColors = ["#d06b71", "#6aa2a8", "#d5af64", "#7a70b5"];
       for (let row = 0; row < 3; row += 1) {
         for (let x = 14; x < width - 16; x += 13) {
           rectangle(
-            graphic,
+            art,
             x,
             12 + row * 29,
             9,
@@ -356,9 +407,9 @@ export function createTerritoryItemGraphic(item: TerritoryItem): Container {
       const crystal = new Graphics()
         .poly([24, 3, 41, 20, 33, 43, 15, 43, 7, 20])
         .fill("#b9e7e4");
-      graphic.addChild(crystal);
-      rectangle(graphic, 21, 8, 6, 27, "#ffffff", 0.54);
-      circle(graphic, 24, 27, 25, "#8c7bd4", 0.16);
+      art.addChild(crystal);
+      rectangle(art, 21, 8, 6, 27, "#ffffff", 0.54);
+      circle(art, 24, 27, 25, "#8c7bd4", 0.16);
       break;
     }
   }

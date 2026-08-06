@@ -2,10 +2,13 @@ import type { Static } from "@sinclair/typebox";
 
 import type {
   TerritoryActiveSceneSchema,
-  TerritoryCatalogItemIdSchema,
   TerritoryCollectItemRequestSchema,
+  TerritoryCollectionTargetSchema,
   TerritoryFacingSchema,
+  TerritoryGroundTargetSchema,
+  TerritoryInstallGeneratedItemInputSchema,
   TerritoryItemSchema,
+  TerritoryItemTargetSchema,
   TerritoryMovePetRequestSchema,
   TerritoryMoveResponseSchema,
   TerritoryMoveResultSchema,
@@ -16,9 +19,11 @@ import type {
   TerritorySceneDefinitionSchema,
   TerritorySceneIdSchema,
   TerritorySceneSummarySchema,
+  TerritorySceneTargetSchema,
   TerritorySelectSceneRequestSchema,
   TerritorySnapshotResponseSchema,
   TerritorySnapshotSchema,
+  TerritorySurfaceTargetSchema,
 } from "../schemas/territory";
 
 export const TERRITORY_CHANNELS = {
@@ -30,9 +35,6 @@ export const TERRITORY_CHANNELS = {
 } as const;
 
 export type TerritorySceneId = Static<typeof TerritorySceneIdSchema>;
-export type TerritoryCatalogItemId = Static<
-  typeof TerritoryCatalogItemIdSchema
->;
 export type TerritoryFacing = Static<typeof TerritoryFacingSchema>;
 export type TerritoryRotation = Static<typeof TerritoryRotationSchema>;
 export type TerritoryPoint = Static<typeof TerritoryPointSchema>;
@@ -41,6 +43,15 @@ export type TerritorySceneSummary = Static<typeof TerritorySceneSummarySchema>;
 export type TerritorySceneDefinition = Static<
   typeof TerritorySceneDefinitionSchema
 >;
+export type TerritoryCollectionTarget = Static<
+  typeof TerritoryCollectionTargetSchema
+>;
+export type TerritoryGroundTarget = Static<typeof TerritoryGroundTargetSchema>;
+export type TerritorySurfaceTarget = Static<
+  typeof TerritorySurfaceTargetSchema
+>;
+export type TerritorySceneTarget = Static<typeof TerritorySceneTargetSchema>;
+export type TerritoryItemTarget = Static<typeof TerritoryItemTargetSchema>;
 export type TerritoryItem = Static<typeof TerritoryItemSchema>;
 export type TerritoryActiveScene = Static<typeof TerritoryActiveSceneSchema>;
 export type TerritorySnapshot = Static<typeof TerritorySnapshotSchema>;
@@ -55,6 +66,9 @@ export type TerritoryPlaceItemRequest = Static<
 >;
 export type TerritoryCollectItemRequest = Static<
   typeof TerritoryCollectItemRequestSchema
+>;
+export type TerritoryInstallGeneratedItemInput = Static<
+  typeof TerritoryInstallGeneratedItemInputSchema
 >;
 export type TerritorySnapshotResponse = Static<
   typeof TerritorySnapshotResponseSchema
