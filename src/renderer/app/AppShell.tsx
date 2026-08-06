@@ -28,6 +28,7 @@ import type { ChatDomainState } from "../features/chats/chatStore";
 import { ChatsPage } from "../features/chats/ChatsPage";
 import { ProviderSettingsPanel } from "../features/settings/ProviderSettingsPanel";
 import { CharacterSettingsPanel } from "../features/settings/CharacterSettingsPanel";
+import { TerritoryPage } from "../features/territory/TerritoryPage";
 import type {
   ChatView,
   ChatsUiAction,
@@ -90,6 +91,7 @@ interface AppShellProps {
   readonly onBackgroundSchemeChange: (scheme: BackgroundScheme) => void;
   readonly onProvidersChanged: () => void;
   readonly openCharacterSettingsToken: number;
+  readonly petAnimationSpeed: number;
   readonly state: ChatsUiState;
 }
 
@@ -747,6 +749,7 @@ export function AppShell({
   onBackgroundSchemeChange,
   onProvidersChanged,
   openCharacterSettingsToken,
+  petAnimationSpeed,
   state,
 }: AppShellProps) {
   const [renameRequest, setRenameRequest] = useState<ChatRenameRequest | null>(
@@ -817,6 +820,11 @@ export function AppShell({
               onBackgroundSchemeChange={onBackgroundSchemeChange}
               onProvidersChanged={onProvidersChanged}
               openCharacterSettingsToken={openCharacterSettingsToken}
+            />
+          ) : state.activePage === "territory" ? (
+            <TerritoryPage
+              activePet={activePet}
+              animationSpeed={petAnimationSpeed}
             />
           ) : (
             <PlaceholderPage page={state.activePage} />

@@ -65,6 +65,73 @@ export const CURRENT_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS territory_scenes (
+    scene_id TEXT PRIMARY KEY NOT NULL CHECK (
+      scene_id IN (
+        'forest-cabin',
+        'seaside-room',
+        'city-rooftop',
+        'star-workshop'
+      )
+    ),
+    is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+    pet_x INTEGER NOT NULL CHECK (pet_x >= 0),
+    pet_y INTEGER NOT NULL CHECK (pet_y >= 0),
+    pet_facing TEXT NOT NULL CHECK (pet_facing IN ('left', 'right')),
+    initialized_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS territory_items (
+    item_id TEXT PRIMARY KEY NOT NULL,
+    catalog_id TEXT NOT NULL CHECK (
+      catalog_id IN (
+        'cabin-hearth',
+        'cabin-desk',
+        'fern-pot',
+        'moss-rug',
+        'seaside-bed',
+        'shell-table',
+        'potted-palm',
+        'wave-rug',
+        'rooftop-bench',
+        'sunset-planter',
+        'brass-telescope',
+        'roof-lantern',
+        'star-workbench',
+        'astral-bookshelf',
+        'moon-crystal',
+        'constellation-rug'
+      )
+    ),
+    initial_scene_id TEXT NOT NULL REFERENCES territory_scenes(scene_id),
+    created_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS territory_placements (
+    item_id TEXT PRIMARY KEY NOT NULL
+      REFERENCES territory_items(item_id) ON DELETE CASCADE,
+    location TEXT NOT NULL CHECK (location IN ('scene', 'collection')),
+    scene_id TEXT REFERENCES territory_scenes(scene_id),
+    grid_x INTEGER CHECK (grid_x IS NULL OR grid_x >= 0),
+    grid_y INTEGER CHECK (grid_y IS NULL OR grid_y >= 0),
+    layer INTEGER NOT NULL CHECK (layer >= 0),
+    rotation INTEGER NOT NULL CHECK (rotation IN (0, 90, 180, 270)),
+    flipped INTEGER NOT NULL CHECK (flipped IN (0, 1)),
+    pinned INTEGER NOT NULL CHECK (pinned IN (0, 1)),
+    placed_at TEXT,
+    updated_at TEXT NOT NULL,
+    CHECK (
+      (
+        location = 'scene' AND scene_id IS NOT NULL AND
+        grid_x IS NOT NULL AND grid_y IS NOT NULL AND placed_at IS NOT NULL
+      ) OR (
+        location = 'collection' AND scene_id IS NULL AND
+        grid_x IS NULL AND grid_y IS NULL
+      )
+    )
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY NOT NULL,
     chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -221,4 +288,11 @@ export const CURRENT_SCHEMA_SQL = `
     ON tool_artifacts(run_item_id, position);
   CREATE INDEX IF NOT EXISTS approvals_run_idx
     ON approvals(run_id, requested_at, id);
+  CREATE UNIQUE INDEX IF NOT EXISTS territory_one_active_scene_idx
+    ON territory_scenes(is_active)
+    WHERE is_active = 1;
+  CREATE INDEX IF NOT EXISTS territory_placements_scene_idx
+    ON territory_placements(scene_id, layer, grid_y, grid_x, item_id);
+  CREATE INDEX IF NOT EXISTS territory_placements_collection_idx
+    ON territory_placements(location, updated_at, item_id);
 `;

@@ -169,6 +169,68 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
     ).toHaveCount(1);
     await expect(first.character.getByRole("alert")).toHaveCount(0);
 
+    await first.main.getByRole("button", { name: "Territory" }).click();
+    await first.main.getByRole("button", { name: /林间小屋/u }).click();
+    await expect(first.main.getByTestId("territory-canvas")).toHaveAttribute(
+      "data-pet-render-ready",
+      "true",
+    );
+    await expect(first.main.getByRole("alert")).toHaveCount(0);
+
+    const territoryCanvas = first.main
+      .getByTestId("territory-canvas")
+      .locator("canvas");
+    const territoryBox = await territoryCanvas.boundingBox();
+    if (!territoryBox) throw new Error("Territory canvas has no bounds");
+    const territoryScale = Math.min(
+      territoryBox.width / 768,
+      territoryBox.height / 480,
+    );
+    const territoryOffsetX = (territoryBox.width - 768 * territoryScale) / 2;
+    const territoryOffsetY = (territoryBox.height - 480 * territoryScale) / 2;
+    const territoryPosition = (x: number, y: number) => ({
+      x: territoryOffsetX + (x + 0.5) * 48 * territoryScale,
+      y: territoryOffsetY + (y + 0.5) * 48 * territoryScale,
+    });
+    await territoryCanvas.click({ position: territoryPosition(2, 8) });
+    await expect
+      .poll(async () => {
+        const movementId = await territoryCanvas.getAttribute(
+          "data-pet-movement-id",
+        );
+        const x = Number(await territoryCanvas.getAttribute("data-pet-grid-x"));
+        return movementId !== "idle" && x > 2.5 && x < 7.5;
+      })
+      .toBe(true);
+    const beforeReroute = await territoryCanvas.evaluate((canvas) => ({
+      movementId: canvas.dataset["petMovementId"],
+      x: Number(canvas.dataset["petGridX"]),
+      y: Number(canvas.dataset["petGridY"]),
+    }));
+    await territoryCanvas.click({ position: territoryPosition(13, 7) });
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-movement-id"))
+      .not.toBe(beforeReroute.movementId);
+    const afterReroute = await territoryCanvas.evaluate((canvas) => ({
+      x: Number(canvas.dataset["petGridX"]),
+      y: Number(canvas.dataset["petGridY"]),
+    }));
+    expect(
+      Math.abs(afterReroute.x - beforeReroute.x) +
+        Math.abs(afterReroute.y - beforeReroute.y),
+    ).toBeLessThan(1);
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-movement-id"))
+      .toBe("idle");
+    await expect
+      .poll(() =>
+        first.main.evaluate(async () => {
+          const response = await window.charaMate.territory.getSnapshot();
+          return response.ok ? response.value.activeScene?.pet : null;
+        }),
+      )
+      .toMatchObject({ x: 13, y: 7 });
+
     const windowFlags = await application.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows().find(
         (candidate) => candidate.getTitle() === "CharaMate Character",

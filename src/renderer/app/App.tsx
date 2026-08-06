@@ -206,6 +206,7 @@ export function App() {
     <AppShell
       activeChat={activeChat}
       activePet={activePet}
+      petAnimationSpeed={petLibrary?.animationSpeed ?? 0.75}
       backgroundScheme={backgroundScheme}
       chatDomain={chatDomain}
       dispatch={dispatch}

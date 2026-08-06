@@ -4,11 +4,13 @@ import type { CharaMateApi } from "../shared/contracts/foundation";
 import { CHAT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
+import { TERRITORY_CHANNELS } from "../shared/contracts/territory";
 import {
   chatDataSnapshotFixture,
   FIXTURE_IDS,
   runEventEnvelopeFixture,
 } from "../../tests/fixtures/foundationContracts";
+import { activeTerritorySnapshot } from "../../tests/fixtures/territory";
 
 type IpcListener = (event: unknown, input: unknown) => void;
 
@@ -148,6 +150,46 @@ describe("Phase 1 typed preload data boundary", () => {
       value: { scale: 0.3 },
     });
     await expect(api.pet.setScale({ scale: 0.29 })).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("validates Territory commands and snapshots on both sides of IPC", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(TERRITORY_CHANNELS.placeItem);
+        expect(input).toEqual({
+          flipped: true,
+          itemId: "forest-cabin.desk",
+          rotation: 90,
+          sceneId: "forest-cabin",
+          x: 6,
+          y: 5,
+        });
+        return Promise.resolve({ ok: true, value: activeTerritorySnapshot });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.territory.placeItem({
+        flipped: true,
+        itemId: "forest-cabin.desk",
+        rotation: 90,
+        sceneId: "forest-cabin",
+        x: 6,
+        y: 5,
+      }),
+    ).resolves.toEqual({ ok: true, value: activeTerritorySnapshot });
+    await expect(
+      api.territory.placeItem({
+        flipped: false,
+        itemId: "../escape",
+        rotation: 0,
+        sceneId: "forest-cabin",
+        x: 0,
+        y: 0,
+      }),
+    ).rejects.toThrow(/itemId|pattern/u);
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });
 

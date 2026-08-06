@@ -5,6 +5,7 @@ import type { ChatApi } from "./chat";
 import type { RunEventsApi } from "./ipc";
 import type { PetManagementApi } from "./pet";
 import type { ProviderApi } from "./provider";
+import type { TerritoryApi } from "./territory";
 
 export const FOUNDATION_CHANNELS = {
   getSnapshot: "app.foundation.getSnapshot",
@@ -22,6 +23,7 @@ export interface DesktopApi {
   foundation: FoundationApi;
   pet: PetManagementApi;
   provider: ProviderApi;
+  territory: TerritoryApi;
 }
 
 export interface CharaMateApi extends DesktopApi {

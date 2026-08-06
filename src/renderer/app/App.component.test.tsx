@@ -24,6 +24,7 @@ import {
   chatFixture,
   FIXTURE_TIMESTAMPS,
 } from "../../../tests/fixtures/foundationContracts";
+import { emptyTerritorySnapshot } from "../../../tests/fixtures/territory";
 import { App } from "./App";
 
 const CREATED_CHAT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -229,6 +230,25 @@ function renderApp({
           streamId,
         }),
       subscribe: () => () => undefined,
+    },
+    territory: {
+      collectItem: vi.fn().mockResolvedValue({
+        ok: true,
+        value: emptyTerritorySnapshot,
+      }),
+      getSnapshot: vi.fn().mockResolvedValue({
+        ok: true,
+        value: emptyTerritorySnapshot,
+      }),
+      movePet: vi.fn(),
+      placeItem: vi.fn().mockResolvedValue({
+        ok: true,
+        value: emptyTerritorySnapshot,
+      }),
+      selectScene: vi.fn().mockResolvedValue({
+        ok: true,
+        value: emptyTerritorySnapshot,
+      }),
     },
   };
   Object.defineProperty(window, "charaMate", {

@@ -38,6 +38,14 @@ import {
   type ProviderTestConnectionRequest,
 } from "../shared/contracts/provider";
 import {
+  type TerritoryApi,
+  type TerritoryCollectItemRequest,
+  TERRITORY_CHANNELS,
+  type TerritoryMovePetRequest,
+  type TerritoryPlaceItemRequest,
+  type TerritorySelectSceneRequest,
+} from "../shared/contracts/territory";
+import {
   ChatCreateRequestSchema,
   ChatDataSnapshotRequestSchema,
   ChatDeleteResponseSchema,
@@ -75,6 +83,14 @@ import {
   ProviderTestConnectionRequestSchema,
   ProviderTestConnectionResponseSchema,
 } from "../shared/schemas/provider";
+import {
+  TerritoryCollectItemRequestSchema,
+  TerritoryMovePetRequestSchema,
+  TerritoryMoveResponseSchema,
+  TerritoryPlaceItemRequestSchema,
+  TerritorySelectSceneRequestSchema,
+  TerritorySnapshotResponseSchema,
+} from "../shared/schemas/territory";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
 
 const chatApi: ChatApi = Object.freeze({
@@ -298,6 +314,55 @@ const petApi: PetManagementApi = Object.freeze({
   },
 });
 
+const territoryApi: TerritoryApi = Object.freeze({
+  collectItem: async (input: TerritoryCollectItemRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritorySnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.collectItem,
+        parseSchemaWithoutCodeGeneration(
+          TerritoryCollectItemRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  getSnapshot: async () =>
+    parseSchemaWithoutCodeGeneration(
+      TerritorySnapshotResponseSchema,
+      await ipcRenderer.invoke(TERRITORY_CHANNELS.getSnapshot, {}),
+    ),
+  movePet: async (input: TerritoryMovePetRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritoryMoveResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.movePet,
+        parseSchemaWithoutCodeGeneration(TerritoryMovePetRequestSchema, input),
+      ),
+    ),
+  placeItem: async (input: TerritoryPlaceItemRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritorySnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.placeItem,
+        parseSchemaWithoutCodeGeneration(
+          TerritoryPlaceItemRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  selectScene: async (input: TerritorySelectSceneRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritorySnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.selectScene,
+        parseSchemaWithoutCodeGeneration(
+          TerritorySelectSceneRequestSchema,
+          input,
+        ),
+      ),
+    ),
+});
+
 const desktopApi: CharaMateApi = Object.freeze({
   chat: chatApi,
   foundation: Object.freeze({
@@ -313,6 +378,7 @@ const desktopApi: CharaMateApi = Object.freeze({
   pet: petApi,
   provider: providerApi,
   runEvents: runEventsApi,
+  territory: territoryApi,
 });
 
 contextBridge.exposeInMainWorld("charaMate", desktopApi);

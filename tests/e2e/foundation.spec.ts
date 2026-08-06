@@ -64,6 +64,7 @@ test("launches through the typed preload boundary", async () => {
       providerKeys: Object.keys(window.charaMate.provider).sort(),
       rootKeys: Object.keys(window.charaMate).sort(),
       runEventKeys: Object.keys(window.charaMate.runEvents).sort(),
+      territoryKeys: Object.keys(window.charaMate.territory).sort(),
       exposesRawIpcRenderer: "ipcRenderer" in window.charaMate,
       exposesSecretReader: "getApiKey" in window.charaMate.provider,
     }));
@@ -95,8 +96,22 @@ test("launches through the typed preload boundary", async () => {
         "subscribeChanged",
         "subscribeOpenMain",
       ],
-      rootKeys: ["chat", "foundation", "pet", "provider", "runEvents"],
+      rootKeys: [
+        "chat",
+        "foundation",
+        "pet",
+        "provider",
+        "runEvents",
+        "territory",
+      ],
       runEventKeys: ["replay", "subscribe"],
+      territoryKeys: [
+        "collectItem",
+        "getSnapshot",
+        "movePet",
+        "placeItem",
+        "selectScene",
+      ],
       exposesRawIpcRenderer: false,
       exposesSecretReader: false,
     });

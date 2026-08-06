@@ -38,6 +38,9 @@ import { registerProviderIpc } from "./providers/providerIpc";
 import { ProviderRepository } from "./providers/providerRepository";
 import { ProviderService } from "./providers/providerService";
 import { SafeStorageSecretStore } from "./providers/secretStore";
+import { registerTerritoryIpc } from "./territory/territoryIpc";
+import { TerritoryRepository } from "./territory/territoryRepository";
+import { TerritoryService } from "./territory/territoryService";
 
 const logger = createAppLogger();
 
@@ -70,6 +73,7 @@ let unregisterFoundationIpc: (() => void) | undefined;
 let unregisterProviderIpc: (() => void) | undefined;
 let unregisterPetIpc: (() => void) | undefined;
 let unregisterPetProtocol: (() => void) | undefined;
+let unregisterTerritoryIpc: (() => void) | undefined;
 let providerService: ProviderService | undefined;
 let characterWindowController: CharacterWindowController | undefined;
 
@@ -95,6 +99,8 @@ function stopApplicationInfrastructure(): void {
   unregisterPetIpc = undefined;
   unregisterPetProtocol?.();
   unregisterPetProtocol = undefined;
+  unregisterTerritoryIpc?.();
+  unregisterTerritoryIpc = undefined;
   characterWindowController?.destroy();
   characterWindowController = undefined;
   mainWindowController = undefined;
@@ -177,6 +183,9 @@ async function startApplication(): Promise<void> {
   );
   await petService.initialize();
   unregisterPetProtocol = registerPetProtocol(petLibrary);
+  unregisterTerritoryIpc = registerTerritoryIpc(
+    new TerritoryService(new TerritoryRepository(applicationDatabase), clock),
+  );
 
   const mainWindows = new MainWindowController(
     () => createMainWindow(windowPlacementRepository, clock),

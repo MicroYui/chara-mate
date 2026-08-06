@@ -1,0 +1,694 @@
+.territoryPage,
+.firstExperience,
+.loadingPage {
+  width: 100%;
+  height: 100%;
+}
+
+.territoryPage {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  background:
+    radial-gradient(
+      circle at 50% 0%,
+      color-mix(in srgb, var(--accent) 9%, transparent),
+      transparent 42%
+    ),
+    color-mix(in srgb, var(--surface-subtle) 78%, var(--surface));
+}
+
+.loadingPage {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.territoryToolbar {
+  z-index: 3;
+  display: flex;
+  min-width: 0;
+  min-height: 62px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--border);
+  padding: 9px 16px 9px 20px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.sceneIdentity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.sceneIdentity > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.sceneIdentity strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 630;
+}
+
+.sceneIdentity small {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sceneDot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border: 2px solid color-mix(in srgb, var(--surface) 80%, transparent);
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 14%, transparent);
+}
+
+.toolbarActions,
+.modeSwitch,
+.itemActions {
+  display: flex;
+  align-items: center;
+}
+
+.toolbarActions {
+  gap: 7px;
+}
+
+.modeSwitch {
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 2px;
+  background: var(--surface-subtle);
+}
+
+.modeSwitch button,
+.toolbarButton,
+.itemActions button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 9px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.modeSwitch button[aria-pressed="true"] {
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgba(24, 29, 35, 0.1);
+  color: var(--text-primary);
+}
+
+.toolbarButton {
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.sceneStage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.canvasFrame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 13%, var(--border));
+  border-radius: 16px;
+  background: #24283a;
+  box-shadow:
+    0 20px 54px rgba(27, 31, 42, 0.13),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.canvasLoading {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  place-items: center;
+  background: #24283a;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+}
+
+.canvasHost {
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.canvasHost canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.canvasError {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: rgba(25, 27, 38, 0.78);
+  color: #fff;
+  font-size: 12px;
+}
+
+.petHint {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(29, 32, 45, 0.7);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 10.5px;
+  backdrop-filter: blur(8px);
+}
+
+.collectionDrawer {
+  position: absolute;
+  z-index: 5;
+  top: 24px;
+  right: 24px;
+  bottom: 24px;
+  display: flex;
+  width: min(310px, calc(100% - 48px));
+  flex-direction: column;
+  gap: 17px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 13%, var(--border));
+  border-radius: 14px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--surface) 93%, transparent);
+  box-shadow: 0 20px 60px rgba(25, 29, 38, 0.2);
+  backdrop-filter: blur(18px);
+}
+
+.collectionDrawer header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.collectionDrawer header > span {
+  display: grid;
+  gap: 3px;
+}
+
+.collectionDrawer header strong {
+  font-size: 14px;
+  font-weight: 640;
+}
+
+.collectionDrawer header small,
+.collectionDrawer section > h3,
+.emptyCollection {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.collectionDrawer header > button,
+.itemDetail > button,
+.closePicker {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 7px;
+  padding: 0;
+  place-items: center;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.collectionDrawer section {
+  display: grid;
+  gap: 7px;
+}
+
+.collectionDrawer section > h3 {
+  margin: 0;
+  font-weight: 620;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.itemList {
+  display: grid;
+  gap: 4px;
+}
+
+.itemList > button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.itemList > button:hover,
+.itemList > button[data-selected] {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-subtle));
+}
+
+.itemList > button > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.itemList strong {
+  font-size: 11.5px;
+  font-weight: 610;
+}
+
+.itemList small {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemSwatch {
+  position: relative;
+  width: 38px;
+  height: 34px;
+  overflow: hidden;
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.45), transparent),
+    color-mix(in srgb, var(--accent) 24%, var(--surface-subtle));
+}
+
+.itemSwatch::before,
+.itemSwatch::after {
+  position: absolute;
+  content: "";
+}
+
+.itemSwatch::before {
+  inset: 9px 7px 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 56%, #796550);
+  box-shadow: 0 4px 0 rgba(37, 43, 50, 0.19);
+}
+
+.itemSwatch::after {
+  top: 5px;
+  left: 14px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 54%, #83aa78);
+}
+
+.emptyCollection {
+  margin: 0;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  padding: 12px;
+  text-align: center;
+}
+
+.itemDetail {
+  position: absolute;
+  z-index: 4;
+  bottom: 24px;
+  left: 24px;
+  display: grid;
+  width: min(300px, calc(100% - 48px));
+  gap: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 12px;
+  padding: 12px 44px 12px 13px;
+  background: rgba(29, 32, 45, 0.78);
+  box-shadow: 0 16px 40px rgba(19, 22, 31, 0.2);
+  color: #f7f6f2;
+  backdrop-filter: blur(12px);
+}
+
+.itemDetail > button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.itemDetail p,
+.itemDetail h3,
+.itemDetail span {
+  margin: 0;
+}
+
+.itemDetail p {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.itemDetail h3 {
+  font-size: 13px;
+  font-weight: 630;
+}
+
+.itemDetail > span {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.itemActions {
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.itemActions button {
+  min-height: 26px;
+  background: rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 10px;
+}
+
+.itemActions > span {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 10px;
+}
+
+.firstExperience {
+  display: grid;
+  overflow: auto;
+  padding: 34px;
+  place-items: center;
+  background:
+    radial-gradient(
+      circle at 24% 20%,
+      rgba(114, 200, 206, 0.13),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 78% 75%,
+      rgba(143, 120, 215, 0.12),
+      transparent 38%
+    ),
+    var(--surface);
+}
+
+.scenePicker {
+  position: relative;
+  width: min(960px, 100%);
+}
+
+.eyebrow {
+  margin: 0 0 7px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 670;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scenePicker h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: clamp(22px, 3vw, 30px);
+  font-weight: 620;
+  letter-spacing: -0.025em;
+}
+
+.pickerLead {
+  max-width: 620px;
+  margin: 8px 0 23px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.sceneGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sceneCard {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 152px minmax(0, 1fr);
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--surface-subtle));
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.sceneCard:hover,
+.sceneCard:focus-visible,
+.sceneCard[data-active] {
+  border-color: color-mix(in srgb, var(--scene-accent) 60%, var(--border));
+  box-shadow: 0 10px 28px
+    color-mix(in srgb, var(--scene-shadow) 16%, transparent);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.sceneCard:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.scenePreview {
+  position: relative;
+  display: block;
+  height: 104px;
+  overflow: hidden;
+  border-radius: 9px;
+  background: var(--scene-sky);
+  image-rendering: pixelated;
+}
+
+.scenePreview i {
+  position: absolute;
+  display: block;
+}
+
+.scenePreview i:first-child {
+  inset: 37% 0 0;
+  background: var(--scene-wall);
+}
+
+.scenePreview i:nth-child(2) {
+  inset: 58% 0 0;
+  background:
+    linear-gradient(90deg, transparent 49%, rgba(255, 255, 255, 0.08) 50%),
+    var(--scene-floor);
+  background-size: 24px 24px;
+}
+
+.scenePreview i:nth-child(3) {
+  right: 16px;
+  bottom: 18px;
+  width: 42px;
+  height: 31px;
+  border-bottom: 7px solid var(--scene-shadow);
+  background: var(--scene-accent);
+}
+
+.scenePreview i:nth-child(4) {
+  bottom: 13px;
+  left: 25px;
+  width: 25px;
+  height: 44px;
+  border-radius: 12px 12px 3px 3px;
+  background: color-mix(in srgb, var(--scene-accent) 54%, var(--scene-wall));
+}
+
+.scenePreview i:nth-child(5) {
+  top: 15px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  background: var(--scene-accent);
+  box-shadow:
+    32px 12px 0 color-mix(in srgb, var(--scene-accent) 75%, white),
+    -40px 18px 0 color-mix(in srgb, var(--scene-accent) 65%, white);
+}
+
+.sceneCardCopy {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.sceneCardCopy strong {
+  font-size: 13.5px;
+  font-weight: 630;
+}
+
+.sceneCardCopy small {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.sceneCardCopy em {
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--scene-accent) 72%, var(--text-secondary));
+  font-size: 9.5px;
+  font-style: normal;
+}
+
+.pickerOverlay {
+  position: absolute;
+  z-index: 12;
+  inset: 0;
+  display: grid;
+  overflow: auto;
+  padding: 34px;
+  place-items: center;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.closePicker {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.errorBanner {
+  position: absolute;
+  z-index: 15;
+  top: 24px;
+  left: 50%;
+  display: flex;
+  max-width: calc(100% - 48px);
+  align-items: center;
+  gap: 12px;
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  border-radius: 9px;
+  padding: 8px 9px 8px 12px;
+  background: var(--surface-raised);
+  box-shadow: 0 12px 34px rgba(23, 28, 34, 0.16);
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.errorBanner button {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 7px;
+  background: var(--surface-subtle);
+  color: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 980px) {
+  .sceneIdentity small {
+    display: none;
+  }
+  .toolbarButton {
+    gap: 0;
+    font-size: 0;
+  }
+  .sceneGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .territoryToolbar {
+    padding-right: 10px;
+    padding-left: 12px;
+  }
+  .sceneIdentity {
+    display: none;
+  }
+  .toolbarActions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .sceneStage {
+    padding: 8px;
+  }
+  .canvasFrame {
+    border-radius: 11px;
+  }
+  .collectionDrawer {
+    inset: auto 8px 8px;
+    width: auto;
+    max-height: 55%;
+  }
+  .itemDetail {
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+    width: auto;
+  }
+  .firstExperience,
+  .pickerOverlay {
+    padding: 22px 16px;
+  }
+  .sceneCard {
+    grid-template-columns: 116px minmax(0, 1fr);
+  }
+  .scenePreview {
+    height: 88px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sceneCard {
+    transition: none;
+  }
+}
