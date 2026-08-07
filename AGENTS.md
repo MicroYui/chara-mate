@@ -83,6 +83,8 @@ Separate three things explicitly:
 
 Only the first is automatically a constraint. The second is a sourced candidate. The third requires an experiment or usability test. Never invent a fixed “12 steps”, wall-clock Run kill, token/cost kill, concurrency count, context percentage, TTL, batch size or topK and present it as SOTA.
 
+Except for an official protocol hard limit, a correctness or irreversible-side-effect red line, or a threshold the user explicitly marks non-negotiable, a preregistered numeric gate is decision evidence rather than an automatic veto. Never discard an otherwise clearly better option solely because one confidence bound narrowly crosses a CharaMate heuristic. Report the point estimate, interval, effect size, quality, cost, scale, latency and complexity together. If the mechanical preregistered outcome conflicts with that overall evidence, preserve it and record any different product selection as a transparent post-result tradeoff amendment.
+
 When using Codex as a reference, inspect the current public source/manual rather than copying a remembered design. Record the commit or documentation version used.
 
 ## Experiment-to-production lifecycle
@@ -123,6 +125,8 @@ Security/privacy design is intentionally limited to:
 OS permission prompts required for Accessibility, screen capture or microphone access are platform prerequisites, not a new CharaMate permission framework.
 
 Unless the user explicitly expands scope, do not add threat-model frameworks, adversarial prompt systems, sandbox matrices, trust scores, policy DSLs, enterprise RBAC, compliance/audit exports, multiple privacy modes or security-tuning screens. Schema validation, cancellation, idempotency, evidence links, crash recovery and generation checks are correctness mechanisms; describe and implement them as such.
+
+Apply the same proportionality rule to engineering and research work. Treat ordinary product experiments as ordinary experiments: do not add adversarial audits, pair-unlinkability tests, encrypted oracles, cryptographic commitments, tamper-evident evidence chains or security-style red-team matrices merely to make the protocol look stronger. Use the minimum controls needed for reproducibility and honest comparison—normally versioned inputs, stable IDs/seeds, hashes, independent labels, blinded holdout use and preserved raw evidence. Add stronger security or adversarial controls only when the user asks for them or a concrete in-scope risk such as real secrets, private data or irreversible external effects requires them.
 
 ## Target repository structure
 

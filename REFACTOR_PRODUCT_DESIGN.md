@@ -1209,6 +1209,8 @@ CharaMate 因此仍只保存一套 `imageGenerationEndpoint` 作为 deployment�
 
 OpenAI-compatible 与 Azure HTTP Adapter 使用官方 OpenAI JavaScript SDK 能直接表达的标准能力，并在 Adapter 边界归一化 stream、Tool Call、usage 和错误；兼容服务确需协议差异时只在该外部 Adapter 内做有界映射，不能把 SDK 对象或 Provider 分支带入 Chat/Run/Memory。Realtime 连接仍遵守 `VOICE-TRANSPORT` 胜者，不因 HTTP SDK 选择提前固定媒体 Driver。
 
+Provider Prompt Cache 是协议相关的请求优化，不是 Run、Context 或 Tool 语义。`PROVIDER-PROMPT-CACHE` 必须先用当前目标 Provider/模型证明净计费输入成本和 TTFT 收益；发布版对每个已验证协议只保留一个固定 Adapter 策略，无收益时不添加缓存专用代码。缓存命中不减少逻辑 input token、上下文占用或 TPM，也不能掩盖 `TOOL-DISCOVERY` 的真实 Prompt 大小。Settings 不提供 cache key、breakpoint、TTL 或开关，Azure/OpenAI-compatible 也不继承未经各自 Contract Test 验证的 OpenAI 字段。
+
 API Key 使用 Electron async `safeStorage`（`encryptStringAsync` / `decryptStringAsync`）加密后落盘，SQLite 只保存引用；初始化暂不可用与 key rotation 作为可恢复状态处理。日志、Run Item、Prompt、Memory 和错误文本都不能包含明文 Key。Renderer 只能提交或删除 Key，不能从 Preload 读取长期明文。
 
 ### 11.2 Settings 分组
@@ -1255,7 +1257,7 @@ http://127.0.0.1:<dynamic-port>/dev
 
 ### 12.2 关键指标
 
-- Agent：任务成功率、模型调用数、Tool Call 数、工具选择/参数正确率、重复调用率、端到端时延、Token。
+- Agent：任务成功率、模型调用数、Tool Call 数、工具选择/参数正确率、重复调用率、端到端时延、逻辑 Token、Provider cache read/write 与实际计费成本。
 - Memory：Decision Record 冻结 K 下的 Recall/Hit/MRR/nDCG、知识更新、过期误召回、abstention、context token 构成。
 - Storage：每次事务写入、journal 增长、checkpoint、所选索引工件占用、清理耗时与相关进程 RSS。
 - Voice：连接、首转写、首音频、打断停止、误打断、Tool continuation、迟到结果、断线恢复。
@@ -1873,7 +1875,8 @@ flowchart TD
 
 ### Phase 2：Agent Runtime 与能力
 
-- 先在隔离 worktree 完成 `HARNESS-LOOP` 与 `TOOL-DISCOVERY`，写中文 Decision Record 并删除失败 Arms；
+- 先在隔离 worktree 完成 `HARNESS-LOOP`、`TOOL-DISCOVERY` 与 `PROVIDER-PROMPT-CACHE`，写中文 Decision Record 并删除失败 Arms；
+- Decision 若为无胜者，Phase 2 对应生产实现保持阻塞；后继研究可在仓库外直接修订同一可覆盖工作 Manifest/任务集，并让每次计分结果记录实际输入 hash，不要求每次修改复制冻结版本或重跑无关阶段；AR1/AR2-S 的阶段 baseline 仍不得越过未完成的联合 holdout 成为产品默认或 fallback；
 - 实现唯一 Agent Runtime、ContextCompiler 接口、自动压缩、steering、checkpoint、恢复和获胜 Loop Guard；
 - 实现 JSON Schema Tool Registry、结构化 Tool Result、AbortSignal、deadline、artifact 和错误分类；
 - 实现三档 Approval，确保 Chat Card 与未来桌宠气泡投影同一个 Approval Item；
@@ -1966,7 +1969,7 @@ CharaMate 达到首个完整产品版本时，应满足：
 - Provider URL/Key/Model 配置顺畅，Key 简单加密且不进入业务数据。
 - 领地从首次进入就完整好看，并能把真实记忆转成可生成、可布置、可追溯的像素物件。
 - 开发者能在本地看板查询 Run、Tool、Memory、Storage、Voice 与 Image 指标，普通产品界面不被研发控制淹没。
-- 检索、embedding、rerank、ANN、图扩展、Realtime transport 与 multi-agent 的候选只存在于实验；发布版每项只保留一个获胜实现。
+- 检索、embedding、rerank、ANN、图扩展、Provider Prompt Cache、Realtime transport 与 multi-agent 的候选只存在于实验；发布版每项只保留一个获胜实现。
 - `package-lock.json`、实际 scripts、`AGENTS.md` Commands、`STATUS.md` 最近绿色验证和已接受 Decision Record 指向同一真实工具链与生产路径。
 
 ---
@@ -1980,6 +1983,7 @@ CharaMate 达到首个完整产品版本时，应满足：
 - [Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)
 - [OpenAI JavaScript SDK 6.49.0](https://github.com/openai/openai-node/tree/v6.49.0)
 - [OpenAI Models API](https://developers.openai.com/api/reference/resources/models/methods/list)
+- [OpenAI Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
 - [Electron Forge Vite Plugin v7.11.2](https://github.com/electron/forge/tree/v7.11.2/packages/plugin/vite)
 - [React v19.2.8](https://github.com/facebook/react/releases/tag/v19.2.8)
 - [`better-sqlite3` v13.0.1](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.1)
