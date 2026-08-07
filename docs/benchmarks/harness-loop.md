@@ -1,7 +1,7 @@
 # HARNESS-LOOP 决策记录
 
 > Decision ID：`HARNESS-LOOP`
-> 状态：完成；H7 Quality 接受单一 `HC-FINAL` 组合，H7 Timing 100 未运行
+> 状态：完成；H7 Quality 接受单一 `HC-FINAL` 组合，专用 H7 Timing 100 经 owner 决定不再运行
 > 初始决策日期：2026-08-03
 > 后继定案日期：2026-08-07
 
@@ -15,7 +15,7 @@ H7 W2 Quality 为 300/300 valid blocks、0 infrastructure/load/protocol/cache-co
 
 exact arguments 为 1879/1903（98.74%，Wilson 95% 下界 98.13%），evidence retention 为 2435/2435（Wilson 95% 下界 99.84%），Approval 52/52、Steering 33/33，No-op discovery/product calls 均为 0。50 个 Guard 正例触发 27 个、27/27 达到产品语义终局；23 个未触发正例同样完成。50 个负例误触发为 0。H7 是单 Arm 联合确认，不能据此宣称 Guard 的独立因果收益，也没有证据支持只为提高 detector 召回或 strict Tool path 而继续增加 Harness 复杂度。
 
-本次只定案 Quality。W2 事前明确不运行 H7 Timing 100，因此不能声称最终组合完成联合时延确认；该缺口作为普通性能确认保留，不反向把 Quality 选择改成无胜者。
+W2 事前只定案 Quality。2026-08-07，owner 在结果完整可见后决定不再运行专用 H7 Timing 100：现有 Quality raw 的延迟字段只作为 C12 混合负载下的描述性遥测，不伪装成隔离 timing cohort，也不声称通过原 timing Gate。该范围取舍关闭实施前阻塞；生产性能由单路径集成/E2E 与后续实际产品遥测继续验证，不恢复实验 Arms。
 
 ## 初始决策（2026-08-03）
 
@@ -98,7 +98,7 @@ H2 只在同一批冻结 shadow traces 上离线重放 detector，不重新调�
 | H3A/H3B | 24 / 8 paired tasks | 300 planned（H3A 299 valid）/100 | Direct controls 100 | 8–16 lanes，block 内串行 |
 | H3C | — | 300 | timing 100 | Quality 16；Timing 固定子集 |
 | H4/H5/H6 | 各 16 pressure tasks | 各 200 | 各 100 timing | screen 4；Quality 8；Timing 4 |
-| H7 W2 | 无候选筛选 | 300 单 Arm holdout | Timing 100 未运行 | Quality 12 lanes |
+| H7 W2 | 无候选筛选 | 300 单 Arm holdout | 专用 Timing 100 waived；Quality raw 延迟仅描述 | Quality 12 lanes |
 
 H4–H6 的 200 workflows 固定为 10 个产品任务族，每项 24 个有效边界；语言 `80 en / 80 zh-CN / 40 zh-en`，难度 `60/80/60`。100 个任务落在约 272K input，另 100 个落在当前 endpoint resolved 922K input budget 的 85%–98%；实际 Provider `usage.input_tokens` 不在注册 band 的整对记 load-invalid。六类 observation 为 artifact ledger、Browser snapshot、command output、file chunk、增长日志和 MCP records，早/中/晚各放 evidence，并含两次 Steering revision 与一次 Approval outcome；不靠无意义 filler 造长上下文。
 
@@ -162,7 +162,7 @@ H2 使用冻结 shadow traces，不发 Provider 请求，因此无 LS2。16 lane
 | H4 Trigger | `CT0`–`CT3` | AR1 淘汰等价或退化项，AR2 选择 `CT1` | `CT1` |
 | H5 Summary | `CS1/CS2` | 复杂方案无已证明收益，选择简单基线 `CS1` | `CS1` |
 | H6 Output | `CO0/CO1/CO2` | 复杂方案无可归因的处理暴露收益，选择简单基线 `CO0` | `CO0` |
-| H7 joint holdout | 一条 `HC-FINAL` | W1 setup-invalid；W2 Quality 机械失败、产品语义接受 | Quality 已定案；Timing 待运行 |
+| H7 joint holdout | 一条 `HC-FINAL` | W1 setup-invalid；W2 Quality 机械失败、产品语义接受 | Quality 已定案；专用 Timing waived |
 
 ### 重设计 H2：从旧无胜者到固定 detector
 
@@ -278,10 +278,12 @@ H7 W1 在运行至 102 个 Quality、65 个 Timing blocks 时发现使用了旧 
 
 W2 不是再比较 Arms，而是把前序唯一选择合成一条 compiler 后做交互确认。300 个未曝光 workflows 按 256/512 Tool inventory 各 150，并与 short、约 272K、当前 endpoint resolved input budget 的 85%–98% 三层各 100 条交叉。任务分层不是十二类均分：Long Run、Recovery 各 50，Approval、Browser Act、Browser Read、Command、Computer Use、Direct、File、MCP、No-op、Steering 各 20；语言为 `120 en / 120 zh-CN / 60 zh-en`，难度为 `60 easy / 120 medium / 120 hard`。同一 oracle 同时报业务终局、strict、Tool/参数、Evidence、Approval、Steering、Guard 触发和四类副作用；20 个 No-op task 另要求 discovery/product call 为 0。由于只有一个 Arm，H7 只能检验绝对门和组件交互，不能做组件间因果比较。
 
-W2 重新冻结 fresh 300-task bank、12 lanes 与单一 `HC-FINAL`，事前只运行 Quality。300/300 blocks 有效，0 infrastructure/load/protocol/cache-contamination invalid。raw SHA-256 为 `9a0f7aa4…e11ac2`，analysis 为 `5d5a8ac2…ba2e`。机械 Decision `62f39d26…8f63` 保留 strict/exactness 门失败；产品 Decision `25a4bf1e…c103` 根据 300/300 产品语义终局、97.33% 注册业务完成、98.74% exact arguments、100% 证据/Approval/Steering 保留和零外部副作用接受 Quality。H7 Timing 100 仍未运行，不能把这一缺口写成已经通过。
+W2 重新冻结 fresh 300-task bank、12 lanes 与单一 `HC-FINAL`，事前只运行 Quality。300/300 blocks 有效，0 infrastructure/load/protocol/cache-contamination invalid。raw SHA-256 为 `9a0f7aa4…e11ac2`，analysis 为 `5d5a8ac2…ba2e`。机械 Decision `62f39d26…8f63` 保留 strict/exactness 门失败；产品 Decision `25a4bf1e…c103` 根据 300/300 产品语义终局、97.33% 注册业务完成、98.74% exact arguments、100% 证据/Approval/Steering 保留和零外部副作用接受 Quality。
+
+不新增 Provider 请求，直接从同一 raw 重算描述性延迟：300 个 task 的端到端 mean/p50/p95 为 `111.1s / 51.1s / 351.6s`，首请求 TTFT 为 `13.0s / 10.3s / 25.3s`。三层端到端 mean/p50/p95 分别为：short `28.6s / 22.0s / 66.8s`、约 272K `48.8s / 41.9s / 95.3s`、近 resolved budget `256.1s / 226.1s / 431.5s`；后者显著拉高总体平均。描述性分析 SHA-256 为 `925ade18…be41a`。它来自 12 条并发 lane、混合任务长度和 Quality 采样，没有 timing 专用顺序、对照或置信区间，所以只回答“本次实际运行观察到什么”，不回答独立 timing Gate 是否通过。
 
 ## 当前复杂度与处置
 
 - 选择的是一个生产实现方向，不是保留整个实验编译器。实现时删除 losing Arms、runner、候选 catalog、阈值开关与实验 schema，只重写一个 Harness/Discovery/Cache 路径。
 - H7 Quality 的执行价格快照成本等价为 `$2486.07`（`$8.29`/task），包含近 context-budget 压力层，不代表普通会话均值。
-- 本记录不能声称各组件的独立因果收益，也不能替代 H7 Timing 100。后续性能确认若发现具体产品问题，应修正单一路径；不得为“保险”恢复多个 Harness 模式。
+- 本记录不能声称各组件的独立因果收益，也不能声称专用 H7 Timing 100 已通过。owner 已明确 waive 该额外 cohort；后续集成/E2E 或产品遥测若发现具体性能问题，应优化单一路径，不得为“保险”恢复多个 Harness 模式。

@@ -4,9 +4,9 @@
 
 ## 当前里程碑
 
-**Phase 2 — H7 Quality 已定案接受，H7 Timing 100 待运行；生产实现阻塞**
+**Phase 2 — Decision Gate 已关闭；生产单路径实现待启动**
 
-Phase 0 与 Phase 1 已完成。后继 H2–H6、source-derived Discovery 与 Prompt Cache 均已形成选择；H7 W2 Quality 300/300 valid，按保留机械失败的产品权衡 amendment 接受单一 `HC-FINAL` 组合。W2 事前只运行 Quality，H7 Timing 100 尚未运行，因此 Phase 2 生产 Runtime、Tool、Approval 与 Cache 重写继续阻塞。候选代码和原始证据只在仓库外 disposable worktree/artifact/result root。互不依赖 Harness 的 `P6-TERRITORY-BASE` 已完成实现、集成验证、仓库 owner 验收并合并 `main`，且未接触 Agent Runtime 或实验文件。
+Phase 0 与 Phase 1 已完成。后继 H2–H6、source-derived Discovery 与 Prompt Cache 均已形成选择；H7 W2 Quality 300/300 valid，按保留机械失败的产品权衡 amendment 接受单一 `HC-FINAL` 组合。2026-08-07 owner 决定不再运行专用 H7 Timing 100：Quality C12 raw 的延迟只作描述性遥测，不声称 timing Gate 通过；该 scope closure 不再阻塞 Phase 2 生产 Runtime、Tool、Approval 与 Cache 单路径重写。候选代码和原始证据只在仓库外 disposable worktree/artifact/result root。互不依赖 Harness 的 `P6-TERRITORY-BASE` 已完成实现、集成验证、仓库 owner 验收并合并 `main`，且未接触 Agent Runtime 或实验文件。
 
 退出条件：
 
@@ -22,23 +22,23 @@ Phase 0 与 Phase 1 已完成。后继 H2–H6、source-derived Discovery 与 Pr
 - [x] 完成 D1C 现实工作流收口：256/512 quality 与 timing 全部结束，C16/C1 共同任务的 Arm 方向一致且均无 429/invalid；1024 scored 分母未运行并退休。机械预注册门槛会选 T0，但它只因 256 timing 单侧上界 `1.1190` 窄幅超过 CharaMate heuristic `1.10`；仓库 owner 综合 512 合格、质量、Token、延迟与规模证据选择 `T2-CLIENT-BM25`，原结论和带时间戳 amendment 均保留；
 - [x] 固定 H2 选择后独立完成 H3 action；已选择 candidate-present `GA5-ALLOWED-AUTO`、no-candidate `GA3-CANDIDATE-LIST` 与 `H3C-CONDITIONAL`，仅覆盖 known failed/no-progress，不覆盖 unknown outcome/reconcile；
 - [x] 完成 H4–H6、Provider Prompt Cache 与 H7 Quality 300；保留机械结论并按整体业务、成本、副作用与复杂度完成产品 Quality 定案；
-- [ ] 完成 H7 Timing 100 与最终联合性能确认；
+- [x] owner waive 专用 H7 Timing 100；从 Quality raw 保存描述性延迟分布及其限制，不把范围关闭改写成 timing Gate 通过；
 - [x] 未修改生产 Schema、IPC、Settings、Runtime、Tool/Approval 或模型采样；主仓库没有候选依赖、Arm、flag 或实验模式；
 - [x] 当前修改的 `git diff --check`、格式检查与 `npm run check:fast` 最终通过。
 
-后继研究使用一个可覆盖工作集，不再为每次修订创建冻结版本或重跑无关阶段。每次真正计分只记录当次实际 source/task/oracle/lane/model/raw SHA-256。H7 Quality 已不再阻塞产品选择；在 H7 Timing 100 完成并记录联合性能边界前，Phase 2 生产实现仍不启动。
+后继研究使用一个可覆盖工作集，不再为每次修订创建冻结版本或重跑无关阶段。每次真正计分只记录当次实际 source/task/oracle/lane/model/raw SHA-256。H7 Quality 与明确的 Timing scope closure 已关闭研究 Gate；下一步启动 Phase 2 生产单路径实现，并在集成/E2E 与实际产品遥测中继续验证性能。
 
 ## 工作包状态
 
 - `P2-H2-DETECTOR-REDESIGN`：owner `main`，状态 `focused-verified`。`S1-SEMANTIC-CYCLE + W0 + C0 + D1` 已通过 selection/holdout；它只供下一阶段 H3 固定使用，不是生产默认。
 - `P2-SOURCE-DERIVED-DISCOVERY`：owner `main`，状态 `focused-verified`。D1B/D1C 已完整结束；在保留机械 gate 结论的同时，按整体产品证据与用户明确取舍选择 `T2-CLIENT-BM25` 作为后继实验固定发现协议，不是生产默认。512 为极限 Tool 压力层；1024 scored 主实验退休，已生成的 compatibility/task bank 原样保留但不再影响选择。R1/R2/R3/scale raw 均原样保留。
 - `P2-H3-RECOVERY-ACTION`：owner `main`，状态 `focused-verified`。300-task H3A/H3C、100-task H3B、100 Direct controls 与固定 100-task timing 均完成且 0 invalid；条件策略在业务终局、严格 Tool 执行、参数、Capability 与 recovery 指标上整体优于全局策略。原机械 gate 的 `no-winner` 与 evidence-led product selection amendment 同时保留；该 component 不是生产默认。
-- `P2-H4-H7-COMPACTION-CONFIRM`：owner `main`，状态 `integration-verified`（Quality）/`implementing`（Timing）。H4/H5/H6 已选择 `CT1-CODEX-TOTAL90`、`CS1-CODEX-HANDOFF` 与 `CO0-CODEX-USERS`。Cache 最终 paired confirmation 证明 Cache On 成本比 0.2990、质量非劣，但 Timing TTFT p95 ratio 1.2465 超过机械 1.05；原机械 Cache Off 与 owner 综合权衡选择 Cache On 均保留。H7 W1 因旧 bank 与 recovery catalog/discovery 组合错误整体标为 setup-invalid；W2 fresh Quality 按 C12 完成 300/300、0 invalid。注册 business 为 292/300、strict 为 236/300；8 个注册 false-completion 仅因额外 compaction evidence，全部最终状态、边界与预期证据正确，产品语义终局为 300/300。Quality mechanical Decision `62f39d26…8f63` 保留失败，产品 Decision `25a4bf1e…c103` 接受 `HC-FINAL`；H7 Timing 100 未运行。
-- `P2-AGENT-DECISION-EVIDENCE`：owner `main`，状态 `done`。三份正式中文 Decision Record 已补齐从设置校准、AR1/AR2、候选淘汰、机械结论、产品 amendment 到 H7 联合确认的逐步链路；旧无胜者、setup-invalid 与外部 hash 归档均保留，未把后继选择回写成原预注册胜者。
-- `P2-RUNTIME`、`P2-TOOLS`、`P2-APPROVAL`：owner `main`，状态 `specified`，阻塞。Quality 组合已选定；H7 Timing 100 与最终联合性能边界记录完成后才开始单路径重写。
+- `P2-H4-H7-COMPACTION-CONFIRM`：owner `main`，状态 `done`。H4/H5/H6 已选择 `CT1-CODEX-TOTAL90`、`CS1-CODEX-HANDOFF` 与 `CO0-CODEX-USERS`。Cache 最终 paired confirmation 证明 Cache On 成本比 0.2990、质量非劣，但 Timing TTFT p95 ratio 1.2465 超过机械 1.05；原机械 Cache Off 与 owner 综合权衡选择 Cache On 均保留。H7 W1 因旧 bank 与 recovery catalog/discovery 组合错误整体标为 setup-invalid；W2 fresh Quality 按 C12 完成 300/300、0 invalid。注册 business 为 292/300、strict 为 236/300；8 个注册 false-completion 仅因额外 compaction evidence，全部最终状态、边界与预期证据正确，产品语义终局为 300/300。Quality mechanical Decision `62f39d26…8f63` 保留失败，产品 Decision `25a4bf1e…c103` 接受 `HC-FINAL`；专用 H7 Timing 100 由 owner waive，Quality 延迟只作描述性证据。
+- `P2-AGENT-DECISION-EVIDENCE`：owner `main`，状态 `done`。三份正式中文 Decision Record 已补齐从设置校准、AR1/AR2、候选淘汰、机械结论、产品 amendment 到 H7 联合确认及 Timing scope closure 的逐步链路；旧无胜者、setup-invalid 与外部 hash 归档均保留，未把后继选择回写成原预注册胜者。
+- `P2-RUNTIME`、`P2-TOOLS`、`P2-APPROVAL`：owner `main`，状态 `specified`，已解除 Decision 阻塞；下一工作包先冻结单一路径生产 Contract，再按 Runtime → Tools/Approval → capability adapters 与桌面 E2E 集成。
 - `P6-TERRITORY-ITEM-MANIFEST`：owner `codex/p6-territory-base` worktree，状态 `done`，已通过仓库 owner 验收并合并 `main`。`TerritoryItemManifestV1` 已成为内置/未来生成物件的唯一定义：视觉尺寸、`underlay/object`、占用/碰撞 mask、深度锚点、单层 `tabletop` 插槽与附件锚点通过 TypeBox/Ajv 和领域语义校验；当前 greenfield Schema 直接更新为 `territory_assets`、不可变 definition revision 与互斥的 ground/surface/collection target，不增加旧表迁移。异步领域入口 `installGeneratedItem({ itemId, sourceImagePath, manifest })` 会按 `sizePx` 用 Electron `nativeImage` 归一化 PNG、复核尺寸、计算 hash、写入自有目录，并把 asset 元数据、definition、item 和初始收藏库位置确定性登记；相同输入幂等，同 assetId 不同图片拒绝覆盖。受控 `chara-mate-territory:` 协议同时供收藏库真实缩略图和 Pixi Sprite 使用。Harness/Tool Discovery 适配仍等待 Phase 2，不在本包注册，Image Driver/去背景/候选确认仍属于 `P6-TERRITORY-IMAGE`。Pixi 已按角色脚底/物件深度锚点排序，寻路只消费碰撞 mask，附件作为父物件局部子节点随移动/旋转/翻转；收回父物件时同事务收回附件。收藏库新增暖陶杯、折叠短笺、袖珍多肉三个桌面小物，选择后自动收起遮挡场景的抽屉并显示兼容空闲插槽，场景中的地面物件与附件均可点击查看结构说明。维护性复核后，Main/Pixi 共用唯一插槽合法性规则，旋转尺寸只保留一个实现，Repository 不再逐字段复制领域物件，持久化冲突使用 typed `TerritoryError`；资产读取保留受控 ID/登记键、hash、staging 与回滚，删除重复的本地 symlink/目录逃逸检查。Pixi Canvas 只负责生命周期与场景组合，物件加载/层级/拖动/插槽和桌宠动画分别由两个内聚模块承载。非目标仍为真正 3D、物理、任意嵌套、Image Driver 与 Agent Harness 改动。
 - `P6-TERRITORY-BASE`：owner `codex/p6-territory-base` worktree，状态 `done`，已通过仓库 owner 验收并合并 `main`。四个本地基础像素场景、首次选场景、PixiJS 固定图层、nav grid/A*、当前桌宠移动、游览/布置、合法网格、直接拖拽、旋转/翻转、收回/重新放置，以及 SQLite + typed IPC 的确定性重启恢复已成为一条实现路径；首次进入不等待生图。主窗口 CSP 已按 Pixi `Assets` 的真实 fetch/worker 路径补齐受控 `chara-mate-pet:` 与 blob worker，v1/v2 实际图集均完成主窗口渲染。验收中确认点击物品时可能因角色已位于最近可达格而返回单点路径；Renderer 现将其作为已完成的无位移请求，不再锁住后续移动，并已移除与点击地面主交互重复、语义不清的右下角方向键。行走中再次点击会读取 Pixi 当前浮点坐标，以最近网格作为新 A* 起点，并从当前视觉位置直接衔接新路线的下一步，不会先退回取整格或从数据库中的旧终点重放；Pixi 在每个水平移动分段切换左右动画，重规划或路线转向时会立即更新面朝方向并保留当前动画帧。该起点通过 typed IPC 显式校验，最终目标仍按确定性事务保存。非目标仍为 Memory/Activity 候选与来源、容量回收、场景/asset 版本、Image Generation/Edit Driver、Run/Approval/Voice 投影及任何 Harness 代码。shared Territory contract、当前 greenfield Schema 与 IPC 的本次 integration owner 为该 worktree。
-- `P6-PET-FOUNDATION`：owner `main`，状态 `done`，提交 `7e61a03` 已快进合并。已实现透明 Character Window、自由拖动与多屏 DIP 恢复、PixiJS v1/v2 动画和 CharaMate 自有目录导入；验收修正跨原生窗口拖动的非有限坐标异常，方向改按相邻采样点判定，Character 设置收紧为真实图像预览列表，大小使用 `30%–150%`、速度使用 `10%–150%` 的连续滑杆且不显示比例文本，并细化轨道、滑块和聚焦反馈；左上角 CharaMate 品牌图标实时使用当前桌宠的首帧缩略图，v1 悬停动作播放三轮。主面板入口统一交给一个生命周期 owner，销毁后单飞重建，等待 Renderer ready 后再发送 typed 页面导航。Chats 搜索框聚焦描边不再被裁切；标题栏继续保留会话操作，左侧会话支持鼠标右键及键盘上下文菜单，可重命名、置顶/取消置顶、归档/恢复和删除，并避免菜单关闭时的焦点恢复立即提交重命名。不接入仍受 Phase 2 阻塞的 Run/Approval/Voice 状态投影，也不改 Harness 实验文件、共享 Run/Item Schema 或现有数据库迁移。
+- `P6-PET-FOUNDATION`：owner `main`，状态 `done`，提交 `7e61a03` 已快进合并。已实现透明 Character Window、自由拖动与多屏 DIP 恢复、PixiJS v1/v2 动画和 CharaMate 自有目录导入；验收修正跨原生窗口拖动的非有限坐标异常，方向改按相邻采样点判定，Character 设置收紧为真实图像预览列表，大小使用 `30%–150%`、速度使用 `10%–150%` 的连续滑杆且不显示比例文本，并细化轨道、滑块和聚焦反馈；左上角 CharaMate 品牌图标实时使用当前桌宠的首帧缩略图，v1 悬停动作播放三轮。主面板入口统一交给一个生命周期 owner，销毁后单飞重建，等待 Renderer ready 后再发送 typed 页面导航。Chats 搜索框聚焦描边不再被裁切；标题栏继续保留会话操作，左侧会话支持鼠标右键及键盘上下文菜单，可重命名、置顶/取消置顶、归档/恢复和删除，并避免菜单关闭时的焦点恢复立即提交重命名。该已完成包不接入当时尚未实现的 Run/Approval/Voice 状态投影，也不改 Harness 实验文件、共享 Run/Item Schema 或现有数据库迁移。
 - Phase 0/1 完成包已归档；Chats、Provider、typed IPC 与持久化继续是唯一生产路径。
 
 ## 来源与复现标识
@@ -70,18 +70,19 @@ Phase 0 与 Phase 1 已完成。后继 H2–H6、source-derived Discovery 与 Pr
 - H3 known-failure candidate router 普通离线验证已通过：320/320 top-1、valid set 与 recall，80/80 no-candidate abstention、0/80 erroneous force（Wilson 95% 上界 `0.0458`），四个 source stratum 各 80/80，1,200 个重命名/乱序/无关 Tool comparisons 零变化；dataset/result/source SHA 为 `3a796d8c…8b5e` / `d47ced19…2e8f` / `4744ba46…19f4`。它不代表 H3 action 胜者。
 - 当前 Provider metadata 报告 `gpt-5.6-sol` context/prompt/output 上限为 `1,050,000/922,000/128,000`；这是 endpoint 当前行为而非协议硬限制。后续 H4–H6 同时验证约 272K 长上下文层和接近 resolved 922K input budget 的高压层，不再把 Codex 272K metadata 当本模型上限。
 - H3 已完成：H3A/H3C quality 为 `300/300` blocks，H3B 为 `100/100`，Direct negative controls 为 `100/100`，timing 为 `100/100`，均 0 invalid。H3A 选择 `GA3-CANDIDATE-LIST`；H3B 选择 `GA5-ALLOWED-AUTO`；H3C 条件策略对全局策略的业务终局为 `300/300` 对 `268/300`，严格执行为 `223/300` 对 `197/300`，recovery success 为 `177/200` 对 `142/200`，四项副作用与 100 Direct 错误 guard intervention 均为 0。timing 的 end-to-end p95 ratio 单侧上界为 `1.1641`，TTFT ratio 上界为 `0.7936`；原机械 gate `no-winner` 被保留，用户批准的 evidence-led amendment 选择条件策略。最终 Decision SHA 为 `57e00ca8…4395d`，H3A/H3B/H3C quality Decision 为 `e73f4ef2…374` / `8d4d660f…d59` / `03331ae2…ea3e`，timing 为 `332652c2…103`。结论只覆盖 known failed/no-progress，unknown outcome 的 reconcile 后置。
-- H4–H7/Cache 的现实负载已完成到 H7 Quality：H4/H5/H6 依次选择 `CT1-CODEX-TOTAL90`、`CS1-CODEX-HANDOFF`、`CO0-CODEX-USERS`；Cache composed policy 为启用、无 key、无 breakpoint、implicit、TTL `30m`。H7 W2 plan/source/raw/analysis SHA 为 `d82b3c15…ed6` / `16b6f55d…e93f` / `9a0f7aa4…e11ac2` / `5d5a8ac2…ba2e`；300 blocks、12 lanes、0 invalid。H7 Timing 100 保持未运行。
+- H4–H7/Cache 的现实负载已完成到 H7 Quality：H4/H5/H6 依次选择 `CT1-CODEX-TOTAL90`、`CS1-CODEX-HANDOFF`、`CO0-CODEX-USERS`；Cache composed policy 为启用、无 key、无 breakpoint、implicit、TTL `30m`。H7 W2 plan/source/raw/analysis SHA 为 `d82b3c15…ed6` / `16b6f55d…e93f` / `9a0f7aa4…e11ac2` / `5d5a8ac2…ba2e`；300 blocks、12 lanes、0 invalid。Quality raw 描述性延迟 analysis 为 `925ade18…be41a`；专用 H7 Timing 100 明确 waived。
 
 ## Decision 与阻塞
 
-- [`HARNESS-LOOP`](../benchmarks/harness-loop.md)：旧无胜者历史保留；后继 H7 Quality 已接受单一 `HC-FINAL` 组合。H7 Timing 100 尚未运行，不能声称联合时延确认。
-- [`TOOL-DISCOVERY`](../benchmarks/tool-discovery.md)：旧 Decision 的 T0 只属于旧协议；source-derived D1C 的 `T2-CLIENT-BM25` 已进入 H7 Quality 接受的单一组合。它不是独立 fallback 或用户可选模式，H7 Timing 仍待完成。
+- [`HARNESS-LOOP`](../benchmarks/harness-loop.md)：旧无胜者历史保留；后继 H7 Quality 已接受单一 `HC-FINAL` 组合。专用 H7 Timing 100 经 owner waive，不能声称该 Gate 通过。
+- [`TOOL-DISCOVERY`](../benchmarks/tool-discovery.md)：旧 Decision 的 T0 只属于旧协议；source-derived D1C 的 `T2-CLIENT-BM25` 已进入 H7 Quality 接受的单一组合。它不是独立 fallback 或用户可选模式；后续性能验证进入生产单路径集成与遥测。
 - [`PROVIDER-PROMPT-CACHE`](../benchmarks/provider-prompt-cache.md)：旧 PC4 公平性停止保留；source-derived `PC0-ENABLE` 与最终 confirmation 已选择 Cache On。机械 TTFT 门选择 Off 与综合成本/质量/副作用选择 On 均保留。
-- 后继单一路径输入已完成 Quality 选择：`S1-SEMANTIC-CYCLE + W0-CYCLE-ONLY + C0-DETERMINISTIC + D1-ONE-WINDOW`、`T2-CLIENT-BM25`、H3 条件策略、`CT1`、`CS1`、`CO0` 与 Cache On。实验 Arm 不进入生产；H7 Timing 仍是实施前阻塞。
+- 后继单一路径输入已完成选择：`S1-SEMANTIC-CYCLE + W0-CYCLE-ONLY + C0-DETERMINISTIC + D1-ONE-WINDOW`、`T2-CLIENT-BM25`、H3 条件策略、`CT1`、`CS1`、`CO0` 与 Cache On。实验 Arm 不进入生产；Decision Gate 已关闭。
 - 旧 D1 使用 48 Tool 和自定义 meta functions，只是历史证据；当前 native Tool Search 的 D1B/D1C 已完成。T2 只作为已接受 `HC-FINAL` 的内部组件进入未来单路径重写，不保留旧协议或候选 Arm。
 
 ## 最近绿色验证
 
+- 2026-08-07：owner waive 专用 H7 Timing 100；未新增 Provider 请求。直接从 H7 Quality raw 重算 300-task C12 描述性延迟，端到端 mean/p50/p95 为 `111.1s/51.1s/351.6s`，首请求 TTFT 为 `13.0s/10.3s/25.3s`；三层分布与限制写入外部 analysis `925ade18…be41a`，不声称 timing Gate 通过。目标文档 Prettier、`git diff --check` 与 `npm run check:fast` 全绿，contract tests `59/59`。
 - 2026-08-07：三份 Phase 2 Decision Record 已补齐各 Arm 的实际执行方法、单变量公平比较设置、设置校准、晋级/淘汰链、机械结论与产品 amendment；目标文档 Prettier check、`git diff --check` 与 `npm run check:fast` 全绿，contract tests `59/59`。
 - 2026-08-07：H7 W2 Quality 以 C12 完成 `300/300` blocks、0 invalid；raw/analysis 为 `9a0f7aa4…e11ac2` / `5d5a8ac2…ba2e`。修复分析器 safety 聚合字段并新增不把附加 compaction evidence 当缺证据的产品语义复算，Provider 重跑 0；机械/产品 Decision 为 `62f39d26…8f63` / `25a4bf1e…c103`。H7 定向回归 `27/27` 与目标文件 Prettier check 通过。
 - 2026-08-07：H5 quality/timing 完成 `200/100` blocks、0 invalid。singleton composite strata 的 bootstrap 分析缺陷只用旧 ledger 重评分，Provider 重跑为 0；修正后选择 `CS1-CODEX-HANDOFF`，Decision `b1df9e1e…42e0`。H6 首轮 E4 compatibility/evidence gate 通过；Compaction analyzer 定向回归 `10/10`、Cache/H7/Final `55/55` 通过。
@@ -105,7 +106,7 @@ Phase 0 与 Phase 1 已完成。后继 H2–H6、source-derived Discovery 与 Pr
 ## 已知产品影响问题
 
 - 生产 Image Generation/Edit、去背景、style prompt 和候选确认仍由 `P6-TERRITORY-IMAGE` 实现；当前已完成的是接收“已落盘候选图片 + manifest”的 Territory 领域入口，不在普通 UI 暴露半完成生图入口，也不提前注册 Agent Tool。
-- Phase 2 Agent、Tool、Approval、Browser/Computer/MCP 生产实现的 Quality 路径已选定，但仍受 H7 Timing 100 与最终联合性能边界记录阻塞；普通 Chat 与 Phase 1 Provider 路径不受影响。
+- Phase 2 Agent、Tool、Approval、Browser/Computer/MCP 的单一生产路径已选定且 Decision Gate 已关闭；尚未开始生产实现。专用 H7 Timing 被 waive，不能把现有描述性遥测表述为 timing Gate 通过；普通 Chat 与 Phase 1 Provider 路径不受影响。
 - 当前 npm 的 split MCP client 仍是 `2.0.0-beta.5`，而冻结源码 package version 为 `2.0.0`；真正实现前必须重新核对可安装工件，不能静默退回旧聚合 SDK/旧协议。
 - Electron Forge Vite Plugin 在当前官方说明中仍标记为 experimental；已通过 Phase 0 的开发启动、原生模块、打包、隔离 packaged-app smoke 与 Electron E2E，并冻结为唯一构建路径。
 - Forge 打包当前携带 `better-sqlite3` 的多平台预构建二进制及内容渲染依赖，macOS `.app` 约 348 MB；不阻塞当前正确性，发布优化需在不增加第二构建路径的前提下处理。

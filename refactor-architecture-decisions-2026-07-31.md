@@ -1,6 +1,6 @@
 # CharaMate Agent Harness、记忆检索、Realtime 与自进化研究/实验设计
 
-> 状态：Phase 2 研究协议与历史 amendment 已记录；当前选择见 `docs/benchmarks/`，H7 Timing 待运行，生产 Runtime 继续阻塞
+> 状态：Phase 2 研究协议与历史 amendment 已记录；当前选择与 Timing scope closure 见 `docs/benchmarks/`，生产 Runtime 可进入实现
 > 日期：2026-08-07
 > 性质：面向全新实现的研究问题、实验协议、指标与决策门槛
 
@@ -1958,7 +1958,7 @@ Stage 0 只证明工程宿主可用，不证明 Harness、Storage、Retrieval、
 1. §3.16 的 V8/V10/V11 已完成并按 H2 `no-winner` 停止；这些阶段不得重跑、补样或改门槛。
 2. 后继 H2 已按 §3.17 完成 component selection/holdout；H3 也已在固定 H2 与 T2 下选择 candidate-present `GA5-ALLOWED-AUTO`、no-candidate `GA3-CANDIDATE-LIST` 与条件路由。该结果只覆盖 known failed/no-progress，不包含 unknown-outcome reconcile，也不是完整 Harness 胜者。
 3. H4–H6、Provider Prompt Cache 与 H7 Quality 的当前结果只在对应中文 Decision Record 中定案；本文件保留方法、候选和历史 amendment，不把阶段结果升级为生产默认。任务分层继续单报 Long Run、steering、审批、取消、恢复、Browser、Computer Use 与 MCP。
-4. H7 Timing 使用最终单一 compiler、独立 namespace 与冻结的 100-task subset；Quality 结果不能替代联合时延确认。
+4. 2026-08-07 owner waive 专用 H7 Timing 100；Quality C12 延迟只作描述性运行遥测，不能表述为 timing Gate 通过。性能验证转入最终单一 compiler 的生产集成/E2E 与实际遥测，不恢复候选路径。
 5. `MULTI-AGENT` 先比较 M0/M2R；通过后才运行更高并行度。
 6. Realtime V0–V2 与 Tool Join J0–J2；先过协议 Contract Test，再跑真实语音。
 

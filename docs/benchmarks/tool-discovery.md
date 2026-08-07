@@ -1,7 +1,7 @@
 # TOOL-DISCOVERY 决策记录
 
 > Decision ID：`TOOL-DISCOVERY`
-> 状态：完成；source-derived `T2-CLIENT-BM25` 已随 H7 Quality 接受，H7 Timing 100 未运行
+> 状态：完成；source-derived `T2-CLIENT-BM25` 已随 H7 Quality 接受，专用 H7 Timing 100 已 waived
 > 初始决策日期：2026-08-03
 > 后继定案日期：2026-08-07
 
@@ -11,7 +11,7 @@
 
 原 D1C 机械门会选择 `T0-FULL`，原因只有 256-Tool timing 的 end-to-end p95 ratio 单侧 95% 上界 `1.1190` 窄幅超过 CharaMate 启发式 `1.10`。完整证据同时显示：T2 在 256/512 两层业务质量非劣，512 层完整合格，input token 显著下降，且 512 的 TTFT/end-to-end 在 C16 与 C1 下方向一致。仓库 owner 因此在保留机械结论后，以带时间戳 amendment 选择 T2。当前 Decision SHA-256 为 `70a41569…e052`，selection amendment 为 `df73b622…d044`。
 
-H7 W2 使用 T2、512 Tool 极限层和最终 Harness/Cache 组合，300/300 Quality blocks 有效，产品语义终局 300/300、No-op discovery/product calls 为 0。H7 是联合单 Arm 确认，不能反推 T2 的独立因果收益；H7 Timing 100 未运行，因此当前只完成 Quality 选择。
+H7 W2 使用 T2、512 Tool 极限层和最终 Harness/Cache 组合，300/300 Quality blocks 有效，产品语义终局 300/300、No-op discovery/product calls 为 0。H7 是联合单 Arm 确认，不能反推 T2 的独立因果收益。2026-08-07 owner 决定不再运行专用 H7 Timing 100；Quality raw 的 C12 延迟只作描述性遥测，不把范围关闭写成 timing Gate 通过。
 
 ## 初始决策（2026-08-03）
 
@@ -177,4 +177,4 @@ D1C 用 12 类现实多步 workflow，分别在 256 与 512 Tool 层运行 300 q
 
 T2 随 H3–H6 与 Cache On 进入 H7 W2，而不是单独再造一个“Discovery holdout”。H7 Quality 的 300/300 blocks 有效，No-op discovery/product calls 均为 0，产品语义终局 300/300，因此 T2 作为 `HC-FINAL` 的内部组件被接受。生产重写只保留一条 client native Tool Search 路径；T0/T1/T3、旧 48-Tool meta functions、候选 catalog、runner 和 Arm IDs 全部留在仓库外归档或删除。
 
-本记录不能声称：T2 在所有 Tool 数量、Provider 或语言上总是更优；512 是产品压力假设而非协议上限；H7 联合结果也不能拆成 T2 的独立因果效应。H7 Timing 100 未完成之前，最终联合时延仍是实施前 Gate。
+本记录不能声称：T2 在所有 Tool 数量、Provider 或语言上总是更优；512 是产品压力假设而非协议上限；H7 联合结果也不能拆成 T2 的独立因果效应。专用 H7 Timing 100 已由 owner waive 而不是通过；后续只在生产单路径的集成/E2E 和实际遥测中继续验证时延。

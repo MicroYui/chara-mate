@@ -1,6 +1,6 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Quality 已选，H7 Timing 待完成，生产实现阻塞
+> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Decision Gate 已关闭，生产实现待启动
 > 日期：2026-08-07
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
@@ -118,7 +118,7 @@ flowchart TD
 
 1. **Wave 0 — 串行入口（已完成）**：来源刷新、工具链兼容性、共享 Contract/Schema 所有权和测试命令基线。
 2. **Wave 1 — Phase 1 并行（已完成）**：UI fixture、持久化/IPC、Provider/Secret 三条所有权不重叠的路径并行，随后由一个集成 owner 收口 Chats。
-3. **Wave 2 — Phase 2 主干（Quality 已选、生产仍阻塞）**：后继 H2–H6、source-derived Discovery 与 Cache 已形成选择，H7 W2 Quality 300/300 valid，并在保留机械失败的同时按整体产品证据接受单一 `HC-FINAL` 组合。Discovery 的主质量压力上限为 512 Tool；未计分的 1024 层已退休。H7 Timing 100 与最终联合性能边界尚未完成，因此唯一 Agent Runtime、Tool、Approval 和恢复路径仍不进入实现。
+3. **Wave 2 — Phase 2 主干（Decision complete / implementation next）**：后继 H2–H6、source-derived Discovery 与 Cache 已形成选择，H7 W2 Quality 300/300 valid，并在保留机械失败的同时按整体产品证据接受单一 `HC-FINAL` 组合。Discovery 的主质量压力上限为 512 Tool；未计分的 1024 层已退休。2026-08-07 owner waive 专用 H7 Timing 100，Quality raw 延迟只作描述性证据且不声称 Gate 通过；该 scope closure 已解除唯一 Agent Runtime、Tool、Approval 和恢复路径的实现阻塞。
 4. **Wave 3 — 多支线并行**：Agent 主干稳定后，Memory 研究、Voice Contract/实验、Automation 基础、桌宠基础与 Multi-agent 实验可并行；候选代码只在隔离 worktree。
 5. **Wave 4 — 长期理解支线**：Memory 胜者进入生产后，Activity、主动聊天、Self-evolution 实验和 Territory 记忆物件可并行。
 6. **Wave 5 — 全产品收口**：只集成已通过 Gate 的路径，运行完整离线、打包、E2E 和明确要求的 Live 检查。
@@ -175,15 +175,15 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## Phase 2 — Agent Runtime 与能力
 
-> 里程碑状态：Quality selected / production blocked（2026-08-07）。H2–H6、source-derived D1、Cache 与 H7 Quality 已完成选择；H7 Timing 100 尚未运行。
+> 里程碑状态：Decision complete / implementation next（2026-08-07）。H2–H6、source-derived D1、Cache 与 H7 Quality 已完成选择；专用 H7 Timing 100 已由 owner waive。
 
 ### 依赖与 Gate
 
 - Phase 1 的 Run/Item、IPC、Provider 与持久化稳定；
-- `HARNESS-LOOP`、`TOOL-DISCOVERY`、`PROVIDER-PROMPT-CACHE` 已更新中文 Decision Record，并记录设置校准、逐轮晋升/淘汰、机械结论与产品 amendment 的完整链路；Quality 生产组合已选定，H7 Timing 100 仍是实现前 Gate；
+- `HARNESS-LOOP`、`TOOL-DISCOVERY`、`PROVIDER-PROMPT-CACHE` 已更新中文 Decision Record，并记录设置校准、逐轮晋升/淘汰、机械结论、产品 amendment 与 Timing scope closure 的完整链路；生产组合已选定，专用 H7 Timing 100 不再是实现前 Gate；
 - 后继 H2 使用新 detector、未曝光任务和仓库外可覆盖工作 Manifest；修订直接覆盖工作文件，每次计分记录实际 hash 与 lane map，不为每次修改复制版本或重跑无关阶段；不能把 HS0、T0、GD4 或 PC0-OFF 当 fallback；
 - 后继所有选择实验遵守现实负载准入：小 fixture、单步任务、少量 Schema 或缩小 window 只作 smoke/AR1/规模校准，不能选择生产方案；D1 的 256/512 Tool 现实工作流与 512 极限压力保留为 Discovery 证据，1024 scored 层已经在首个计分请求前退休；H3 使用完整发现 inventory 与失败后续步骤；H4–H6 同时验证真实长上下文和目标 endpoint resolved-budget 高压层；Cache 重放最终请求形状；H7 在 256/512 Tool 与短/长/近预算 context 上做未曝光联合确认。所有阶段都分别保存业务终局、Tool/参数正确、误调/漏调、虚假完成、实际请求 shape 与 Provider usage，只有规模标签或合并“成功率”不算充分证据；
-- 后续 live 阶段先通过已有 compatibility/preflight 或首轮 evidence barrier，再并行互不依赖的 cohort：同一 paired block 内 Arms 保持串行，quality 与 timing 使用隔离 namespace、固定 lane map 和相同的阶段前并发配置；H5→H6→Cache→H7 Quality 已完成，尚未运行的 H7 Timing 继续使用隔离 namespace 与固定 100-task subset；
+- 后续 live 阶段先通过已有 compatibility/preflight 或首轮 evidence barrier，再并行互不依赖的 cohort：同一 paired block 内 Arms 保持串行，quality 与 timing 使用隔离 namespace、固定 lane map 和相同的阶段前并发配置；H5→H6→Cache→H7 Quality 已完成，专用 H7 Timing 不再运行，性能转入生产单路径集成/E2E 与实际遥测；
 - 主仓库当前没有候选 Harness/Discovery/Cache Arm、Adapter、Schema、依赖或实验模式；未来胜者重写为单一路径前，失败候选仍不得进入生产。
 
 ### 工作包

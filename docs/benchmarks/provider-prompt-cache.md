@@ -157,6 +157,6 @@ PC4 计划 300 paired tasks，实际写入 3 blocks、启动 28 requests。前�
 
 ### 联合确认、处置与限制
 
-H7 W2 固定使用同一 Cache On policy，300/300 Quality blocks 有效且无 cache-contamination invalid。这证明它能进入最终 Quality 组合，但不消除 TTFT p95 退化，也不等于 H7 Timing 已通过。未来实现只在该 OpenAI Adapter 中编译一条固定 Cache On 请求路径；不保留 Off fallback、动态 key、breakpoint、explicit mode、用户设置或实验 Arm。
+H7 W2 固定使用同一 Cache On policy，300/300 Quality blocks 有效且无 cache-contamination invalid。这证明它能进入最终 Quality 组合，但不消除 Cache 专项 TTFT p95 退化。2026-08-07 owner 决定 waive 专用 H7 Timing 100；这不是 timing Gate 通过，也不改变本记录中 Cache On/Off 的实测区间。未来实现只在该 OpenAI Adapter 中编译一条固定 Cache On 请求路径；不保留 Off fallback、动态 key、breakpoint、explicit mode、用户设置或实验 Arm。
 
 本结论只覆盖当前 pinned OpenAI-compatible gateway/model。Cache 不减少 logical context、TPM 或回答生成；其他 Provider 需要各自协议 Contract Test，不能照抄 30m TTL 或 usage 字段。本轮 H7 `$8.29`/task 来自近 context-budget 压力任务，不是普通会话成本均值。产品实现应观测实际 TTFT 与成本分布，但不能为此恢复双路径。
