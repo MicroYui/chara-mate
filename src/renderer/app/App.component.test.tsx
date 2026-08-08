@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { AgentApi } from "../../shared/contracts/agent";
 import type {
   Chat,
   ChatApi,
@@ -124,6 +125,17 @@ function renderApp({
     return chat;
   };
   const desktopApi: CharaMateApi = {
+    agent: {
+      cancel: vi.fn<AgentApi["cancel"]>(),
+      getPendingApproval: vi.fn<AgentApi["getPendingApproval"]>(),
+      resolveApproval: vi.fn<AgentApi["resolveApproval"]>(),
+      resume: vi.fn<AgentApi["resume"]>(),
+      start: vi.fn<AgentApi["start"]>(),
+      steer: vi.fn<AgentApi["steer"]>(),
+      subscribeOpenApproval: vi.fn<AgentApi["subscribeOpenApproval"]>(
+        () => () => undefined,
+      ),
+    },
     chat: {
       archive: vi.fn<ChatApi["archive"]>(({ chatId }) => {
         const chat = findChat(chatId);
@@ -180,6 +192,21 @@ function renderApp({
         delete chat.pinnedAt;
         return Promise.resolve(update(chat));
       }),
+    },
+    extensions: {
+      mcpDelete: vi.fn(),
+      mcpList: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      mcpRefresh: vi.fn(),
+      mcpSave: vi.fn(),
+      skillArchive: vi.fn(),
+      skillGet: vi.fn(),
+      skillList: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      skillRefresh: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      skillSave: vi.fn(),
+      skillSetEnabled: vi.fn(),
+    },
+    files: {
+      getPathForFile: vi.fn(() => "/tmp/test-attachment"),
     },
     foundation: {
       getSnapshot: vi.fn().mockResolvedValue({
@@ -249,6 +276,27 @@ function renderApp({
         ok: true,
         value: emptyTerritorySnapshot,
       }),
+    },
+    settings: {
+      getSnapshot: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          agent: {
+            defaultApprovalMode: "request_approval",
+            defaultMode: "chat",
+            workingDirectory: "/workspace",
+          },
+          browserComputer: {
+            accessibility: "unavailable",
+            browser: "not_installed",
+            profileDirectory: "/browser/profile",
+            screenRecording: "unavailable",
+          },
+        },
+      }),
+      importBrowserCookies: vi.fn(),
+      openManagedBrowser: vi.fn(),
+      saveAgent: vi.fn(),
     },
   };
   Object.defineProperty(window, "charaMate", {
@@ -348,7 +396,7 @@ describe("application shell", () => {
     expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "发送" })).toHaveAttribute(
       "title",
-      "Agent Runtime 将在 Phase 2 接入",
+      "请先选择可用模型",
     );
   });
 

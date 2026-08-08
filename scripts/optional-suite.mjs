@@ -8,6 +8,9 @@ console.log(
   JSON.stringify({
     status: "not-applicable",
     suite,
-    reason: `Phase 0 has no ${suite} owner or external endpoint cases.`,
+    reason:
+      suite === "live"
+        ? "Phase 2 production verification is offline by default; this checkout has no configured external Provider or Computer Use endpoint case."
+        : "Phase 2 winner evidence is preserved outside the repository by hash; disposable candidate runners are not part of the production tree.",
   }),
 );

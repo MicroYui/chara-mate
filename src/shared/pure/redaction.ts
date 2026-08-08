@@ -112,3 +112,51 @@ function redactUnknown(value: unknown, seen: WeakSet<object>): unknown {
 export function redactBoundaryValue(value: unknown): unknown {
   return redactUnknown(value, new WeakSet());
 }
+
+function redactKnownTextValues(
+  value: string,
+  sensitiveValues: readonly string[],
+): string {
+  return sensitiveValues.reduce(
+    (redacted, sensitiveValue) =>
+      sensitiveValue
+        ? redacted.replaceAll(sensitiveValue, REDACTED_VALUE)
+        : redacted,
+    value,
+  );
+}
+
+function redactKnownUnknown(
+  value: unknown,
+  sensitiveValues: readonly string[],
+): unknown {
+  if (typeof value === "string") {
+    return redactKnownTextValues(value, sensitiveValues);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactKnownUnknown(entry, sensitiveValues));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [
+        key,
+        redactKnownUnknown(nestedValue, sensitiveValues),
+      ]),
+    );
+  }
+  return value;
+}
+
+export function redactKnownBoundaryValue(
+  value: unknown,
+  sensitiveValues: readonly string[],
+): unknown {
+  return redactKnownUnknown(redactBoundaryValue(value), sensitiveValues);
+}
+
+export function redactKnownText(
+  value: string,
+  sensitiveValues: readonly string[],
+): string {
+  return redactKnownTextValues(redactText(value), sensitiveValues);
+}

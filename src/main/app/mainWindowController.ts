@@ -30,6 +30,26 @@ export class MainWindowController {
     return this.window;
   }
 
+  destroy(): void {
+    const window = this.getWindow();
+    if (!window) return;
+    const webContentsId = window.webContents.id;
+
+    // `close` runs the window-placement persistence listener while the
+    // application database is still available. Force-destroy only when a
+    // renderer prevents the normal close so no window can outlive storage.
+    window.close();
+    if (!window.isDestroyed()) window.destroy();
+
+    if (this.window === window) this.window = null;
+    const readyState = this.readyState;
+    if (readyState?.webContentsId === webContentsId) {
+      this.readyState = undefined;
+      readyState.resolve();
+    }
+    this.earlyReadySenders.delete(webContentsId);
+  }
+
   markRendererReady(sender: Pick<WebContents, "id">): void {
     const readyState = this.readyState;
     if (readyState?.webContentsId === sender.id) {

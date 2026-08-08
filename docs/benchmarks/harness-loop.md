@@ -66,6 +66,8 @@ H2 只在同一批冻结 shadow traces 上离线重放 detector，不重新调�
 | Codex | commit [`2b5bdcf`](https://github.com/openai/codex/tree/2b5bdcf67547860f2e5c5a605009a70026796b2b)；[`turn.rs`](https://github.com/openai/codex/blob/2b5bdcf67547860f2e5c5a605009a70026796b2b/codex-rs/core/src/session/turn.rs)、[`compact.rs`](https://github.com/openai/codex/blob/2b5bdcf67547860f2e5c5a605009a70026796b2b/codex-rs/core/src/compact.rs)、[App Server](https://learn.chatgpt.com/docs/app-server) | turn continuation、compaction、steering、resume 是权威源码当前行为，只用于形成候选，不是 CharaMate 默认。 |
 | MCP | 规范 `2026-07-28` commit [`7376311`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/73763114e511106fc07543f6096b3a814b1a3583)；TS SDK commit [`cc4b416`](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac) | `server/discover`、`tools/list`、`tools/call`、JSON Schema/structuredContent 是协议边界，不决定 Loop Guard。 |
 
+生产重写前于 2026-08-08 再次核对 Codex 当前公开源码 commit [`3aae5d8`](https://github.com/openai/codex/tree/3aae5d885bac39c1262491aa3fd100dfd8b3919f)（提交时间 `2026-08-08T04:57:06Z`）中的 turn continuation、compaction、steering 与恢复边界，并以项目实际锁定的 MCP Client/Server `2.0.0` 复核 Adapter。该复核没有改变历史实验分母或 Decision：Codex 行为仍只是实现参考，CharaMate 仍由自己的 Run/Item/checkpoint 状态机实现已接受单一路径。
+
 协议硬限制、上述源码行为和 CharaMate 实验启发式在研究设计 §1.8 分开记录。固定的 detector 阈值、压缩水位、lane 数、非劣界和 p95 门槛都是预注册选择，不能外推为协议常量。
 
 ## 工件、环境与任务集

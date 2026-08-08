@@ -80,6 +80,58 @@ async function copyOptionalPreview(
 export class PetLibraryRepository {
   constructor(private readonly petsDirectory: string) {}
 
+  private async copyInstalledPet(source: InstalledPet): Promise<PetDescriptor> {
+    const destination = path.join(this.petsDirectory, source.manifest.id);
+    try {
+      await stat(destination);
+      throw new PetError(
+        "PET.ALREADY_EXISTS",
+        `桌宠目录 ${source.manifest.id} 已存在。`,
+        false,
+      );
+    } catch (error) {
+      if (error instanceof PetError) throw error;
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        error.code !== "ENOENT"
+      ) {
+        throw error;
+      }
+    }
+
+    const staging = path.join(
+      this.petsDirectory,
+      `.import-${source.manifest.id}-${randomUUID()}`,
+    );
+    await mkdir(staging);
+    try {
+      const spriteFileName = `spritesheet.${source.spriteFormat}`;
+      await copyFile(source.spritePath, path.join(staging, spriteFileName));
+      await copyOptionalPreview(source.directory, staging);
+      const normalizedManifest: PetManifest = {
+        ...source.manifest,
+        spritesheetPath: spriteFileName,
+      };
+      await writeFile(
+        path.join(staging, "pet.json"),
+        `${JSON.stringify(normalizedManifest, null, 2)}\n`,
+        "utf8",
+      );
+      await rename(staging, destination);
+    } catch (error) {
+      await rm(staging, { force: true, recursive: true });
+      if (error instanceof PetError) throw error;
+      throw new PetError(
+        "PET.IMPORT_FAILED",
+        "无法把桌宠复制到 CharaMate 数据目录。",
+        false,
+      );
+    }
+
+    return (await this.readInstalledPet(destination)).descriptor;
+  }
+
   private async readInstalledPet(directory: string): Promise<InstalledPet> {
     let parsed: unknown;
     try {
@@ -204,56 +256,16 @@ export class PetLibraryRepository {
         false,
       );
     }
+    return this.copyInstalledPet(source);
+  }
 
-    const destination = path.join(this.petsDirectory, source.manifest.id);
-    try {
-      await stat(destination);
-      throw new PetError(
-        "PET.ALREADY_EXISTS",
-        `桌宠目录 ${source.manifest.id} 已存在。`,
-        false,
-      );
-    } catch (error) {
-      if (error instanceof PetError) throw error;
-      if (
-        !(error instanceof Error) ||
-        !("code" in error) ||
-        error.code !== "ENOENT"
-      ) {
-        throw error;
-      }
-    }
-
-    const staging = path.join(
-      this.petsDirectory,
-      `.import-${source.manifest.id}-${randomUUID()}`,
+  async ensureInstalledFrom(sourceDirectory: string): Promise<PetDescriptor> {
+    const source = await this.readInstalledPet(sourceDirectory);
+    await mkdir(this.petsDirectory, { recursive: true });
+    const existing = (await this.listInstalledPets()).find(
+      ({ descriptor }) => descriptor.id === source.descriptor.id,
     );
-    await mkdir(staging);
-    try {
-      const spriteFileName = `spritesheet.${source.spriteFormat}`;
-      await copyFile(source.spritePath, path.join(staging, spriteFileName));
-      await copyOptionalPreview(source.directory, staging);
-      const normalizedManifest: PetManifest = {
-        ...source.manifest,
-        spritesheetPath: spriteFileName,
-      };
-      await writeFile(
-        path.join(staging, "pet.json"),
-        `${JSON.stringify(normalizedManifest, null, 2)}\n`,
-        "utf8",
-      );
-      await rename(staging, destination);
-    } catch (error) {
-      await rm(staging, { force: true, recursive: true });
-      if (error instanceof PetError) throw error;
-      throw new PetError(
-        "PET.IMPORT_FAILED",
-        "无法把桌宠复制到 CharaMate 数据目录。",
-        false,
-      );
-    }
-
-    return (await this.readInstalledPet(destination)).descriptor;
+    return existing ? existing.descriptor : this.copyInstalledPet(source);
   }
 
   async resolveSpritePath(petId: string): Promise<string> {

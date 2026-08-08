@@ -15,6 +15,15 @@ const projectRoot = path.resolve(
   "..",
 );
 const expectedPrefix = "CHARAMATE_SMOKE_RESULT ";
+const fatalOutputMarkers = [
+  "UnhandledPromiseRejectionWarning",
+  "Uncaught Exception:",
+  "CHARAMATE_PRELOAD_ERROR",
+  "CHARAMATE_LOAD_ERROR",
+  "CHARAMATE_CHARACTER_PRELOAD_ERROR",
+  "CHARAMATE_CHARACTER_LOAD_ERROR",
+  "violates the following Content Security Policy directive",
+];
 
 function forceTerminateProcessTree(child) {
   if (child.exitCode !== null || child.signalCode !== null) {
@@ -126,6 +135,18 @@ try {
         return;
       }
 
+      const fatalMarker = fatalOutputMarkers.find((marker) =>
+        output.includes(marker),
+      );
+      if (fatalMarker) {
+        reject(
+          new Error(
+            `${mode} smoke reported fatal output (${fatalMarker}).\n${output}`,
+          ),
+        );
+        return;
+      }
+
       try {
         resolve(JSON.parse(resultLine.slice(expectedPrefix.length)));
       } catch (error) {
@@ -140,8 +161,15 @@ try {
 if (
   typeof result !== "object" ||
   result === null ||
+  result.browserRoundTrip !== true ||
   result.characterRendererReady !== true ||
   result.databaseRoundTrip !== true ||
+  !Array.isArray(result.petIds) ||
+  !result.petIds.includes("columbinya") ||
+  !result.petIds.includes("linnea") ||
+  !Array.isArray(result.providerProfileNames) ||
+  !result.providerProfileNames.includes("copilot_api") ||
+  !result.providerProfileNames.includes("azure") ||
   result.rendererReady !== true ||
   result.mode !== mode
 ) {

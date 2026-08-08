@@ -40,6 +40,8 @@ import styles from "./Composer.module.css";
 interface ComposerProps {
   readonly dispatch: Dispatch<ChatsUiAction>;
   readonly models: readonly ChatModelOption[];
+  readonly onSend?: () => void;
+  readonly onStop?: () => void;
   readonly runtimeEnabled?: boolean;
   readonly state: ChatsUiState;
 }
@@ -236,6 +238,7 @@ function fileAttachment(file: globalThis.File): ComposerAttachment {
     id: crypto.randomUUID(),
     ...(file.type ? { mediaType: file.type } : {}),
     source: file.type.startsWith("image/") ? "image" : "file",
+    storageKey: window.charaMate.files.getPathForFile(file),
   };
 }
 
@@ -259,12 +262,18 @@ function AttachmentPicker({ dispatch }: Pick<ComposerProps, "dispatch">) {
     const first = files[0];
     if (first) {
       const displayName = first.webkitRelativePath.split("/")[0] || first.name;
+      const firstPath = window.charaMate.files.getPathForFile(first);
+      const prefix = firstPath.slice(
+        0,
+        Math.max(0, firstPath.length - first.webkitRelativePath.length),
+      );
       dispatch({
         attachment: {
           byteLength: files.reduce((total, file) => total + file.size, 0),
           displayName,
           id: crypto.randomUUID(),
           source: "folder",
+          storageKey: `${prefix}${displayName}`,
         },
         type: "composer.attachment-added",
       });
@@ -412,6 +421,8 @@ function VoiceGlyph() {
 export function Composer({
   dispatch,
   models,
+  onSend,
+  onStop,
   runtimeEnabled = true,
   state,
 }: ComposerProps) {
@@ -431,7 +442,8 @@ export function Composer({
 
   const send = () => {
     if (runtimeEnabled && canSend && state.composerPhase === "idle") {
-      dispatch({ phase: "running", type: "composer.phase-changed" });
+      if (onSend) onSend();
+      else dispatch({ phase: "running", type: "composer.phase-changed" });
     }
   };
 
@@ -536,9 +548,14 @@ export function Composer({
               className={styles["primaryButton"]}
               type="button"
               aria-label="停止"
-              onClick={() =>
-                dispatch({ phase: "stopping", type: "composer.phase-changed" })
-              }
+              onClick={() => {
+                if (onStop) onStop();
+                else
+                  dispatch({
+                    phase: "stopping",
+                    type: "composer.phase-changed",
+                  });
+              }}
             >
               <Square aria-hidden="true" fill="currentColor" size={11} />
             </button>
@@ -557,9 +574,7 @@ export function Composer({
               type="button"
               aria-label="发送"
               disabled={!runtimeEnabled}
-              title={
-                runtimeEnabled ? undefined : "Agent Runtime 将在 Phase 2 接入"
-              }
+              title={runtimeEnabled ? undefined : "请先选择可用模型"}
               onClick={send}
             >
               <ArrowUp aria-hidden="true" size={17} />

@@ -1,11 +1,32 @@
 import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import type { ForgeConfig } from "@electron-forge/shared-types";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { chromium } from "playwright-core";
+
+function chromiumRevisionDirectory(): string | undefined {
+  let current = path.dirname(chromium.executablePath());
+  while (path.dirname(current) !== current) {
+    if (path.basename(current).startsWith("chromium-")) return current;
+    current = path.dirname(current);
+  }
+  return undefined;
+}
+
+const chromiumDirectory = chromiumRevisionDirectory();
+const defaultPetsDirectory = path.resolve("resources/default-pets");
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     executableName: "CharaMate",
+    extraResource: [
+      defaultPetsDirectory,
+      ...(chromiumDirectory && existsSync(chromiumDirectory)
+        ? [chromiumDirectory]
+        : []),
+    ],
     appBundleId: "com.charamate.desktop",
     ignore: (filePath) => {
       if (!filePath) {
@@ -16,6 +37,7 @@ const config: ForgeConfig = {
         "/.vite",
         "/node_modules/better-sqlite3",
         "/node_modules/node-addon-api",
+        "/node_modules/playwright-core",
         "/node_modules/ws",
       ];
       const isAllowedRuntimePath = allowedRuntimePaths.some(

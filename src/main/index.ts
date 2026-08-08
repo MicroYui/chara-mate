@@ -1,16 +1,22 @@
 import path from "node:path";
 
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, shell, systemPreferences } from "electron";
 import type Database from "better-sqlite3";
 
 import type { FoundationSnapshot } from "../shared/contracts/foundation";
+import { AGENT_CHANNELS } from "../shared/contracts/agent";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { SystemClock } from "../shared/pure/clock";
 import { CryptoIdGenerator } from "../shared/pure/id";
 import { PetMainNavigationSchema } from "../shared/schemas/pet";
+import { ApprovalNavigationTargetSchema } from "../shared/schemas/agent";
 import { parseSchema } from "../shared/schemas/validation";
+import { registerAgentIpc } from "./agent/agentIpc";
+import { AgentRuntime } from "./agent/agentRuntime";
+import { CheckpointRepository } from "./agent/checkpointRepository";
 import { RunEventService } from "./agent/runEventService";
+import { RunEventWriter } from "./agent/runEventWriter";
 import { RunRepository } from "./agent/runRepository";
 import { registerChatIpc } from "./app/chatIpc";
 import { registerFoundationIpc } from "./app/foundationIpc";
@@ -21,14 +27,35 @@ import {
 } from "./app/mainWindowController";
 import { WindowPlacementRepository } from "./app/windowPlacementRepository";
 import { createMainWindow } from "./app/windows";
+import { registerSettingsIpc } from "./app/settingsIpc";
+import { SettingsRepository } from "./app/settingsRepository";
+import { SettingsService } from "./app/settingsService";
 import { ChatRepository } from "./chat/chatRepository";
 import { ChatService } from "./chat/chatService";
+import {
+  bundledChromiumExecutablePath,
+  ManagedBrowser,
+  registerBrowserTools,
+} from "./browser/managedBrowser";
+import { ElectronScreenCapture } from "./computer/electronScreenCapture";
+import {
+  MacOsComputerAdapter,
+  registerComputerTools,
+} from "./computer/macosComputer";
 import {
   openApplicationDatabase,
   verifyDatabaseRoundTrip,
 } from "./db/database";
 import { createAppLogger } from "./observability/logger";
+import { DevDashboard } from "./observability/devDashboard";
+import { RuntimeObservability } from "./observability/runtimeObservability";
+import { registerExtensionIpc } from "./extensions/extensionIpc";
+import { McpRepository } from "./extensions/mcpRepository";
+import { McpService } from "./extensions/mcpService";
+import { SkillRepository } from "./extensions/skillRepository";
+import { SkillService } from "./extensions/skillService";
 import { CharacterWindowController } from "./pet/characterWindowController";
+import { bundledPetsDirectory, installBundledPets } from "./pet/bundledPets";
 import { registerPetIpc } from "./pet/petIpc";
 import { PetLibraryRepository } from "./pet/petLibraryRepository";
 import { registerPetProtocol } from "./pet/petProtocol";
@@ -39,6 +66,9 @@ import { registerProviderIpc } from "./providers/providerIpc";
 import { ProviderRepository } from "./providers/providerRepository";
 import { ProviderService } from "./providers/providerService";
 import { SafeStorageSecretStore } from "./providers/secretStore";
+import { ArtifactStore } from "./tools/artifactStore";
+import { registerLocalTools } from "./tools/localTools";
+import { ToolRegistry } from "./tools/toolRegistry";
 import { registerTerritoryIpc } from "./territory/territoryIpc";
 import { TerritoryAssetStore } from "./territory/territoryAssetStore";
 import { ElectronTerritoryImageNormalizer } from "./territory/electronTerritoryImageNormalizer";
@@ -73,14 +103,23 @@ function getSupportedPlatform(): FoundationSnapshot["platform"] {
 let mainWindowController: MainWindowController | undefined;
 let applicationDatabase: Database.Database | undefined;
 let unregisterChatIpc: (() => void) | undefined;
+let unregisterAgentIpc: (() => void) | undefined;
+let unregisterExtensionIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
 let unregisterProviderIpc: (() => void) | undefined;
+let unregisterSettingsIpc: (() => void) | undefined;
 let unregisterPetIpc: (() => void) | undefined;
 let unregisterPetProtocol: (() => void) | undefined;
 let unregisterTerritoryIpc: (() => void) | undefined;
 let unregisterTerritoryProtocol: (() => void) | undefined;
 let providerService: ProviderService | undefined;
 let characterWindowController: CharacterWindowController | undefined;
+let agentRuntime: AgentRuntime | undefined;
+let managedBrowser: ManagedBrowser | undefined;
+let mcpService: McpService | undefined;
+let devDashboard: DevDashboard | undefined;
+let stopPromise: Promise<void> | undefined;
+let shutdownComplete = false;
 
 function openMainWindow(target?: MainWindowTarget): void {
   const controller = mainWindowController;
@@ -93,27 +132,48 @@ function openMainWindow(target?: MainWindowTarget): void {
   });
 }
 
-function stopApplicationInfrastructure(): void {
-  unregisterChatIpc?.();
-  unregisterChatIpc = undefined;
-  unregisterFoundationIpc?.();
-  unregisterFoundationIpc = undefined;
-  unregisterProviderIpc?.();
-  unregisterProviderIpc = undefined;
-  unregisterPetIpc?.();
-  unregisterPetIpc = undefined;
-  unregisterPetProtocol?.();
-  unregisterPetProtocol = undefined;
-  unregisterTerritoryIpc?.();
-  unregisterTerritoryIpc = undefined;
-  unregisterTerritoryProtocol?.();
-  unregisterTerritoryProtocol = undefined;
-  characterWindowController?.destroy();
-  characterWindowController = undefined;
-  mainWindowController = undefined;
-  providerService = undefined;
-  applicationDatabase?.close();
-  applicationDatabase = undefined;
+async function stopApplicationInfrastructure(): Promise<void> {
+  if (stopPromise) return stopPromise;
+  stopPromise = (async () => {
+    unregisterAgentIpc?.();
+    unregisterAgentIpc = undefined;
+    unregisterExtensionIpc?.();
+    unregisterExtensionIpc = undefined;
+    unregisterChatIpc?.();
+    unregisterChatIpc = undefined;
+    unregisterFoundationIpc?.();
+    unregisterFoundationIpc = undefined;
+    unregisterProviderIpc?.();
+    unregisterProviderIpc = undefined;
+    unregisterSettingsIpc?.();
+    unregisterSettingsIpc = undefined;
+    unregisterPetIpc?.();
+    unregisterPetIpc = undefined;
+    unregisterPetProtocol?.();
+    unregisterPetProtocol = undefined;
+    unregisterTerritoryIpc?.();
+    unregisterTerritoryIpc = undefined;
+    unregisterTerritoryProtocol?.();
+    unregisterTerritoryProtocol = undefined;
+    await agentRuntime?.interruptAll();
+    await Promise.allSettled([
+      managedBrowser?.close() ?? Promise.resolve(),
+      mcpService?.close() ?? Promise.resolve(),
+      devDashboard?.close() ?? Promise.resolve(),
+    ]);
+    agentRuntime = undefined;
+    managedBrowser = undefined;
+    mcpService = undefined;
+    devDashboard = undefined;
+    characterWindowController?.destroy();
+    characterWindowController = undefined;
+    mainWindowController?.destroy();
+    mainWindowController = undefined;
+    providerService = undefined;
+    applicationDatabase?.close();
+    applicationDatabase = undefined;
+  })();
+  return stopPromise;
 }
 
 async function startApplication(): Promise<void> {
@@ -142,6 +202,7 @@ async function startApplication(): Promise<void> {
   const clock = new SystemClock();
   const chatRepository = new ChatRepository(applicationDatabase);
   const runRepository = new RunRepository(applicationDatabase);
+  const runtimeObservability = new RuntimeObservability(runRepository, logger);
   const windowPlacementRepository = new WindowPlacementRepository(
     applicationDatabase,
   );
@@ -161,28 +222,159 @@ async function startApplication(): Promise<void> {
           });
         }
       }
+      try {
+        runtimeObservability.record(envelope);
+      } catch (error) {
+        logger.warn("RUNTIME_OBSERVABILITY_ERROR", {
+          error,
+          runId: envelope.streamId,
+          sequence: envelope.sequence,
+        });
+      }
     },
   });
-  unregisterChatIpc = registerChatIpc(
-    new ChatService(chatRepository, runRepository, idGenerator, clock),
-    runEventService,
+  if (!app.isPackaged && process.env["CHARAMATE_DEV_DASHBOARD"] !== "0") {
+    devDashboard = new DevDashboard(runtimeObservability);
+    logger.info("DEV_DASHBOARD_READY", {
+      url: await devDashboard.start(),
+    });
+  }
+  const chatService = new ChatService(
+    chatRepository,
+    runRepository,
+    idGenerator,
+    clock,
   );
+  unregisterChatIpc = registerChatIpc(chatService, runEventService);
 
+  const secretStore = new SafeStorageSecretStore(
+    path.join(userDataPath, "secrets.bin"),
+    new ElectronSafeStorageEncryption(),
+    idGenerator,
+  );
   providerService = new ProviderService(
     new ProviderRepository(applicationDatabase),
-    new SafeStorageSecretStore(
-      path.join(userDataPath, "secrets.bin"),
-      new ElectronSafeStorageEncryption(),
-      idGenerator,
-    ),
+    secretStore,
     idGenerator,
     clock,
     logger,
   );
-  await providerService.initialize();
+  const toolRegistry = new ToolRegistry();
+  const artifactStore = new ArtifactStore(
+    path.join(userDataPath, "artifacts"),
+    idGenerator,
+  );
+  const workspaceDirectory = path.resolve(
+    process.env["CHARAMATE_WORKSPACE_DIR"] ?? process.cwd(),
+  );
+  const settingsRepository = new SettingsRepository(
+    applicationDatabase,
+    workspaceDirectory,
+  );
+  const initialAgentSettings = settingsRepository.getAgent();
+  const skillService = new SkillService(
+    path.join(initialAgentSettings.workingDirectory, ".agents", "skills"),
+    path.join(userDataPath, "skills"),
+    new SkillRepository(applicationDatabase),
+    idGenerator,
+    clock,
+  );
+  await skillService.initialize();
+  skillService.registerTools(toolRegistry);
+
+  mcpService = new McpService(
+    new McpRepository(applicationDatabase),
+    secretStore,
+    toolRegistry,
+    artifactStore,
+    idGenerator,
+    clock,
+  );
+  await providerService.initialize(mcpService.listSecretReferences());
   unregisterProviderIpc = registerProviderIpc(providerService);
+  mcpService.registerConfigurationTools();
+
+  managedBrowser = new ManagedBrowser(
+    path.join(userDataPath, "browser", "profile"),
+    path.join(userDataPath, "browser", "downloads"),
+    process.env["CHARAMATE_CHROMIUM_EXECUTABLE_PATH"] ??
+      (app.isPackaged
+        ? bundledChromiumExecutablePath(process.resourcesPath)
+        : undefined),
+  );
+  const settingsService = new SettingsService(
+    settingsRepository,
+    managedBrowser,
+    {
+      read: () =>
+        process.platform !== "darwin"
+          ? "unavailable"
+          : systemPreferences.isTrustedAccessibilityClient(false)
+            ? "granted"
+            : "denied",
+      readScreenRecording: () => {
+        if (process.platform !== "darwin") return "unavailable";
+        const status = systemPreferences.getMediaAccessStatus("screen");
+        if (status === "not-determined") return "not_determined";
+        return status === "unknown" ? "unavailable" : status;
+      },
+    },
+    clock,
+    (directory) => skillService.setWorkspaceDirectory(directory),
+  );
+  registerLocalTools(toolRegistry, {
+    artifacts: artifactStore,
+    openPath: (target) => shell.openPath(target),
+    openUrl: (url) => shell.openExternal(url),
+    resolvePath: (target) => settingsService.resolveWorkingPath(target),
+    trashItem: (target) => shell.trashItem(target),
+  });
+  registerBrowserTools(toolRegistry, managedBrowser, artifactStore, (target) =>
+    settingsService.resolveWorkingPath(target),
+  );
+  if (process.platform === "darwin") {
+    registerComputerTools(
+      toolRegistry,
+      new MacOsComputerAdapter(),
+      new ElectronScreenCapture(),
+      artifactStore,
+    );
+  }
+  await mcpService.initialize();
+  unregisterExtensionIpc = registerExtensionIpc(mcpService, skillService);
+
+  const writer = new RunEventWriter(
+    runRepository,
+    runEventService,
+    idGenerator,
+    clock,
+  );
+  agentRuntime = new AgentRuntime(
+    chatRepository,
+    chatService,
+    runRepository,
+    new CheckpointRepository(applicationDatabase),
+    writer,
+    toolRegistry,
+    providerService,
+    idGenerator,
+    clock,
+    undefined,
+    () => skillService.instructions(),
+  );
+  await agentRuntime.initialize();
+  unregisterAgentIpc = registerAgentIpc(agentRuntime);
 
   const petLibrary = new PetLibraryRepository(path.join(userDataPath, "pets"));
+  await installBundledPets(
+    petLibrary,
+    bundledPetsDirectory({
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+    }),
+    logger,
+  );
   const petService = new PetService(
     petLibrary,
     new PetStateRepository(applicationDatabase),
@@ -217,6 +409,9 @@ async function startApplication(): Promise<void> {
     },
   );
   mainWindowController = mainWindows;
+  unregisterSettingsIpc = registerSettingsIpc(settingsService, () =>
+    mainWindows.getWindow(),
+  );
 
   let resolveRendererReady: (() => void) | undefined;
   const rendererReady = new Promise<void>((resolve) => {
@@ -239,17 +434,44 @@ async function startApplication(): Promise<void> {
     characterWindowController,
     () => mainWindows.getWindow(),
     () => resolveCharacterRendererReady?.(),
+    (approvalId) => {
+      const runtime = agentRuntime;
+      if (!runtime) return;
+      void (async () => {
+        const target = parseSchema(
+          ApprovalNavigationTargetSchema,
+          runtime.getApprovalNavigation(approvalId),
+        );
+        const window = await mainWindows.open("chat");
+        window.webContents.send(AGENT_CHANNELS.openApproval, target);
+      })().catch((error: unknown) => {
+        logger.warn("APPROVAL_NAVIGATION_ERROR", {
+          approvalId,
+          error,
+        });
+      });
+    },
   );
   await mainWindows.open();
   await characterWindowController.create();
   if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
     console.error("CHARAMATE_MAIN_STAGE window-loaded");
     await Promise.all([rendererReady, characterRendererReady]);
+    const browser = managedBrowser;
+    if (!browser) throw new Error("Managed Browser was not initialized");
+    await browser.open();
+    await browser.close();
+    const petIds = (await petService.getLibrary()).pets.map(({ id }) => id);
+    const providerProfileNames =
+      providerService?.listProfiles().map(({ name }) => name) ?? [];
     console.log(
       `CHARAMATE_SMOKE_RESULT ${JSON.stringify({
+        browserRoundTrip: true,
         characterRendererReady: true,
         databaseRoundTrip,
         mode: process.env["CHARAMATE_SMOKE_KIND"],
+        petIds,
+        providerProfileNames,
         rendererReady: true,
       })}`,
     );
@@ -260,12 +482,12 @@ async function startApplication(): Promise<void> {
 void app
   .whenReady()
   .then(startApplication)
-  .catch((error: unknown) => {
+  .catch(async (error: unknown) => {
     logger.error(
       "CHARAMATE_STARTUP_ERROR",
       error instanceof Error ? error : { error },
     );
-    stopApplicationInfrastructure();
+    await stopApplicationInfrastructure();
     app.exit(1);
   });
 
@@ -279,6 +501,11 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("will-quit", () => {
-  stopApplicationInfrastructure();
+app.on("before-quit", (event) => {
+  if (shutdownComplete) return;
+  event.preventDefault();
+  void stopApplicationInfrastructure().finally(() => {
+    shutdownComplete = true;
+    app.quit();
+  });
 });

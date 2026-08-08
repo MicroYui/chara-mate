@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { _electron as electron } from "playwright";
 
+import type { Run, RunEventEnvelope } from "../../src/shared/contracts";
 import { RunRepository } from "../../src/main/agent/runRepository";
 import { ChatRepository } from "../../src/main/chat/chatRepository";
 import { openApplicationDatabase } from "../../src/main/db/database";
@@ -13,6 +14,7 @@ import {
   attachmentFixture,
   chatFixture,
   FIXTURE_IDS,
+  FIXTURE_TIMESTAMPS,
   messageFixture,
   runEventEnvelopeFixture,
   runFixture,
@@ -22,6 +24,20 @@ const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
+
+const completedRun = {
+  ...runFixture,
+  endedAt: FIXTURE_TIMESTAMPS.updated,
+  latestSequence: 2,
+  status: "completed",
+} satisfies Run;
+
+const completedRunEventEnvelope = {
+  event: { run: completedRun, type: "run.completed" },
+  occurredAt: FIXTURE_TIMESTAMPS.updated,
+  sequence: 2,
+  streamId: FIXTURE_IDS.run,
+} satisfies RunEventEnvelope;
 
 test("launches through the typed preload boundary", async () => {
   const userDataDirectory = await mkdtemp(
@@ -35,7 +51,9 @@ test("launches through the typed preload boundary", async () => {
     );
     const chats = new ChatRepository(seedDatabase);
     chats.insertChat(chatFixture);
-    new RunRepository(seedDatabase).appendEvent(runEventEnvelopeFixture);
+    const runs = new RunRepository(seedDatabase);
+    runs.appendEvent(runEventEnvelopeFixture);
+    runs.appendEvent(completedRunEventEnvelope);
     chats.insertMessage(messageFixture);
     chats.insertAttachment(attachmentFixture);
     seedDatabase.close();
@@ -53,22 +71,36 @@ test("launches through the typed preload boundary", async () => {
       page.getByRole("heading", { name: chatFixture.title }),
     ).toBeVisible();
     await expect(page.getByText(messageFixture.content)).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /正在处理/u }),
-    ).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("button", { name: /已处理/u })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
 
     const bridgeShape = await page.evaluate(() => ({
+      agentKeys: Object.keys(window.charaMate.agent).sort(),
       chatKeys: Object.keys(window.charaMate.chat).sort(),
+      extensionKeys: Object.keys(window.charaMate.extensions).sort(),
+      fileKeys: Object.keys(window.charaMate.files).sort(),
       foundationKeys: Object.keys(window.charaMate.foundation).sort(),
       petKeys: Object.keys(window.charaMate.pet).sort(),
       providerKeys: Object.keys(window.charaMate.provider).sort(),
       rootKeys: Object.keys(window.charaMate).sort(),
       runEventKeys: Object.keys(window.charaMate.runEvents).sort(),
+      settingsKeys: Object.keys(window.charaMate.settings).sort(),
       territoryKeys: Object.keys(window.charaMate.territory).sort(),
       exposesRawIpcRenderer: "ipcRenderer" in window.charaMate,
       exposesSecretReader: "getApiKey" in window.charaMate.provider,
     }));
     expect(bridgeShape).toEqual({
+      agentKeys: [
+        "cancel",
+        "getPendingApproval",
+        "resolveApproval",
+        "resume",
+        "start",
+        "steer",
+        "subscribeOpenApproval",
+      ],
       chatKeys: [
         "archive",
         "create",
@@ -80,6 +112,19 @@ test("launches through the typed preload boundary", async () => {
         "setPinned",
       ],
       foundationKeys: ["getSnapshot", "markRendererReady"],
+      extensionKeys: [
+        "mcpDelete",
+        "mcpList",
+        "mcpRefresh",
+        "mcpSave",
+        "skillArchive",
+        "skillGet",
+        "skillList",
+        "skillRefresh",
+        "skillSave",
+        "skillSetEnabled",
+      ],
+      fileKeys: ["getPathForFile"],
       providerKeys: [
         "deleteProfile",
         "discoverModels",
@@ -97,14 +142,24 @@ test("launches through the typed preload boundary", async () => {
         "subscribeOpenMain",
       ],
       rootKeys: [
+        "agent",
         "chat",
+        "extensions",
+        "files",
         "foundation",
         "pet",
         "provider",
         "runEvents",
+        "settings",
         "territory",
       ],
       runEventKeys: ["replay", "subscribe"],
+      settingsKeys: [
+        "getSnapshot",
+        "importBrowserCookies",
+        "openManagedBrowser",
+        "saveAgent",
+      ],
       territoryKeys: [
         "collectItem",
         "getSnapshot",
@@ -138,7 +193,7 @@ test("launches through the typed preload boundary", async () => {
         chat: chatFixture,
         messages: [messageFixture],
         runItems: [],
-        runs: [runFixture],
+        runs: [completedRun],
       },
     });
 
@@ -148,8 +203,8 @@ test("launches through the typed preload boundary", async () => {
       FIXTURE_IDS.run,
     );
     expect(replay).toEqual({
-      events: [runEventEnvelopeFixture],
-      latestSequence: 1,
+      events: [runEventEnvelopeFixture, completedRunEventEnvelope],
+      latestSequence: 2,
       streamId: FIXTURE_IDS.run,
     });
 
@@ -183,12 +238,12 @@ test("launches through the typed preload boundary", async () => {
     expect(snapshotAfterReload).toEqual(chatData);
     const replayAfterReload = await page.evaluate(
       (streamId) =>
-        window.charaMate.runEvents.replay({ afterSequence: 1, streamId }),
+        window.charaMate.runEvents.replay({ afterSequence: 2, streamId }),
       FIXTURE_IDS.run,
     );
     expect(replayAfterReload).toEqual({
       events: [],
-      latestSequence: 1,
+      latestSequence: 2,
       streamId: FIXTURE_IDS.run,
     });
   } finally {

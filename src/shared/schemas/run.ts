@@ -125,6 +125,7 @@ export const RunItemSchema = Type.Object(
     id: EntityIdSchema,
     input: Type.Optional(JsonValueReferenceSchema),
     kind: RunItemKindSchema,
+    output: Type.Optional(JsonValueReferenceSchema),
     runId: EntityIdSchema,
     sequence: SequenceSchema,
     startedAt: Type.Optional(TimestampSchema),
@@ -152,7 +153,7 @@ export const ApprovalSchema = Type.Object(
     requestedAt: TimestampSchema,
     runId: EntityIdSchema,
     status: ApprovalStatusSchema,
-    toolName: Type.String({ pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$" }),
+    toolName: Type.String({ pattern: "^[a-z][a-z0-9._-]*[a-z0-9]$" }),
   },
   { additionalProperties: false },
 );

@@ -126,3 +126,58 @@ export type {
   TerritorySurfaceKind,
   TerritorySurfaceSlot,
 } from "./territoryItemManifest";
+export type {
+  ToolDescriptor,
+  ToolEffect,
+  ToolIdempotency,
+  ToolResult,
+  ToolResultStatus,
+  ToolSource,
+} from "./tool";
+export type {
+  AgentApi,
+  ApprovalDecision,
+  ApprovalNavigationRequest,
+  ApprovalNavigationTarget,
+  PendingApprovalRequest,
+  PendingApprovalResponse,
+  ResolveApprovalRequest,
+  ResolveApprovalResponse,
+  ResumeRunRequest,
+  RunCancelResponse,
+  RunMutationResponse,
+  StartRunRequest,
+  StartRunResponse,
+  SteerRunRequest,
+} from "./agent";
+export type {
+  ExtensionsApi,
+  McpDeleteResponse,
+  McpIdRequest,
+  McpListRequest,
+  McpListResponse,
+  McpMutationResponse,
+  McpSaveRequest,
+  McpServer,
+  McpServerDraft,
+  McpTransportDraft,
+  SkillDescriptor,
+  SkillGetResponse,
+  SkillIdRequest,
+  SkillListRequest,
+  SkillListResponse,
+  SkillMutationResponse,
+  SkillSaveRequest,
+  SkillSetEnabledRequest,
+} from "./extensions";
+export type { LocalFilesApi } from "./files";
+export type {
+  AgentSettings,
+  AgentSettingsSaveRequest,
+  AgentSettingsSaveResponse,
+  BrowserActionResponse,
+  BrowserComputerSettings,
+  SettingsApi,
+  SettingsSnapshot,
+  SettingsSnapshotResponse,
+} from "./settings";

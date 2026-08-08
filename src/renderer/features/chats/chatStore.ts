@@ -1,3 +1,4 @@
+import type { AgentApi } from "../../../shared/contracts/agent";
 import type {
   Chat,
   ChatApi,
@@ -5,6 +6,11 @@ import type {
   ChatMutationResponse,
   ChatStatus,
 } from "../../../shared/contracts/chat";
+import type {
+  ArtifactReference,
+  Run,
+  RunExecution,
+} from "../../../shared/contracts/run";
 import type {
   RunEventEnvelope,
   RunEventsApi,
@@ -23,6 +29,20 @@ export interface ChatDomainState {
   readonly status: "loading" | "ready";
 }
 
+export interface SubmitChatRunInput {
+  readonly attachments: readonly ArtifactReference[];
+  readonly chatId: string;
+  readonly content: string;
+  readonly execution: RunExecution;
+  readonly providerProfileId: string;
+}
+
+const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
+  "queued",
+  "running",
+  "waiting_approval",
+]);
+
 const initialState: ChatDomainState = {
   activeSnapshot: null,
   chats: [],
@@ -33,7 +53,7 @@ const initialState: ChatDomainState = {
 
 function profileToModel(profile: ProviderProfile): ChatModelOption | undefined {
   const modelId = profile.chatModel?.trim();
-  if (!modelId) {
+  if (!profile.hasApiKey || !modelId) {
     return undefined;
   }
   return {
@@ -65,6 +85,7 @@ export class ChatDomainStore {
 
   constructor(
     private readonly chatApi: ChatApi,
+    private readonly agentApi: AgentApi,
     private readonly providerApi: ProviderApi,
     private readonly runEventsApi: RunEventsApi,
   ) {}
@@ -198,11 +219,105 @@ export class ChatDomainStore {
     );
   }
 
+  async submit(input: SubmitChatRunInput): Promise<void> {
+    try {
+      const activeRun = this.#activeRun(input.chatId);
+      if (activeRun) {
+        if (input.attachments.length > 0) {
+          throw new Error("Run 进行中不能追加新附件，请先停止或等待本轮完成。");
+        }
+        const result = await this.agentApi.steer({
+          content: input.content,
+          requestedAt: new Date().toISOString(),
+          runId: activeRun.id,
+        });
+        if (!result.ok) throw new Error(result.error.message);
+      } else {
+        const result = await this.agentApi.start({
+          attachments: [...input.attachments],
+          chatId: input.chatId,
+          content: input.content,
+          execution: input.execution,
+          providerProfileId: input.providerProfileId,
+          requestedAt: new Date().toISOString(),
+        });
+        if (!result.ok) throw new Error(result.error.message);
+      }
+      await this.loadSnapshot(input.chatId);
+    } catch (error) {
+      this.#setState({ error: errorMessage(error) });
+      throw error;
+    }
+  }
+
+  async cancelActive(chatId: string): Promise<void> {
+    try {
+      const run = this.#activeRun(chatId);
+      if (!run) return;
+      const result = await this.agentApi.cancel({
+        requestedAt: new Date().toISOString(),
+        runId: run.id,
+      });
+      if (!result.ok) throw new Error(result.error.message);
+      await this.loadSnapshot(chatId);
+    } catch (error) {
+      this.#setState({ error: errorMessage(error) });
+      throw error;
+    }
+  }
+
+  async resolveApproval(
+    approvalId: string,
+    decision: "approved" | "rejected",
+  ): Promise<void> {
+    try {
+      const result = await this.agentApi.resolveApproval({
+        approvalId,
+        decidedAt: new Date().toISOString(),
+        decision,
+      });
+      if (!result.ok) throw new Error(result.error.message);
+      const run = this.#state.activeSnapshot?.runs.find(
+        ({ id }) => id === result.value.runId,
+      );
+      if (run) await this.loadSnapshot(run.chatId);
+    } catch (error) {
+      this.#setState({ error: errorMessage(error) });
+      throw error;
+    }
+  }
+
+  async resume(runId: string): Promise<void> {
+    try {
+      const run = this.#state.activeSnapshot?.runs.find(
+        (candidate) => candidate.id === runId,
+      );
+      if (!run) throw new Error("找不到要继续的 Run。");
+      const result = await this.agentApi.resume({
+        requestedAt: new Date().toISOString(),
+        runId,
+      });
+      if (!result.ok) throw new Error(result.error.message);
+      await this.loadSnapshot(run.chatId);
+    } catch (error) {
+      this.#setState({ error: errorMessage(error) });
+      throw error;
+    }
+  }
+
   async #afterMutation(chatId: string): Promise<void> {
     await this.loadChats(this.#listStatus, this.#listQuery);
     if (this.#activeChatId === chatId) {
       await this.loadSnapshot(chatId);
     }
+  }
+
+  #activeRun(chatId: string): Run | undefined {
+    const snapshot = this.#state.activeSnapshot;
+    if (snapshot?.chat.id !== chatId) return undefined;
+    return [...snapshot.runs]
+      .reverse()
+      .find(({ status }) => ACTIVE_RUN_STATUSES.has(status));
   }
 
   async #mutate(

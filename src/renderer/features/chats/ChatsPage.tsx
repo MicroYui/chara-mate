@@ -14,6 +14,14 @@ interface ChatsPageProps {
   readonly activeChat: ChatView | undefined;
   readonly dispatch: Dispatch<ChatsUiAction>;
   readonly models: readonly ChatModelOption[];
+  readonly onResumeRun: (runId: string) => void;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: "approved" | "rejected",
+  ) => void;
+  readonly onSend: () => void;
+  readonly onStop: () => void;
+  readonly runtimeEnabled: boolean;
   readonly state: ChatsUiState;
 }
 
@@ -49,6 +57,11 @@ export function ChatsPage({
   activeChat,
   dispatch,
   models,
+  onResumeRun,
+  onResolveApproval,
+  onSend,
+  onStop,
+  runtimeEnabled,
   state,
 }: ChatsPageProps) {
   const hasTimeline = Boolean(
@@ -59,7 +72,13 @@ export function ChatsPage({
     <section className={styles["chats"]} aria-label="Chats">
       <div className={styles["conversation"]}>
         {activeChat && hasTimeline ? (
-          <MessageList chat={activeChat} dispatch={dispatch} state={state} />
+          <MessageList
+            chat={activeChat}
+            dispatch={dispatch}
+            onResumeRun={onResumeRun}
+            onResolveApproval={onResolveApproval}
+            state={state}
+          />
         ) : (
           <EmptyChat dispatch={dispatch} />
         )}
@@ -68,7 +87,9 @@ export function ChatsPage({
         <Composer
           dispatch={dispatch}
           models={models}
-          runtimeEnabled={false}
+          onSend={onSend}
+          onStop={onStop}
+          runtimeEnabled={runtimeEnabled}
           state={state}
         />
         <p>CharaMate 也可能出错，请核对重要信息。</p>

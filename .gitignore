@@ -6,3 +6,10 @@ playwright-report/
 test-results/
 *.log
 .DS_Store
+
+# Local CharaMate state and encrypted credentials never belong in Git.
+*.sqlite*
+*.db
+*.db-*
+*.db.key
+secrets.bin

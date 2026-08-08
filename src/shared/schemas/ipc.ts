@@ -28,6 +28,10 @@ export const RunEventSchema = Type.Union([
     { additionalProperties: false },
   ),
   Type.Object(
+    { run: RunSchema, type: Type.Literal("run.resumed") },
+    { additionalProperties: false },
+  ),
+  Type.Object(
     { item: RunItemSchema, type: Type.Literal("item.started") },
     { additionalProperties: false },
   ),

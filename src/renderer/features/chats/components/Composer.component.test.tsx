@@ -1,13 +1,22 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useReducer } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { chatsFixture } from "../fixtures";
 import { chatsFixtureUiReducer, initialChatsFixtureUiState } from "../state";
 import type { ChatsFixtureUiState } from "../types";
 import { Composer } from "./Composer";
 
-afterEach(cleanup);
+beforeEach(() => {
+  vi.stubGlobal("charaMate", {
+    files: { getPathForFile: (file: File) => `/tmp/${file.name}` },
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function ComposerHarness({
   initial,

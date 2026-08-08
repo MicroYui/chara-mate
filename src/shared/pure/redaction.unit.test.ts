@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { REDACTED_VALUE, redactBoundaryValue, redactText } from "./redaction";
+import {
+  REDACTED_VALUE,
+  redactBoundaryValue,
+  redactKnownBoundaryValue,
+  redactKnownText,
+  redactText,
+} from "./redaction";
 
 describe("shared persistence and logging redaction boundary", () => {
   it("removes nested credential fields without removing ordinary token metrics", () => {
@@ -47,5 +53,20 @@ describe("shared persistence and logging redaction boundary", () => {
       password: REDACTED_VALUE,
       self: "[Circular]",
     });
+  });
+
+  it("removes exact configured secrets that do not match a generic pattern", () => {
+    const configuredSecret = "ordinary-looking-configured-value";
+
+    expect(
+      redactKnownText(`server returned ${configuredSecret}`, [
+        configuredSecret,
+      ]),
+    ).toBe(`server returned ${REDACTED_VALUE}`);
+    expect(
+      redactKnownBoundaryValue({ nested: [{ output: configuredSecret }] }, [
+        configuredSecret,
+      ]),
+    ).toEqual({ nested: [{ output: REDACTED_VALUE }] });
   });
 });

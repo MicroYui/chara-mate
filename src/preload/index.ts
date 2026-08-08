@@ -1,5 +1,15 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
+import {
+  AGENT_CHANNELS,
+  type AgentApi,
+  type ApprovalNavigationTarget,
+  type PendingApprovalRequest,
+  type ResolveApprovalRequest,
+  type ResumeRunRequest,
+  type StartRunRequest,
+  type SteerRunRequest,
+} from "../shared/contracts/agent";
 import {
   CHAT_CHANNELS,
   type ChatApi,
@@ -15,11 +25,28 @@ import {
   FOUNDATION_CHANNELS,
 } from "../shared/contracts/foundation";
 import {
+  EXTENSION_CHANNELS,
+  type ExtensionsApi,
+  type McpIdRequest,
+  type McpListRequest,
+  type McpSaveRequest,
+  type SkillIdRequest,
+  type SkillListRequest,
+  type SkillSaveRequest,
+  type SkillSetEnabledRequest,
+} from "../shared/contracts/extensions";
+import {
   RUN_EVENT_CHANNELS,
   type RunEventEnvelope,
   type RunEventReplayRequest,
   type RunEventsApi,
 } from "../shared/contracts/ipc";
+import type { RunCancelRequest } from "../shared/contracts/run";
+import {
+  type AgentSettingsSaveRequest,
+  SETTINGS_CHANNELS,
+  type SettingsApi,
+} from "../shared/contracts/settings";
 import {
   PET_CHANNELS,
   type PetAnimationSpeedRequest,
@@ -57,12 +84,47 @@ import {
   ChatRenameRequestSchema,
   ChatSetPinnedRequestSchema,
 } from "../shared/schemas/chat";
+import {
+  ResolveApprovalRequestSchema,
+  ResolveApprovalResponseSchema,
+  ResumeRunRequestSchema,
+  RunCancelResponseSchema,
+  RunMutationResponseSchema,
+  StartRunRequestSchema,
+  StartRunResponseSchema,
+  SteerRunRequestSchema,
+  PendingApprovalRequestSchema,
+  PendingApprovalResponseSchema,
+  ApprovalNavigationTargetSchema,
+} from "../shared/schemas/agent";
 import { FoundationSnapshotSchema } from "../shared/schemas/foundation";
+import {
+  McpDeleteResponseSchema,
+  McpIdRequestSchema,
+  McpListRequestSchema,
+  McpListResponseSchema,
+  McpMutationResponseSchema,
+  McpSaveRequestSchema,
+  SkillGetResponseSchema,
+  SkillIdRequestSchema,
+  SkillListRequestSchema,
+  SkillListResponseSchema,
+  SkillMutationResponseSchema,
+  SkillSaveRequestSchema,
+  SkillSetEnabledRequestSchema,
+} from "../shared/schemas/extensions";
 import {
   RunEventEnvelopeSchema,
   RunEventReplayRequestSchema,
   RunEventReplayResponseSchema,
 } from "../shared/schemas/ipc";
+import { RunCancelRequestSchema } from "../shared/schemas/run";
+import {
+  AgentSettingsSaveRequestSchema,
+  AgentSettingsSaveResponseSchema,
+  BrowserActionResponseSchema,
+  SettingsSnapshotResponseSchema,
+} from "../shared/schemas/settings";
 import {
   PetAnimationSpeedRequestSchema,
   PetImportResponseSchema,
@@ -176,6 +238,154 @@ const chatApi: ChatApi = Object.freeze({
   },
 });
 
+const agentApi: AgentApi = Object.freeze({
+  cancel: async (input: RunCancelRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      RunCancelResponseSchema,
+      await ipcRenderer.invoke(
+        AGENT_CHANNELS.cancel,
+        parseSchemaWithoutCodeGeneration(RunCancelRequestSchema, input),
+      ),
+    ),
+  getPendingApproval: async (input: PendingApprovalRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      PendingApprovalResponseSchema,
+      await ipcRenderer.invoke(
+        AGENT_CHANNELS.pendingApproval,
+        parseSchemaWithoutCodeGeneration(PendingApprovalRequestSchema, input),
+      ),
+    ),
+  resolveApproval: async (input: ResolveApprovalRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      ResolveApprovalResponseSchema,
+      await ipcRenderer.invoke(
+        AGENT_CHANNELS.resolveApproval,
+        parseSchemaWithoutCodeGeneration(ResolveApprovalRequestSchema, input),
+      ),
+    ),
+  resume: async (input: ResumeRunRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      RunMutationResponseSchema,
+      await ipcRenderer.invoke(
+        AGENT_CHANNELS.resume,
+        parseSchemaWithoutCodeGeneration(ResumeRunRequestSchema, input),
+      ),
+    ),
+  start: async (input: StartRunRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      StartRunResponseSchema,
+      await ipcRenderer.invoke(
+        AGENT_CHANNELS.start,
+        parseSchemaWithoutCodeGeneration(StartRunRequestSchema, input),
+      ),
+    ),
+  steer: async (input: SteerRunRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      RunMutationResponseSchema,
+      await ipcRenderer.invoke(
+        AGENT_CHANNELS.steer,
+        parseSchemaWithoutCodeGeneration(SteerRunRequestSchema, input),
+      ),
+    ),
+  subscribeOpenApproval: (
+    listener: (target: ApprovalNavigationTarget) => void,
+  ) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        parseSchemaWithoutCodeGeneration(ApprovalNavigationTargetSchema, input),
+      );
+    };
+    ipcRenderer.on(AGENT_CHANNELS.openApproval, wrappedListener);
+    return () => ipcRenderer.off(AGENT_CHANNELS.openApproval, wrappedListener);
+  },
+});
+
+const extensionsApi: ExtensionsApi = Object.freeze({
+  mcpDelete: async (input: McpIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      McpDeleteResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.mcpDelete,
+        parseSchemaWithoutCodeGeneration(McpIdRequestSchema, input),
+      ),
+    ),
+  mcpList: async (input: McpListRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      McpListResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.mcpList,
+        parseSchemaWithoutCodeGeneration(McpListRequestSchema, input),
+      ),
+    ),
+  mcpRefresh: async (input: McpIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      McpMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.mcpRefresh,
+        parseSchemaWithoutCodeGeneration(McpIdRequestSchema, input),
+      ),
+    ),
+  mcpSave: async (input: McpSaveRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      McpMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.mcpSave,
+        parseSchemaWithoutCodeGeneration(McpSaveRequestSchema, input),
+      ),
+    ),
+  skillArchive: async (input: SkillIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillArchive,
+        parseSchemaWithoutCodeGeneration(SkillIdRequestSchema, input),
+      ),
+    ),
+  skillGet: async (input: SkillIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillGetResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillGet,
+        parseSchemaWithoutCodeGeneration(SkillIdRequestSchema, input),
+      ),
+    ),
+  skillList: async (input: SkillListRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillListResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillList,
+        parseSchemaWithoutCodeGeneration(SkillListRequestSchema, input),
+      ),
+    ),
+  skillRefresh: async (input: SkillListRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillListResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillRefresh,
+        parseSchemaWithoutCodeGeneration(SkillListRequestSchema, input),
+      ),
+    ),
+  skillSave: async (input: SkillSaveRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillSave,
+        parseSchemaWithoutCodeGeneration(SkillSaveRequestSchema, input),
+      ),
+    ),
+  skillSetEnabled: async (input: SkillSetEnabledRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillSetEnabled,
+        parseSchemaWithoutCodeGeneration(SkillSetEnabledRequestSchema, input),
+      ),
+    ),
+});
+
 const runEventsApi: RunEventsApi = Object.freeze({
   replay: async (input: RunEventReplayRequest) => {
     const request = parseSchemaWithoutCodeGeneration(
@@ -199,6 +409,32 @@ const runEventsApi: RunEventsApi = Object.freeze({
       ipcRenderer.off(RUN_EVENT_CHANNELS.subscribe, wrappedListener);
     };
   },
+});
+
+const settingsApi: SettingsApi = Object.freeze({
+  getSnapshot: async () =>
+    parseSchemaWithoutCodeGeneration(
+      SettingsSnapshotResponseSchema,
+      await ipcRenderer.invoke(SETTINGS_CHANNELS.getSnapshot, {}),
+    ),
+  importBrowserCookies: async () =>
+    parseSchemaWithoutCodeGeneration(
+      BrowserActionResponseSchema,
+      await ipcRenderer.invoke(SETTINGS_CHANNELS.importBrowserCookies, {}),
+    ),
+  openManagedBrowser: async () =>
+    parseSchemaWithoutCodeGeneration(
+      BrowserActionResponseSchema,
+      await ipcRenderer.invoke(SETTINGS_CHANNELS.openManagedBrowser, {}),
+    ),
+  saveAgent: async (input: AgentSettingsSaveRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      AgentSettingsSaveResponseSchema,
+      await ipcRenderer.invoke(
+        SETTINGS_CHANNELS.saveAgent,
+        parseSchemaWithoutCodeGeneration(AgentSettingsSaveRequestSchema, input),
+      ),
+    ),
 });
 
 const providerApi: ProviderApi = Object.freeze({
@@ -364,7 +600,12 @@ const territoryApi: TerritoryApi = Object.freeze({
 });
 
 const desktopApi: CharaMateApi = Object.freeze({
+  agent: agentApi,
   chat: chatApi,
+  extensions: extensionsApi,
+  files: Object.freeze({
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  }),
   foundation: Object.freeze({
     getSnapshot: async () =>
       parseSchemaWithoutCodeGeneration(
@@ -378,6 +619,7 @@ const desktopApi: CharaMateApi = Object.freeze({
   pet: petApi,
   provider: providerApi,
   runEvents: runEventsApi,
+  settings: settingsApi,
   territory: territoryApi,
 });
 

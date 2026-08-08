@@ -6,11 +6,15 @@ import { MainWindowController } from "./mainWindowController";
 
 class FakeMainWindow {
   readonly focus = vi.fn();
+  readonly destroy = vi.fn(() => {
+    this.destroyed = true;
+    for (const listener of this.closedListeners) listener();
+  });
   readonly restore = vi.fn(() => {
     this.minimized = false;
   });
   readonly show = vi.fn();
-  readonly webContents: {
+  private readonly webContentsValue: {
     readonly id: number;
   };
   private destroyed = false;
@@ -18,7 +22,12 @@ class FakeMainWindow {
   private readonly closedListeners: Array<() => void> = [];
 
   constructor(id: number) {
-    this.webContents = { id };
+    this.webContentsValue = { id };
+  }
+
+  get webContents(): { readonly id: number } {
+    if (this.destroyed) throw new Error("Object has been destroyed");
+    return this.webContentsValue;
   }
 
   close(): void {
@@ -112,5 +121,22 @@ describe("MainWindowController", () => {
 
     expect(createWindow).toHaveBeenCalledTimes(2);
     expect(controller.getWindow()).toBe(asBrowserWindow(second));
+  });
+
+  it("closes the tracked window before releasing it during shutdown", async () => {
+    const window = new FakeMainWindow(61);
+    const controller = new MainWindowController(
+      vi.fn().mockResolvedValue(asBrowserWindow(window)),
+      vi.fn(),
+      vi.fn(),
+    );
+
+    controller.markRendererReady({ id: 61 });
+    await controller.open();
+    controller.destroy();
+
+    expect(window.isDestroyed()).toBe(true);
+    expect(window.destroy).not.toHaveBeenCalled();
+    expect(controller.getWindow()).toBeNull();
   });
 });

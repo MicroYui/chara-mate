@@ -1,6 +1,14 @@
 import type { Static } from "@sinclair/typebox";
 
 import type {
+  ApprovalNavigationRequest,
+  PendingApprovalResponse,
+  ResolveApprovalRequest,
+  ResolveApprovalResponse,
+} from "./agent";
+import type { Approval } from "./run";
+
+import type {
   CodexPetManifestSchema,
   PetAnimationSchema,
   PetAnimationSpeedRequestSchema,
@@ -29,6 +37,7 @@ export const PET_CHANNELS = {
   dragMove: "pet.character.dragMove",
   dragStart: "pet.character.dragStart",
   focusMain: "pet.character.focusMain",
+  focusApproval: "pet.character.focusApproval",
   getLibrary: "pet.library.get",
   importFromFolder: "pet.library.importFromFolder",
   libraryChanged: "pet.library.changed",
@@ -77,10 +86,16 @@ export interface PetManagementApi {
 export interface CharacterWindowApi {
   endDrag(point: PetDragPoint): Promise<PetDragResult>;
   focusMain(): void;
+  focusApproval(request: ApprovalNavigationRequest): void;
   getSnapshot(): Promise<PetCharacterSnapshot>;
+  getPendingApproval(): Promise<PendingApprovalResponse>;
   markReady(): void;
   moveDrag(point: PetDragPoint): void;
   showContextMenu(): void;
+  resolveApproval(
+    request: ResolveApprovalRequest,
+  ): Promise<ResolveApprovalResponse>;
   startDrag(point: PetDragPoint): Promise<PetDragResult>;
   subscribe(listener: (snapshot: PetCharacterSnapshot) => void): () => void;
+  subscribeApproval(listener: (approval: Approval | null) => void): () => void;
 }

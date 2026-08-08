@@ -447,11 +447,13 @@ export const composerAttachmentFixtures = {
     id: fileArtifact.artifactId,
     mediaType: fileArtifact.mediaType,
     source: "file",
+    storageKey: fileArtifact.storageKey,
   },
   folder: {
     displayName: folderArtifact.displayName,
     id: folderArtifact.artifactId,
     source: "folder",
+    storageKey: folderArtifact.storageKey,
   },
   image: {
     byteLength: imageArtifact.byteLength,
@@ -459,6 +461,7 @@ export const composerAttachmentFixtures = {
     id: imageArtifact.artifactId,
     mediaType: imageArtifact.mediaType,
     source: "image",
+    storageKey: imageArtifact.storageKey,
   },
 } as const satisfies Record<string, ComposerAttachment>;
 

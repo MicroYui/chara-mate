@@ -42,6 +42,8 @@ H7 W2 使用 T2、512 Tool 极限层和最终 Harness/Cache 组合，300/300 Qua
 
 OpenAI Function Calling 和 MCP `server/discover/tools/list/tools/call` 定义协议边界，但没有规定 T0–T3 哪一种是 CharaMate 默认，也没有提供覆盖 CharaMate Approval、Steering、Recovery、Computer Use 与统一 App Action 的官方选择数据集。这里使用 996-family 自有合成 bank；一手来源不是校验答案集。
 
+生产实现前于 2026-08-08 再次核对 Codex 当前公开源码 commit [`3aae5d8`](https://github.com/openai/codex/tree/3aae5d885bac39c1262491aa3fd100dfd8b3919f)（提交时间 `2026-08-08T04:57:06Z`）的 client Tool Search/metadata ranker 接线，并以项目实际锁定的 MCP Client/Server `2.0.0` 复核 inventory 到 Registry 的映射。该复核只确认当前源码行为没有推翻已接受的 T2 生产重写，不改写历史 T0–T3 观察值，也不把外部实现作为运行时依赖。
+
 - 预注册：`CHM-P2-AGENT-PREREG-20260802-V8`，index `ee1250de…f2d0`，Discovery Manifest `0f39d2ef…5e98`。
 - AR2-S task/fixture/scorer 各 600，SHA 分别为 `d9ea022e…7f36`、`de605d1d…08f5a`、`fd0e1dbb…bd7a`；稳定 opaque task ID 记录类别、语言、难度、预期证据与成功判据。
 - Capability Registry `CR2` 包含 48 个 built-in/Skill/MCP/App Action capabilities，SHA `93757a83…78a`。

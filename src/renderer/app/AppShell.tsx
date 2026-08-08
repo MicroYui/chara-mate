@@ -24,10 +24,15 @@ import { useRef, useState, type Dispatch, type ReactNode } from "react";
 import type { Chat } from "../../shared/contracts/chat";
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
 import type { PetDescriptor } from "../../shared/contracts/pet";
+import type { AgentSettings } from "../../shared/contracts/settings";
 import type { ChatDomainState } from "../features/chats/chatStore";
 import { ChatsPage } from "../features/chats/ChatsPage";
 import { ProviderSettingsPanel } from "../features/settings/ProviderSettingsPanel";
 import { CharacterSettingsPanel } from "../features/settings/CharacterSettingsPanel";
+import { AgentSettingsPanel } from "../features/settings/AgentSettingsPanel";
+import { BrowserComputerSettingsPanel } from "../features/settings/BrowserComputerSettingsPanel";
+import { McpSettingsPanel } from "../features/settings/McpSettingsPanel";
+import { SkillsSettingsPanel } from "../features/settings/SkillsSettingsPanel";
 import { TerritoryPage } from "../features/territory/TerritoryPage";
 import type {
   ChatView,
@@ -89,7 +94,15 @@ interface AppShellProps {
   readonly onChatSetPinned: (chatId: string, pinned: boolean) => void;
   readonly onClearChatError: () => void;
   readonly onBackgroundSchemeChange: (scheme: BackgroundScheme) => void;
+  readonly onAgentSettingsChanged: (settings: AgentSettings) => void;
   readonly onProvidersChanged: () => void;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: "approved" | "rejected",
+  ) => void;
+  readonly onRunResume: (runId: string) => void;
+  readonly onRunSend: () => void;
+  readonly onRunStop: () => void;
   readonly openCharacterSettingsToken: number;
   readonly petAnimationSpeed: number;
   readonly state: ChatsUiState;
@@ -639,18 +652,26 @@ function PlaceholderPage({
 
 function SettingsPage({
   backgroundScheme,
+  onAgentSettingsChanged,
   onBackgroundSchemeChange,
   onProvidersChanged,
   openCharacterSettingsToken,
 }: Pick<
   AppShellProps,
   | "backgroundScheme"
+  | "onAgentSettingsChanged"
   | "onBackgroundSchemeChange"
   | "onProvidersChanged"
   | "openCharacterSettingsToken"
 >) {
   const [activeSection, setActiveSection] = useState<
-    "appearance" | "character" | "models"
+    | "agent"
+    | "appearance"
+    | "browser-computer"
+    | "character"
+    | "mcp"
+    | "models"
+    | "skills"
   >(openCharacterSettingsToken > 0 ? "character" : "appearance");
 
   return (
@@ -680,8 +701,38 @@ function SettingsPage({
         >
           Models
         </button>
-        <button type="button" disabled>
+        <button
+          type="button"
+          aria-current={activeSection === "agent" ? "page" : undefined}
+          onClick={() => setActiveSection("agent")}
+        >
           Agent
+        </button>
+        <button
+          type="button"
+          aria-current={
+            activeSection === "browser-computer" ? "page" : undefined
+          }
+          onClick={() => setActiveSection("browser-computer")}
+        >
+          Browser &amp; Computer
+        </button>
+        <button
+          type="button"
+          aria-current={activeSection === "skills" ? "page" : undefined}
+          onClick={() => setActiveSection("skills")}
+        >
+          Skills
+        </button>
+        <button
+          type="button"
+          aria-current={activeSection === "mcp" ? "page" : undefined}
+          onClick={() => setActiveSection("mcp")}
+        >
+          MCP
+        </button>
+        <button type="button" disabled>
+          Activity
         </button>
         <button type="button" disabled>
           Data
@@ -724,8 +775,16 @@ function SettingsPage({
           </section>
         ) : activeSection === "character" ? (
           <CharacterSettingsPanel />
-        ) : (
+        ) : activeSection === "models" ? (
           <ProviderSettingsPanel onProfilesChanged={onProvidersChanged} />
+        ) : activeSection === "agent" ? (
+          <AgentSettingsPanel onChanged={onAgentSettingsChanged} />
+        ) : activeSection === "browser-computer" ? (
+          <BrowserComputerSettingsPanel />
+        ) : activeSection === "skills" ? (
+          <SkillsSettingsPanel />
+        ) : (
+          <McpSettingsPanel />
         )}
       </div>
     </div>
@@ -747,7 +806,12 @@ export function AppShell({
   onChatSetPinned,
   onClearChatError,
   onBackgroundSchemeChange,
+  onAgentSettingsChanged,
   onProvidersChanged,
+  onResolveApproval,
+  onRunResume,
+  onRunSend,
+  onRunStop,
   openCharacterSettingsToken,
   petAnimationSpeed,
   state,
@@ -811,12 +875,18 @@ export function AppShell({
               activeChat={activeChat}
               dispatch={dispatch}
               models={chatDomain.models}
+              onResumeRun={onRunResume}
+              onResolveApproval={onResolveApproval}
+              onSend={onRunSend}
+              onStop={onRunStop}
+              runtimeEnabled={state.modelId !== undefined}
               state={state}
             />
           ) : state.activePage === "settings" ? (
             <SettingsPage
               key={openCharacterSettingsToken}
               backgroundScheme={backgroundScheme}
+              onAgentSettingsChanged={onAgentSettingsChanged}
               onBackgroundSchemeChange={onBackgroundSchemeChange}
               onProvidersChanged={onProvidersChanged}
               openCharacterSettingsToken={openCharacterSettingsToken}

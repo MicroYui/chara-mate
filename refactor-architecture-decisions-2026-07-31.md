@@ -128,6 +128,8 @@ Agent Runtime、OpenAI 与 MCP 的本次来源快照见 §1.8；原始预注册�
 | MCP 规范 | 规范版本 `2026-07-28`；仓库 commit `5c4f1768b97198a149d7db05f5026b30c6a3cb12`，`2026-08-04T14:28:25+01:00` | [Versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning)、[Discovery](https://modelcontextprotocol.io/specification/2026-07-28/server/discover)、[Tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)、[Schema source](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/5c4f1768b97198a149d7db05f5026b30c6a3cb12/schema/2026-07-28/schema.ts) |
 | MCP TypeScript SDK | v2 source package version `2.0.0`、commit `cc4b41617ce3601b1290d67216ea0b194a3cd9ac`，`2026-07-28T00:52:57+01:00`；该源码的 `LATEST_PROTOCOL_VERSION` 为 `2025-11-25` | [v2 source](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac)、[`Client.listTools/callTool`](https://github.com/modelcontextprotocol/typescript-sdk/blob/cc4b41617ce3601b1290d67216ea0b194a3cd9ac/packages/client/src/client/client.ts)、[core schemas](https://github.com/modelcontextprotocol/typescript-sdk/blob/cc4b41617ce3601b1290d67216ea0b194a3cd9ac/packages/core/src/schemas.ts) |
 
+2026-08-08 追加复核 OpenAI 官方 [Web search](https://developers.openai.com/api/docs/guides/tools-web-search)：Responses API 的当前原生入口是 `{"type":"web_search"}`；旧 `web_search_preview` 只作为历史集成保留。当前 OpenAI-compatible Adapter 将其用于公开信息，和需要页面交互或登录状态的 Managed Browser 分工；Azure 未经 Live 确认，不盲目发送该能力。
+
 MCP 这里存在必须保留的版本事实：查阅时 npm 的 split-package `@modelcontextprotocol/client` latest 仍为 `2.0.0-beta.5`，旧聚合包 `@modelcontextprotocol/sdk` latest 为 `1.29.0` 且最高声明 `2025-11-25`；当前 CharaMate lockfile 未安装任何 MCP SDK。Manifest 因而锁源码 commit，不把未发布为 npm latest 的 `2.0.0` 或旧协议包偷偷写进生产依赖；真正实现前必须再次核对可安装工件并单独走依赖变更。
 
 #### 官方协议硬限制
@@ -135,6 +137,7 @@ MCP 这里存在必须保留的版本事实：查阅时 npm 的 split-package `@
 - OpenAI Responses 的 HTTP 流是带类型的 SSE 事件；正常终止、失败、不完整与错误有不同事件/状态。Function Calling 可返回零个、一个或多个调用，应用以 `call_id` 回传 `function_call_output` 并决定是否继续。只有以 `background=true` 创建的 Response 才能调用服务端 cancel endpoint；关闭客户端流不等同于撤销已经开始的 Tool 或外部副作用。
 - OpenAI 429/5xx 等错误与 `Retry-After` 属于请求级协议信号；`incomplete` 也不是 `completed`。`truncation=disabled` 时超出上下文应报错，`auto` 才允许丢弃较早输入；本实验固定 `disabled`，不得把截断伪装成完成。
 - OpenAI 原生 `tool_search` 只在 `gpt-5.4` 及以后模型可用。托管模式与 `execution="client"` 模式都使用 `tool_search_call/tool_search_output`；待发现 function 或 MCP server 必须标为 `defer_loading:true`。新加载 Tool 被注入上下文末尾以保留已有 Prompt Cache；这是协议能力，不等于任何搜索算法已经被证明适合 CharaMate。
+- OpenAI 原生 `web_search` 通过 Responses 请求中的 `{"type":"web_search"}` 启用，并由 Provider 在模型回合内执行；它不等于 CharaMate 的 Managed Browser，也不应伪装成 Browser Tool Item。
 - OpenAI compaction 有两种正式路径：`context_management.compact_threshold` 可在 Responses 流内触发服务端压缩；`/responses/compact` 接收完整窗口并返回下一窗口。两者都返回不可供人阅读的加密 compaction item。standalone endpoint 的完整输出是下一窗口的规范输入，客户端不得自行裁剪或改写；官方没有规定一个通用的最佳 `compact_threshold`。
 - OpenAI Prompt Caching 只匹配完全相同的 Prompt 前缀；`gpt-5.6` 及之后模型的可缓存前缀硬下限为 1,024 tokens。该模型族支持 `prompt_cache_options.mode=explicit` 与内容块上的显式 `prompt_cache_breakpoint`；`explicit` 且没有显式断点时不使用 Prompt Cache。当前唯一支持的最小 TTL 是 `30m`，一次请求最多写入四个断点。
 - `gpt-5.6` 及之后模型的 cache write 按未缓存输入价的 `1.25×` 计费，读取量与写入量分别报告为 `cached_tokens`、`cache_write_tokens`。缓存不会缩短逻辑输入、上下文占用或 TPM，也不会复用最终回答；它只复用精确前缀的 prefill 并重新生成输出。

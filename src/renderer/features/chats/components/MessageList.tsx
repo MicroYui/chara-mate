@@ -38,6 +38,11 @@ type TimelineEntry =
 interface MessageListProps {
   readonly chat: ChatView;
   readonly dispatch: Dispatch<ChatsUiAction>;
+  readonly onResumeRun: (runId: string) => void;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: "approved" | "rejected",
+  ) => void;
   readonly state: ChatsUiState;
 }
 
@@ -149,7 +154,13 @@ function buildTimeline(chat: ChatView): readonly TimelineEntry[] {
   return entries;
 }
 
-export function MessageList({ chat, dispatch, state }: MessageListProps) {
+export function MessageList({
+  chat,
+  dispatch,
+  onResumeRun,
+  onResolveApproval,
+  state,
+}: MessageListProps) {
   const scrollElementRef = useRef<HTMLDivElement>(null);
   const [showLatest, setShowLatest] = useState(false);
   const timeline = useMemo(() => buildTimeline(chat), [chat]);
@@ -212,6 +223,8 @@ export function MessageList({ chat, dispatch, state }: MessageListProps) {
                   <RunProcess
                     run={entry.value}
                     dispatch={dispatch}
+                    onResume={onResumeRun}
+                    onResolveApproval={onResolveApproval}
                     state={state}
                   />
                 )}

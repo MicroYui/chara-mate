@@ -159,10 +159,19 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
     const profiles = await second.page.evaluate(() =>
       window.charaMate.provider.listProfiles(),
     );
-    expect(profiles).toMatchObject({
-      ok: true,
-      value: [{ hasApiKey: true, id: profileId, name: "E2E Provider" }],
-    });
+    expect(profiles.ok).toBe(true);
+    if (!profiles.ok) throw new Error(profiles.error.message);
+    expect(profiles.value).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          hasApiKey: true,
+          id: profileId,
+          name: "E2E Provider",
+        }),
+        expect.objectContaining({ hasApiKey: false, name: "copilot_api" }),
+        expect.objectContaining({ hasApiKey: false, name: "azure" }),
+      ]),
+    );
     expect(JSON.stringify(profiles)).not.toContain(secret);
     await expect(
       second.page.evaluate(

@@ -86,7 +86,7 @@ export class SafeStorageSecretStore implements ProviderSecretStore {
       if (!encoded) {
         throw new ProviderError(
           "PROVIDER.CREDENTIAL_REQUIRED",
-          "该 Provider 没有可用的 API Key。",
+          "没有可用的凭据。",
           false,
         );
       }
@@ -108,7 +108,7 @@ export class SafeStorageSecretStore implements ProviderSecretStore {
         }
         throw new ProviderError(
           "PROVIDER.STORAGE_FAILED",
-          "无法读取系统密钥存储中的 API Key。",
+          "无法读取系统密钥存储中的凭据。",
           true,
         );
       }
@@ -138,7 +138,7 @@ export class SafeStorageSecretStore implements ProviderSecretStore {
       if (!normalized) {
         throw new ProviderError(
           "PROVIDER.INVALID_CONFIGURATION",
-          "API Key 不能为空。",
+          "凭据不能为空。",
           false,
         );
       }
@@ -156,7 +156,7 @@ export class SafeStorageSecretStore implements ProviderSecretStore {
         }
         throw new ProviderError(
           "PROVIDER.STORAGE_FAILED",
-          "无法把 API Key 写入系统密钥存储。",
+          "无法把凭据写入系统密钥存储。",
           true,
         );
       }

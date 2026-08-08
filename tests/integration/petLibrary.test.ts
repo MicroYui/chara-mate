@@ -203,4 +203,36 @@ describe("Codex pet import and owned persistence", () => {
       code: "PET.INVALID_FORMAT",
     });
   });
+
+  it("installs a bundled pet idempotently without overwriting the owned copy", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-bundled-pets-"),
+    );
+    temporaryDirectories.push(root);
+    const source = await makeSourcePet(path.join(root, "sources"), {
+      folderName: "linnea-bundled",
+      id: "linnea",
+      version: 1,
+    });
+    const ownedPets = path.join(root, "owned");
+    const repository = new PetLibraryRepository(ownedPets);
+
+    await expect(repository.ensureInstalledFrom(source)).resolves.toMatchObject(
+      { displayName: "Linnea", id: "linnea" },
+    );
+    const ownedManifestPath = path.join(ownedPets, "linnea", "pet.json");
+    const ownedManifest = JSON.parse(
+      await readFile(ownedManifestPath, "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      ownedManifestPath,
+      JSON.stringify({ ...ownedManifest, displayName: "User Linnea" }),
+      "utf8",
+    );
+
+    await expect(repository.ensureInstalledFrom(source)).resolves.toMatchObject(
+      { displayName: "User Linnea", id: "linnea" },
+    );
+    await expect(repository.list()).resolves.toHaveLength(1);
+  });
 });

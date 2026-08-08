@@ -1,6 +1,7 @@
 import { dialog, ipcMain, type BrowserWindow } from "electron";
 
 import { PET_CHANNELS } from "../../shared/contracts/pet";
+import { ApprovalNavigationRequestSchema } from "../../shared/schemas/agent";
 import {
   PetAnimationSpeedRequestSchema,
   PetCharacterSnapshotSchema,
@@ -32,6 +33,7 @@ export function registerPetIpc(
   character: CharacterWindowController,
   getMainWindow: () => BrowserWindow | null,
   onCharacterReady?: () => void,
+  onFocusApproval?: (approvalId: string) => void,
 ): () => void {
   const requireMain = (sender: Electron.WebContents): BrowserWindow => {
     const main = getMainWindow();
@@ -190,6 +192,11 @@ export function registerPetIpc(
     parseSchema(PetEmptyRequestSchema, input);
     character.focusMain(event.sender);
   });
+  ipcMain.on(PET_CHANNELS.focusApproval, (event, input) => {
+    character.assertCharacterSender(event.sender);
+    const request = parseSchema(ApprovalNavigationRequestSchema, input);
+    onFocusApproval?.(request.approvalId);
+  });
   ipcMain.on(PET_CHANNELS.showContextMenu, (event, input) => {
     parseSchema(PetEmptyRequestSchema, input);
     character.showContextMenu(event.sender);
@@ -217,6 +224,7 @@ export function registerPetIpc(
     for (const channel of [
       PET_CHANNELS.dragMove,
       PET_CHANNELS.focusMain,
+      PET_CHANNELS.focusApproval,
       PET_CHANNELS.showContextMenu,
       PET_CHANNELS.characterReady,
     ]) {

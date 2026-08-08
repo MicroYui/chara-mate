@@ -12,6 +12,7 @@ import type {
   PetDragPoint,
   PetFacing,
 } from "../../shared/contracts/pet";
+import type { Approval } from "../../shared/contracts/run";
 import { getDragAnimation } from "./petAtlas";
 import { PixiPetCanvas } from "./PixiPetCanvas";
 import styles from "./CharacterApp.module.css";
@@ -27,6 +28,7 @@ export function CharacterApp() {
   const [snapshot, setSnapshot] = useState<PetCharacterSnapshot | null>(null);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [approval, setApproval] = useState<Approval | null>(null);
   const [dragFacing, setDragFacing] = useState<PetFacing>("right");
   const [lookAngleDegrees, setLookAngleDegrees] = useState<number | null>(null);
   const activePointer = useRef<number | null>(null);
@@ -63,6 +65,22 @@ export function CharacterApp() {
       unsubscribe();
     };
   }, [markReady]);
+
+  useEffect(() => window.charaMateCharacter.subscribeApproval(setApproval), []);
+
+  const decideApproval = (decision: "approved" | "rejected") => {
+    if (!approval) return;
+    void window.charaMateCharacter
+      .resolveApproval({
+        approvalId: approval.id,
+        decidedAt: new Date().toISOString(),
+        decision,
+      })
+      .then((response) => {
+        if (response.ok) setApproval(null);
+      })
+      .catch(() => undefined);
+  };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || activePointer.current !== null) return;
@@ -158,6 +176,34 @@ export function CharacterApp() {
       role="button"
       tabIndex={0}
     >
+      {approval ? (
+        <section
+          aria-label="桌宠审批提醒"
+          className={styles["approvalBubble"]}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <p>{approval.parameterSummary}</p>
+          <div>
+            <button type="button" onClick={() => decideApproval("rejected")}>
+              拒绝
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                window.charaMateCharacter.focusApproval({
+                  approvalId: approval.id,
+                })
+              }
+            >
+              详情
+            </button>
+            <button type="button" onClick={() => decideApproval("approved")}>
+              允许
+            </button>
+          </div>
+        </section>
+      ) : null}
       {startupError ? (
         <span className={styles["status"]} role="alert">
           {startupError}

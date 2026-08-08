@@ -14,12 +14,13 @@ export const initialChatsUiState: ChatsUiState = {
   chatListStatus: "active",
   composerAttachments: [],
   composerPhase: "idle",
+  defaultApprovalMode: "request_approval",
+  defaultMode: "chat",
   draft: "",
   expandedItemIds: [],
   expandedRunIds: [],
   mode: "chat",
   modelId: undefined,
-  resolvedApprovals: {},
   searchQuery: "",
   sidebarCollapsed: false,
 };
@@ -31,6 +32,23 @@ export function chatsUiReducer(
   switch (action.type) {
     case "page.selected":
       return { ...state, activePage: action.page };
+    case "approval.focused":
+      return {
+        ...state,
+        activeChatId: action.target.chatId,
+        activePage: "chats",
+        chatListStatus: "active",
+        expandedItemIds: [action.target.itemId],
+        expandedRunIds: [action.target.runId],
+      };
+    case "settings.defaults-loaded":
+      return {
+        ...state,
+        approvalMode: action.approvalMode,
+        defaultApprovalMode: action.approvalMode,
+        defaultMode: action.mode,
+        mode: action.mode,
+      };
     case "sidebar.toggled":
       return { ...state, sidebarCollapsed: !state.sidebarCollapsed };
     case "chat.selected":
@@ -51,7 +69,8 @@ export function chatsUiReducer(
         draft: "",
         expandedItemIds: [],
         expandedRunIds: [],
-        mode: "chat",
+        approvalMode: state.defaultApprovalMode,
+        mode: state.defaultMode,
       };
     case "chat-list-status.changed":
       return {
@@ -99,14 +118,6 @@ export function chatsUiReducer(
       return {
         ...state,
         expandedItemIds: toggleId(state.expandedItemIds, action.itemId),
-      };
-    case "approval.resolved":
-      return {
-        ...state,
-        resolvedApprovals: {
-          ...state.resolvedApprovals,
-          [action.approvalId]: action.decision,
-        },
       };
   }
 }

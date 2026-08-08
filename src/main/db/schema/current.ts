@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "3";
+export const CURRENT_SCHEMA_VERSION = "4";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -247,6 +247,7 @@ export const CURRENT_SCHEMA_SQL = `
       )
     ),
     input_json TEXT CHECK (input_json IS NULL OR json_valid(input_json)),
+    output_json TEXT CHECK (output_json IS NULL OR json_valid(output_json)),
     display_output TEXT,
     started_at TEXT,
     ended_at TEXT,
@@ -300,6 +301,58 @@ export const CURRENT_SCHEMA_SQL = `
     PRIMARY KEY (run_id, sequence)
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS checkpoints (
+    run_id TEXT PRIMARY KEY NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    generation INTEGER NOT NULL CHECK (generation >= 1),
+    phase TEXT NOT NULL CHECK (
+      phase IN ('model', 'tool', 'approval', 'interrupted')
+    ),
+    context_json TEXT NOT NULL CHECK (json_valid(context_json)),
+    last_completed_sequence INTEGER NOT NULL CHECK (
+      last_completed_sequence >= 0
+    ),
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS mcp_servers (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    transport_json TEXT NOT NULL CHECK (json_valid(transport_json)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_connected_at TEXT,
+    last_error_json TEXT CHECK (
+      last_error_json IS NULL OR json_valid(last_error_json)
+    )
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS skill_versions (
+    skill_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    source TEXT NOT NULL CHECK (source IN ('workspace', 'user')),
+    content_sha256 TEXT NOT NULL CHECK (length(content_sha256) = 64),
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    archived_at TEXT,
+    last_used_at TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (skill_id, revision)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS agent_settings (
+    settings_id TEXT PRIMARY KEY NOT NULL CHECK (settings_id = 'agent'),
+    default_mode TEXT NOT NULL CHECK (default_mode IN ('chat', 'agent')),
+    default_approval_mode TEXT NOT NULL CHECK (
+      default_approval_mode IN (
+        'request_approval',
+        'auto_approve',
+        'full_access'
+      )
+    ),
+    working_directory TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
   CREATE INDEX IF NOT EXISTS chats_updated_idx
     ON chats(status, updated_at DESC, id);
   CREATE INDEX IF NOT EXISTS messages_chat_idx
@@ -317,6 +370,10 @@ export const CURRENT_SCHEMA_SQL = `
     ON tool_artifacts(run_item_id, position);
   CREATE INDEX IF NOT EXISTS approvals_run_idx
     ON approvals(run_id, requested_at, id);
+  CREATE INDEX IF NOT EXISTS mcp_servers_enabled_idx
+    ON mcp_servers(enabled, updated_at DESC, id);
+  CREATE INDEX IF NOT EXISTS skill_versions_active_idx
+    ON skill_versions(skill_id, enabled, archived_at, revision DESC);
   CREATE UNIQUE INDEX IF NOT EXISTS territory_one_active_scene_idx
     ON territory_scenes(is_active)
     WHERE is_active = 1;

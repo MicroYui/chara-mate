@@ -132,6 +132,58 @@
   font-size: 11px;
 }
 
+.runError {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0 5px;
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border));
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.runError button {
+  min-height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 9px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.artifacts > strong {
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.artifacts ul {
+  display: grid;
+  gap: 3px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artifacts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.artifacts small {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
 .approvalCard {
   display: grid;
   grid-template-columns: 27px minmax(0, 1fr);

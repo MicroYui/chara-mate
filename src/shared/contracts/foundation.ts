@@ -1,8 +1,12 @@
 import type { Static } from "@sinclair/typebox";
 
 import type { FoundationSnapshotSchema } from "../schemas/foundation";
+import type { AgentApi } from "./agent";
 import type { ChatApi } from "./chat";
+import type { ExtensionsApi } from "./extensions";
+import type { LocalFilesApi } from "./files";
 import type { RunEventsApi } from "./ipc";
+import type { SettingsApi } from "./settings";
 import type { PetManagementApi } from "./pet";
 import type { ProviderApi } from "./provider";
 import type { TerritoryApi } from "./territory";
@@ -20,13 +24,17 @@ export interface FoundationApi {
 }
 
 export interface DesktopApi {
+  files: LocalFilesApi;
   foundation: FoundationApi;
   pet: PetManagementApi;
   provider: ProviderApi;
+  settings: SettingsApi;
   territory: TerritoryApi;
 }
 
 export interface CharaMateApi extends DesktopApi {
+  agent: AgentApi;
   chat: ChatApi;
+  extensions: ExtensionsApi;
   runEvents: RunEventsApi;
 }

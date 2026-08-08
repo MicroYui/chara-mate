@@ -16,9 +16,10 @@
     "esbuild@0.27.7": true
   },
   "scripts": {
+    "browser:install": "playwright install chromium",
     "start": "electron-forge start",
     "build": "node scripts/build.mjs",
-    "package": "electron-forge package",
+    "package": "npm run browser:install && electron-forge package",
     "smoke:dev": "node scripts/smoke-electron.mjs dev",
     "smoke:package": "node scripts/smoke-electron.mjs packaged",
     "typecheck": "tsc --noEmit",
@@ -37,6 +38,7 @@
     "test:benchmark": "node scripts/optional-suite.mjs benchmark"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@radix-ui/react-dropdown-menu": "2.1.24",
     "@radix-ui/react-popover": "1.1.23",
     "@radix-ui/react-tooltip": "1.2.16",
@@ -50,6 +52,7 @@
     "openai": "6.49.0",
     "pino": "10.3.1",
     "pixi.js": "8.19.0",
+    "playwright-core": "1.62.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",
@@ -58,7 +61,8 @@
     "remark-gfm": "4.0.1",
     "remark-math": "6.0.0",
     "shiki": "4.3.1",
-    "ws": "8.21.1"
+    "ws": "8.21.1",
+    "yaml": "2.9.0"
   },
   "devDependencies": {
     "@electron-forge/cli": "7.11.2",
@@ -66,6 +70,7 @@
     "@electron-forge/plugin-vite": "7.11.2",
     "@electron-forge/shared-types": "7.11.2",
     "@eslint/js": "10.0.1",
+    "@modelcontextprotocol/server": "2.0.0",
     "@playwright/test": "1.62.0",
     "@testing-library/dom": "10.4.1",
     "@testing-library/jest-dom": "7.0.0",

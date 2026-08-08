@@ -4,6 +4,7 @@ import type { ProviderProfileDraft } from "../../shared/contracts/provider";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
 import type { ProviderHttpAdapter } from "./openaiProviderAdapter";
+import { INITIAL_PROVIDER_PROFILES } from "./initialProviderProfiles";
 import { ProviderError } from "./providerError";
 import type {
   ProviderProfileRepository,
@@ -143,6 +144,45 @@ function createService(
 }
 
 describe("Provider Service", () => {
+  it("seeds the two first-run metadata profiles without credentials", async () => {
+    const { repository, service } = createService();
+
+    await service.initialize();
+    await service.initialize();
+
+    expect(repository.list()).toEqual(
+      INITIAL_PROVIDER_PROFILES.map((profile) => ({
+        ...profile,
+        createdAt: NOW,
+        updatedAt: NOW,
+      })),
+    );
+    expect(service.listProfiles()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ hasApiKey: false, name: "copilot_api" }),
+        expect.objectContaining({ hasApiKey: false, name: "azure" }),
+      ]),
+    );
+    expect(repository.list()).toHaveLength(2);
+    expect(JSON.stringify(repository.list())).not.toContain("apiKeyRef");
+  });
+
+  it("does not replace an existing user profile during initialization", async () => {
+    const { repository, service } = createService();
+    const existing = {
+      ...baseDraft,
+      apiKeyRef: SECRET_REF,
+      createdAt: NOW,
+      id: PROFILE_ID,
+      updatedAt: NOW,
+    } satisfies ProviderRecord;
+    repository.records.set(existing.id, existing);
+
+    await service.initialize();
+
+    expect(repository.list()).toEqual([existing]);
+  });
+
   it("persists metadata and a secret reference, then creates immutable Run snapshots", async () => {
     const { adapterFactory, repository, service } = createService();
     const secret = "sk-service-secret";

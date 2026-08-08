@@ -63,12 +63,16 @@ describe("Character Window typed preload boundary", () => {
       [
         "endDrag",
         "focusMain",
+        "focusApproval",
+        "getPendingApproval",
         "getSnapshot",
         "markReady",
         "moveDrag",
+        "resolveApproval",
         "showContextMenu",
         "startDrag",
         "subscribe",
+        "subscribeApproval",
       ].sort(),
     );
     await expect(api.getSnapshot()).resolves.toEqual(characterSnapshot);

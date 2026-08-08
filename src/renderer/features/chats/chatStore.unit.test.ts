@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { AgentApi } from "../../../shared/contracts/agent";
 import type { ChatApi } from "../../../shared/contracts/chat";
 import type {
   RunEventEnvelope,
@@ -99,19 +100,38 @@ function createApis() {
     replay,
     subscribe,
   };
+  const resume = vi.fn<AgentApi["resume"]>(({ runId }) =>
+    Promise.resolve({ ok: true as const, value: { runId } }),
+  );
+  const agentApi: AgentApi = {
+    cancel: vi.fn(),
+    getPendingApproval: vi.fn(),
+    resolveApproval: vi.fn(),
+    resume,
+    start: vi.fn(),
+    steer: vi.fn(),
+    subscribeOpenApproval: vi.fn(() => () => undefined),
+  };
   return {
+    agentApi,
     chatApi,
     emit: (event: RunEventEnvelope) => eventListener?.(event),
     providerApi,
-    spies: { getSnapshot, rename, replay, subscribe },
+    spies: { getSnapshot, listProfiles, rename, replay, resume, subscribe },
     runEventsApi,
   };
 }
 
 describe("ChatDomainStore", () => {
   it("builds its projection from typed Chat and Provider snapshots", async () => {
-    const { chatApi, providerApi, runEventsApi, spies } = createApis();
-    const store = new ChatDomainStore(chatApi, providerApi, runEventsApi);
+    const { agentApi, chatApi, providerApi, runEventsApi, spies } =
+      createApis();
+    const store = new ChatDomainStore(
+      chatApi,
+      agentApi,
+      providerApi,
+      runEventsApi,
+    );
     const stop = store.start();
     await flushMicrotasks();
     await store.loadSnapshot(chatFixture.id);
@@ -137,9 +157,45 @@ describe("ChatDomainStore", () => {
     expect(spies.subscribe).toHaveBeenCalledOnce();
   });
 
+  it("keeps keyless initial profiles in Settings rather than exposing unusable Composer models", async () => {
+    const { agentApi, chatApi, providerApi, runEventsApi, spies } =
+      createApis();
+    spies.listProfiles.mockResolvedValue({
+      ok: true,
+      value: [
+        {
+          apiStyle: "openai-compatible",
+          baseUrl: "http://localhost:4141/v1",
+          chatModel: "gpt-5.6-sol",
+          createdAt: FIXTURE_TIMESTAMPS.created,
+          hasApiKey: false,
+          id: "99999999-9999-4999-8999-999999999999",
+          name: "copilot_api",
+          updatedAt: FIXTURE_TIMESTAMPS.updated,
+        },
+      ],
+    });
+    const store = new ChatDomainStore(
+      chatApi,
+      agentApi,
+      providerApi,
+      runEventsApi,
+    );
+
+    await store.refreshModels();
+
+    expect(store.getState().models).toEqual([]);
+  });
+
   it("treats Run events as sequence notifications and reloads Main truth", async () => {
-    const { chatApi, emit, providerApi, runEventsApi, spies } = createApis();
-    const store = new ChatDomainStore(chatApi, providerApi, runEventsApi);
+    const { agentApi, chatApi, emit, providerApi, runEventsApi, spies } =
+      createApis();
+    const store = new ChatDomainStore(
+      chatApi,
+      agentApi,
+      providerApi,
+      runEventsApi,
+    );
     store.start();
     await flushMicrotasks();
     await store.loadSnapshot(chatFixture.id);
@@ -167,7 +223,8 @@ describe("ChatDomainStore", () => {
   });
 
   it("surfaces mutation failures instead of swallowing them in the App", async () => {
-    const { chatApi, providerApi, runEventsApi, spies } = createApis();
+    const { agentApi, chatApi, providerApi, runEventsApi, spies } =
+      createApis();
     spies.rename.mockResolvedValue({
       error: {
         code: "CHAT.STORAGE_FAILED",
@@ -176,7 +233,12 @@ describe("ChatDomainStore", () => {
       },
       ok: false,
     });
-    const store = new ChatDomainStore(chatApi, providerApi, runEventsApi);
+    const store = new ChatDomainStore(
+      chatApi,
+      agentApi,
+      providerApi,
+      runEventsApi,
+    );
 
     await expect(store.rename(chatFixture.id, "New title")).rejects.toThrow(
       "无法保存会话。",
@@ -184,5 +246,26 @@ describe("ChatDomainStore", () => {
     expect(store.getState().error).toBe("无法保存会话。");
     store.clearError();
     expect(store.getState().error).toBeUndefined();
+  });
+
+  it("resumes an interrupted Run through Main and reloads its Chat snapshot", async () => {
+    const { agentApi, chatApi, providerApi, runEventsApi, spies } =
+      createApis();
+    const store = new ChatDomainStore(
+      chatApi,
+      agentApi,
+      providerApi,
+      runEventsApi,
+    );
+    await store.loadSnapshot(chatFixture.id);
+    spies.getSnapshot.mockClear();
+
+    await store.resume(FIXTURE_IDS.run);
+
+    expect(spies.resume).toHaveBeenCalledOnce();
+    const request = spies.resume.mock.calls[0]?.[0];
+    expect(request?.runId).toBe(FIXTURE_IDS.run);
+    expect(Date.parse(request?.requestedAt ?? "")).not.toBeNaN();
+    expect(spies.getSnapshot).toHaveBeenCalledWith({ chatId: chatFixture.id });
   });
 });

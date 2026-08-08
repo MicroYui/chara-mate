@@ -13,7 +13,6 @@ import type {
   RunEventReplayRequest,
   RunEventReplayResponse,
 } from "../../shared/contracts/ipc";
-import { isTerminalRunStatus } from "../../shared/pure/cancellation";
 import { replayInSequence } from "../../shared/pure/replay";
 import {
   RunEventEnvelopeSchema,
@@ -53,6 +52,7 @@ interface RunItemRow {
   id: string;
   input_json: string | null;
   kind: string;
+  output_json: string | null;
   run_id: string;
   sequence: number;
   started_at: string | null;
@@ -106,6 +106,12 @@ const TERMINAL_RUN_ITEM_STATUSES = new Set<RunItem["status"]>([
   "interrupted",
 ]);
 
+const IMMUTABLE_TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
 function readJson(serialized: string): unknown {
   return JSON.parse(serialized);
 }
@@ -149,6 +155,7 @@ function readRunItem(row: RunItemRow, artifacts: ArtifactReference[]): RunItem {
     id: row.id,
     ...(row.input_json === null ? {} : { input: readJson(row.input_json) }),
     kind: row.kind,
+    ...(row.output_json === null ? {} : { output: readJson(row.output_json) }),
     runId: row.run_id,
     sequence: row.sequence,
     ...(row.started_at === null ? {} : { startedAt: row.started_at }),
@@ -175,6 +182,14 @@ function readApproval(row: ApprovalRow): Approval {
 
 function readRunEvent(row: RunEventRow): RunEventEnvelope {
   return parseSchema(RunEventEnvelopeSchema, readJson(row.envelope_json));
+}
+
+function textDelta(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const text = (value as Record<string, unknown>)["text"];
+  return typeof text === "string" ? text : undefined;
 }
 
 function assertRunIdentity(current: Run, next: Run, streamId: string): void {
@@ -262,7 +277,7 @@ export class RunRepository {
           throw new Error(`Run ${envelope.streamId} does not exist`);
         }
         const currentRun = readRun(runRow);
-        if (isTerminalRunStatus(currentRun.status)) {
+        if (IMMUTABLE_TERMINAL_RUN_STATUSES.has(currentRun.status)) {
           throw new Error(`Run ${envelope.streamId} is already terminal`);
         }
         if (envelope.sequence !== runRow.latest_sequence + 1) {
@@ -340,7 +355,7 @@ export class RunRepository {
     const runItemRows = this.database
       .prepare(
         `SELECT item.id, item.run_id, item.sequence, item.kind, item.status,
-                item.input_json, item.display_output,
+                item.input_json, item.output_json, item.display_output,
                 item.started_at, item.ended_at, item.duration_ms, item.error_json
          FROM run_items AS item
          INNER JOIN runs AS run ON run.id = item.run_id
@@ -403,9 +418,87 @@ export class RunRepository {
     return row ? readRun(row) : undefined;
   }
 
+  getRun(runId: string): Run | undefined {
+    const row = this.selectRunRow(runId);
+    return row ? readRun(row) : undefined;
+  }
+
+  getRunItem(itemId: string): RunItem | undefined {
+    const row = this.selectRunItem(itemId);
+    return row ? this.readRunItem(row) : undefined;
+  }
+
+  getApproval(approvalId: string): Approval | undefined {
+    const row = this.selectApproval(approvalId);
+    return row ? readApproval(row) : undefined;
+  }
+
+  getLatestPendingApproval(): Approval | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, run_id, item_id, tool_name, parameter_summary, status,
+                requested_at, expires_at, decided_at, decision_reason
+         FROM approvals
+         WHERE status = 'pending'
+         ORDER BY requested_at DESC, id DESC
+         LIMIT 1`,
+      )
+      .get() as ApprovalRow | undefined;
+    return row ? readApproval(row) : undefined;
+  }
+
+  listRunsByStatus(statuses: readonly Run["status"][]): Run[] {
+    if (statuses.length === 0) return [];
+    const placeholders = statuses.map(() => "?").join(", ");
+    const rows = this.database
+      .prepare(
+        `SELECT id, chat_id, execution_json, provider_json, status,
+                latest_sequence, created_at, started_at, ended_at, error_json
+         FROM runs
+         WHERE status IN (${placeholders})
+         ORDER BY created_at, id`,
+      )
+      .all(...statuses) as RunRow[];
+    return rows.map(readRun);
+  }
+
+  listRunItems(runId: string): RunItem[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, run_id, sequence, kind, status, input_json, output_json,
+                display_output, started_at, ended_at, duration_ms, error_json
+         FROM run_items
+         WHERE run_id = ?
+         ORDER BY sequence, id`,
+      )
+      .all(runId) as RunItemRow[];
+    return rows.map((row) => this.readRunItem(row));
+  }
+
   private applyProjection(currentRun: Run, envelope: RunEventEnvelope): void {
     const { event } = envelope;
     switch (event.type) {
+      case "run.resumed": {
+        if (
+          currentRun.status !== "interrupted" &&
+          currentRun.status !== "needs_input"
+        ) {
+          throw new Error(`Run ${envelope.streamId} is not resumable`);
+        }
+        assertRunIdentity(currentRun, event.run, envelope.streamId);
+        if (
+          event.run.status !== "running" ||
+          event.run.latestSequence !== envelope.sequence ||
+          event.run.endedAt !== undefined ||
+          event.run.error !== undefined
+        ) {
+          throw new Error(
+            `Invalid run.resumed projection for ${envelope.streamId}`,
+          );
+        }
+        this.updateRun(event.run);
+        return;
+      }
       case "item.started": {
         if (
           event.item.runId !== envelope.streamId ||
@@ -431,6 +524,8 @@ export class RunRepository {
             `Run item ${event.itemId} does not belong to ${envelope.streamId}`,
           );
         }
+        const text = textDelta(event.delta);
+        if (text) this.appendRunItemDisplayOutput(event.itemId, text);
         this.updateRunSequence(envelope.streamId, envelope.sequence);
         return;
       }
@@ -447,7 +542,8 @@ export class RunRepository {
           );
         }
         if (
-          currentItem.status !== "running" ||
+          (currentItem.status !== "running" &&
+            currentItem.status !== "waiting_approval") ||
           !TERMINAL_RUN_ITEM_STATUSES.has(event.item.status)
         ) {
           throw new Error(`Invalid completed state for item ${event.item.id}`);
@@ -472,6 +568,10 @@ export class RunRepository {
           );
         }
         this.insertApproval(event.approval);
+        this.updateRunItem({
+          ...this.readRunItem(item),
+          status: "waiting_approval",
+        });
         this.updateRunSequence(
           envelope.streamId,
           envelope.sequence,
@@ -606,9 +706,9 @@ export class RunRepository {
     this.database
       .prepare(
         `INSERT INTO run_items (
-          id, run_id, sequence, kind, status, input_json, display_output,
+          id, run_id, sequence, kind, status, input_json, output_json, display_output,
           started_at, ended_at, duration_ms, error_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         item.id,
@@ -617,6 +717,7 @@ export class RunRepository {
         item.kind,
         item.status,
         item.input === undefined ? null : serializeForPersistence(item.input),
+        item.output === undefined ? null : serializeForPersistence(item.output),
         item.displayOutput ?? null,
         item.startedAt ?? null,
         item.endedAt ?? null,
@@ -630,13 +731,14 @@ export class RunRepository {
     const result = this.database
       .prepare(
         `UPDATE run_items
-         SET status = ?, input_json = ?, display_output = ?, started_at = ?,
+         SET status = ?, input_json = ?, output_json = ?, display_output = ?, started_at = ?,
              ended_at = ?, duration_ms = ?, error_json = ?
          WHERE id = ?`,
       )
       .run(
         item.status,
         item.input === undefined ? null : serializeForPersistence(item.input),
+        item.output === undefined ? null : serializeForPersistence(item.output),
         item.displayOutput ?? null,
         item.startedAt ?? null,
         item.endedAt ?? null,
@@ -648,6 +750,19 @@ export class RunRepository {
       throw new Error(`Run item ${item.id} does not exist`);
     }
     this.appendArtifacts(item);
+  }
+
+  private appendRunItemDisplayOutput(itemId: string, text: string): void {
+    const result = this.database
+      .prepare(
+        `UPDATE run_items
+         SET display_output = COALESCE(display_output, '') || ?
+         WHERE id = ?`,
+      )
+      .run(text, itemId);
+    if (result.changes !== 1) {
+      throw new Error(`Run item ${itemId} does not exist`);
+    }
   }
 
   private insertApproval(approval: Approval): void {
@@ -704,7 +819,7 @@ export class RunRepository {
   private selectRunItem(itemId: string): RunItemRow | undefined {
     return this.database
       .prepare(
-        `SELECT id, run_id, sequence, kind, status, input_json, display_output,
+        `SELECT id, run_id, sequence, kind, status, input_json, output_json, display_output,
                 started_at, ended_at, duration_ms, error_json
          FROM run_items
          WHERE id = ?`,

@@ -21,7 +21,7 @@ export interface ProviderHttpAdapter {
   verifyImageConfiguration(): Promise<void>;
 }
 
-function createClient(
+export function createClient(
   profile: ProviderProfileDraft,
   apiKey: string,
   azureApiVersion = profile.apiStyle === "azure-openai"
@@ -57,11 +57,22 @@ function createClient(
   return new OpenAI({ ...common, baseURL: profile.baseUrl });
 }
 
-function mapSdkError(
+export function mapSdkError(
   error: unknown,
   unavailableMessage = "该 Provider 没有标准模型列表端点，请手动填写 Model ID。",
 ): ProviderError {
   if (error instanceof ProviderError) return error;
+  if (
+    error instanceof APIError &&
+    (error.code === "context_length_exceeded" ||
+      error.code === "max_tokens_exceeded")
+  ) {
+    return new ProviderError(
+      "PROVIDER.CONTEXT_LIMIT_EXCEEDED",
+      "当前上下文已超过模型窗口，需要先整理较早内容。",
+      true,
+    );
+  }
   if (error instanceof AuthenticationError) {
     return new ProviderError(
       "PROVIDER.AUTHENTICATION_FAILED",

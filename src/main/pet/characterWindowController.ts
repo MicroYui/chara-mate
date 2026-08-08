@@ -223,6 +223,10 @@ export class CharacterWindowController {
     screen.off("display-added", this.handleDisplayChange);
     screen.off("display-removed", this.handleDisplayChange);
     screen.off("display-metrics-changed", this.handleDisplayChange);
+    const window = this.window;
     this.persistPlacement();
+    this.window = null;
+    this.drag = undefined;
+    if (window && !window.isDestroyed()) window.destroy();
   }
 }

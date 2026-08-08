@@ -9,6 +9,7 @@ import type {
   ProviderSnapshot,
   ProviderTestCapability,
 } from "../../shared/contracts/provider";
+import type { ModelProvider } from "../agent/modelProvider";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
 import { ProviderProfileSchema } from "../../shared/schemas/provider";
@@ -18,7 +19,9 @@ import {
   OpenAISdkProviderAdapter,
   type ProviderHttpAdapter,
 } from "./openaiProviderAdapter";
+import { createInitialProviderRecords } from "./initialProviderProfiles";
 import { ProviderError } from "./providerError";
+import { OpenAIResponsesModelProvider } from "./openaiModelProvider";
 import { normalizeProviderDraft } from "./providerNormalization";
 import type {
   ProviderRecord,
@@ -30,6 +33,16 @@ export type ProviderAdapterFactory = (
   profile: ProviderProfileDraft,
   apiKey: string,
 ) => ProviderHttpAdapter;
+
+export type ModelProviderFactory = (
+  profile: ProviderProfileDraft,
+  apiKey: string,
+) => ModelProvider;
+
+export interface ChatModelRuntime {
+  readonly provider: ModelProvider;
+  readonly snapshot: ProviderSnapshot;
+}
 
 function recordToDraft(record: ProviderRecord): ProviderProfileDraft {
   const common = {
@@ -76,7 +89,28 @@ export class ProviderService {
       profile,
       apiKey,
     ) => new OpenAISdkProviderAdapter(profile, apiKey),
+    private readonly modelProviderFactory: ModelProviderFactory = (
+      profile,
+      apiKey,
+    ) => new OpenAIResponsesModelProvider(profile, apiKey),
   ) {}
+
+  async createChatModelRuntime(profileId: string): Promise<ChatModelRuntime> {
+    const record = this.#requireProfile(profileId);
+    if (!record.apiKeyRef) {
+      throw new ProviderError(
+        "PROVIDER.CREDENTIAL_REQUIRED",
+        "该 Provider 尚未保存 API Key。",
+        false,
+      );
+    }
+    const apiKey = await this.secretStore.get(record.apiKeyRef);
+    const profile = normalizeProviderDraft(recordToDraft(record));
+    return {
+      provider: this.modelProviderFactory(profile, apiKey),
+      snapshot: this.createSnapshot(profileId),
+    };
+  }
 
   createSnapshot(profileId: string, modelId?: string): ProviderSnapshot {
     const profile = this.#requireProfile(profileId);
@@ -142,9 +176,30 @@ export class ProviderService {
     }
   }
 
-  async initialize(): Promise<void> {
+  async initialize(
+    additionalSecretReferences: ReadonlySet<string> = new Set(),
+  ): Promise<void> {
     try {
-      await this.secretStore.prune(this.repository.listSecretReferences());
+      if (this.repository.list().length === 0) {
+        for (const record of createInitialProviderRecords(this.clock.now())) {
+          this.repository.save(record);
+        }
+      }
+    } catch {
+      throw new ProviderError(
+        "PROVIDER.STORAGE_FAILED",
+        "无法初始化 Provider Profiles。",
+        true,
+      );
+    }
+
+    try {
+      await this.secretStore.prune(
+        new Set([
+          ...this.repository.listSecretReferences(),
+          ...additionalSecretReferences,
+        ]),
+      );
     } catch (error) {
       this.logger.warn("PROVIDER_SECRET_PRUNE_FAILED", {
         code:

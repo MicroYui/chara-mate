@@ -38,13 +38,10 @@ test("manages real Chats and restores product state after an Electron restart", 
     application = first.launched;
     const page = first.page;
     await expect(page.getByRole("button", { name: "Territory" })).toBeVisible();
-    const petImage = page.getByRole("img", { name: "Mika 桌宠" });
-    await expect(petImage).toHaveJSProperty("complete", true);
-    expect(
-      await petImage.evaluate(
-        (image) => (image as HTMLImageElement).naturalWidth,
-      ),
-    ).toBeGreaterThan(0);
+    const petImage = page.getByRole("img", {
+      name: "Columbinya 桌宠缩略图",
+    });
+    await expect(petImage).toHaveAttribute("style", /columbinya/u);
 
     const settingsBox = await page
       .getByRole("button", { name: "Settings" })

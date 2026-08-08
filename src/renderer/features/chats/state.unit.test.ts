@@ -56,7 +56,7 @@ describe("Chats fixture UI state", () => {
     expect(removed.composerAttachments).toHaveLength(0);
   });
 
-  it("tracks run, item and approval interactions independently", () => {
+  it("tracks local run and item expansion without duplicating approval truth", () => {
     const run = chatsFixtureUiReducer(initialChatsFixtureUiState, {
       runId: "00000000-0000-4000-8000-000000000301",
       type: "run.toggled",
@@ -65,17 +65,8 @@ describe("Chats fixture UI state", () => {
       itemId: "00000000-0000-4400-8000-000000000033",
       type: "item.toggled",
     });
-    const approval = chatsFixtureUiReducer(item, {
-      approvalId: "00000000-0000-4000-8000-000000000501",
-      decision: "approved",
-      type: "approval.resolved",
-    });
-
-    expect(approval.expandedRunIds).toHaveLength(1);
-    expect(approval.expandedItemIds).toHaveLength(1);
-    expect(approval.resolvedApprovals).toEqual({
-      "00000000-0000-4000-8000-000000000501": "approved",
-    });
+    expect(item.expandedRunIds).toHaveLength(1);
+    expect(item.expandedItemIds).toHaveLength(1);
   });
 
   it("changes the repository-backed Chat list scope and clears the selection", () => {

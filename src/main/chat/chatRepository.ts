@@ -281,6 +281,41 @@ export class ChatRepository {
     return persisted;
   }
 
+  getMessage(messageId: string): Message | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, chat_id, run_id, role, status, content, created_at, updated_at
+         FROM messages
+         WHERE id = ?`,
+      )
+      .get(messageId) as MessageRow | undefined;
+    return row ? readMessage(row) : undefined;
+  }
+
+  listMessages(chatId: string): Message[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, chat_id, run_id, role, status, content, created_at, updated_at
+         FROM messages
+         WHERE chat_id = ?
+         ORDER BY created_at, id`,
+      )
+      .all(chatId) as MessageRow[];
+    return rows.map(readMessage);
+  }
+
+  listRunMessages(runId: string): Message[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, chat_id, run_id, role, status, content, created_at, updated_at
+         FROM messages
+         WHERE run_id = ?
+         ORDER BY created_at, id`,
+      )
+      .all(runId) as MessageRow[];
+    return rows.map(readMessage);
+  }
+
   getSnapshot(chatId: string): ChatPersistenceSnapshot | null {
     const chat = this.getChat(chatId);
     if (!chat) {

@@ -19,7 +19,13 @@ export default defineConfig((environment) => ({
     minify: false,
     outDir: ".vite/build",
     rollupOptions: {
-      external: ["electron", "better-sqlite3", "ws", ...nodeExternals],
+      external: [
+        "electron",
+        "better-sqlite3",
+        "playwright-core",
+        "ws",
+        ...nodeExternals,
+      ],
     },
     sourcemap: true,
   },

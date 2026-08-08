@@ -195,6 +195,8 @@ userData/
 
 导入器接受一个 Codex 风格文件夹，校验后**复制**进 CharaMate 目录；运行时不依赖 `~/.codex/pets`。因此用户可直接复制兼容素材，但两边安装、更新和删除互不影响。
 
+发布包随附 Columbinya v2 与 Linnea v1 两个初始桌宠。首次启动使用同一导入校验与复制路径把缺失项写入 CharaMate 自有目录；同 ID 的已有桌宠、当前选择和用户后续修改均不被覆盖。内置资源也不改变运行时边界：Renderer 仍只读取 `userData/pets`。
+
 兼容格式：
 
 | 版本 | 图集 | 含义 |
@@ -469,6 +471,8 @@ Registry 负责：
 | Memory | 检索、读取来源、创建候选、编辑记忆 |
 | Chat | 创建会话、附加结果、读取当前 Run 状态 |
 | Territory | 提议物件、生成、放置、收回记忆库 |
+
+当前公开信息在 Adapter 已确认 Provider 支持时优先使用原生 Web Search；需要页面交互、已登录状态或可复现 DOM/AX 证据时使用 Managed Browser；网页结构化能力不足时才退到 Computer Use。原生搜索、受管浏览器与 Computer 分别承担检索、交互和兜底职责，不构成同一能力的运行时模式或失败回退链。
 
 ### 5.3 Browser
 
@@ -1189,6 +1193,8 @@ interface ProviderProfile {
 ```
 
 一个 Provider Profile 只保存一个 `apiKeyRef`，Chat、Realtime 与 Image 能力共用该凭据。若某项能力由不同服务或不同密钥提供，用户应创建另一个 Provider Profile；普通设置与持久层都不增加能力级多密钥字段。
+
+空 Provider 库首次初始化时写入两份源码所有的非密钥元数据：`copilot_api`（本机 `localhost:4141/v1` 与 `gpt-5.6-sol`）以及 `azure`（目标 resource、API Version、Realtime/Image Endpoint 与 Model）。已有 Profile 库不被改写。源码、SQLite 和 IPC 都不包含 API Key；用户填写的真实 Key 仍只进入 `safeStorage` 管理的 `secrets.bin`，数据库只保留随机引用。
 
 2026-08-01 的实现前来源刷新确认：官方 OpenAI JavaScript SDK `6.49.0` 的 `OpenAI` client 支持显式 `baseURL`，OpenAI OpenAPI `2.3.0` 的 `GET /v1/models` 对应 `client.models.list()`；同一 SDK 的 `AzureOpenAI` client 在构造 HTTP client 时除 endpoint/baseURL 与 API Key 外还强制要求 `apiVersion`。这只是 SDK HTTP client 的构造约束，不代表 Azure GA Realtime 需要版本号。因此 `apiVersion` 在 `azure-openai` Profile 中为可选，在 `openai-compatible` Profile 中不存在；Adapter 仅在模型发现等 Azure HTTP 动作发生时构造 SDK client 并要求版本号，Realtime GA 握手不读取它，Image 验证优先使用 Image deployment 的 Generation 基准 Endpoint 自带的 `api-version`、否则使用 Profile 值。这些差异只存在于外部协议 Adapter 边界，不分叉 CharaMate Provider Service。Electron `43.2.0` 的正式类型与 API 文档同时确认 async `safeStorage` 需要在 app ready 后调用 `isAsyncEncryptionAvailable`、`encryptStringAsync` 与 `decryptStringAsync`，解密结果的 `shouldReEncrypt` 由 Secret Store 原位换钥处理。
 

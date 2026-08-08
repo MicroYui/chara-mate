@@ -20,6 +20,11 @@ import styles from "./RunProcess.module.css";
 
 interface RunProcessProps {
   readonly dispatch: Dispatch<ChatsUiAction>;
+  readonly onResume: (runId: string) => void;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: "approved" | "rejected",
+  ) => void;
   readonly run: ChatRunView;
   readonly state: ChatsUiState;
 }
@@ -39,6 +44,27 @@ function runDuration(run: ChatRunView): number {
     return Date.parse(run.record.endedAt) - Date.parse(run.record.startedAt);
   }
   return run.items.reduce((total, item) => total + (item.durationMs ?? 0), 0);
+}
+
+function runSummary(status: ChatRunView["record"]["status"]): string {
+  switch (status) {
+    case "queued":
+      return "等待开始";
+    case "running":
+      return "正在处理";
+    case "waiting_approval":
+      return "等待确认";
+    case "completed":
+      return "已处理";
+    case "needs_input":
+      return "需要补充信息";
+    case "interrupted":
+      return "已中断";
+    case "failed":
+      return "处理失败";
+    case "cancelled":
+      return "已停止";
+  }
 }
 
 function itemTitle(item: RunItem): string {
@@ -124,36 +150,62 @@ function ItemDetails({ item }: { readonly item: RunItem }) {
       {item.error ? (
         <p className={styles["itemError"]}>{item.error.message}</p>
       ) : null}
+      {item.artifacts.length > 0 ? (
+        <div className={styles["artifacts"]}>
+          <strong>产物</strong>
+          <ul>
+            {item.artifacts.map((artifact) => (
+              <li key={artifact.artifactId}>
+                {artifact.displayName}
+                <small>{artifact.kind}</small>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 interface ApprovalCardProps {
   readonly approval: Approval;
-  readonly decision: "approved" | "rejected" | undefined;
   readonly dispatch: Dispatch<ChatsUiAction>;
   readonly expanded: boolean;
   readonly item: RunItem;
+  readonly onResolveApproval: RunProcessProps["onResolveApproval"];
 }
 
 function ApprovalCard({
   approval,
-  decision,
   dispatch,
   expanded,
   item,
+  onResolveApproval,
 }: ApprovalCardProps) {
-  if (decision) {
+  if (approval.status !== "pending") {
+    const label =
+      approval.status === "approved"
+        ? "已允许一次"
+        : approval.status === "rejected"
+          ? "已拒绝"
+          : approval.status === "expired"
+            ? "审批已结束"
+            : "审批已取消";
     return (
       <div className={styles["approvalResolved"]} role="status">
         <Check aria-hidden="true" size={14} />
-        <span>{decision === "approved" ? "已允许一次" : "已拒绝"}</span>
+        <span>{label}</span>
       </div>
     );
   }
 
   return (
-    <section className={styles["approvalCard"]} aria-label="需要你的确认">
+    <section
+      className={styles["approvalCard"]}
+      id={`approval-${approval.id}`}
+      aria-label="需要你的确认"
+      tabIndex={-1}
+    >
       <div className={styles["approvalIcon"]}>
         <ShieldAlert aria-hidden="true" size={15} />
       </div>
@@ -175,13 +227,7 @@ function ApprovalCard({
         <div className={styles["approvalActions"]}>
           <button
             type="button"
-            onClick={() =>
-              dispatch({
-                approvalId: approval.id,
-                decision: "rejected",
-                type: "approval.resolved",
-              })
-            }
+            onClick={() => onResolveApproval(approval.id, "rejected")}
           >
             拒绝
           </button>
@@ -194,13 +240,7 @@ function ApprovalCard({
           <button
             className={styles["approveButton"]}
             type="button"
-            onClick={() =>
-              dispatch({
-                approvalId: approval.id,
-                decision: "approved",
-                type: "approval.resolved",
-              })
-            }
+            onClick={() => onResolveApproval(approval.id, "approved")}
           >
             允许一次
           </button>
@@ -219,7 +259,8 @@ function RunItemRow({
   readonly item: RunItem;
   readonly state: ChatsUiState;
 }) {
-  const expanded = state.expandedItemIds.includes(item.id);
+  const forcedOpen = item.status === "running";
+  const expanded = forcedOpen || state.expandedItemIds.includes(item.id);
   const expandable = hasDetails(item);
   return (
     <div className={styles["item"]} data-status={item.status}>
@@ -249,20 +290,19 @@ function RunItemRow({
   );
 }
 
-export function RunProcess({ dispatch, run, state }: RunProcessProps) {
+export function RunProcess({
+  dispatch,
+  onResume,
+  onResolveApproval,
+  run,
+  state,
+}: RunProcessProps) {
   const forcedOpen = run.record.status !== "completed";
   const expanded = forcedOpen || state.expandedRunIds.includes(run.record.id);
   const visibleItems = run.items.filter(
     ({ kind }) => kind !== "user_message" && kind !== "assistant_message",
   );
-  const summaryLead =
-    run.record.status === "waiting_approval"
-      ? "等待确认"
-      : run.record.status === "running"
-        ? "正在处理"
-        : run.record.status === "completed"
-          ? "已处理"
-          : "处理已结束";
+  const summaryLead = runSummary(run.record.status);
 
   return (
     <section className={styles["run"]} data-status={run.record.status}>
@@ -284,6 +324,18 @@ export function RunProcess({ dispatch, run, state }: RunProcessProps) {
       </button>
       {expanded ? (
         <div className={styles["items"]}>
+          {run.record.error ? (
+            <div className={styles["runError"]} role="alert">
+              <AlertCircle aria-hidden="true" size={14} />
+              <span>{run.record.error.message}</span>
+              {run.record.status === "interrupted" &&
+              run.record.error.retryable ? (
+                <button type="button" onClick={() => onResume(run.record.id)}>
+                  继续运行
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {visibleItems.map((item) => {
             if (item.kind === "approval") {
               const approval = run.approvals.find(
@@ -293,10 +345,10 @@ export function RunProcess({ dispatch, run, state }: RunProcessProps) {
                 <ApprovalCard
                   key={item.id}
                   approval={approval}
-                  decision={state.resolvedApprovals[approval.id]}
                   dispatch={dispatch}
                   expanded={state.expandedItemIds.includes(item.id)}
                   item={item}
+                  onResolveApproval={onResolveApproval}
                 />
               ) : null;
             }

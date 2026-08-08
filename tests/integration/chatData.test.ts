@@ -401,6 +401,37 @@ describe("Phase 1 Chat Data and Run event persistence", () => {
     database.close();
   });
 
+  it("projects text deltas into the visible item output while streaming", async () => {
+    const { database } = await createDatabase();
+    new ChatRepository(database).insertChat(chatFixture);
+    const runs = new RunRepository(database);
+    const item = startedItem();
+
+    runs.appendEvent(envelope(1, { run: startedRun(), type: "run.started" }));
+    runs.appendEvent(envelope(2, { item, type: "item.started" }));
+    runs.appendEvent(
+      envelope(3, {
+        delta: { text: "first" },
+        itemId: item.id,
+        type: "item.delta",
+      }),
+    );
+    runs.appendEvent(
+      envelope(4, {
+        delta: { text: " second" },
+        itemId: item.id,
+        type: "item.delta",
+      }),
+    );
+
+    expect(runs.getRunItem(item.id)).toMatchObject({
+      displayOutput: "first second",
+      status: "running",
+    });
+    expect(runs.getRun(FIXTURE_IDS.run)?.latestSequence).toBe(4);
+    database.close();
+  });
+
   it("commits before broadcast and does not rebroadcast an idempotent append", async () => {
     const { database, databasePath } = await createDatabase();
     new ChatRepository(database).insertChat(chatFixture);

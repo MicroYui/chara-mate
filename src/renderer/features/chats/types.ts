@@ -1,5 +1,6 @@
 import type {
   Approval,
+  ApprovalNavigationTarget,
   ApprovalMode,
   ArtifactReference,
   Chat,
@@ -69,6 +70,7 @@ export interface ComposerAttachment {
   readonly id: EntityId;
   readonly mediaType?: string;
   readonly source: "file" | "folder" | "image" | "screenshot";
+  readonly storageKey: string;
 }
 
 export interface ChatsUiState {
@@ -78,12 +80,13 @@ export interface ChatsUiState {
   readonly chatListStatus: "active" | "archived";
   readonly composerAttachments: readonly ComposerAttachment[];
   readonly composerPhase: ComposerPhase;
+  readonly defaultApprovalMode: ApprovalMode;
+  readonly defaultMode: "chat" | "agent";
   readonly draft: string;
   readonly expandedItemIds: readonly EntityId[];
   readonly expandedRunIds: readonly EntityId[];
   readonly mode: "chat" | "agent";
   readonly modelId: string | undefined;
-  readonly resolvedApprovals: Readonly<Record<string, "approved" | "rejected">>;
   readonly searchQuery: string;
   readonly sidebarCollapsed: boolean;
 }
@@ -120,9 +123,13 @@ export type ChatsUiAction =
   | { readonly type: "run.toggled"; readonly runId: EntityId }
   | { readonly type: "item.toggled"; readonly itemId: EntityId }
   | {
-      readonly type: "approval.resolved";
-      readonly approvalId: EntityId;
-      readonly decision: "approved" | "rejected";
+      readonly approvalMode: ApprovalMode;
+      readonly mode: "chat" | "agent";
+      readonly type: "settings.defaults-loaded";
+    }
+  | {
+      readonly type: "approval.focused";
+      readonly target: ApprovalNavigationTarget;
     };
 
 export type ChatsFixtureUiState = ChatsUiState;

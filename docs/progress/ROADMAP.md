@@ -1,7 +1,7 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Decision Gate 已关闭，生产实现待启动
-> 日期：2026-08-07
+> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done
+> 日期：2026-08-08
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
 本文件记录里程碑依赖、工作包边界和验收，不记录逐命令历史。Phase 编号表示产品集成与验收顺序，不要求所有开发工作全局串行；只有共享契约、Schema、IPC 和同一可变资源的写入必须串行。
@@ -118,7 +118,7 @@ flowchart TD
 
 1. **Wave 0 — 串行入口（已完成）**：来源刷新、工具链兼容性、共享 Contract/Schema 所有权和测试命令基线。
 2. **Wave 1 — Phase 1 并行（已完成）**：UI fixture、持久化/IPC、Provider/Secret 三条所有权不重叠的路径并行，随后由一个集成 owner 收口 Chats。
-3. **Wave 2 — Phase 2 主干（Decision complete / implementation next）**：后继 H2–H6、source-derived Discovery 与 Cache 已形成选择，H7 W2 Quality 300/300 valid，并在保留机械失败的同时按整体产品证据接受单一 `HC-FINAL` 组合。Discovery 的主质量压力上限为 512 Tool；未计分的 1024 层已退休。2026-08-07 owner waive 专用 H7 Timing 100，Quality raw 延迟只作描述性证据且不声称 Gate 通过；该 scope closure 已解除唯一 Agent Runtime、Tool、Approval 和恢复路径的实现阻塞。
+3. **Wave 2 — Phase 2 主干（已完成）**：后继 H2–H6、source-derived Discovery 与 Cache 的选择已重写为唯一 Agent Runtime、Tool/Approval、Local/Browser/Computer/MCP/Skills、可观测性和固定 Cache On 生产路径。H7 W2 Quality 300/300 valid；机械失败、产品 amendment 与专用 H7 Timing 100 的 scope closure 原样保留，不声称 timing Gate 通过。完整 offline、Electron E2E、build、package 和开发/打包 smoke 已通过。
 4. **Wave 3 — 多支线并行**：Agent 主干稳定后，Memory 研究、Voice Contract/实验、Automation 基础、桌宠基础与 Multi-agent 实验可并行；候选代码只在隔离 worktree。
 5. **Wave 4 — 长期理解支线**：Memory 胜者进入生产后，Activity、主动聊天、Self-evolution 实验和 Territory 记忆物件可并行。
 6. **Wave 5 — 全产品收口**：只集成已通过 Gate 的路径，运行完整离线、打包、E2E 和明确要求的 Live 检查。
@@ -163,7 +163,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P1-CHAT-UI`：消息列表、空状态、用户/助手消息、附件、Composer 模式/模型/权限位置。
 - `P1-CONTENT`：GFM、代码、KaTeX、表格、Mermaid、媒体/文件卡与各级复制；流式容错后确定性重渲染。
 - `P1-RUN-PROJECTION`：运行中展开、完成折叠、Tool 二级详情、停止反馈、刷新和重启恢复。
-- `P1-PROVIDER`：Provider Profile、模型发现/手填、连接测试、Model snapshot、async `safeStorage` 与 redaction。
+- `P1-PROVIDER`：Provider Profile、模型发现/手填、连接测试、Model snapshot、async `safeStorage` 与 redaction；空库首次写入源码所有的 `copilot_api`/`azure` 非密钥元数据，已有库不覆盖。
 
 ### 验收
 
@@ -175,7 +175,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## Phase 2 — Agent Runtime 与能力
 
-> 里程碑状态：Decision complete / implementation next（2026-08-07）。H2–H6、source-derived D1、Cache 与 H7 Quality 已完成选择；专用 H7 Timing 100 已由 owner waive。
+> 里程碑状态：Done（2026-08-08）。Decision、单一生产实现与全部退出验收均已完成；专用 H7 Timing 100 仍按 owner scope closure 记为 waived，而非通过。
 
 ### 依赖与 Gate
 
@@ -184,7 +184,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - 后继 H2 使用新 detector、未曝光任务和仓库外可覆盖工作 Manifest；修订直接覆盖工作文件，每次计分记录实际 hash 与 lane map，不为每次修改复制版本或重跑无关阶段；不能把 HS0、T0、GD4 或 PC0-OFF 当 fallback；
 - 后继所有选择实验遵守现实负载准入：小 fixture、单步任务、少量 Schema 或缩小 window 只作 smoke/AR1/规模校准，不能选择生产方案；D1 的 256/512 Tool 现实工作流与 512 极限压力保留为 Discovery 证据，1024 scored 层已经在首个计分请求前退休；H3 使用完整发现 inventory 与失败后续步骤；H4–H6 同时验证真实长上下文和目标 endpoint resolved-budget 高压层；Cache 重放最终请求形状；H7 在 256/512 Tool 与短/长/近预算 context 上做未曝光联合确认。所有阶段都分别保存业务终局、Tool/参数正确、误调/漏调、虚假完成、实际请求 shape 与 Provider usage，只有规模标签或合并“成功率”不算充分证据；
 - 后续 live 阶段先通过已有 compatibility/preflight 或首轮 evidence barrier，再并行互不依赖的 cohort：同一 paired block 内 Arms 保持串行，quality 与 timing 使用隔离 namespace、固定 lane map 和相同的阶段前并发配置；H5→H6→Cache→H7 Quality 已完成，专用 H7 Timing 不再运行，性能转入生产单路径集成/E2E 与实际遥测；
-- 主仓库当前没有候选 Harness/Discovery/Cache Arm、Adapter、Schema、依赖或实验模式；未来胜者重写为单一路径前，失败候选仍不得进入生产。
+- 主仓库没有候选 Harness/Discovery/Cache Arm、Adapter、Schema、依赖或实验模式；胜者已经按 CharaMate domain contract 重写为单一路径，失败候选不得回流生产。
 
 ### 工作包
 
@@ -205,6 +205,8 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - 审批前副作用、取消后副作用和虚假完成均为零；
 - 进程中断后只恢复未完成边界，已完成副作用不重放；
 - Phase 2 领域测试、相关 contract/IPC integration、Electron Agent E2E、full offline 和 build 通过。
+
+完成证据见 `docs/progress/STATUS.md`：生产树只保留一个 Harness/Discovery/Cache 路径；开发版与 packaged app 均实际完成主窗口、桌宠、SQLite 和固定 Chromium round-trip。
 
 ## Phase 3 — Memory 与 Activity
 
@@ -290,7 +292,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 - `P6-PET-WINDOW`：透明常驻窗口、自由拖动、多显示器、位置/尺寸/朝向恢复、托盘和 earcon。
 - `P6-PET-RUNTIME`：PixiJS sprite runtime、CompanionState 动画、气泡和 Voice envelope 联动。
-- `P6-PET-IMPORT`：Codex v1/v2 校验、复制安装、自有目录和缺失 look row 降级。
+- `P6-PET-IMPORT`：Codex v1/v2 校验、复制安装、自有目录和缺失 look row 降级；发布包内置 Columbinya v2 与 Linnea v1，首次启动沿同一路径幂等复制且不覆盖同 ID 用户资产。
 - `P6-TERRITORY-BASE`：基础像素场景、图层、nav grid、角色移动、布置和收藏库。
 - `P6-TERRITORY-ITEM-MANIFEST`：2.5D 深度锚点、地面平面、占用/碰撞 mask、单层承载插槽、附件关系与结构化 authoring 校验；接收已落盘图片和 manifest，完成归一化 asset、不可变 definition/item、受控 URL 与 Renderer 投影，只提供 Territory 领域入口，不注册 Harness Tool。
 - `P6-TERRITORY-MEMORY`：Memory/Activity candidate、来源追溯、容量回收、版本与 pin。

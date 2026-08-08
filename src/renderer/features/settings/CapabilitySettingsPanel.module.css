@@ -1,0 +1,219 @@
+.panel {
+  width: min(900px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.header,
+.section,
+.form {
+  padding: 16px 18px;
+}
+
+.header,
+.section + .section {
+  border-bottom: 1px solid var(--border);
+}
+
+.header h2,
+.header p,
+.section h3,
+.section p {
+  margin: 0;
+}
+
+.header h2 {
+  margin: 3px 0;
+  font-size: 18px;
+}
+
+.header p:last-child,
+.section p,
+.meta,
+.feedback,
+.empty {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.eyebrow {
+  color: var(--accent) !important;
+  font-size: 10.5px !important;
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.form,
+.fields,
+.list,
+.toolList {
+  display: grid;
+  gap: 10px;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+}
+
+.list {
+  align-content: start;
+  padding: 9px;
+  border-right: 1px solid var(--border);
+  background: var(--surface-subtle);
+}
+
+.list button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: 32px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.list button[aria-current="true"],
+.list button:hover {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.list small,
+.toolList small {
+  color: var(--text-secondary);
+}
+
+.form label,
+.field {
+  display: grid;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.form input,
+.form select,
+.form textarea,
+.button,
+.actions button,
+.section button,
+.list > button:last-child {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.form textarea {
+  min-height: 86px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.45;
+}
+
+.editor {
+  min-height: 280px !important;
+}
+
+.row,
+.actions,
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.row > label,
+.statusRow > div {
+  flex: 1;
+}
+
+.checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 7px !important;
+}
+
+.checkbox input {
+  min-height: auto;
+}
+
+.actions {
+  justify-content: flex-end;
+}
+
+.actions button,
+.section button,
+.button {
+  width: auto;
+  cursor: pointer;
+}
+
+.primary {
+  border-color: var(--accent) !important;
+  background: var(--accent) !important;
+  color: #fff !important;
+}
+
+.danger {
+  color: var(--danger) !important;
+}
+
+.feedback {
+  min-height: 18px;
+}
+
+.feedback[role="alert"] {
+  color: var(--danger);
+}
+
+.status {
+  display: inline-flex;
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.toolList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.toolList li {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (max-width: 720px) {
+  .columns {
+    grid-template-columns: 1fr;
+  }
+
+  .list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
