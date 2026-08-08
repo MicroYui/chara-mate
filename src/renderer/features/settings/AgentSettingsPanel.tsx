@@ -70,12 +70,13 @@ export function AgentSettingsPanel({
           默认模式
           <select
             value={settings.defaultMode}
-            onChange={(event) =>
+            onChange={(event) => {
+              const defaultMode = event.currentTarget.value as "chat" | "agent";
               setSettings((current) => ({
                 ...current,
-                defaultMode: event.currentTarget.value as "chat" | "agent",
-              }))
-            }
+                defaultMode,
+              }));
+            }}
           >
             <option value="chat">Chat</option>
             <option value="agent">Agent</option>
@@ -85,13 +86,14 @@ export function AgentSettingsPanel({
           Agent 默认权限
           <select
             value={settings.defaultApprovalMode}
-            onChange={(event) =>
+            onChange={(event) => {
+              const defaultApprovalMode = event.currentTarget
+                .value as AgentSettings["defaultApprovalMode"];
               setSettings((current) => ({
                 ...current,
-                defaultApprovalMode: event.currentTarget
-                  .value as AgentSettings["defaultApprovalMode"],
-              }))
-            }
+                defaultApprovalMode,
+              }));
+            }}
           >
             <option value="request_approval">请求批准</option>
             <option value="auto_approve">替我审批</option>
@@ -102,12 +104,13 @@ export function AgentSettingsPanel({
           工作目录
           <input
             value={settings.workingDirectory}
-            onChange={(event) =>
+            onChange={(event) => {
+              const workingDirectory = event.currentTarget.value;
               setSettings((current) => ({
                 ...current,
-                workingDirectory: event.currentTarget.value,
-              }))
-            }
+                workingDirectory,
+              }));
+            }}
           />
         </label>
         <p className={styles["meta"]}>

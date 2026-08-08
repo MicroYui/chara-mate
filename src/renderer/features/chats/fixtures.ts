@@ -176,7 +176,12 @@ const designItems: readonly RunItem[] = [
     durationMs: 8_200,
     endedAt: "2026-08-01T07:52:08.200Z",
     input: {
-      steps: ["读取设计", "整理组件边界", "验证 fixture"],
+      explanation: "先核对约束，再完成实现与验证。",
+      plan: [
+        { status: "completed", step: "读取设计" },
+        { status: "in_progress", step: "整理组件边界" },
+        { status: "pending", step: "验证 fixture" },
+      ],
     },
     kind: "plan",
     startedAt: timestamps.designCreated,

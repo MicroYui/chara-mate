@@ -1,0 +1,223 @@
+.activePlan {
+  position: absolute;
+  right: 6px;
+  bottom: calc(100% + 7px);
+  z-index: 5;
+}
+
+.trigger {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 999px;
+  padding: 0 9px;
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  box-shadow: 0 7px 22px rgba(30, 37, 43, 0.1);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+}
+
+.trigger:hover,
+.trigger:focus-visible,
+.activePlan[data-open] .trigger {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
+  color: var(--text-primary);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: 2px;
+}
+
+.trigger > svg:first-child {
+  color: var(--accent);
+}
+
+.trigger strong {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 640;
+}
+
+.trigger > svg:last-child {
+  color: var(--text-tertiary);
+  transition: transform 140ms ease;
+}
+
+.activePlan[data-open] .trigger > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.floatingPanel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  width: min(430px, calc(100vw - 44px));
+  visibility: hidden;
+  transform: translateY(5px) scale(0.985);
+  transform-origin: bottom right;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    transform 140ms ease,
+    visibility 140ms;
+}
+
+.activePlan[data-open] .floatingPanel {
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.floatingPanel,
+.archiveCard {
+  display: grid;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
+  border-radius: 13px;
+  padding: 11px;
+  background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
+  color: var(--text-primary);
+}
+
+.floatingPanel {
+  box-shadow: 0 18px 48px rgba(30, 37, 43, 0.16);
+  backdrop-filter: blur(18px);
+}
+
+.archiveCard {
+  margin: 4px 0 6px;
+  background: var(--surface-subtle);
+}
+
+.header {
+  display: grid;
+  grid-template-columns: 27px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+
+.planIcon {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+}
+
+.header strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 640;
+}
+
+.header p {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.header > small {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.steps {
+  display: grid;
+  max-height: min(290px, 45vh);
+  overflow-y: auto;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps li {
+  display: grid;
+  min-height: 27px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  border-radius: 7px;
+  padding: 3px 6px;
+}
+
+.steps li > span {
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+}
+
+.steps li > p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.steps li > small {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.steps li[data-status="in_progress"] {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.steps li[data-status="in_progress"] > span,
+.steps li[data-status="in_progress"] > small {
+  color: var(--accent);
+}
+
+.steps li[data-status="completed"] > span {
+  color: var(--success);
+}
+
+.steps li[data-status="completed"] > p {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-tertiary);
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trigger > svg:last-child,
+  .floatingPanel {
+    transition: none;
+  }
+
+  .spin {
+    animation: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .activePlan {
+    right: 5px;
+  }
+
+  .floatingPanel {
+    width: min(400px, calc(100vw - 26px));
+  }
+}

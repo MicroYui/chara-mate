@@ -1,3 +1,9 @@
+import {
+  Accessibility,
+  MonitorUp,
+  PanelsTopLeft,
+  RefreshCw,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import type {
@@ -13,6 +19,14 @@ const labels = {
   restricted: "受系统限制",
   unavailable: "当前平台不可用",
 } as const;
+
+type PermissionStatus = BrowserComputerSettings["accessibility"];
+
+function statusTone(status: PermissionStatus | undefined): string {
+  if (status === "granted") return "positive";
+  if (status === "denied" || status === "restricted") return "attention";
+  return "neutral";
+}
 
 export function BrowserComputerSettingsPanel({
   api = window.charaMate.settings,
@@ -69,20 +83,38 @@ export function BrowserComputerSettingsPanel({
         <p>浏览器使用独立 Profile；系统权限仍由 macOS 原生设置管理。</p>
       </header>
       <div className={styles["section"]}>
-        <div className={styles["statusRow"]}>
+        <div className={styles["capabilityRow"]}>
+          <span className={styles["capabilityIcon"]}>
+            <PanelsTopLeft aria-hidden="true" size={17} />
+          </span>
           <div>
             <h3>Managed Chromium</h3>
-            <p>{snapshot?.profileDirectory ?? "正在读取 Profile…"}</p>
+            <p>独立 Profile，不影响日常浏览器会话</p>
           </div>
-          <span className={styles["status"]}>
-            {snapshot?.browser === "open"
-              ? "已打开"
-              : snapshot?.browser === "ready"
-                ? "可用"
-                : "尚未安装"}
+          <span
+            className={styles["status"]}
+            data-tone={
+              snapshot?.browser === "ready" || snapshot?.browser === "open"
+                ? "positive"
+                : "neutral"
+            }
+          >
+            {!snapshot
+              ? "读取中"
+              : snapshot.browser === "open"
+                ? "已打开"
+                : snapshot.browser === "ready"
+                  ? "可用"
+                  : "尚未安装"}
           </span>
         </div>
-        <div className={styles["actions"]}>
+        <div className={styles["profilePath"]}>
+          <span>Profile</span>
+          <code title={snapshot?.profileDirectory}>
+            {snapshot?.profileDirectory ?? "正在读取…"}
+          </code>
+        </div>
+        <div className={styles["compactActions"]}>
           <button
             disabled={busy || snapshot?.browser === "not_installed"}
             type="button"
@@ -100,18 +132,57 @@ export function BrowserComputerSettingsPanel({
         </div>
       </div>
       <div className={styles["section"]}>
-        <h3>macOS 权限状态</h3>
-        <p>
-          Accessibility：{snapshot ? labels[snapshot.accessibility] : "读取中"}
-        </p>
-        <p>
-          Screen Recording：
-          {snapshot ? labels[snapshot.screenRecording] : "读取中"}
-        </p>
+        <div className={styles["sectionHeading"]}>
+          <div>
+            <h3>macOS 权限</h3>
+            <p>状态由系统设置管理，CharaMate 只读取当前结果。</p>
+          </div>
+          <button disabled={busy} type="button" onClick={() => void refresh()}>
+            <RefreshCw aria-hidden="true" size={13} />
+            刷新
+          </button>
+        </div>
+        <div className={styles["permissionList"]}>
+          <div className={styles["permissionRow"]}>
+            <span className={styles["permissionIcon"]}>
+              <Accessibility aria-hidden="true" size={15} />
+            </span>
+            <div>
+              <strong>辅助功能</strong>
+              <small>操作其他 macOS 应用</small>
+            </div>
+            <span
+              className={styles["status"]}
+              data-tone={statusTone(snapshot?.accessibility)}
+            >
+              {snapshot ? labels[snapshot.accessibility] : "读取中"}
+            </span>
+          </div>
+          <div className={styles["permissionRow"]}>
+            <span className={styles["permissionIcon"]}>
+              <MonitorUp aria-hidden="true" size={15} />
+            </span>
+            <div>
+              <strong>屏幕录制</strong>
+              <small>读取屏幕内容以完成 Computer 操作</small>
+            </div>
+            <span
+              className={styles["status"]}
+              data-tone={statusTone(snapshot?.screenRecording)}
+            >
+              {snapshot ? labels[snapshot.screenRecording] : "读取中"}
+            </span>
+          </div>
+        </div>
       </div>
-      <p className={styles["form"]} role={error ? "alert" : "status"}>
-        {error ?? feedback}
-      </p>
+      {error || feedback ? (
+        <p
+          className={styles["panelFeedback"]}
+          role={error ? "alert" : "status"}
+        >
+          {error ?? feedback}
+        </p>
+      ) : null}
     </section>
   );
 }

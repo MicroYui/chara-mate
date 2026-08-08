@@ -24,6 +24,9 @@ export interface CompiledContext {
 }
 
 function resolvedInputBudget(limits: ModelContextLimits): number | undefined {
+  if (limits.effectiveInputTokens !== undefined) {
+    return limits.effectiveInputTokens;
+  }
   const byContext =
     limits.maxContextTokens === undefined ||
     limits.maxOutputTokens === undefined

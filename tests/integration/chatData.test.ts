@@ -101,6 +101,44 @@ function chatService(
 }
 
 describe("Phase 1 Chat Data and Run event persistence", () => {
+  it("creates the first-message fallback and never overwrites a user rename", async () => {
+    const { database } = await createDatabase();
+    const changed = vi.fn();
+    const service = new ChatService(
+      new ChatRepository(database),
+      new RunRepository(database),
+      { generate: () => FIXTURE_IDS.chat },
+      new FakeClock(FIXTURE_TIMESTAMPS.updated),
+      changed,
+    );
+
+    const created = service.create({
+      initialMessage: "  帮我规划北京\n周末行程  ",
+    });
+    expect(created.title).toBe("帮我规划北京 周末行程");
+    expect(changed).toHaveBeenLastCalledWith(created);
+
+    const generated = service.replaceGeneratedTitle(
+      created.id,
+      created.title,
+      "北京周末行程规划",
+    );
+    expect(generated?.title).toBe("北京周末行程规划");
+
+    service.rename({ chatId: created.id, title: "我的自定义标题" });
+    expect(
+      service.replaceGeneratedTitle(
+        created.id,
+        "北京周末行程规划",
+        "迟到的 AI 标题",
+      ),
+    ).toBeUndefined();
+    expect(service.getSnapshot({ chatId: created.id })?.chat.title).toBe(
+      "我的自定义标题",
+    );
+    database.close();
+  });
+
   it("manages, orders, searches and restores multiple Chats through the domain service", async () => {
     const { database, databasePath } = await createDatabase();
     const clock = new FakeClock(FIXTURE_TIMESTAMPS.created);

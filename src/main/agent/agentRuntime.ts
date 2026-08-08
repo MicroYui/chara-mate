@@ -24,6 +24,7 @@ import type { IdGenerator } from "../../shared/pure/id";
 import { redactText } from "../../shared/pure/redaction";
 import type { ChatRepository } from "../chat/chatRepository";
 import type { ChatService } from "../chat/chatService";
+import type { ChatTitleGenerator } from "../chat/chatTitleService";
 import type { ChatModelRuntime } from "../providers/providerService";
 import { ProviderError, toProviderAppError } from "../providers/providerError";
 import { toolEvidenceHash } from "../tools/toolRegistry";
@@ -57,6 +58,7 @@ const BASE_INSTRUCTIONS = `You are CharaMate's single Agent Runtime.
 Complete the user's actual goal using the available capabilities. When capabilities are needed, use the native tool search interface and then call only a loaded tool.
 Use Provider-native web search for current public information. Use the managed browser for webpage interaction or authenticated state, and macOS Computer only when the managed browser cannot access the needed interface.
 Treat every structured Tool Result as an observation: a rejected or failed action is not success. Change strategy when an operation makes no progress, and state honestly when a required result could not be obtained.
+For genuinely multi-step Agent work, call the always-loaded plan.update tool directly before other work, keep at most one step in_progress, and send the complete current plan again after meaningful progress. Do not search for plan.update, substitute a prose checklist, create a plan for simple work, or repeat the plan in prose because the product displays it.
 Only give a final answer when the user goal is complete or when the remaining limitation is explicit. Never claim that an external action happened without a successful Tool Result.
 Visible progress may be concise, but do not expose hidden reasoning.`;
 
@@ -75,6 +77,8 @@ const USER_ATTACHMENT_KINDS = new Set<ArtifactKind>([
   "audio",
   "video",
 ]);
+
+const ALWAYS_LOADED_CLIENT_TOOLS = new Set(["plan.update"]);
 
 interface ProviderRuntimeFactory {
   createChatModelRuntime(profileId: string): Promise<ChatModelRuntime>;
@@ -259,6 +263,7 @@ function namespaceDescription(
 
 function modelFunctionTool(definition: ToolDefinition): ModelFunctionTool {
   return {
+    deferLoading: !ALWAYS_LOADED_CLIENT_TOOLS.has(definition.descriptor.name),
     description: definition.descriptor.description,
     inputSchema: definition.descriptor.inputSchema as Readonly<
       Record<string, unknown>
@@ -358,6 +363,7 @@ export class AgentRuntime {
     private readonly clock: Clock,
     private readonly contextCompiler = new ContextCompiler(),
     private readonly additionalInstructions: () => string = () => "",
+    private readonly chatTitles?: ChatTitleGenerator,
   ) {}
 
   async initialize(): Promise<void> {
@@ -373,15 +379,18 @@ export class AgentRuntime {
             const modelRuntime = await this.providers.createChatModelRuntime(
               run.provider.profileId,
             );
-            const limits = await modelRuntime.provider.resolveContextLimits(
-              run.provider.modelId,
-            );
+            const data = decodeRuntimeCheckpoint(checkpoint.context);
+            const limits =
+              data.contextLimits ??
+              (await modelRuntime.provider.resolveContextLimits(
+                run.provider.modelId,
+              ));
             this.#launch(
               this.#createActiveRun(
                 run.id,
                 modelRuntime.provider,
                 limits,
-                decodeRuntimeCheckpoint(checkpoint.context),
+                data,
                 checkpoint.generation,
               ),
               checkpoint.phase,
@@ -565,11 +574,11 @@ export class AgentRuntime {
     const modelRuntime = await this.providers.createChatModelRuntime(
       run.provider.profileId,
     );
-    const limits = await modelRuntime.provider.resolveContextLimits(
-      run.provider.modelId,
-    );
-    this.writer.resume(run.id);
     const data = decodeRuntimeCheckpoint(checkpoint.context);
+    const limits =
+      data.contextLimits ??
+      (await modelRuntime.provider.resolveContextLimits(run.provider.modelId));
+    this.writer.resume(run.id);
     const active = this.#createActiveRun(
       run.id,
       modelRuntime.provider,
@@ -693,11 +702,13 @@ export class AgentRuntime {
     data: RuntimeCheckpointState,
     generation: number,
   ): ActiveRun {
+    const contextLimits = data.contextLimits ?? limits;
     return {
       abort: new AbortController(),
-      data,
+      data:
+        data.contextLimits === undefined ? { ...data, contextLimits } : data,
       generation,
-      limits,
+      limits: contextLimits,
       provider,
       runId,
       steering: [],
@@ -793,8 +804,9 @@ export class AgentRuntime {
         continue;
       }
       if (turn.text.trim()) {
-        this.writer.transition(active.runId, "completed");
+        const completedRun = this.writer.transition(active.runId, "completed");
         this.checkpoints.delete(active.runId);
+        await this.#generateFirstTurnTitle(active, completedRun, turn.text);
         return;
       }
       throw new GuardTerminalError({
@@ -803,6 +815,26 @@ export class AgentRuntime {
         retryable: false,
       });
     }
+  }
+
+  async #generateFirstTurnTitle(
+    active: ActiveRun,
+    run: Run,
+    assistantContent: string,
+  ): Promise<void> {
+    if (!this.chatTitles) return;
+    const firstUserMessage = this.chats
+      .listMessages(run.chatId)
+      .find(({ role, status }) => role === "user" && status === "completed");
+    if (!firstUserMessage || firstUserMessage.runId !== run.id) return;
+    await this.chatTitles.generate({
+      assistantContent,
+      chatId: run.chatId,
+      firstUserContent: firstUserMessage.content,
+      modelId: run.provider.modelId,
+      provider: active.provider,
+      signal: active.abort.signal,
+    });
   }
 
   async #modelTurn(active: ActiveRun): Promise<CollectedModelTurn> {
@@ -1071,11 +1103,13 @@ export class AgentRuntime {
     const item = this.writer.startItem(
       active.runId,
       definition.descriptor.itemKind,
-      {
-        arguments: pending.arguments,
-        callId: pending.callId,
-        toolName: pending.name,
-      },
+      definition.descriptor.itemKind === "plan"
+        ? asJsonValue(pending.arguments)
+        : {
+            arguments: pending.arguments,
+            callId: pending.callId,
+            toolName: pending.name,
+          },
     );
     const executing = { ...pending, toolItemId: item.id };
     const checkpointBoundary = { ...active.data };

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentApi } from "../../../shared/contracts/agent";
-import type { ChatApi } from "../../../shared/contracts/chat";
+import type { Chat, ChatApi } from "../../../shared/contracts/chat";
 import type {
   RunEventEnvelope,
   RunEventsApi,
@@ -25,6 +25,7 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 function createApis() {
+  let chatChangedListener: ((chat: Chat) => void) | undefined;
   let eventListener: ((event: RunEventEnvelope) => void) | undefined;
   const getSnapshot = vi.fn<ChatApi["getSnapshot"]>(() =>
     Promise.resolve({
@@ -35,6 +36,15 @@ function createApis() {
   const rename = vi.fn<ChatApi["rename"]>(() =>
     Promise.resolve({ ok: true as const, value: chatFixture }),
   );
+  const list = vi.fn<ChatApi["list"]>(() =>
+    Promise.resolve({ ok: true as const, value: [chatFixture] }),
+  );
+  const subscribeChanged = vi.fn<ChatApi["subscribeChanged"]>((listener) => {
+    chatChangedListener = listener;
+    return () => {
+      chatChangedListener = undefined;
+    };
+  });
   const chatApi: ChatApi = {
     archive: vi.fn<ChatApi["archive"]>(() =>
       Promise.resolve({ ok: true as const, value: chatFixture }),
@@ -49,9 +59,7 @@ function createApis() {
       }),
     ),
     getSnapshot,
-    list: vi.fn<ChatApi["list"]>(() =>
-      Promise.resolve({ ok: true as const, value: [chatFixture] }),
-    ),
+    list,
     rename,
     restore: vi.fn<ChatApi["restore"]>(() =>
       Promise.resolve({ ok: true as const, value: chatFixture }),
@@ -59,6 +67,7 @@ function createApis() {
     setPinned: vi.fn<ChatApi["setPinned"]>(() =>
       Promise.resolve({ ok: true as const, value: chatFixture }),
     ),
+    subscribeChanged,
   };
   const profile: ProviderProfile = {
     apiStyle: "openai-compatible",
@@ -103,21 +112,42 @@ function createApis() {
   const resume = vi.fn<AgentApi["resume"]>(({ runId }) =>
     Promise.resolve({ ok: true as const, value: { runId } }),
   );
+  const start = vi.fn<AgentApi["start"]>(() =>
+    Promise.resolve({
+      ok: true as const,
+      value: chatDataSnapshotFixture.runs[0]!,
+    }),
+  );
+  const steer = vi.fn<AgentApi["steer"]>(({ runId }) =>
+    Promise.resolve({ ok: true as const, value: { runId } }),
+  );
   const agentApi: AgentApi = {
     cancel: vi.fn(),
     getPendingApproval: vi.fn(),
     resolveApproval: vi.fn(),
     resume,
-    start: vi.fn(),
-    steer: vi.fn(),
+    start,
+    steer,
     subscribeOpenApproval: vi.fn(() => () => undefined),
   };
   return {
     agentApi,
     chatApi,
+    emitChatChanged: (chat = chatFixture) => chatChangedListener?.(chat),
     emit: (event: RunEventEnvelope) => eventListener?.(event),
     providerApi,
-    spies: { getSnapshot, listProfiles, rename, replay, resume, subscribe },
+    spies: {
+      getSnapshot,
+      list,
+      listProfiles,
+      rename,
+      replay,
+      resume,
+      start,
+      steer,
+      subscribe,
+      subscribeChanged,
+    },
     runEventsApi,
   };
 }
@@ -155,6 +185,7 @@ describe("ChatDomainStore", () => {
     });
     stop();
     expect(spies.subscribe).toHaveBeenCalledOnce();
+    expect(spies.subscribeChanged).toHaveBeenCalledOnce();
   });
 
   it("keeps keyless initial profiles in Settings rather than exposing unusable Composer models", async () => {
@@ -185,6 +216,33 @@ describe("ChatDomainStore", () => {
     await store.refreshModels();
 
     expect(store.getState().models).toEqual([]);
+  });
+
+  it("routes a second message into the active Run as steering", async () => {
+    const { agentApi, chatApi, providerApi, runEventsApi, spies } =
+      createApis();
+    const store = new ChatDomainStore(
+      chatApi,
+      agentApi,
+      providerApi,
+      runEventsApi,
+    );
+    await store.loadSnapshot(chatFixture.id);
+
+    await store.submit({
+      attachments: [],
+      chatId: chatFixture.id,
+      content: "先改用更简单的方案",
+      execution: { approvalMode: "request_approval", mode: "agent" },
+      providerProfileId: FIXTURE_IDS.provider,
+    });
+
+    expect(spies.steer).toHaveBeenCalledOnce();
+    expect(spies.steer.mock.calls[0]?.[0]).toMatchObject({
+      content: "先改用更简单的方案",
+      runId: FIXTURE_IDS.run,
+    });
+    expect(spies.start).not.toHaveBeenCalled();
   });
 
   it("treats Run events as sequence notifications and reloads Main truth", async () => {
@@ -220,6 +278,34 @@ describe("ChatDomainStore", () => {
     expect(spies.getSnapshot).toHaveBeenCalledWith({
       chatId: chatFixture.id,
     });
+  });
+
+  it("reloads the list and active snapshot when Main publishes an AI title", async () => {
+    const {
+      agentApi,
+      chatApi,
+      emitChatChanged,
+      providerApi,
+      runEventsApi,
+      spies,
+    } = createApis();
+    const store = new ChatDomainStore(
+      chatApi,
+      agentApi,
+      providerApi,
+      runEventsApi,
+    );
+    store.start();
+    await flushMicrotasks();
+    await store.loadSnapshot(chatFixture.id);
+    spies.getSnapshot.mockClear();
+    spies.list.mockClear();
+
+    emitChatChanged({ ...chatFixture, title: "AI 总结标题" });
+    await flushMicrotasks();
+
+    expect(spies.list).toHaveBeenCalledWith({ query: "", status: "active" });
+    expect(spies.getSnapshot).toHaveBeenCalledWith({ chatId: chatFixture.id });
   });
 
   it("surfaces mutation failures instead of swallowing them in the App", async () => {

@@ -19,6 +19,7 @@ export const initialChatsUiState: ChatsUiState = {
   draft: "",
   expandedItemIds: [],
   expandedRunIds: [],
+  isDraftChat: false,
   mode: "chat",
   modelId: undefined,
   searchQuery: "",
@@ -40,6 +41,7 @@ export function chatsUiReducer(
         chatListStatus: "active",
         expandedItemIds: [action.target.itemId],
         expandedRunIds: [action.target.runId],
+        isDraftChat: false,
       };
     case "settings.defaults-loaded":
       return {
@@ -58,17 +60,34 @@ export function chatsUiReducer(
         activePage: "chats",
         expandedItemIds: [],
         expandedRunIds: [],
+        isDraftChat: false,
       };
     case "chat.new":
       return {
         ...state,
         activeChatId: null,
         activePage: "chats",
+        chatListStatus: "active",
         composerAttachments: [],
         composerPhase: "idle",
         draft: "",
         expandedItemIds: [],
         expandedRunIds: [],
+        isDraftChat: true,
+        approvalMode: state.defaultApprovalMode,
+        mode: state.defaultMode,
+        searchQuery: "",
+      };
+    case "chat.selection-cleared":
+      return {
+        ...state,
+        activeChatId: null,
+        composerAttachments: [],
+        composerPhase: "idle",
+        draft: "",
+        expandedItemIds: [],
+        expandedRunIds: [],
+        isDraftChat: false,
         approvalMode: state.defaultApprovalMode,
         mode: state.defaultMode,
       };
@@ -79,6 +98,7 @@ export function chatsUiReducer(
         chatListStatus: action.status,
         expandedItemIds: [],
         expandedRunIds: [],
+        isDraftChat: false,
       };
     case "search.changed":
       return { ...state, searchQuery: action.query };

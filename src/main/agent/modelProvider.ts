@@ -1,6 +1,7 @@
 import type { JsonValue } from "../../shared/contracts/primitives";
 
 export interface ModelFunctionTool {
+  readonly deferLoading?: boolean;
   readonly description: string;
   readonly inputSchema: Readonly<Record<string, unknown>>;
   readonly name: string;
@@ -15,6 +16,7 @@ export interface ModelToolNamespace {
 }
 
 export interface ModelContextLimits {
+  readonly effectiveInputTokens?: number;
   readonly maxContextTokens?: number;
   readonly maxOutputTokens?: number;
   readonly maxPromptTokens?: number;

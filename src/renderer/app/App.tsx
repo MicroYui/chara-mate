@@ -48,6 +48,7 @@ export function App() {
   const [approvalNavigation, setApprovalNavigation] =
     useState<ApprovalNavigationTarget | null>(null);
   const focusedApprovalId = useRef<string | undefined>(undefined);
+  const sendPending = useRef(false);
   const chatStore = useMemo(
     () =>
       new ChatDomainStore(
@@ -195,10 +196,15 @@ export function App() {
     const nextChat = chatDomain.chats.find(
       ({ status }) => status === uiState.chatListStatus,
     );
-    if (uiState.activeChatId === null && nextChat) {
+    if (uiState.activeChatId === null && !uiState.isDraftChat && nextChat) {
       dispatch({ chatId: nextChat.id, type: "chat.selected" });
     }
-  }, [chatDomain.chats, uiState.activeChatId, uiState.chatListStatus]);
+  }, [
+    chatDomain.chats,
+    uiState.activeChatId,
+    uiState.chatListStatus,
+    uiState.isDraftChat,
+  ]);
 
   useEffect(() => {
     if (chatDomain.models.some(({ id }) => id === uiState.modelId)) {
@@ -258,25 +264,21 @@ export function App() {
 
   const createChat = () => {
     dispatch({ type: "chat.new" });
-    dispatch({ status: "active", type: "chat-list-status.changed" });
-    dispatch({ query: "", type: "search.changed" });
-    void chatStore
-      .create()
-      .then((chat) => dispatch({ chatId: chat.id, type: "chat.selected" }))
-      .catch(() => undefined);
   };
 
   const sendRun = async () => {
     const model = chatDomain.models.find(({ id }) => id === uiState.modelId);
-    if (!model) return;
-    let chatId = uiState.activeChatId;
-    if (!chatId) {
-      const created = await chatStore.create();
-      chatId = created.id;
-      dispatch({ chatId, type: "chat.selected" });
-    }
+    if (!model || sendPending.current) return;
+    const content = uiState.draft.trim() || "请处理这些附件。";
+    sendPending.current = true;
     dispatch({ phase: "running", type: "composer.phase-changed" });
     try {
+      let chatId = uiState.activeChatId;
+      if (!chatId) {
+        const created = await chatStore.create(content);
+        chatId = created.id;
+        dispatch({ chatId, type: "chat.selected" });
+      }
       await chatStore.submit({
         attachments: uiState.composerAttachments.map((attachment) => ({
           artifactId: attachment.id,
@@ -295,7 +297,7 @@ export function App() {
           storageKey: attachment.storageKey,
         })),
         chatId,
-        content: uiState.draft.trim() || "请处理这些附件。",
+        content,
         execution:
           uiState.mode === "chat"
             ? { mode: "chat" }
@@ -311,6 +313,8 @@ export function App() {
       }
     } catch {
       dispatch({ phase: "idle", type: "composer.phase-changed" });
+    } finally {
+      sendPending.current = false;
     }
   };
 
@@ -326,14 +330,22 @@ export function App() {
       onChatArchive={(chatId) =>
         void chatStore
           .archive(chatId)
-          .then(() => dispatch({ type: "chat.new" }))
+          .then(() => {
+            if (uiState.activeChatId === chatId) {
+              dispatch({ type: "chat.selection-cleared" });
+            }
+          })
           .catch(() => undefined)
       }
       onChatCreate={createChat}
       onChatDelete={(chatId) =>
         void chatStore
           .delete(chatId)
-          .then(() => dispatch({ type: "chat.new" }))
+          .then(() => {
+            if (uiState.activeChatId === chatId) {
+              dispatch({ type: "chat.selection-cleared" });
+            }
+          })
           .catch(() => undefined)
       }
       onChatRename={(chatId, title) =>

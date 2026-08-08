@@ -5,6 +5,7 @@ import type Database from "better-sqlite3";
 
 import type { FoundationSnapshot } from "../shared/contracts/foundation";
 import { AGENT_CHANNELS } from "../shared/contracts/agent";
+import { CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { SystemClock } from "../shared/pure/clock";
@@ -32,6 +33,7 @@ import { SettingsRepository } from "./app/settingsRepository";
 import { SettingsService } from "./app/settingsService";
 import { ChatRepository } from "./chat/chatRepository";
 import { ChatService } from "./chat/chatService";
+import { ChatTitleService } from "./chat/chatTitleService";
 import {
   bundledChromiumExecutablePath,
   ManagedBrowser,
@@ -66,6 +68,7 @@ import { registerProviderIpc } from "./providers/providerIpc";
 import { ProviderRepository } from "./providers/providerRepository";
 import { ProviderService } from "./providers/providerService";
 import { SafeStorageSecretStore } from "./providers/secretStore";
+import { registerPlanTool } from "./agent/planTool";
 import { ArtifactStore } from "./tools/artifactStore";
 import { registerLocalTools } from "./tools/localTools";
 import { ToolRegistry } from "./tools/toolRegistry";
@@ -77,6 +80,7 @@ import { TerritoryRepository } from "./territory/territoryRepository";
 import { TerritoryService } from "./territory/territoryService";
 
 const logger = createAppLogger();
+const backgroundTest = process.env["CHARAMATE_TEST_BACKGROUND"] === "1";
 
 registerApplicationSchemes();
 
@@ -177,6 +181,7 @@ async function stopApplicationInfrastructure(): Promise<void> {
 }
 
 async function startApplication(): Promise<void> {
+  if (backgroundTest && process.platform === "darwin") app.dock?.hide();
   if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
     console.error("CHARAMATE_MAIN_STAGE app-ready");
   }
@@ -244,6 +249,19 @@ async function startApplication(): Promise<void> {
     runRepository,
     idGenerator,
     clock,
+    (chat) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.webContents.isDestroyed()) continue;
+        try {
+          window.webContents.send(CHAT_EVENT_CHANNELS.changed, chat);
+        } catch (error) {
+          logger.warn("CHAT_CHANGE_BROADCAST_ERROR", {
+            chatId: chat.id,
+            error,
+          });
+        }
+      }
+    },
   );
   unregisterChatIpc = registerChatIpc(chatService, runEventService);
 
@@ -329,6 +347,7 @@ async function startApplication(): Promise<void> {
     resolvePath: (target) => settingsService.resolveWorkingPath(target),
     trashItem: (target) => shell.trashItem(target),
   });
+  registerPlanTool(toolRegistry);
   registerBrowserTools(toolRegistry, managedBrowser, artifactStore, (target) =>
     settingsService.resolveWorkingPath(target),
   );
@@ -361,6 +380,7 @@ async function startApplication(): Promise<void> {
     clock,
     undefined,
     () => skillService.instructions(),
+    new ChatTitleService(chatService, logger),
   );
   await agentRuntime.initialize();
   unregisterAgentIpc = registerAgentIpc(agentRuntime);
@@ -396,7 +416,7 @@ async function startApplication(): Promise<void> {
   );
 
   const mainWindows = new MainWindowController(
-    () => createMainWindow(windowPlacementRepository, clock),
+    () => createMainWindow(windowPlacementRepository, clock, !backgroundTest),
     () => {
       if (process.platform === "darwin") app.focus({ steal: true });
       else app.focus();
@@ -407,6 +427,7 @@ async function startApplication(): Promise<void> {
         parseSchema(PetMainNavigationSchema, { target }),
       );
     },
+    { reveal: !backgroundTest },
   );
   mainWindowController = mainWindows;
   unregisterSettingsIpc = registerSettingsIpc(settingsService, () =>
@@ -428,6 +449,7 @@ async function startApplication(): Promise<void> {
   characterWindowController = new CharacterWindowController(
     petService,
     openMainWindow,
+    !backgroundTest,
   );
   unregisterPetIpc = registerPetIpc(
     petService,
@@ -466,13 +488,21 @@ async function startApplication(): Promise<void> {
       providerService?.listProfiles().map(({ name }) => name) ?? [];
     console.log(
       `CHARAMATE_SMOKE_RESULT ${JSON.stringify({
+        backgroundTest,
         browserRoundTrip: true,
         characterRendererReady: true,
         databaseRoundTrip,
+        dockVisible:
+          process.platform === "darwin"
+            ? (app.dock?.isVisible() ?? null)
+            : null,
         mode: process.env["CHARAMATE_SMOKE_KIND"],
         petIds,
         providerProfileNames,
         rendererReady: true,
+        visibleWindowCount: BrowserWindow.getAllWindows().filter((window) =>
+          window.isVisible(),
+        ).length,
       })}`,
     );
     app.quit();

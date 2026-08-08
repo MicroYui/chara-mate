@@ -2,6 +2,7 @@ import type { Dispatch } from "react";
 
 import { Composer } from "./components/Composer";
 import { MessageList } from "./components/MessageList";
+import { ActivePlan } from "./components/PlanDisplay";
 import type {
   ChatModelOption,
   ChatView,
@@ -30,6 +31,18 @@ const suggestions = [
   "帮我整理一个周末计划",
   "解释一段代码",
 ] as const;
+
+const ACTIVE_RUN_STATUSES = new Set<
+  ChatView["runs"][number]["record"]["status"]
+>(["queued", "running", "waiting_approval"]);
+
+export function activeRunForChat(chat: ChatView | undefined) {
+  return chat
+    ? [...chat.runs]
+        .reverse()
+        .find(({ record }) => ACTIVE_RUN_STATUSES.has(record.status))
+    : undefined;
+}
 
 function EmptyChat({ dispatch }: Pick<ChatsPageProps, "dispatch">) {
   return (
@@ -68,6 +81,7 @@ export function ChatsPage({
     activeChat &&
     (activeChat.messages.length > 0 || activeChat.runs.length > 0),
   );
+  const activeRun = activeRunForChat(activeChat);
   return (
     <section className={styles["chats"]} aria-label="Chats">
       <div className={styles["conversation"]}>
@@ -84,14 +98,19 @@ export function ChatsPage({
         )}
       </div>
       <div className={styles["composerDock"]}>
-        <Composer
-          dispatch={dispatch}
-          models={models}
-          onSend={onSend}
-          onStop={onStop}
-          runtimeEnabled={runtimeEnabled}
-          state={state}
-        />
+        <div className={styles["composerStack"]}>
+          {activeRun ? (
+            <ActivePlan key={activeRun.record.id} run={activeRun} />
+          ) : null}
+          <Composer
+            dispatch={dispatch}
+            models={models}
+            onSend={onSend}
+            onStop={onStop}
+            runtimeEnabled={runtimeEnabled}
+            state={state}
+          />
+        </div>
         <p>CharaMate 也可能出错，请核对重要信息。</p>
       </div>
     </section>

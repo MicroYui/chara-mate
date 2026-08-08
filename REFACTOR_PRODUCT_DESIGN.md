@@ -276,6 +276,8 @@ userData/
 - 相关长期记忆引用；
 - Automation/主动聊天来源。
 
+“新建 Chat”先进入右侧未持久化草稿态，不立即向侧栏插入“新对话”；用户首次发送时才创建真实 Chat 并出现在会话列表。创建后的即时兜底标题取首条用户消息的紧凑文本；首轮回答成功且所选 Provider 可用时，再以无 Tool 的后台模型请求生成简短摘要标题并实时替换。标题请求失败时保留兜底，若用户已经手工重命名，迟到的模型结果不得覆盖用户标题。
+
 同一个 Chat 内 Turn 串行；不同 Chat 可并行。切换页面不会停止后台 Run。
 
 ### 4.2 Composer
@@ -310,6 +312,8 @@ userData/
 
 LLM 如果在 Chat 中发现任务需要执行，只能回复建议并给出“一键切换 Agent”按钮；不能自行升级。
 
+当模型需要少量、明确且会改变后续执行的信息时，可以调用宿主直接提供的结构化 `request_user_input`，由 Chat 内卡片收集选项或自由文本，再继续同一个 Run。它不是外部副作用，不走 Approval，也不应先经 Tool Search；普通对话式追问仍可直接使用自然语言，不强迫所有问题结构化。
+
 ### 4.3 执行权限
 
 | 选项 | 产品语义 |
@@ -324,7 +328,7 @@ LLM 如果在 Chat 中发现任务需要执行，只能回复建议并给出“�
 
 助手消息完整支持：
 
-- CommonMark 与 GFM；
+- CommonMark 与 GFM，并兼容 CJK 标点/正文紧邻的强调与删除线 delimiter；
 - 标题、粗体、斜体、引用、列表、任务列表、链接；
 - 表格和横线；
 - 行内代码与带语言的代码块、语法高亮和复制按钮；
@@ -332,7 +336,7 @@ LLM 如果在 Chat 中发现任务需要执行，只能回复建议并给出“�
 - 图片、音频、视频和生成文件卡片；
 - 可折叠的长 Tool 输出；
 
-流式阶段对未闭合 Markdown 做增量容错；消息完成后重新进行一次确定性渲染。代码块、LaTeX 和表格不能因流式 token 造成永久错位。
+流式阶段对未闭合 Markdown 做增量容错；消息完成后重新进行一次确定性渲染。CJK 兼容在固定解析管线内完成，不预处理或改写源 Markdown；代码块、LaTeX 和表格不能因流式 token 造成永久错位。
 
 复制与消息操作对齐成熟聊天产品：
 
@@ -360,6 +364,7 @@ type RunItemKind =
   | 'user_message'
   | 'assistant_message'
   | 'plan'
+  | 'input_request'
   | 'tool_call'
   | 'command'
   | 'file_change'
@@ -372,13 +377,14 @@ type RunItemKind =
 
 UI 行为：
 
-1. Run 进行中，当前 Item 自动展开，输出实时追加。
+1. Run 进行中，当前非 Plan Item 自动展开，输出实时追加；最新 Plan 快照悬浮在 Composer 上方，默认只显示当前完成数/总步数，hover、focus 或点击后展开完整步骤。
 2. 命令以 `命令 + 工作目录 + 状态 + 输出` 的下拉卡片显示。
 3. Tool Call 以用户可理解的动作标题显示；第一层展开看到动作摘要，第二层再看参数、命令和截断结果。
-4. 等待审批时定位到 Approval Item，同时桌宠进入 `waiting_approval`。
-5. 完成后全部过程自动折叠为“已处理 2分13秒 · 8 项”，下方只保留最后回答；点击整行可重新展开完整过程。
-6. 展开后显示的是助手主动给用户看的进度摘要、计划变化和真实 Tool/Command/File Item，不展示隐藏 chain-of-thought。
-7. 用户可以复制整个问题、完整回答、单个代码块/公式、命令或 Tool 输出，也可以打开文件或从失败 Item 继续。
+4. `input_request` 显示模型真正等待的 1–3 个短问题、互斥选项和可选自由文本；提交后答案只注入一次并继续同一 Run，刷新或重启不会丢失待回答状态。
+5. 等待审批时定位到 Approval Item，同时桌宠进入 `waiting_approval`。
+6. Run 进入终态后，活跃 Plan 悬浮层消失，全部过程自动折叠为“已处理 2分13秒 · 8 项”，下方只保留最后回答；点击整行可重新展开完整过程及最新 Plan。
+7. 展开后显示的是助手主动给用户看的进度摘要、计划变化和真实 Tool/Command/File Item，不展示隐藏 chain-of-thought。
+8. 用户可以复制整个问题、完整回答、单个代码块/公式、命令或 Tool 输出，也可以打开文件或从失败 Item 继续。
 
 ### 4.6 Agent Harness
 
@@ -414,6 +420,7 @@ Run 的终态语义：
 
 - 简单任务直接执行，不强制先写计划。
 - 多步骤任务可生成可见、可更新的 Plan Item；Plan 只是同一 Harness 的一种 Item。
+- 活跃 Run 只把最新 Plan 快照投影为 Composer 上方的紧凑悬浮进度；Run 结束后该快照回到“已处理”历史，不复制 Item 或维护第二份计划状态。
 - 默认只有一个 Agent 保持目标和上下文，避免协调与代码膨胀。
 - Multi-agent 作为实验能力：只有两个以上相互独立、可并行且主要为读取的子任务才允许派生。
 - 子任务不能并发写同一工作区或共用同一可变 Browser Profile。
@@ -468,11 +475,14 @@ Registry 负责：
 | App | 打开/聚焦应用、打开 URL/文件、触发已注册 App Action |
 | Browser | 导航、DOM/AX 快照、点击、输入、上传、下载、截图 |
 | Computer | 读取 Accessibility 树、截图、鼠标、键盘、窗口操作 |
+| Image | 读取用户图片附件、已知本地图片、截图或图片 artifact 的真实像素语义 |
 | Memory | 检索、读取来源、创建候选、编辑记忆 |
 | Chat | 创建会话、附加结果、读取当前 Run 状态 |
 | Territory | 提议物件、生成、放置、收回记忆库 |
 
 当前公开信息在 Adapter 已确认 Provider 支持时优先使用原生 Web Search；需要页面交互、已登录状态或可复现 DOM/AX 证据时使用 Managed Browser；网页结构化能力不足时才退到 Computer Use。原生搜索、受管浏览器与 Computer 分别承担检索、交互和兜底职责，不构成同一能力的运行时模式或失败回退链。
+
+图片输入只有一条 Main-owned 媒体路径。用户在 Composer 明确附加的图片直接成为 Provider 多模态 message content；Agent 已经知道某个本地图片、截图或图片 artifact 时，通过按模型/环境能力条件直载的 `image.inspect` 请求同一路径读取。Renderer 缩略图、文件名、路径或 OCR 文本都不能单独作为“模型已经看过图片”的证据；目标模型不支持视觉输入时明确返回能力不可用，不暗中切换未验证的识别方案。
 
 ### 5.3 Browser
 
@@ -665,6 +675,8 @@ interface RetrievalPipeline {
 
 - 当前用户请求、附件和 steering 不得被较早内容挤掉；
 - 当前审批结果、最新必要 Tool Result 与本轮所需 Tool Schema 必须可见；
+- Provider Adapter 按当前 Provider、模型和协议元数据解析本 Run 的有效输入预算，Harness 只在该预算上应用已选的 90% 压缩水位；数值不得按 Model ID 写死，且必须随 checkpoint 冻结，恢复同一个 Run 时不得中途漂移；
+- Provider 既没有模型列表限额、也没有模型详情限额时不猜窗口值，保留真实 context-limit 错误后至多一次强制压缩恢复；
 - 记忆进入 Context 时带 ID、时间、Revision 和来源，不能变成无来源事实；
 - 会话摘要是带覆盖水位和来源的版本化工件，能够表达目标、约束、完成动作、重要决定与未解决问题；
 - Persona、近期原文、摘要、长期记忆、Activity Digest 和 Tool 结果的具体顺序、预算、topK 与裁剪规则由 `CONTEXT-RECIPE` 实验一次选定。
@@ -1212,6 +1224,10 @@ CharaMate 因此仍只保存一套 `imageGenerationEndpoint` 作为 deployment�
 4. 用户分别选择 Chat、Realtime 和 Image 模型；Memory 检索使用实验冻结的唯一产品实现，不在这里选择 embedding 档位。
 5. Chat、Realtime 与 Image 分别提供紧邻配置的测试入口，展示简短成功/错误，不泄露 Key；Image 测试不生成图片并明确说明验证范围。
 6. 切换只影响新 Run；历史 Run 保存使用的 Provider/Model 快照。
+
+模型窗口同样属于 Provider/模型快照，而不是 `gpt-5.6-sol` 这类名称的全局常量。OpenAI-compatible Adapter 先读取标准模型列表中的完整条目；若目标条目没有可用限额，再读取模型详情。它把 Provider 明示的 `max_prompt_tokens/max_input_tokens`，或 Codex 风格的 `context_window × effective_context_window_percent`，归一化为 `effectiveInputTokens`；只有两者都不存在且总窗口/最大输出同时明确时，才用两者之差。该值在 Run 首次创建时写入 checkpoint，重启/继续沿用原快照，新 Run 才重新发现。
+
+2026-08-08 的来源刷新说明了为什么必须保留这层 Adapter 语义：OpenAI 官方 [`gpt-5.6-sol` 模型页](https://developers.openai.com/api/docs/models/gpt-5.6-sol)列出物理 Context Window `1,050,000` 与最大输出 `128,000`；本机 `codex-cli 0.145.0` 的当前 catalog 则给该模型 `context_window=272,000`、`effective_context_window_percent=95`，Codex 展示的有效窗口因而为 `258,400`；当前 `copilot_api 1.15.2` 的标准 `/v1/models` 又为同名模型明示 `max_prompt_tokens=922,000`。同一个 Model ID 在不同 Provider/runtime/档位下具有不同可用预算。`billing.default.context_max=272,000` 是该 gateway 返回的计费分界，不作为上下文硬上限。CharaMate 因此不会把 Codex 的 `258,400` 覆盖到当前 Copilot 路径：前者经归一化后的 90% 触发点为 `232,560`，后者为 `829,800`；若未来 Provider 返回不同值，新 Run 自动随之变化。
 
 OpenAI-compatible 与 Azure HTTP Adapter 使用官方 OpenAI JavaScript SDK 能直接表达的标准能力，并在 Adapter 边界归一化 stream、Tool Call、usage 和错误；兼容服务确需协议差异时只在该外部 Adapter 内做有界映射，不能把 SDK 对象或 Provider 分支带入 Chat/Run/Memory。Realtime 连接仍遵守 `VOICE-TRANSPORT` 胜者，不因 HTTP SDK 选择提前固定媒体 Driver。
 
@@ -1870,7 +1886,7 @@ flowchart TD
 可并行工作：React UI 使用冻结 fixtures；SQLite/IPC 实现事件真源；Provider/Secret Adapter 独立实现。共享 Contract/Schema 由一个 integration owner 串行修改。
 
 - 主窗口、融合标题栏、单侧栏、六个一级页面骨架、窗口尺寸/位置与侧栏恢复；
-- Chat/Message/Attachment/Run/RunItem 初始 Schema、领域 Repository、多会话管理和 append-first event replay；
+- Chat/Message/Attachment/Run/RunItem 初始 Schema、领域 Repository、多会话管理、首次发送落库、首条消息兜底/AI 摘要标题和 append-first event replay；
 - Composer 的 Chat/Agent、Model、三档权限、附件、Mic/Voice/Send/Stop 位置与 reducer；
 - React 消息列表、TanStack Virtual、自动跟随/回到最新、空状态与响应式布局；
 - `react-markdown`/GFM、懒加载 Shiki 代码高亮、KaTeX、表格、懒加载 Mermaid、媒体/文件卡和全部复制语义；
@@ -1892,8 +1908,10 @@ flowchart TD
 
 退出条件：Direct、File、Command、Browser、Computer、MCP、Long Run、Steering、Recovery、Approval、No-op 旅程通过；没有固定全局步数/总时长/Token/成本静默截断；审批前和取消后副作用为零。
 
-### Phase 3：Memory 与 Activity
+### Phase 3：输入闭环、Memory 与 Activity
 
+- `P3-STRUCTURED-INPUT`：直接宿主工具 `request_user_input`、持久化 `input_request` Item、选项/自由文本卡片、重启恢复和同 Run continuation；该工作只依赖 Phase 2，可与 Memory 研究并行；
+- `P3-MULTIMODAL-INPUT`：用户图片附件与条件直载 `image.inspect` 共用一条 Main 图片解码/校验和 Provider 多模态输入路径；不支持视觉的模型诚实停止，不保留第二识别 fallback；
 - 在一次性 worktree 完成 `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE` 与 `MEMORY-GRAPH`；存储的向量/worker 阶段只有 dense lane 达到触发门槛才实现；
 - 用 `better-sqlite3` prepared SQL 实现 Memory/Revision/Source、validity、supersede、pin、archive/delete 与 Profile 投影；
 - 只实现获胜的 Retrieval Pipeline、Context Recipe、索引生命周期和 `search_memory`；Graph 未晋级时没有表、文件或 UI；
@@ -1902,7 +1920,7 @@ flowchart TD
 - 实现文件、缩略图、OCR、索引引用、数据库行和 orphan asset 的一致清理；
 - 运行 LongMemEval、LoCoMo 与冻结中文集，分别报告 retrieval、answer、storage、Activity 和资源指标。
 
-退出条件：改口/Revision/来源语义正确；发布物只含一个 Retrieval/Context/Graph 结果；Activity 不污染长期检索，原始层磁盘有界且清理完整。
+退出条件：结构化补充信息可恢复并继续原 Run；支持视觉的目标 Provider 能读取用户附件和 Agent 已知本地图片的真实内容；改口/Revision/来源语义正确；发布物只含一个 Retrieval/Context/Graph 结果；Activity 不污染长期检索，原始层磁盘有界且清理完整。
 
 ### Phase 4：Realtime Voice
 
@@ -1964,7 +1982,7 @@ CharaMate 达到首个完整产品版本时，应满足：
 
 - 单 package Electron/Forge/Vite、strict TypeScript/React、typed Preload 和 `better-sqlite3` 构建路径在开发与打包产物中一致；原生模块、签名安装包和 packaged smoke 可重复通过，仓库没有第二套 build/package/ORM/前端业务状态路径。
 - 桌面角色始终可用、可自由拖动、状态可信，Codex v1/v2 pet 可复制导入。
-- Chats 具备成熟的文字、Markdown、LaTeX、附件、语音和多会话体验。
+- Chats 具备成熟的文字、Markdown、LaTeX、附件、结构化补充信息、图片语义读取、语音和多会话体验。
 - Chat/Agent、Model 和三档权限都在 Composer，用户能预期本轮行为。
 - Agent 没有固定 12 步限制，长任务可压缩、追加输入、暂停、恢复和取消。
 - Browser、Computer Use、File、Command、App、MCP、Skills 共用同一 Tool/Approval/Run 模型。

@@ -23,8 +23,7 @@ import { parseSchema } from "../../shared/schemas/validation";
 import type { RunRepository } from "../agent/runRepository";
 import { ChatError } from "./chatError";
 import type { ChatRepository } from "./chatRepository";
-
-const DEFAULT_CHAT_TITLE = "新对话";
+import { fallbackChatTitle } from "./chatTitle";
 
 export class ChatService {
   readonly #turnTails = new Map<string, Promise<void>>();
@@ -34,6 +33,7 @@ export class ChatService {
     private readonly runs: RunRepository,
     private readonly idGenerator: IdGenerator,
     private readonly clock: Clock,
+    private readonly publishChanged: (chat: Chat) => void = () => undefined,
   ) {}
 
   archive(input: ChatIdRequest): Chat {
@@ -55,13 +55,16 @@ export class ChatService {
     const request = parseSchema(ChatCreateRequestSchema, input);
     const now = this.clock.now();
     try {
-      return this.chats.insertChat({
+      const chat = this.chats.insertChat({
         createdAt: now,
         id: this.idGenerator.generate(),
         status: "active",
-        title: request.title?.trim() || DEFAULT_CHAT_TITLE,
+        title:
+          request.title?.trim() || fallbackChatTitle(request.initialMessage),
         updatedAt: now,
       });
+      this.#publishChanged(chat);
+      return chat;
     } catch {
       throw new ChatError("CHAT.STORAGE_FAILED", "无法创建会话。", true);
     }
@@ -128,6 +131,22 @@ export class ChatService {
     if (current.title === title) {
       return current;
     }
+    return this.#updateChat({
+      ...current,
+      title,
+      updatedAt: this.clock.now(),
+    });
+  }
+
+  replaceGeneratedTitle(
+    chatId: string,
+    expectedTitle: string,
+    generatedTitle: string,
+  ): Chat | undefined {
+    const current = this.#requireChat(chatId);
+    const title = generatedTitle.trim();
+    if (current.title !== expectedTitle || !title) return undefined;
+    if (current.title === title) return current;
     return this.#updateChat({
       ...current,
       title,
@@ -225,9 +244,19 @@ export class ChatService {
 
   #updateChat(chat: Chat): Chat {
     try {
-      return this.chats.updateChat(chat);
+      const updated = this.chats.updateChat(chat);
+      this.#publishChanged(updated);
+      return updated;
     } catch {
       throw new ChatError("CHAT.STORAGE_FAILED", "无法保存会话。", true);
+    }
+  }
+
+  #publishChanged(chat: Chat): void {
+    try {
+      this.publishChanged(chat);
+    } catch {
+      // A Renderer notification must never roll back a durable Chat mutation.
     }
   }
 }

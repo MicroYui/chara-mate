@@ -21,6 +21,7 @@ import {
   SkillSetEnabledRequestSchema,
 } from "../../src/shared/schemas/extensions";
 import { IpcChannelSchema } from "../../src/shared/schemas/ipc";
+import { PlanUpdateSchema } from "../../src/shared/schemas/run";
 import {
   AgentSettingsSaveRequestSchema,
   BrowserActionResponseSchema,
@@ -150,6 +151,18 @@ const validCases: readonly [string, TSchema, unknown][] = [
     { ok: true, value: approvalFixture },
   ],
   ["Tool descriptor", ToolDescriptorSchema, toolDescriptor],
+  [
+    "Plan update",
+    PlanUpdateSchema,
+    {
+      explanation: "先确认实现，再验证结果。",
+      plan: [
+        { status: "completed", step: "确认现有实现" },
+        { status: "in_progress", step: "补齐端到端能力" },
+        { status: "pending", step: "运行验收" },
+      ],
+    },
+  ],
   [
     "Tool result",
     ToolResultSchema,

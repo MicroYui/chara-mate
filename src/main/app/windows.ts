@@ -47,6 +47,7 @@ function normalizedBounds(saved: WindowPlacement | undefined) {
 export async function createMainWindow(
   placements?: WindowPlacementRepository,
   clock?: Clock,
+  revealOnReady = true,
 ): Promise<BrowserWindow> {
   const saved = placements?.get(MAIN_WINDOW_ID);
   const bounds = normalizedBounds(saved);
@@ -72,6 +73,7 @@ export async function createMainWindow(
   });
 
   window.once("ready-to-show", () => {
+    if (!revealOnReady) return;
     if (saved?.isMaximized) {
       window.maximize();
     }

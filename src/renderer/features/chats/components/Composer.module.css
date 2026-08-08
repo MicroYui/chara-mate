@@ -62,6 +62,7 @@
 }
 
 .iconButton,
+.stopButton,
 .primaryButton,
 .controlButton {
   display: inline-flex;
@@ -78,6 +79,23 @@
   height: 28px;
   flex: 0 0 auto;
   border-radius: 8px;
+}
+
+.stopButton {
+  display: inline-grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.stopButton:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .iconButton:hover,

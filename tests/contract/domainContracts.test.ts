@@ -82,6 +82,11 @@ const validCases: readonly [string, TSchema, unknown][] = [
   ],
   ["Chat create request", ChatCreateRequestSchema, {}],
   [
+    "Chat create request from first message",
+    ChatCreateRequestSchema,
+    { initialMessage: "Plan a weekend trip" },
+  ],
+  [
     "Chat rename request",
     ChatRenameRequestSchema,
     { chatId: FIXTURE_IDS.chat, title: "Renamed" },

@@ -81,6 +81,7 @@ export class ChatDomainStore {
   #listStatus: ChatStatus = "active";
   #snapshotGeneration = 0;
   #state: ChatDomainState = initialState;
+  #unsubscribeChatChanges: (() => void) | undefined;
   #unsubscribeEvents: (() => void) | undefined;
 
   constructor(
@@ -98,6 +99,11 @@ export class ChatDomainStore {
   };
 
   start(): () => void {
+    this.#unsubscribeChatChanges ??= this.chatApi.subscribeChanged((chat) => {
+      this.#eventSync = this.#eventSync
+        .catch(() => undefined)
+        .then(() => this.#handleChatChanged(chat));
+    });
     this.#unsubscribeEvents ??= this.runEventsApi.subscribe((envelope) => {
       this.#eventSync = this.#eventSync
         .catch(() => undefined)
@@ -110,6 +116,8 @@ export class ChatDomainStore {
   }
 
   stop(): void {
+    this.#unsubscribeChatChanges?.();
+    this.#unsubscribeChatChanges = undefined;
     this.#unsubscribeEvents?.();
     this.#unsubscribeEvents = undefined;
   }
@@ -122,9 +130,11 @@ export class ChatDomainStore {
     return this.#mutate(chatId, () => this.chatApi.archive({ chatId }));
   }
 
-  async create(): Promise<Chat> {
+  async create(initialMessage?: string): Promise<Chat> {
     try {
-      const result = await this.chatApi.create({});
+      const result = await this.chatApi.create({
+        ...(initialMessage ? { initialMessage } : {}),
+      });
       if (!result.ok) throw new Error(result.error.message);
       await this.loadChats("active", this.#listQuery);
       await this.loadSnapshot(result.value.id);
@@ -359,6 +369,13 @@ export class ChatDomainStore {
       await this.loadSnapshot(this.#activeChatId);
     } catch (error) {
       this.#setState({ error: errorMessage(error) });
+    }
+  }
+
+  async #handleChatChanged(chat: Chat): Promise<void> {
+    await this.loadChats(this.#listStatus, this.#listQuery);
+    if (this.#activeChatId === chat.id) {
+      await this.loadSnapshot(chat.id);
     }
   }
 

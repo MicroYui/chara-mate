@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CharaMateApi } from "../shared/contracts/foundation";
-import { CHAT_CHANNELS } from "../shared/contracts/chat";
+import { CHAT_CHANNELS, CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { TERRITORY_CHANNELS } from "../shared/contracts/territory";
@@ -108,6 +108,35 @@ describe("Phase 1 typed preload data boundary", () => {
     unsubscribe();
     expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
       RUN_EVENT_CHANNELS.subscribe,
+      registeredListener,
+    );
+  });
+
+  it("validates Chat change events and detaches the wrapped listener", async () => {
+    let registeredListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(CHAT_EVENT_CHANNELS.changed);
+        registeredListener = listener;
+      },
+    );
+    const api = await loadApi();
+    const listener = vi.fn();
+    const unsubscribe = api.chat.subscribeChanged(listener);
+    if (!registeredListener) {
+      throw new Error("Chat change listener was not registered");
+    }
+
+    registeredListener(
+      { rawElectronEvent: true },
+      chatDataSnapshotFixture.chat,
+    );
+    expect(listener).toHaveBeenCalledWith(chatDataSnapshotFixture.chat);
+    expect(() => registeredListener?.({}, { title: "invalid" })).toThrow();
+
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      CHAT_EVENT_CHANNELS.changed,
       registeredListener,
     );
   });

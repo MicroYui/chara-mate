@@ -79,6 +79,7 @@ try {
         ...process.env,
         CHARAMATE_SMOKE_TEST: "1",
         CHARAMATE_SMOKE_KIND: mode,
+        CHARAMATE_TEST_BACKGROUND: "1",
         CHARAMATE_USER_DATA_DIR: userDataDirectory,
         ELECTRON_ENABLE_LOGGING: "1",
       },
@@ -171,6 +172,9 @@ if (
   !result.providerProfileNames.includes("copilot_api") ||
   !result.providerProfileNames.includes("azure") ||
   result.rendererReady !== true ||
+  result.backgroundTest !== true ||
+  result.visibleWindowCount !== 0 ||
+  (process.platform === "darwin" && result.dockVisible !== false) ||
   result.mode !== mode
 ) {
   throw new Error(`Invalid ${mode} smoke result: ${JSON.stringify(result)}`);

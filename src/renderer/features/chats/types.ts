@@ -85,6 +85,7 @@ export interface ChatsUiState {
   readonly draft: string;
   readonly expandedItemIds: readonly EntityId[];
   readonly expandedRunIds: readonly EntityId[];
+  readonly isDraftChat: boolean;
   readonly mode: "chat" | "agent";
   readonly modelId: string | undefined;
   readonly searchQuery: string;
@@ -96,6 +97,7 @@ export type ChatsUiAction =
   | { readonly type: "sidebar.toggled" }
   | { readonly type: "chat.selected"; readonly chatId: EntityId }
   | { readonly type: "chat.new" }
+  | { readonly type: "chat.selection-cleared" }
   | {
       readonly type: "chat-list-status.changed";
       readonly status: "active" | "archived";

@@ -4,6 +4,10 @@ import type { PetMainTarget } from "../../shared/contracts/pet";
 
 export type MainWindowTarget = PetMainTarget;
 
+interface MainWindowControllerOptions {
+  readonly reveal?: boolean;
+}
+
 interface RendererReadyState {
   readonly promise: Promise<void>;
   readonly resolve: () => void;
@@ -23,6 +27,7 @@ export class MainWindowController {
       window: BrowserWindow,
       target: MainWindowTarget,
     ) => void,
+    private readonly options: MainWindowControllerOptions = {},
   ) {}
 
   getWindow(): BrowserWindow | null {
@@ -73,6 +78,7 @@ export class MainWindowController {
   }
 
   private reveal(window: BrowserWindow): void {
+    if (this.options.reveal === false) return;
     if (window.isMinimized()) window.restore();
     window.show();
     this.activateApplication();

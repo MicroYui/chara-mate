@@ -7,6 +7,9 @@ import type {
   AppErrorSchema,
   ArtifactKindSchema,
   ArtifactReferenceSchema,
+  PlanStepSchema,
+  PlanStepStatusSchema,
+  PlanUpdateSchema,
   RunCancelRequestSchema,
   RunCancelResultSchema,
   RunExecutionSchema,
@@ -22,6 +25,9 @@ export type AppError = Static<typeof AppErrorSchema>;
 export type ArtifactKind = Static<typeof ArtifactKindSchema>;
 export type ArtifactReference = Static<typeof ArtifactReferenceSchema>;
 export type ApprovalMode = Static<typeof ApprovalModeSchema>;
+export type PlanStepStatus = Static<typeof PlanStepStatusSchema>;
+export type PlanStep = Static<typeof PlanStepSchema>;
+export type PlanUpdate = Static<typeof PlanUpdateSchema>;
 export type RunExecution = Static<typeof RunExecutionSchema>;
 export type RunStatus = Static<typeof RunStatusSchema>;
 export type TerminalRunStatus = Static<typeof TerminalRunStatusSchema>;

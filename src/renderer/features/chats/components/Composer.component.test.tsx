@@ -20,15 +20,25 @@ afterEach(() => {
 
 function ComposerHarness({
   initial,
+  onSend,
+  onStop,
 }: {
   readonly initial?: Partial<ChatsFixtureUiState>;
+  readonly onSend?: () => void;
+  readonly onStop?: () => void;
 }) {
   const [state, dispatch] = useReducer(chatsFixtureUiReducer, {
     ...initialChatsFixtureUiState,
     ...initial,
   });
   return (
-    <Composer dispatch={dispatch} models={chatsFixture.models} state={state} />
+    <Composer
+      dispatch={dispatch}
+      models={chatsFixture.models}
+      {...(onSend ? { onSend } : {})}
+      {...(onStop ? { onStop } : {})}
+      state={state}
+    />
   );
 }
 
@@ -103,5 +113,27 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: "停止" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "停止" }));
     expect(screen.getByRole("button", { name: "正在停止" })).toBeDisabled();
+  });
+
+  it("keeps text steering and Stop available while the current Run is active", () => {
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    render(
+      <ComposerHarness
+        initial={{ composerPhase: "running", draft: "先改用更简单的方案" }}
+        onSend={onSend}
+        onStop={onStop}
+      />,
+    );
+
+    const editor = screen.getByRole("textbox", { name: "消息" });
+    expect(screen.getByRole("button", { name: "停止" })).toBeVisible();
+    fireEvent.keyDown(editor, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "发送追加消息" }));
+    expect(onSend).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "停止" }));
+    expect(onStop).toHaveBeenCalledOnce();
   });
 });

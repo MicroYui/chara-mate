@@ -68,6 +68,10 @@ H2 只在同一批冻结 shadow traces 上离线重放 detector，不重新调�
 
 生产重写前于 2026-08-08 再次核对 Codex 当前公开源码 commit [`3aae5d8`](https://github.com/openai/codex/tree/3aae5d885bac39c1262491aa3fd100dfd8b3919f)（提交时间 `2026-08-08T04:57:06Z`）中的 turn continuation、compaction、steering 与恢复边界，并以项目实际锁定的 MCP Client/Server `2.0.0` 复核 Adapter。该复核没有改变历史实验分母或 Decision：Codex 行为仍只是实现参考，CharaMate 仍由自己的 Run/Item/checkpoint 状态机实现已接受单一路径。
 
+同日针对生产窗口解析追加来源刷新：[OpenAI 官方模型页](https://developers.openai.com/api/docs/models/gpt-5.6-sol)给 `gpt-5.6-sol` 的物理 Context Window / 最大输出为 `1,050,000 / 128,000`；本机 `codex-cli 0.145.0` 的 `codex debug models` 给当前 Codex catalog 的 `context_window / effective_context_window_percent` 为 `272,000 / 95`，其有效输入显示为 `258,400`，对应源码在上述 commit 的 `turn_context.rs` 中按百分比计算。当前实验/生产目标 `copilot_api 1.15.2`（commit `ded2357a5a0486422e925d4f2e8107d1b57693a1`）则在标准 `/v1/models` 的嵌套 `capabilities.limits` 中返回 `max_context_window_tokens / max_prompt_tokens / max_output_tokens = 1,050,000 / 922,000 / 128,000`，而单模型详情返回 404；其 `billing.default.context_max=272,000` 是计费分界，不是硬窗口。
+
+因此生产修复不按 `gpt-5.6-sol` 名称固定 `258,400` 或 `922,000`：Adapter 先读取当前 Provider 的列表条目，必要时再读详情，归一化为本 Run 的 `effectiveInputTokens`；Harness 只应用本 Decision 已选的 90% trigger。解析值随 checkpoint 冻结，继续同一 Run 不漂移；未知限额不猜测，只保留 context-limit 后的一次强制压缩。Codex 风格 `272,000 × 95%` 的 CharaMate 触发点为 `232,560`，当前 Copilot `922,000` 路径为 `829,800`。这项修复没有改写 H4 在当时 endpoint 的 922K 实验条件、原始结果或 CT1 选择，只纠正生产元数据发现与 Run 生命周期。
+
 协议硬限制、上述源码行为和 CharaMate 实验启发式在研究设计 §1.8 分开记录。固定的 detector 阈值、压缩水位、lane 数、非劣界和 p95 门槛都是预注册选择，不能外推为协议常量。
 
 ## 工件、环境与任务集

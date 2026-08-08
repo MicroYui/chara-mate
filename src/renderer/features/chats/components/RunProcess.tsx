@@ -5,17 +5,17 @@ import {
   ChevronRight,
   CircleDot,
   FilePenLine,
-  ListChecks,
   LoaderCircle,
   ShieldAlert,
   Terminal,
   Wrench,
 } from "lucide-react";
-import type { Dispatch } from "react";
+import { useEffect, useState, type Dispatch } from "react";
 
 import type { Approval, RunItem } from "../../../../shared/contracts";
 import type { ChatRunView, ChatsUiAction, ChatsUiState } from "../types";
 import { CopyButton } from "./CopyButton";
+import { ArchivedPlan, planUpdateFromItem } from "./PlanDisplay";
 import styles from "./RunProcess.module.css";
 
 interface RunProcessProps {
@@ -30,7 +30,7 @@ interface RunProcessProps {
 }
 
 function formatDuration(milliseconds: number): string {
-  const seconds = Math.max(0, Math.round(milliseconds / 1_000));
+  const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
   if (seconds < 60) {
     return `${seconds}秒`;
   }
@@ -39,9 +39,21 @@ function formatDuration(milliseconds: number): string {
   return rest === 0 ? `${minutes}分` : `${minutes}分${rest}秒`;
 }
 
-function runDuration(run: ChatRunView): number {
-  if (run.record.startedAt && run.record.endedAt) {
-    return Date.parse(run.record.endedAt) - Date.parse(run.record.startedAt);
+const LIVE_RUN_STATUSES = new Set<ChatRunView["record"]["status"]>([
+  "queued",
+  "running",
+  "waiting_approval",
+]);
+
+function runDuration(run: ChatRunView, now: number): number {
+  const startedAt = Date.parse(run.record.startedAt ?? run.record.createdAt);
+  const endedAt = run.record.endedAt
+    ? Date.parse(run.record.endedAt)
+    : LIVE_RUN_STATUSES.has(run.record.status)
+      ? now
+      : undefined;
+  if (Number.isFinite(startedAt) && endedAt !== undefined) {
+    return Math.max(0, endedAt - startedAt);
   }
   return run.items.reduce((total, item) => total + (item.durationMs ?? 0), 0);
 }
@@ -108,13 +120,11 @@ function ItemIcon({ item }: { readonly item: RunItem }) {
       ? Terminal
       : item.kind === "file_change"
         ? FilePenLine
-        : item.kind === "plan"
-          ? ListChecks
-          : item.kind === "approval"
-            ? ShieldAlert
-            : item.kind === "tool_call"
-              ? Wrench
-              : CircleDot;
+        : item.kind === "approval"
+          ? ShieldAlert
+          : item.kind === "tool_call"
+            ? Wrench
+            : CircleDot;
   return <Icon aria-hidden="true" size={14} />;
 }
 
@@ -297,10 +307,24 @@ export function RunProcess({
   run,
   state,
 }: RunProcessProps) {
+  const [now, setNow] = useState(() => Date.now());
+  const live = LIVE_RUN_STATUSES.has(run.record.status);
+  useEffect(() => {
+    if (!live) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [live]);
+
   const forcedOpen = run.record.status !== "completed";
   const expanded = forcedOpen || state.expandedRunIds.includes(run.record.id);
+  const latestPlanId = [...run.items]
+    .reverse()
+    .find(({ kind }) => kind === "plan")?.id;
   const visibleItems = run.items.filter(
-    ({ kind }) => kind !== "user_message" && kind !== "assistant_message",
+    ({ id, kind }) =>
+      kind !== "user_message" &&
+      kind !== "assistant_message" &&
+      (kind !== "plan" || (!live && id === latestPlanId)),
   );
   const summaryLead = runSummary(run.record.status);
 
@@ -314,7 +338,7 @@ export function RunProcess({
       >
         <span>{summaryLead}</span>
         <small>
-          {formatDuration(runDuration(run))} · {run.items.length} 项
+          {formatDuration(runDuration(run, now))} · {run.items.length} 项
         </small>
         {expanded ? (
           <ChevronDown aria-hidden="true" size={14} />
@@ -337,6 +361,9 @@ export function RunProcess({
             </div>
           ) : null}
           {visibleItems.map((item) => {
+            if (item.kind === "plan" && planUpdateFromItem(item)) {
+              return <ArchivedPlan key={item.id} item={item} />;
+            }
             if (item.kind === "approval") {
               const approval = run.approvals.find(
                 (candidate) => candidate.itemId === item.id,

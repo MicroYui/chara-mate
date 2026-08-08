@@ -159,7 +159,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 - `P1-APP-SHELL`：主窗口、融合标题栏、侧栏、六个一级页面占位、窗口状态恢复。
 - `P1-CHAT-DATA`：Chat/Message/Attachment/Run/RunItem 初始 Schema、领域 Repository、append-first 事件和重放。
-- `P1-CHAT-SERVICE`：多会话创建、重命名、置顶、搜索、归档、恢复、删除和同 Chat Turn 串行。
+- `P1-CHAT-SERVICE`：多会话创建、重命名、置顶、搜索、归档、恢复、删除、首次发送后落库、首条消息兜底/AI 摘要标题和同 Chat Turn 串行。
 - `P1-CHAT-UI`：消息列表、空状态、用户/助手消息、附件、Composer 模式/模型/权限位置。
 - `P1-CONTENT`：GFM、代码、KaTeX、表格、Mermaid、媒体/文件卡与各级复制；流式容错后确定性重渲染。
 - `P1-RUN-PROJECTION`：运行中展开、完成折叠、Tool 二级详情、停止反馈、刷新和重启恢复。
@@ -208,16 +208,19 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 完成证据见 `docs/progress/STATUS.md`：生产树只保留一个 Harness/Discovery/Cache 路径；开发版与 packaged app 均实际完成主窗口、桌宠、SQLite 和固定 Chromium round-trip。
 
-## Phase 3 — Memory 与 Activity
+## Phase 3 — 输入闭环、Memory 与 Activity
 
 ### 依赖与 Gate
 
 - Phase 2 提供稳定 Agent、ContextCompiler 接口、Tool/Run evidence；
+- `P3-STRUCTURED-INPUT` 与 `P3-MULTIMODAL-INPUT` 只依赖 Phase 1 Attachment/Composer 和 Phase 2 Run/Provider/Tool 契约，不受 Memory Decision 阻塞，可与 Memory 研究并行；
 - `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH` 依研究依赖完成；
 - `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 在 Memory proposal/source 契约稳定后完成。
 
 ### 工作包
 
+- `P3-STRUCTURED-INPUT`：实现直接、非 deferred 的宿主交互能力 `request_user_input`、持久化 `input_request` RunItem、选项/自由文本回答卡与同一 Run continuation；刷新或重启后仍可回答，回答只消费一次，不经过 Tool Search，也不伪装成 Approval。
+- `P3-MULTIMODAL-INPUT`：建立一条 Main-owned 图片解码与 Provider 多模态输入路径；用户显式附加的图片直接进入模型输入，Agent 查看已知本地图片、截图或图片 artifact 时使用仅在模型与环境支持时直载的 `image.inspect`。两种入口复用媒体校验与尺寸处理；不按文件名假装看过图片，也不增加未验证的 OCR fallback。
 - `P3-MEMORY-SEMANTICS`：Memory/Revision/Source、validity、supersede、pin、archive/delete 和 Profile 投影。
 - `P3-MEMORY-RUNTIME`：唯一 Retrieval Pipeline、唯一 Context Recipe、获胜索引生命周期和 `search_memory`。
 - `P3-MEMORY-UI`：搜索、筛选、来源、Revision、画像、候选与领地入口；Graph 未晋级时没有入口。
@@ -228,6 +231,8 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ### 验收
 
+- 结构化问题可在 Chat/Agent 中显示、回答、重启恢复并继续原 Run；同一回答不重复注入，取消或自由文本路径明确；
+- 用户图片附件及 Agent 已知的本地图片/artifact 都能让支持视觉输入的目标 Provider 读取真实像素内容；不支持的模型明确说明能力不可用，路径文字或缩略图不算语义读取成功；
 - Memory 编辑产生 Revision，改口后旧事实不进入默认 Context，所有投影可追溯；
 - 发布物只加载一个 Retrieval/Context/Graph 结果，失败候选模型、依赖、表和设置不存在；
 - Activity 被压缩成少量 Episode/Digest，原始事件不进入普通长期检索；

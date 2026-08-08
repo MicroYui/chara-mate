@@ -137,7 +137,7 @@ function namespaceTool(namespace: ModelToolNamespace): NamespaceTool {
     description: namespace.description,
     name: toolWireNamespace(namespace.name),
     tools: namespace.tools.map((tool) => ({
-      defer_loading: true,
+      defer_loading: tool.deferLoading ?? true,
       description: tool.description,
       name: toolWireName(tool),
       parameters: tool.inputSchema,
@@ -205,28 +205,91 @@ function readPositiveInteger(
   return undefined;
 }
 
-function contextLimitsFromModel(value: unknown): ModelContextLimits {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return {};
+function metadataRecord(
+  value: unknown,
+): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+}
+
+function readPositiveIntegerFrom(
+  records: readonly (Readonly<Record<string, unknown>> | undefined)[],
+  ...names: readonly string[]
+): number | undefined {
+  for (const record of records) {
+    if (!record) continue;
+    const value = readPositiveInteger(record, ...names);
+    if (value !== undefined) return value;
   }
-  const record = value as Readonly<Record<string, unknown>>;
-  const maxContextTokens = readPositiveInteger(
-    record,
+  return undefined;
+}
+
+function readEffectiveContextPercent(
+  records: readonly (Readonly<Record<string, unknown>> | undefined)[],
+): number | undefined {
+  const value = readPositiveIntegerFrom(
+    records,
+    "effective_context_window_percent",
+  );
+  return value !== undefined && value <= 100 ? value : undefined;
+}
+
+function contextLimitsFromModel(value: unknown): ModelContextLimits {
+  const record = metadataRecord(value);
+  if (!record) return {};
+  const capabilities = metadataRecord(record["capabilities"]);
+  const nestedLimits = metadataRecord(capabilities?.["limits"]);
+  const records = [record, nestedLimits] as const;
+  const maxContextTokens = readPositiveIntegerFrom(
+    records,
     "context_window",
     "context_window_tokens",
     "max_context_tokens",
+    "max_context_window",
+    "max_context_window_tokens",
   );
-  const maxInputTokens = readPositiveInteger(
-    record,
+  const maxPromptTokens = readPositiveIntegerFrom(
+    records,
     "max_input_tokens",
     "max_prompt_tokens",
   );
-  const maxOutputTokens = readPositiveInteger(record, "max_output_tokens");
+  const maxOutputTokens = readPositiveIntegerFrom(records, "max_output_tokens");
+  const effectiveContextPercent = readEffectiveContextPercent(records);
+  const byContext =
+    maxContextTokens !== undefined &&
+    maxOutputTokens !== undefined &&
+    maxContextTokens > maxOutputTokens
+      ? maxContextTokens - maxOutputTokens
+      : undefined;
+  const byEffectiveContext =
+    maxContextTokens !== undefined && effectiveContextPercent !== undefined
+      ? Math.floor((maxContextTokens * effectiveContextPercent) / 100)
+      : undefined;
+  const effectiveInputTokens =
+    byEffectiveContext !== undefined
+      ? maxPromptTokens === undefined
+        ? byEffectiveContext
+        : Math.min(byEffectiveContext, maxPromptTokens)
+      : maxPromptTokens === undefined
+        ? byContext
+        : byContext === undefined
+          ? maxPromptTokens
+          : Math.min(maxPromptTokens, byContext);
   return {
+    ...(effectiveInputTokens ? { effectiveInputTokens } : {}),
     ...(maxContextTokens ? { maxContextTokens } : {}),
-    ...(maxInputTokens ? { maxPromptTokens: maxInputTokens } : {}),
     ...(maxOutputTokens ? { maxOutputTokens } : {}),
+    ...(maxPromptTokens ? { maxPromptTokens } : {}),
   };
+}
+
+function unsupportedModelMetadataEndpoint(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "status" in error &&
+    (error.status === 404 || error.status === 405 || error.status === 501)
+  );
 }
 
 function eventError(event: ResponseStreamEvent): ProviderError | undefined {
@@ -260,18 +323,28 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
   }
 
   async resolveContextLimits(modelId: string): Promise<ModelContextLimits> {
+    let listedLimits: ModelContextLimits | undefined;
     try {
-      return contextLimitsFromModel(
+      const page = await this.#client.models.list();
+      for await (const model of page) {
+        if (model.id !== modelId) continue;
+        listedLimits = contextLimitsFromModel(model);
+        if (listedLimits.effectiveInputTokens !== undefined) {
+          return listedLimits;
+        }
+        break;
+      }
+    } catch (error) {
+      if (!unsupportedModelMetadataEndpoint(error)) throw mapSdkError(error);
+    }
+
+    try {
+      const detailedLimits = contextLimitsFromModel(
         await this.#client.models.retrieve(modelId),
       );
+      return { ...listedLimits, ...detailedLimits };
     } catch (error) {
-      if (
-        error instanceof Error &&
-        "status" in error &&
-        (error.status === 404 || error.status === 405 || error.status === 501)
-      ) {
-        return {};
-      }
+      if (unsupportedModelMetadataEndpoint(error)) return listedLimits ?? {};
       throw mapSdkError(error);
     }
   }

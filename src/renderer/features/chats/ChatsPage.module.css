@@ -63,6 +63,12 @@
   background: linear-gradient(to bottom, transparent, var(--canvas) 22px);
 }
 
+.composerStack {
+  position: relative;
+  width: min(var(--composer-max), 100%);
+  margin: 0 auto;
+}
+
 .composerDock > p {
   margin: 5px 0 0;
   color: var(--text-tertiary);

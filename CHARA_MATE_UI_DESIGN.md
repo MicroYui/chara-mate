@@ -132,7 +132,7 @@ CharaMate 复用这种信息密度和层级，但不复制品牌颜色、图标�
 - Radix Primitives 只提供 Dialog、Popover、Menu、Tooltip 等无样式行为；所有视觉仍由 CharaMate Token 控制。
 - Lucide 提供通用 outline 图标；Voice waveform、角色、领地和产品专用语义图标使用自有 SVG/Pixi asset。
 - TanStack Virtual 负责消息、Memory、Activity 等长列表；靠近底部、动态行高、焦点和滚动锚点由 CharaMate adapter 统一处理。
-- 消息使用 `react-markdown` + remark/rehype pipeline，GFM、math、KaTeX、允许列表、链接策略和复制源集中配置；Shiki 与 Mermaid 只在出现对应 block 时懒加载。
+- 消息使用 `react-markdown` + remark/rehype pipeline，GFM、CJK 紧邻标点/正文的强调与删除线、math、KaTeX、允许列表、链接策略和复制源集中配置；兼容解析不改写源 Markdown，Shiki 与 Mermaid 只在出现对应 block 时懒加载。
 - PixiJS 只在 Character Window 和 Territory canvas 内运行；React 管理页面/浮层/可访问控件，PixiJS 管理 atlas、sprite、场景层、pointer 和动画 tick，二者不重复保存业务状态。
 - UI component test 使用 Vitest + Testing Library；跨 Electron 窗口、Preload、重启和拖动使用 Playwright Electron。Voice 真实打断、音频和图像生成另列 Live 验收。
 
@@ -171,7 +171,7 @@ CharaMate 复用这种信息密度和层级，但不复制品牌颜色、图标�
 
 侧栏建议 248–264 px，可折叠为 64 px 图标栏。产品内一级页面显示名统一使用英文：Chats、Territory、Memory、Activity、Automations、Settings。
 
-- 顶部是当前桌宠的图片槽、产品名和新建 Chat；图片槽使用原生图片源，可随当前 Persona/桌宠切换 PNG、WebP、GIF 或 SVG；
+- 顶部是当前桌宠的图片槽、产品名和新建 Chat；点击新建只在右侧打开空白草稿，不向左侧插入占位会话，首次发送后才显示真实会话；图片槽使用原生图片源，可随当前 Persona/桌宠切换 PNG、WebP、GIF 或 SVG；
 - 中部是六个一级页面；
 - Chats 页面在导航下显示搜索、置顶和最近会话；
 - 底部是当前 Persona，以及处于同一行的 Settings 和侧栏折叠按钮；
@@ -193,6 +193,8 @@ Header 高度约 52 px，只放当前页面真正需要的动作：
 ## 4. Chats 页面
 
 ### 4.1 内容布局
+
+新建草稿的 Header 显示“新对话”，但没有重命名、归档或更多菜单，因为此时尚无持久化 Chat。首次发送后，Header 与侧栏立即显示首条用户消息兜底标题；后台 AI 摘要返回时两处同步更新，标题生成失败不阻塞消息与 Run。
 
 ```text
 ┌──────────────────────────────────────────────────────┐
@@ -320,6 +322,7 @@ Popover 中每项只有一行说明，不展示风险分值、规则树或几十
 ### 5.6 附件
 
 - 图片显示缩略图；
+- 缩略图只证明附件已进入 Composer；发送后必须由 Provider 多模态输入链读取真实图片内容，不能因展示了文件名或缩略图就声称模型看过图片；
 - 文件显示类型、名称和大小；
 - 文件夹显示名称与“将按需读取”；
 - 每个附件可移除，错误显示在对应卡片上；
@@ -386,7 +389,25 @@ Popover 中每项只有一行说明，不展示风险分值、规则树或几十
 
 ## 7. Run 过程与 Tool 详情
 
-### 7.1 默认折叠
+### 7.1 活跃 Plan 悬浮
+
+多步骤 Run 产生 Plan 后，最新完整快照从运行过程列表抽离，悬浮在 Composer 正上方：
+
+```text
+                                             [计划 1/5  Chevron]
+┌───────────────────────────────────────────────────────────┐
+│ 输入消息……                                                │
+└───────────────────────────────────────────────────────────┘
+```
+
+- 默认只显示紧凑的 `计划 1/5` 进度胶囊，不占用消息时间线，也不与当前 Tool/Command 展开项竞争视觉焦点；
+- 鼠标 hover、键盘 focus 或点击胶囊时，在其上方展开完整计划；点击可保持展开，再次点击、按 Escape 或 Run 结束后收起；
+- 完整面板显示说明、所有步骤与三态图标；当前步骤使用 Accent，完成步骤降噪但保持可读；
+- 每个新 Plan 快照原位更新同一悬浮面板，不叠加旧卡片；Renderer 刷新后从持久化 Run Item 恢复；
+- Run 进入终态后悬浮面板立即消失，最新 Plan 与既有调用仍保留在该 Run 的“已处理”展开历史中；
+- 没有有效 Plan、简单任务或 Chat 模式不显示空壳。
+
+### 7.2 默认折叠
 
 完成后：
 
@@ -403,7 +424,7 @@ Popover 中每项只有一行说明，不展示风险分值、规则树或几十
 - 键盘 focus 后 Enter/Space 可展开；
 - 失败或仍等待批准时不强制收起关键 Item。
 
-### 7.2 展开层级
+### 7.3 展开层级
 
 第一层是按时间排列的用户可理解过程：
 
@@ -429,12 +450,13 @@ Popover 中每项只有一行说明，不展示风险分值、规则树或几十
   Output              ...                                  [Expand]
 ```
 
-### 7.3 Item 视觉
+### 7.4 Item 视觉
 
 | Item | 摘要标题 | 展开内容 |
 | --- | --- | --- |
 | Progress | 正在查找相关文件 | 用户可见进度摘要 |
 | Plan | 已更新计划 | 步骤与状态 |
+| Input request | 需要你补充信息 | 1–3 个短问题、互斥选项、自由文本与提交/取消 |
 | Search/Read | 已读取 3 个文件 | 文件列表、查询词 |
 | Command | 已运行测试 | 命令、cwd、exit、输出 |
 | File change | 已修改 2 个文件 | 文件、摘要、diff 入口 |
@@ -445,16 +467,17 @@ Popover 中每项只有一行说明，不展示风险分值、规则树或几十
 | Context compaction | 已整理较早上下文 | 仅显示发生了压缩，不显示隐藏推理 |
 | Error | 某一步失败 | 错误、已尝试恢复、继续动作 |
 
-### 7.4 运行中
+### 7.5 运行中
 
-- 当前 Item 展开并显示 spinner/progress；
+- 当前非 Plan Item 展开并显示 spinner/progress；最新 Plan 按 §7.1 悬浮展示；
+- `input_request` 出现时就地显示可键盘操作的回答卡，提交后折叠为已回答摘要并继续同一 Run；它不使用 Approval 的盾牌、权限文案或允许/拒绝按钮；
 - 已完成 Item 变为低对比 Check；
 - 输出 delta 合批更新，避免整页跳动；
 - 新的简短 progress 可以流式出现，但不展示隐藏推理；
 - Tool 等待较久时显示耗时，不伪造百分比；
 - 用户 Stop 后立即显示“正在停止”，完成清理后变为“已停止”。
 
-### 7.5 复制与跳转
+### 7.6 复制与跳转
 
 用户可以复制：
 
@@ -764,6 +787,7 @@ CharacterWindowRoot
 6. 对话不显示头像；正文采用紧凑排版，Copy、Retry 等动作保持次要层级；
 7. 完成过程默认折叠，内部 Tool 使用两级展开；
 8. 领地使用完整像素场景，其他页面只保留轻量角色插画和强调色。
+9. 新建 Chat 在首次发送前只存在于右侧草稿态；首次发送后才进入侧栏，标题先用首条消息兜底，再无阻塞地更新为可用 Provider 生成的摘要。
 
 评审只观察三组关键画面：Chats 空状态、Agent 执行完成态、Realtime 说话/打断态。可用性与视觉测试完成后，直接修改本节和 Design Token 为胜者，并删除被否决的组件/CSS 分支；Memory、Activity 和 Settings 复用同一视觉系统。
 

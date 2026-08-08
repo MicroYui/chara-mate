@@ -100,6 +100,14 @@ function finalAnswer(responseId: string, text: string) {
 async function startFakeProvider(browserUrl?: string) {
   const bodies: string[] = [];
   let responseSequence = 0;
+  let releasePlanProgress: () => void = () => undefined;
+  let releasePlanFinal: () => void = () => undefined;
+  const planProgressGate = new Promise<void>((resolve) => {
+    releasePlanProgress = resolve;
+  });
+  const planFinalGate = new Promise<void>((resolve) => {
+    releasePlanFinal = resolve;
+  });
   const server = createServer((request, response) => {
     if (request.method === "GET") {
       response.writeHead(200, { "content-type": "application/json" });
@@ -114,12 +122,64 @@ async function startFakeProvider(browserUrl?: string) {
       );
       return;
     }
-    void requestText(request).then((body) => {
+    void requestText(request).then(async (body) => {
       bodies.push(body);
       responseSequence += 1;
       const responseId = `response-${String(responseSequence)}`;
       const browserTask = body.includes("浏览器");
-      if (browserTask) {
+      const planTask = body.includes("计划测试");
+      if (planTask) {
+        if (
+          body.includes('"call_id":"plan-final"') &&
+          body.includes("function_call_output")
+        ) {
+          writeSse(response, finalAnswer(responseId, "计划测试完成"));
+        } else if (
+          body.includes('"call_id":"plan-progress"') &&
+          body.includes("function_call_output")
+        ) {
+          await planFinalGate;
+          writeSse(response, [
+            functionCall("plan-final", "plan.update", "plan", {
+              explanation: "实现与验证均已完成。",
+              plan: [
+                { status: "completed", step: "检查需求" },
+                { status: "completed", step: "实现计划能力" },
+                { status: "completed", step: "验证界面更新" },
+              ],
+            }),
+            completed(responseId),
+          ]);
+        } else if (
+          body.includes('"call_id":"plan-first"') &&
+          body.includes("function_call_output")
+        ) {
+          await planProgressGate;
+          writeSse(response, [
+            functionCall("plan-progress", "plan.update", "plan", {
+              explanation: "需求已确认，正在验证界面。",
+              plan: [
+                { status: "completed", step: "检查需求" },
+                { status: "completed", step: "实现计划能力" },
+                { status: "in_progress", step: "验证界面更新" },
+              ],
+            }),
+            completed(responseId),
+          ]);
+        } else {
+          writeSse(response, [
+            functionCall("plan-first", "plan.update", "plan", {
+              explanation: "先检查需求，再实现并验证。",
+              plan: [
+                { status: "in_progress", step: "检查需求" },
+                { status: "pending", step: "实现计划能力" },
+                { status: "pending", step: "验证界面更新" },
+              ],
+            }),
+            completed(responseId),
+          ]);
+        }
+      } else if (browserTask) {
         if (
           body.includes('"call_id":"browser-snapshot"') &&
           body.includes("function_call_output")
@@ -175,11 +235,16 @@ async function startFakeProvider(browserUrl?: string) {
   return {
     baseUrl: `http://127.0.0.1:${String(address.port)}/v1`,
     bodies,
-    close: () =>
-      new Promise<void>((resolve) => {
+    close: () => {
+      releasePlanProgress();
+      releasePlanFinal();
+      return new Promise<void>((resolve) => {
         server.closeAllConnections();
         server.close(() => resolve());
-      }),
+      });
+    },
+    releasePlanFinal,
+    releasePlanProgress,
   };
 }
 
@@ -198,7 +263,11 @@ async function findWindow(
   throw new Error(`Missing Electron window: ${title}`);
 }
 
-async function launchApplication(userData: string, workspace: string) {
+async function launchApplication(
+  userData: string,
+  workspace: string,
+  expectedHeading = "新对话",
+) {
   const application = await electron.launch({
     args: [projectRoot],
     cwd: projectRoot,
@@ -215,7 +284,9 @@ async function launchApplication(userData: string, workspace: string) {
   });
   const main = await findWindow(application, "CharaMate");
   const character = await findWindow(application, "CharaMate Character");
-  await expect(main.getByRole("heading", { name: "新对话" })).toBeVisible();
+  await expect(
+    main.getByRole("heading", { name: expectedHeading }),
+  ).toBeVisible();
   return { application, character, main, stderr };
 }
 
@@ -313,7 +384,7 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
     await application.close();
     application = undefined;
     expectCleanApplicationShutdown(first.stderr);
-    const second = await launchApplication(userData, workspace);
+    const second = await launchApplication(userData, workspace, "创建测试文件");
     application = second.application;
     await expect(second.main.getByText("文件任务完成")).toBeVisible();
     expect(provider.bodies).toHaveLength(requestCount);
@@ -332,6 +403,106 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
       .get() as { count: number };
     database.close();
     expect(checkpointCount.count).toBe(0);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("steers an active Run while plan.update snapshots render live", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "chara-mate-plan-e2e-"));
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    await selectAgent(launched.main, "完全访问");
+    const composer = launched.main.getByRole("textbox", { name: "消息" });
+    await composer.fill("计划测试：分步骤完成这个任务");
+    await launched.main.getByRole("button", { name: "发送" }).click();
+
+    const activePlan = launched.main.getByLabel("活跃计划");
+    const planTrigger = activePlan.getByRole("button");
+    await expect(planTrigger).toHaveAccessibleName("计划 1/3");
+    const plan = launched.main.getByLabel("当前计划");
+    await expect(plan).toHaveAttribute("aria-hidden", "true");
+    await planTrigger.hover();
+    await expect(plan).toBeVisible();
+    await expect(plan).toContainText("先检查需求，再实现并验证。");
+    expect(provider.bodies[0]).toContain('"name":"plan"');
+    expect(provider.bodies[0]).toContain('"defer_loading":false');
+    expect(provider.bodies[0]).toContain(
+      "call the always-loaded plan.update tool directly before other work",
+    );
+    await expect(plan.locator("li", { hasText: "检查需求" })).toHaveAttribute(
+      "data-status",
+      "in_progress",
+    );
+
+    await composer.fill("追加要求：验证时保留当前界面状态");
+    await expect(
+      launched.main.getByRole("button", { name: "发送追加消息" }),
+    ).toBeVisible();
+    await launched.main.getByRole("button", { name: "发送追加消息" }).click();
+    await expect(composer).toHaveValue("");
+
+    provider.releasePlanProgress();
+    await expect(planTrigger).toHaveAccessibleName("计划 3/3");
+    await planTrigger.hover();
+    await expect(plan).toBeVisible();
+    await expect(plan).toContainText("需求已确认，正在验证界面。");
+    await expect(plan.locator("li", { hasText: "检查需求" })).toHaveAttribute(
+      "data-status",
+      "completed",
+    );
+    await expect(
+      plan.locator("li", { hasText: "验证界面更新" }),
+    ).toHaveAttribute("data-status", "in_progress");
+    await expect
+      .poll(() =>
+        provider.bodies.some((body) =>
+          body.includes("追加要求：验证时保留当前界面状态"),
+        ),
+      )
+      .toBe(true);
+
+    provider.releasePlanFinal();
+    await expect(launched.main.getByText("计划测试完成")).toBeVisible();
+    await expect(activePlan).toHaveCount(0);
+    const completedRun = launched.main.getByRole("button", { name: /已处理/u });
+    await completedRun.click();
+    const archivedPlan = launched.main.getByLabel("计划记录");
+    await expect(archivedPlan).toContainText("实现与验证均已完成。");
+    await expect(
+      archivedPlan.locator("li", { hasText: "验证界面更新" }),
+    ).toHaveAttribute("data-status", "completed");
+    const state = await launched.main.evaluate(async () => {
+      const chats = await window.charaMate.chat.list({ status: "active" });
+      if (!chats.ok || !chats.value[0]) return null;
+      return window.charaMate.chat.getSnapshot({ chatId: chats.value[0].id });
+    });
+    if (!state?.ok || !state.value) {
+      throw new Error("Missing Plan E2E state");
+    }
+    expect(
+      state.value.runItems.filter(({ kind }) => kind === "plan"),
+    ).toHaveLength(3);
+    expect(
+      state.value.runItems.filter(({ kind }) => kind === "user_message"),
+    ).toHaveLength(2);
+    expect(
+      provider.bodies.every((body) => !body.includes("tool_search_output")),
+    ).toBe(true);
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
   } finally {
     await application?.close();
     await provider.close();

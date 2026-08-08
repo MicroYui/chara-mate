@@ -67,6 +67,23 @@ test("launches through the typed preload boundary", async () => {
       },
     });
     const page = await application.firstWindow();
+    const backgroundState = await application.evaluate(
+      ({ app, BrowserWindow }) => ({
+        dockVisible:
+          process.platform === "darwin"
+            ? (app.dock?.isVisible() ?? null)
+            : null,
+        mode: process.env["CHARAMATE_TEST_BACKGROUND"],
+        visibleWindows: BrowserWindow.getAllWindows().filter((window) =>
+          window.isVisible(),
+        ).length,
+      }),
+    );
+    expect(backgroundState).toEqual({
+      dockVisible: process.platform === "darwin" ? false : null,
+      mode: "1",
+      visibleWindows: 0,
+    });
     await expect(
       page.getByRole("heading", { name: chatFixture.title }),
     ).toBeVisible();
@@ -110,6 +127,7 @@ test("launches through the typed preload boundary", async () => {
         "rename",
         "restore",
         "setPinned",
+        "subscribeChanged",
       ],
       foundationKeys: ["getSnapshot", "markRendererReady"],
       extensionKeys: [

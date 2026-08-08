@@ -33,6 +33,10 @@ export const CHAT_CHANNELS = {
   setPinned: "chat.setPinned",
 } as const;
 
+export const CHAT_EVENT_CHANNELS = {
+  changed: "chat.changed",
+} as const;
+
 export type ChatStatus = Static<typeof ChatStatusSchema>;
 export type Chat = Static<typeof ChatSchema>;
 export type MessageRole = Static<typeof MessageRoleSchema>;
@@ -70,4 +74,5 @@ export interface ChatApi {
   rename(request: ChatRenameRequest): Promise<ChatMutationResponse>;
   restore(request: ChatIdRequest): Promise<ChatMutationResponse>;
   setPinned(request: ChatSetPinnedRequest): Promise<ChatMutationResponse>;
+  subscribeChanged(listener: (chat: Chat) => void): () => void;
 }

@@ -44,6 +44,27 @@ afterEach(() => {
 });
 
 describe("MarkdownRenderer", () => {
+  it("renders CJK emphasis beside CJK text without rewriting literal code", () => {
+    render(
+      <MarkdownRenderer
+        source={
+          "不算“不热”。明天 **8月9日（周日）**海淀晴天为主，今天*很热（注意）*出门，~~旧安排（取消）~~改成室内。`**代码（原样）**海淀`"
+        }
+      />,
+    );
+
+    expect(
+      screen.getByText("8月9日（周日）", { selector: "strong" }),
+    ).toBeVisible();
+    expect(screen.getByText("很热（注意）", { selector: "em" })).toBeVisible();
+    expect(
+      screen.getByText("旧安排（取消）", { selector: "del" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("**代码（原样）**海淀", { selector: "code" }),
+    ).toBeVisible();
+  });
+
   it("renders rich content while keeping external links explicit", async () => {
     render(
       <MarkdownRenderer

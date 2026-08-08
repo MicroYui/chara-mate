@@ -139,4 +139,22 @@ describe("MainWindowController", () => {
     expect(window.destroy).not.toHaveBeenCalled();
     expect(controller.getWindow()).toBeNull();
   });
+
+  it("keeps background E2E windows loaded without revealing or focusing them", async () => {
+    const window = new FakeMainWindow(71);
+    const activateApplication = vi.fn();
+    const controller = new MainWindowController(
+      vi.fn().mockResolvedValue(asBrowserWindow(window)),
+      activateApplication,
+      vi.fn(),
+      { reveal: false },
+    );
+
+    controller.markRendererReady({ id: 71 });
+    await controller.open();
+
+    expect(window.show).not.toHaveBeenCalled();
+    expect(window.focus).not.toHaveBeenCalled();
+    expect(activateApplication).not.toHaveBeenCalled();
+  });
 });

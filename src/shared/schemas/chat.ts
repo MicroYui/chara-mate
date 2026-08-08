@@ -111,7 +111,10 @@ export const ChatListRequestSchema = Type.Object(
 );
 
 export const ChatCreateRequestSchema = Type.Object(
-  { title: Type.Optional(NonBlankStringSchema) },
+  {
+    initialMessage: Type.Optional(NonBlankStringSchema),
+    title: Type.Optional(NonBlankStringSchema),
+  },
   { additionalProperties: false },
 );
 

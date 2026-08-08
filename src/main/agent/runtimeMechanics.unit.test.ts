@@ -150,6 +150,37 @@ describe("Phase 2 Runtime mechanics", () => {
     expect(JSON.stringify(compiled.input)).not.toContain("call-old");
   });
 
+  it("keeps the 90% trigger proportional to the Provider-resolved model window", () => {
+    const compiler = new ContextCompiler();
+    const items = [
+      { content: "current", role: "user", type: "message" },
+    ] satisfies JsonValue[];
+    const lastRequestBytes = Buffer.byteLength(JSON.stringify(items), "utf8");
+    const checkpoint = (inputTokens: number) => ({
+      items,
+      lastRequestBytes,
+      lastUsage: {
+        cachedInputTokens: 0,
+        inputTokens,
+        outputTokens: 1,
+      },
+      recentUsers: ["current"],
+    });
+    const codexEffectiveWindow = { effectiveInputTokens: 258_400 };
+
+    expect(
+      compiler.shouldCompact(checkpoint(232_559), codexEffectiveWindow),
+    ).toBe(false);
+    expect(
+      compiler.shouldCompact(checkpoint(232_560), codexEffectiveWindow),
+    ).toBe(true);
+    expect(
+      compiler.shouldCompact(checkpoint(232_560), {
+        effectiveInputTokens: 922_000,
+      }),
+    ).toBe(false);
+  });
+
   it("does not invent a compaction trigger when Provider limits are unknown", () => {
     const compiler = new ContextCompiler();
     expect(

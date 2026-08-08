@@ -17,6 +17,8 @@ import ReactMarkdown, {
 } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import remarkCjkFriendly from "remark-cjk-friendly/parseOnly";
+import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough/parseOnly";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import type { Element, Root, RootContent } from "hast";
@@ -460,7 +462,12 @@ export function MarkdownRenderer({ source }: MarkdownRendererProps) {
             [rehypeSanitize, sanitizeSchema],
             [rehypeKatex, { strict: false, throwOnError: false }],
           ]}
-          remarkPlugins={[remarkGfm, remarkMath]}
+          remarkPlugins={[
+            remarkGfm,
+            remarkCjkFriendly,
+            remarkCjkFriendlyGfmStrikethrough,
+            remarkMath,
+          ]}
         >
           {source}
         </ReactMarkdown>

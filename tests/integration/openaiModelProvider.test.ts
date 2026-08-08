@@ -176,6 +176,25 @@ async function collect(
                 },
               ],
             },
+            {
+              description: "Current plan",
+              name: "plan",
+              tools: [
+                {
+                  deferLoading: false,
+                  description: "Update the current plan",
+                  inputSchema: {
+                    additionalProperties: false,
+                    properties: { plan: { type: "array" } },
+                    required: ["plan"],
+                    type: "object",
+                  },
+                  name: "plan.update",
+                  namespace: "plan",
+                  strict: true,
+                },
+              ],
+            },
           ]
         : [],
       ...(withTools
@@ -200,11 +219,17 @@ describe("OpenAI Responses Agent wire shape", () => {
           response.writeHead(200, { "content-type": "application/json" });
           response.end(
             JSON.stringify({
-              context_window: 1_050_000,
-              id: "gpt-5.6-sol",
-              max_input_tokens: 922_000,
-              max_output_tokens: 128_000,
-              object: "model",
+              data: [
+                {
+                  context_window: 1_050_000,
+                  id: "gpt-5.6-sol",
+                  max_input_tokens: 922_000,
+                  max_output_tokens: 128_000,
+                  object: "model",
+                  owned_by: "openai",
+                },
+              ],
+              object: "list",
             }),
           );
           return;
@@ -226,6 +251,7 @@ describe("OpenAI Responses Agent wire shape", () => {
 
     await expect(provider.resolveContextLimits("gpt-5.6-sol")).resolves.toEqual(
       {
+        effectiveInputTokens: 922_000,
         maxContextTokens: 1_050_000,
         maxOutputTokens: 128_000,
         maxPromptTokens: 922_000,
@@ -279,6 +305,11 @@ describe("OpenAI Responses Agent wire shape", () => {
           tools: [{ name: "snapshot", type: "function" }],
           type: "namespace",
         },
+        {
+          name: "plan",
+          tools: [{ defer_loading: false, name: "update", type: "function" }],
+          type: "namespace",
+        },
         { type: "tool_search" },
         { type: "web_search" },
       ],
@@ -312,6 +343,125 @@ describe("OpenAI Responses Agent wire shape", () => {
     expect(wire).not.toContain("prompt_cache_breakpoint");
     expect(wire).toContain('"parallel_tool_calls":false');
     expect(wire).toContain('"store":false');
+  });
+
+  it("resolves Copilot nested model limits from the standard model list", async () => {
+    const requests: string[] = [];
+    const baseUrl = await listen(
+      createServer((request, response) => {
+        requests.push(`${request.method ?? "GET"} ${request.url ?? ""}`);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            data: [
+              {
+                capabilities: {
+                  limits: {
+                    max_context_window_tokens: 1_050_000,
+                    max_output_tokens: 128_000,
+                    max_prompt_tokens: 922_000,
+                  },
+                },
+                id: "gpt-5.6-sol",
+                object: "model",
+                owned_by: "OpenAI",
+              },
+            ],
+            object: "list",
+          }),
+        );
+      }),
+    );
+    const provider = new OpenAIResponsesModelProvider(
+      {
+        apiStyle: "openai-compatible",
+        baseUrl,
+        name: "Copilot-compatible",
+      },
+      "test-secret",
+    );
+
+    await expect(provider.resolveContextLimits("gpt-5.6-sol")).resolves.toEqual(
+      {
+        effectiveInputTokens: 922_000,
+        maxContextTokens: 1_050_000,
+        maxOutputTokens: 128_000,
+        maxPromptTokens: 922_000,
+      },
+    );
+    expect(requests).toEqual(["GET /v1/models"]);
+  });
+
+  it("uses Codex effective-window metadata when the list needs a detail lookup", async () => {
+    const requests: string[] = [];
+    const baseUrl = await listen(
+      createServer((request, response) => {
+        requests.push(`${request.method ?? "GET"} ${request.url ?? ""}`);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          request.url === "/v1/models"
+            ? JSON.stringify({
+                data: [
+                  {
+                    id: "gpt-5.6-sol",
+                    object: "model",
+                    owned_by: "openai",
+                  },
+                ],
+                object: "list",
+              })
+            : JSON.stringify({
+                context_window: 272_000,
+                effective_context_window_percent: 95,
+                id: "gpt-5.6-sol",
+                max_context_window: 272_000,
+                object: "model",
+                owned_by: "openai",
+              }),
+        );
+      }),
+    );
+    const provider = new OpenAIResponsesModelProvider(
+      {
+        apiStyle: "openai-compatible",
+        baseUrl,
+        name: "Codex-compatible",
+      },
+      "test-secret",
+    );
+
+    await expect(provider.resolveContextLimits("gpt-5.6-sol")).resolves.toEqual(
+      {
+        effectiveInputTokens: 258_400,
+        maxContextTokens: 272_000,
+      },
+    );
+    expect(requests).toEqual(["GET /v1/models", "GET /v1/models/gpt-5.6-sol"]);
+  });
+
+  it("keeps context limits unknown when neither metadata endpoint supports them", async () => {
+    const baseUrl = await listen(
+      createServer((_request, response) => {
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: { message: "not found", type: "invalid_request_error" },
+          }),
+        );
+      }),
+    );
+    const provider = new OpenAIResponsesModelProvider(
+      {
+        apiStyle: "openai-compatible",
+        baseUrl,
+        name: "Manual compatible",
+      },
+      "test-secret",
+    );
+
+    await expect(
+      provider.resolveContextLimits("manual-model"),
+    ).resolves.toEqual({});
   });
 
   it("gives Chat only native read-only web search and does not apply cache evidence to other models", async () => {

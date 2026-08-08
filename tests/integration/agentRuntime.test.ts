@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RunEventEnvelope } from "../../src/shared/contracts/ipc";
 import type { JsonValue } from "../../src/shared/contracts/primitives";
@@ -12,7 +12,9 @@ import { SystemClock, type Clock } from "../../src/shared/pure/clock";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { AgentRuntime } from "../../src/main/agent/agentRuntime";
 import { CheckpointRepository } from "../../src/main/agent/checkpointRepository";
+import { registerPlanTool } from "../../src/main/agent/planTool";
 import type {
+  ModelContextLimits,
   ModelEvent,
   ModelProvider,
   ModelRequest,
@@ -22,6 +24,7 @@ import { RunEventWriter } from "../../src/main/agent/runEventWriter";
 import { RunRepository } from "../../src/main/agent/runRepository";
 import { ChatRepository } from "../../src/main/chat/chatRepository";
 import { ChatService } from "../../src/main/chat/chatService";
+import type { ChatTitleGenerator } from "../../src/main/chat/chatTitleService";
 import { openApplicationDatabase } from "../../src/main/db/database";
 import {
   ToolRegistry,
@@ -37,15 +40,22 @@ type Turn = (
 ) => Promise<readonly ModelEvent[]> | readonly ModelEvent[];
 
 class ScriptedProvider implements ModelProvider {
+  readonly contextLimitRequests: string[] = [];
   readonly requests: ModelRequest[] = [];
 
-  constructor(private readonly turns: Turn[]) {}
-
-  resolveContextLimits() {
-    return Promise.resolve({
+  constructor(
+    private readonly turns: Turn[],
+    private readonly contextLimits: ModelContextLimits = {
+      effectiveInputTokens: 922_000,
       maxContextTokens: 1_050_000,
       maxOutputTokens: 128_000,
-    });
+      maxPromptTokens: 922_000,
+    },
+  ) {}
+
+  resolveContextLimits(modelId: string) {
+    this.contextLimitRequests.push(modelId);
+    return Promise.resolve(this.contextLimits);
   }
 
   async *stream(
@@ -180,6 +190,7 @@ function searchTurn(callId: string, query: string): Turn {
 async function createFixture(
   turns: Turn[],
   clock: Clock = new SystemClock(),
+  chatTitles?: ChatTitleGenerator,
 ): Promise<RuntimeFixture> {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "chara-mate-agent-runtime-"),
@@ -218,6 +229,9 @@ async function createFixture(
     },
     ids,
     clock,
+    undefined,
+    undefined,
+    chatTitles,
   );
   return {
     chatId: chat.id,
@@ -352,6 +366,93 @@ async function waitForStatus(
 }
 
 describe("Agent Runtime production path", () => {
+  it("requests an AI title only after the first persisted Turn completes", async () => {
+    const generate = vi.fn<ChatTitleGenerator["generate"]>(() =>
+      Promise.resolve(),
+    );
+    const fixture = await createFixture(
+      [finalTurn("首轮回答")],
+      new SystemClock(),
+      { generate },
+    );
+
+    const run = await startAgent(fixture);
+    await waitForStatus(fixture, run.id, "completed");
+    await Promise.resolve();
+
+    expect(generate).toHaveBeenCalledOnce();
+    expect(generate.mock.calls[0]?.[0]).toMatchObject({
+      assistantContent: "首轮回答",
+      chatId: fixture.chatId,
+      firstUserContent: "完成测试任务",
+      modelId: "gpt-5.6-sol",
+    });
+    fixture.database.close();
+  });
+
+  it("persists full plan.update snapshots as live Plan Run items", async () => {
+    const initialPlan = {
+      explanation: "先检查，再实现。",
+      plan: [
+        { status: "in_progress" as const, step: "检查现有实现" },
+        { status: "pending" as const, step: "补齐能力" },
+        { status: "pending" as const, step: "运行验收" },
+      ],
+    };
+    const progressedPlan = {
+      explanation: "检查完成，开始实现。",
+      plan: [
+        { status: "completed" as const, step: "检查现有实现" },
+        { status: "in_progress" as const, step: "补齐能力" },
+        { status: "pending" as const, step: "运行验收" },
+      ],
+    };
+    const fixture = await createFixture([
+      namespacedFunctionTurn("plan-first", "update", "plan", initialPlan),
+      namespacedFunctionTurn("plan-progress", "update", "plan", progressedPlan),
+      finalTurn(),
+    ]);
+    registerPlanTool(fixture.tools);
+
+    const run = await startAgent(fixture);
+    await waitForStatus(fixture, run.id, "completed");
+
+    const planItems = fixture.runs
+      .listRunItems(run.id)
+      .filter(({ kind }) => kind === "plan");
+    expect(planItems).toHaveLength(2);
+    expect(planItems[0]).toMatchObject({
+      input: initialPlan,
+      status: "completed",
+    });
+    expect(planItems[1]).toMatchObject({
+      input: progressedPlan,
+      status: "completed",
+    });
+    expect(
+      fixture.collector.events.some(
+        ({ event }) =>
+          event.type === "item.started" && event.item.kind === "plan",
+      ),
+    ).toBe(true);
+    expect(fixture.provider.requests[0]?.instructions).toContain(
+      "call the always-loaded plan.update tool directly before other work",
+    );
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "plan")
+        ?.tools.find(({ name }) => name === "plan.update"),
+    ).toMatchObject({ deferLoading: false });
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces.flatMap(({ tools }) =>
+        tools
+          .filter(({ deferLoading }) => deferLoading === false)
+          .map(({ name }) => name),
+      ),
+    ).toEqual(["plan.update"]);
+    fixture.database.close();
+  });
+
   it("resolves a Provider leaf Tool name through its namespace", async () => {
     const fixture = await createFixture(
       [
@@ -752,13 +853,26 @@ describe("Agent Runtime production path", () => {
     await boundary;
     await fixture.runtime.interruptAll();
     expect(fixture.runs.getRun(run.id)?.status).toBe("interrupted");
+    expect(fixture.checkpoints.get(run.id)?.context).toMatchObject({
+      contextLimits: {
+        effectiveInputTokens: 922_000,
+        maxContextTokens: 1_050_000,
+        maxOutputTokens: 128_000,
+        maxPromptTokens: 922_000,
+      },
+    });
 
-    const resumedProvider = new ScriptedProvider([finalTurn("恢复完成")]);
+    const resumedProvider = new ScriptedProvider([finalTurn("恢复完成")], {
+      effectiveInputTokens: 32_000,
+      maxPromptTokens: 32_000,
+    });
     const resumedRuntime = createRuntimeFor(fixture, resumedProvider);
     await resumedRuntime.resume({ requestedAt: REQUESTED_AT, runId: run.id });
     await waitForStatus(fixture, run.id, "completed");
 
     expect(calls).toBe(1);
+    expect(fixture.provider.contextLimitRequests).toEqual(["gpt-5.6-sol"]);
+    expect(resumedProvider.contextLimitRequests).toEqual([]);
     expect(resumedProvider.requests).toHaveLength(1);
     fixture.database.close();
   });

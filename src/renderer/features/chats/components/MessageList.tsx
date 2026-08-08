@@ -133,21 +133,39 @@ function Message({ value }: { readonly value: ChatMessageView }) {
   );
 }
 
-function buildTimeline(chat: ChatView): readonly TimelineEntry[] {
+export function buildTimeline(chat: ChatView): readonly TimelineEntry[] {
   const runsById = new Map(chat.runs.map((run) => [run.record.id, run]));
+  const lastUserMessageByRun = new Map<EntityId, number>();
+  for (const [index, message] of chat.messages.entries()) {
+    if (message.record.role === "user" && message.record.runId) {
+      lastUserMessageByRun.set(message.record.runId, index);
+    }
+  }
   const entries: TimelineEntry[] = [];
+  const placedRuns = new Set<EntityId>();
 
-  for (const fixtureMessage of chat.messages) {
+  for (const [index, fixtureMessage] of chat.messages.entries()) {
     entries.push({
       id: fixtureMessage.record.id,
       kind: "message",
       value: fixtureMessage,
     });
-    if (fixtureMessage.record.role === "user" && fixtureMessage.record.runId) {
+    if (
+      fixtureMessage.record.role === "user" &&
+      fixtureMessage.record.runId &&
+      lastUserMessageByRun.get(fixtureMessage.record.runId) === index
+    ) {
       const run = runsById.get(fixtureMessage.record.runId);
       if (run) {
         entries.push({ id: run.record.id, kind: "run", value: run });
+        placedRuns.add(run.record.id);
       }
+    }
+  }
+
+  for (const run of chat.runs) {
+    if (!placedRuns.has(run.record.id)) {
+      entries.push({ id: run.record.id, kind: "run", value: run });
     }
   }
 

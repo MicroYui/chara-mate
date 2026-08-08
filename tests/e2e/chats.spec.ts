@@ -1,20 +1,138 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
-import { _electron as electron } from "playwright";
+import { _electron as electron, type Page } from "playwright";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
 
+async function requestText(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request as AsyncIterable<Buffer | string>) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function writeAnswer(response: ServerResponse, id: string, text: string): void {
+  response.writeHead(200, { "content-type": "text/event-stream" });
+  response.write(
+    `event: response.output_text.delta\ndata: ${JSON.stringify({ delta: text, type: "response.output_text.delta" })}\n\n`,
+  );
+  response.write(
+    `event: response.completed\ndata: ${JSON.stringify({
+      response: {
+        id,
+        usage: {
+          input_tokens: 40,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: 8,
+        },
+      },
+      type: "response.completed",
+    })}\n\n`,
+  );
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+async function startFakeProvider() {
+  let responseSequence = 0;
+  let releaseFirstTitle: () => void = () => undefined;
+  const firstTitleGate = new Promise<void>((resolve) => {
+    releaseFirstTitle = resolve;
+  });
+  let firstTitleReleased = false;
+  const server = createServer((request, response) => {
+    if (request.method === "GET") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          context_window: 32_000,
+          id: "chat-e2e-model",
+          max_input_tokens: 30_000,
+          max_output_tokens: 2_000,
+          object: "model",
+        }),
+      );
+      return;
+    }
+    void requestText(request).then(async (body) => {
+      responseSequence += 1;
+      const id = `chat-response-${String(responseSequence)}`;
+      if (body.includes("Generate one concise chat title")) {
+        if (!firstTitleReleased) await firstTitleGate;
+        writeAnswer(
+          response,
+          id,
+          body.includes("临时会话测试") ? "临时会话" : "北京周末行程规划",
+        );
+        return;
+      }
+      writeAnswer(
+        response,
+        id,
+        body.includes("临时会话测试") ? "临时会话已记录" : "行程规划已记录",
+      );
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    baseUrl: `http://127.0.0.1:${String(address.port)}/v1`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        releaseFirstTitle();
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+    releaseFirstTitle: () => {
+      firstTitleReleased = true;
+      releaseFirstTitle();
+    },
+  };
+}
+
+async function saveProvider(page: Page, baseUrl: string): Promise<void> {
+  const saved = await page.evaluate(
+    ({ url }) =>
+      window.charaMate.provider.saveProfile({
+        credential: { mode: "replace", value: "sk-chats-e2e" },
+        profile: {
+          apiStyle: "openai-compatible",
+          baseUrl: url,
+          chatModel: "chat-e2e-model",
+          name: "Chats E2E",
+        },
+      }),
+    { url: baseUrl },
+  );
+  expect(saved.ok).toBe(true);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "chat-e2e-model" }),
+  ).toBeVisible();
+}
+
 test("manages real Chats and restores product state after an Electron restart", async () => {
   const userDataDirectory = await mkdtemp(
     path.join(os.tmpdir(), "chara-mate-chats-e2e-"),
   );
+  const provider = await startFakeProvider();
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
 
   const launchApplication = async (expectedHeading = "新对话") => {
@@ -59,9 +177,44 @@ test("manages real Chats and restores product state after an Electron restart", 
       ),
     ).toBeLessThan(1);
 
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { exact: true, name: "Agent" }).click();
+    await page.getByLabel("默认模式").selectOption("agent");
+    await page.getByLabel("Agent 默认权限").selectOption("full_access");
+    await expect(
+      page.getByRole("heading", { name: "默认执行方式" }),
+    ).toBeVisible();
+    await expect(page.getByLabel("默认模式")).toHaveValue("agent");
+    await expect(page.getByLabel("Agent 默认权限")).toHaveValue("full_access");
+    await page
+      .getByRole("button", { exact: true, name: "Browser & Computer" })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "受管浏览器与系统能力" }),
+    ).toBeVisible();
+    await expect(page.getByText("辅助功能")).toBeVisible();
+    await expect(page.getByText("屏幕录制")).toBeVisible();
+    await page.getByRole("button", { name: "Chats" }).click();
+    await saveProvider(page, provider.baseUrl);
+
     await page.getByRole("button", { name: "新建对话" }).click();
     await expect(
       page.getByRole("button", { exact: true, name: "新对话" }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "新对话" })).toBeVisible();
+    const composer = page.getByRole("textbox", { name: "消息" });
+    await composer.fill("帮我规划北京周末行程");
+    await page.getByRole("button", { name: "发送" }).click();
+    await expect(
+      page.getByRole("button", {
+        exact: true,
+        name: "帮我规划北京周末行程",
+      }),
+    ).toBeVisible();
+    await expect(page.getByText("行程规划已记录")).toBeVisible();
+    provider.releaseFirstTitle();
+    await expect(
+      page.getByRole("heading", { name: "北京周末行程规划" }),
     ).toBeVisible();
     await page.getByRole("button", { name: "更多会话操作" }).click();
     await page.getByRole("menuitem", { name: "重命名" }).click();
@@ -76,23 +229,12 @@ test("manages real Chats and restores product state after an Electron restart", 
     await page.getByRole("menuitem", { name: "置顶" }).click();
     await expect(page.getByLabel("已置顶")).toBeVisible();
 
-    await page.getByRole("button", { name: "聊聊今天发生的事" }).click();
-    const composer = page.getByRole("textbox", { name: "消息" });
-    await expect(composer).toHaveValue("聊聊今天发生的事");
-    await expect(page.getByRole("button", { name: "发送" })).toBeDisabled();
-    await page.getByRole("button", { exact: true, name: "Chat" }).click();
-    await page.getByRole("menuitem", { name: /^Agent/u }).click();
-    await expect(composer).toHaveValue("聊聊今天发生的事");
-    await expect(page.getByRole("button", { name: /请求批准/u })).toBeVisible();
-    await expect(page.getByRole("button", { name: "发送" })).toBeDisabled();
-
     await page.getByRole("button", { name: "新建对话" }).click();
-    await page
-      .getByRole("button", { exact: true, name: "新对话" })
-      .click({ button: "right" });
-    await page.getByRole("menuitem", { name: "重命名" }).click();
-    await page.getByRole("textbox", { name: "会话标题" }).fill("临时会话");
-    await page.getByRole("textbox", { name: "会话标题" }).press("Enter");
+    await expect(
+      page.getByRole("button", { exact: true, name: "新对话" }),
+    ).toHaveCount(0);
+    await composer.fill("临时会话测试");
+    await page.getByRole("button", { name: "发送" }).click();
     await expect(page.getByRole("heading", { name: "临时会话" })).toBeVisible();
 
     const search = page.getByRole("searchbox", { name: "搜索会话" });
@@ -199,6 +341,7 @@ test("manages real Chats and restores product state after an Electron restart", 
     try {
       await application?.close();
     } finally {
+      await provider.close();
       await rm(userDataDirectory, { force: true, recursive: true });
     }
   }

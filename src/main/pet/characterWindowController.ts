@@ -28,6 +28,7 @@ export class CharacterWindowController {
   constructor(
     private readonly service: PetService,
     private readonly openMainWindow: (target?: PetMainTarget) => void,
+    private readonly revealOnReady = true,
   ) {}
 
   getWindow(): BrowserWindow | null {
@@ -100,7 +101,9 @@ export class CharacterWindowController {
     });
     this.window = window;
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    window.once("ready-to-show", () => window.showInactive());
+    window.once("ready-to-show", () => {
+      if (this.revealOnReady) window.showInactive();
+    });
     window.on("close", () => this.persistPlacement());
     window.on("closed", () => {
       if (this.window === window) this.window = null;

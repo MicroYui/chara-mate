@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { useReducer } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -7,7 +13,10 @@ import { chatsFixtureUiReducer, initialChatsFixtureUiState } from "../state";
 import type { FixtureRun } from "../types";
 import { RunProcess } from "./RunProcess";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 function runByChatId(chatId: string): FixtureRun {
   const run = chatsFixture.chats.find(({ record }) => record.id === chatId)
@@ -51,12 +60,46 @@ describe("RunProcess", () => {
 
     const summary = screen.getByRole("button", { name: /已处理/u });
     expect(summary).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("已更新计划")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("当前计划")).not.toBeInTheDocument();
 
     fireEvent.click(summary);
-    expect(screen.getByText("已更新计划")).toBeVisible();
+    expect(screen.getByLabelText("计划记录")).toBeVisible();
+    expect(screen.getByText("整理组件边界")).toBeVisible();
+    expect(screen.getByText("进行中")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /已运行命令/u }));
     expect(screen.getByText(/npm run test:focused/u)).toBeVisible();
+  });
+
+  it("leaves the latest Plan out of an active Run process", () => {
+    const base = runByChatId(chatsFixtureIds.designChat);
+    const firstPlan = base.items.find(({ kind }) => kind === "plan");
+    if (!firstPlan) throw new Error("Missing Plan fixture");
+    const updated: FixtureRun = {
+      ...base,
+      items: [
+        ...base.items,
+        {
+          ...firstPlan,
+          id: "00000000-0000-4000-8000-000000000499",
+          input: {
+            explanation: "实现完成，正在验证。",
+            plan: [
+              { status: "completed", step: "读取设计" },
+              { status: "completed", step: "整理组件边界" },
+              { status: "in_progress", step: "运行最终验收" },
+            ],
+          },
+          sequence: 99,
+        },
+      ],
+      record: { ...base.record, status: "running" },
+    };
+
+    render(<RunHarness run={updated} />);
+
+    expect(screen.queryByLabelText("计划记录")).not.toBeInTheDocument();
+    expect(screen.queryByText("运行最终验收")).not.toBeInTheDocument();
+    expect(screen.queryByText("验证 fixture")).not.toBeInTheDocument();
   });
 
   it("keeps an Approval visible and resolves the same fixture decision", () => {
@@ -81,9 +124,7 @@ describe("RunProcess", () => {
 
   it("keeps the current running Item expanded so streamed output stays visible", () => {
     const base = runByChatId(chatsFixtureIds.designChat);
-    const processItem = base.items.find(
-      ({ kind }) => kind !== "user_message" && kind !== "assistant_message",
-    );
+    const processItem = base.items.find(({ kind }) => kind === "command");
     if (!processItem) throw new Error("Missing process Item fixture");
     const running: FixtureRun = {
       ...base,
@@ -100,6 +141,48 @@ describe("RunProcess", () => {
     render(<RunHarness run={running} />);
 
     expect(screen.getByText("正在追加输出")).toBeVisible();
+  });
+
+  it("advances the elapsed time before the first token", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-08T09:00:32.900Z"));
+    const base = runByChatId(chatsFixtureIds.designChat);
+    const assistantItem = base.items.find(
+      ({ kind }) => kind === "assistant_message",
+    );
+    if (!assistantItem) throw new Error("Missing assistant Item fixture");
+    const { endedAt: assistantEndedAt, ...assistantWithoutEndedAt } =
+      assistantItem;
+    const { endedAt: runEndedAt, ...recordWithoutEndedAt } = base.record;
+    expect(assistantEndedAt).toBeDefined();
+    expect(runEndedAt).toBeDefined();
+    const waiting: FixtureRun = {
+      ...base,
+      items: [
+        {
+          ...assistantWithoutEndedAt,
+          startedAt: "2026-08-08T09:00:32.762Z",
+          status: "running",
+        },
+      ],
+      record: {
+        ...recordWithoutEndedAt,
+        startedAt: "2026-08-08T09:00:32.751Z",
+        status: "running",
+      },
+    };
+
+    render(<RunHarness run={waiting} />);
+
+    expect(screen.getByRole("button", { name: /正在处理/u })).toHaveTextContent(
+      "0秒",
+    );
+
+    await act(() => vi.advanceTimersByTime(2_000));
+
+    expect(screen.getByRole("button", { name: /正在处理/u })).toHaveTextContent(
+      "2秒",
+    );
   });
 
   it("shows an interrupted Run error and resumes only from the explicit action", () => {

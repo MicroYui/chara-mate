@@ -115,6 +115,28 @@ export const RunItemStatusSchema = Type.Union([
   Type.Literal("interrupted"),
 ]);
 
+export const PlanStepStatusSchema = Type.Union([
+  Type.Literal("pending"),
+  Type.Literal("in_progress"),
+  Type.Literal("completed"),
+]);
+
+export const PlanStepSchema = Type.Object(
+  {
+    status: PlanStepStatusSchema,
+    step: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const PlanUpdateSchema = Type.Object(
+  {
+    explanation: Type.Optional(NonBlankStringSchema),
+    plan: Type.Array(PlanStepSchema, { minItems: 1 }),
+  },
+  { additionalProperties: false },
+);
+
 export const RunItemSchema = Type.Object(
   {
     artifacts: Type.Array(ArtifactReferenceSchema),

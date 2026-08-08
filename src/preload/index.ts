@@ -12,6 +12,8 @@ import {
 } from "../shared/contracts/agent";
 import {
   CHAT_CHANNELS,
+  CHAT_EVENT_CHANNELS,
+  type Chat,
   type ChatApi,
   type ChatCreateRequest,
   type ChatDataSnapshotRequest,
@@ -82,6 +84,7 @@ import {
   ChatListResponseSchema,
   ChatMutationResponseSchema,
   ChatRenameRequestSchema,
+  ChatSchema,
   ChatSetPinnedRequestSchema,
 } from "../shared/schemas/chat";
 import {
@@ -235,6 +238,13 @@ const chatApi: ChatApi = Object.freeze({
       ChatMutationResponseSchema,
       await ipcRenderer.invoke(CHAT_CHANNELS.setPinned, request),
     );
+  },
+  subscribeChanged: (listener: (chat: Chat) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      listener(parseSchemaWithoutCodeGeneration(ChatSchema, input));
+    };
+    ipcRenderer.on(CHAT_EVENT_CHANNELS.changed, wrapped);
+    return () => ipcRenderer.off(CHAT_EVENT_CHANNELS.changed, wrapped);
   },
 });
 

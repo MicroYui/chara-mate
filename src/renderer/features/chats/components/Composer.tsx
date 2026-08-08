@@ -430,6 +430,8 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const canSend =
     state.draft.trim().length > 0 || state.composerAttachments.length > 0;
+  const canSteer =
+    state.draft.trim().length > 0 && state.composerAttachments.length === 0;
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -441,7 +443,8 @@ export function Composer({
   }, [state.draft]);
 
   const send = () => {
-    if (runtimeEnabled && canSend && state.composerPhase === "idle") {
+    const sendable = state.composerPhase === "running" ? canSteer : canSend;
+    if (runtimeEnabled && sendable && state.composerPhase !== "stopping") {
       if (onSend) onSend();
       else dispatch({ phase: "running", type: "composer.phase-changed" });
     }
@@ -543,7 +546,34 @@ export function Composer({
           >
             <Mic aria-hidden="true" size={16} />
           </button>
-          {state.composerPhase === "running" ? (
+          {state.composerPhase === "running" && canSteer ? (
+            <>
+              <button
+                className={styles["stopButton"]}
+                type="button"
+                aria-label="停止"
+                onClick={() => {
+                  if (onStop) onStop();
+                  else
+                    dispatch({
+                      phase: "stopping",
+                      type: "composer.phase-changed",
+                    });
+                }}
+              >
+                <Square aria-hidden="true" fill="currentColor" size={10} />
+              </button>
+              <button
+                className={styles["primaryButton"]}
+                type="button"
+                aria-label="发送追加消息"
+                disabled={!runtimeEnabled}
+                onClick={send}
+              >
+                <ArrowUp aria-hidden="true" size={17} />
+              </button>
+            </>
+          ) : state.composerPhase === "running" ? (
             <button
               className={styles["primaryButton"]}
               type="button"

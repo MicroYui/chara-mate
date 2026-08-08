@@ -23,7 +23,9 @@ import type {
 import {
   chatDataSnapshotFixture,
   chatFixture,
+  FIXTURE_IDS,
   FIXTURE_TIMESTAMPS,
+  runFixture,
 } from "../../../tests/fixtures/foundationContracts";
 import { emptyTerritorySnapshot } from "../../../tests/fixtures/territory";
 import { App } from "./App";
@@ -60,9 +62,11 @@ afterEach(() => {
 
 function renderApp({
   initialChats,
+  modelAvailable = false,
   seeded = false,
 }: {
   readonly initialChats?: readonly Chat[];
+  readonly modelAvailable?: boolean;
   readonly seeded?: boolean;
 } = {}) {
   let chats: Chat[] = [...(initialChats ?? (seeded ? [chatFixture] : []))];
@@ -74,6 +78,7 @@ function renderApp({
   };
   let petLibraryListener: ((snapshot: PetLibrarySnapshot) => void) | undefined;
   let petMainListener: ((target: PetMainTarget) => void) | undefined;
+  let chatChangedListener: ((chat: Chat) => void) | undefined;
   const snapshots = new Map<string, ChatDataSnapshot>();
   for (const chat of chats) {
     snapshots.set(
@@ -91,13 +96,29 @@ function renderApp({
     );
   }
   const markRendererReady = vi.fn();
-  const listProfiles = vi.fn().mockResolvedValue({ ok: true, value: [] });
-  const create = vi.fn<ChatApi["create"]>(() => {
+  const listProfiles = vi.fn().mockResolvedValue({
+    ok: true,
+    value: modelAvailable
+      ? [
+          {
+            apiStyle: "openai-compatible" as const,
+            baseUrl: "https://example.test/v1",
+            chatModel: "gpt-chat",
+            createdAt: FIXTURE_TIMESTAMPS.created,
+            hasApiKey: true,
+            id: FIXTURE_IDS.provider,
+            name: "Test Provider",
+            updatedAt: FIXTURE_TIMESTAMPS.updated,
+          },
+        ]
+      : [],
+  });
+  const create = vi.fn<ChatApi["create"]>((request) => {
     const chat: Chat = {
       createdAt: FIXTURE_TIMESTAMPS.created,
       id: CREATED_CHAT_ID,
       status: "active",
-      title: "新对话",
+      title: request.title ?? request.initialMessage ?? "新对话",
       updatedAt: FIXTURE_TIMESTAMPS.created,
     };
     chats = [chat, ...chats];
@@ -124,13 +145,19 @@ function renderApp({
     if (!chat) throw new Error(`Missing test Chat ${chatId}`);
     return chat;
   };
+  const start = vi.fn<AgentApi["start"]>(() =>
+    Promise.resolve({
+      ok: true as const,
+      value: { ...runFixture, chatId: CREATED_CHAT_ID },
+    }),
+  );
   const desktopApi: CharaMateApi = {
     agent: {
       cancel: vi.fn<AgentApi["cancel"]>(),
       getPendingApproval: vi.fn<AgentApi["getPendingApproval"]>(),
       resolveApproval: vi.fn<AgentApi["resolveApproval"]>(),
       resume: vi.fn<AgentApi["resume"]>(),
-      start: vi.fn<AgentApi["start"]>(),
+      start,
       steer: vi.fn<AgentApi["steer"]>(),
       subscribeOpenApproval: vi.fn<AgentApi["subscribeOpenApproval"]>(
         () => () => undefined,
@@ -191,6 +218,12 @@ function renderApp({
         const chat = { ...current };
         delete chat.pinnedAt;
         return Promise.resolve(update(chat));
+      }),
+      subscribeChanged: vi.fn<ChatApi["subscribeChanged"]>((listener) => {
+        chatChangedListener = listener;
+        return () => {
+          chatChangedListener = undefined;
+        };
       }),
     },
     extensions: {
@@ -307,6 +340,10 @@ function renderApp({
   render(<App />);
   return {
     create,
+    emitChatChanged: (chat: Chat) => {
+      update(chat);
+      chatChangedListener?.(chat);
+    },
     listProfiles,
     markRendererReady,
     openMain: (target: PetMainTarget) => petMainListener?.(target),
@@ -314,6 +351,7 @@ function renderApp({
       petLibrary = { ...petLibrary, activePetId: petId };
       petLibraryListener?.(petLibrary);
     },
+    start,
   };
 }
 
@@ -373,18 +411,18 @@ describe("application shell", () => {
     expect(screen.getByRole("heading", { name: "桌面角色" })).toBeVisible();
   });
 
-  it("creates a persisted blank Chat and fills a suggestion without faking a Run", async () => {
+  it("keeps New Chat as a right-side draft until the first send", async () => {
     const { create } = renderApp();
     await screen.findByRole("heading", { name: "新对话" });
 
     fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
-    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create).not.toHaveBeenCalled();
     expect(
-      within(screen.getByRole("region", { name: "会话列表" })).getByRole(
+      within(screen.getByRole("region", { name: "会话列表" })).queryByRole(
         "button",
         { name: "新对话" },
       ),
-    ).toBeVisible();
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "今天想从哪里开始？" }),
     ).toBeVisible();
@@ -400,7 +438,7 @@ describe("application shell", () => {
     );
   });
 
-  it("starts a new Chat in Recent even when Archived is selected", async () => {
+  it("opens a new draft in Recent even when Archived is selected", async () => {
     const activeChat: Chat = {
       ...chatFixture,
       id: ACTIVE_CHAT_ID,
@@ -424,17 +462,60 @@ describe("application shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
 
-    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "最近" })).toHaveAttribute(
       "aria-current",
       "page",
     );
     expect(screen.getByRole("searchbox", { name: "搜索会话" })).toHaveValue("");
     expect(
-      within(screen.getByRole("region", { name: "会话列表" })).getByRole(
+      within(screen.getByRole("region", { name: "会话列表" })).queryByRole(
         "button",
         { name: "新对话" },
       ),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "新对话" })).toBeVisible();
+  });
+
+  it("persists on first send, uses the first message fallback, then accepts the AI title", async () => {
+    const { create, emitChatChanged, start } = renderApp({
+      initialChats: [chatFixture],
+      modelAvailable: true,
+    });
+    await screen.findByRole("heading", { name: chatFixture.title });
+    await screen.findByRole("button", { name: "gpt-chat" });
+
+    fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "消息" }), {
+      target: { value: "帮我规划北京周末行程" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith({
+        initialMessage: "帮我规划北京周末行程",
+      }),
+    );
+    await waitFor(() => expect(start).toHaveBeenCalledOnce());
+    expect(
+      within(screen.getByRole("region", { name: "会话列表" })).getByRole(
+        "button",
+        { name: "帮我规划北京周末行程" },
+      ),
+    ).toBeVisible();
+
+    act(() =>
+      emitChatChanged({
+        createdAt: FIXTURE_TIMESTAMPS.created,
+        id: CREATED_CHAT_ID,
+        status: "active",
+        title: "北京周末行程规划",
+        updatedAt: FIXTURE_TIMESTAMPS.updated,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "北京周末行程规划" }),
     ).toBeVisible();
   });
 
