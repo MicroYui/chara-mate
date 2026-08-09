@@ -329,10 +329,12 @@ function eventError(event: ResponseStreamEvent): ProviderError | undefined {
 export class OpenAIResponsesModelProvider implements ModelProvider {
   readonly #client: OpenAI;
   readonly #openAICompatible: boolean;
+  readonly supportsNativeWebSearch: boolean;
 
   constructor(profile: ProviderProfileDraft, apiKey: string) {
     this.#client = createClient(profile, apiKey);
     this.#openAICompatible = profile.apiStyle === "openai-compatible";
+    this.supportsNativeWebSearch = true;
   }
 
   async resolveContextLimits(modelId: string): Promise<ModelContextLimits> {
@@ -366,7 +368,10 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
     request: ModelRequest,
     signal: AbortSignal,
   ): AsyncIterable<ModelEvent> {
-    const tools = requestTools(request.toolNamespaces, this.#openAICompatible);
+    const tools = requestTools(
+      request.toolNamespaces,
+      this.supportsNativeWebSearch && request.nativeWebSearch === true,
+    );
     const useSelectedPromptCache =
       this.#openAICompatible && request.modelId === SELECTED_PROMPT_CACHE_MODEL;
     const body = {
@@ -408,6 +413,7 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
           const usage = event.response.usage;
           yield {
             responseId: event.response.id,
+            status: "completed",
             type: "response.completed",
             usage: {
               cachedInputTokens: usage?.input_tokens_details.cached_tokens ?? 0,

@@ -21,6 +21,7 @@ class TitleProvider implements ModelProvider {
     yield { delta: "标题： “北京周末行程”", type: "text.delta" };
     yield {
       responseId: "title-response",
+      status: "completed",
       type: "response.completed",
       usage: { cachedInputTokens: 0, inputTokens: 20, outputTokens: 5 },
     };
@@ -61,6 +62,7 @@ describe("Chat title generation", () => {
     expect(provider.request).toMatchObject({
       maxOutputTokens: 128,
       modelId: "gpt-chat",
+      nativeWebSearch: false,
       toolNamespaces: [],
     });
     expect(provider.request?.instructions).toContain(

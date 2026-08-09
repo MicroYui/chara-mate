@@ -405,6 +405,7 @@ describe("Phase 2 Runtime mechanics", () => {
         },
         {
           responseId: "response-1",
+          status: "completed",
           type: "response.completed",
           usage: { cachedInputTokens: 10, inputTokens: 20, outputTokens: 3 },
         },

@@ -12,6 +12,7 @@ import type { PetManagementApi } from "./pet";
 import type { ProviderApi } from "./provider";
 import type { TerritoryApi } from "./territory";
 import type { MemoryApi } from "./memory";
+import type { VoiceApi } from "./voice";
 
 export const FOUNDATION_CHANNELS = {
   getSnapshot: "app.foundation.getSnapshot",
@@ -34,6 +35,7 @@ export interface DesktopApi {
   provider: ProviderApi;
   settings: SettingsApi;
   territory: TerritoryApi;
+  voice: VoiceApi;
 }
 
 export interface CharaMateApi extends DesktopApi {

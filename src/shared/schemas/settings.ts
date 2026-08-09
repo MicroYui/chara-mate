@@ -2,7 +2,8 @@ import { Type, type TSchema } from "@sinclair/typebox";
 
 import { ApprovalModeSchema } from "./run";
 import { AppErrorSchema } from "./error";
-import { NonBlankStringSchema } from "./primitives";
+import { EntityIdSchema, NonBlankStringSchema } from "./primitives";
+import { VoiceInputModeSchema, VoiceNameSchema } from "./voice";
 
 export const AgentSettingsSchema = Type.Object(
   {
@@ -13,13 +14,31 @@ export const AgentSettingsSchema = Type.Object(
   { additionalProperties: false },
 );
 
-const PermissionStatusSchema = Type.Union([
+export const PermissionStatusSchema = Type.Union([
   Type.Literal("granted"),
   Type.Literal("denied"),
   Type.Literal("not_determined"),
   Type.Literal("restricted"),
   Type.Literal("unavailable"),
 ]);
+
+export const VoiceSettingsConfigSchema = Type.Object(
+  {
+    inputMode: VoiceInputModeSchema,
+    instructions: NonBlankStringSchema,
+    providerProfileId: EntityIdSchema,
+    voice: VoiceNameSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const VoiceSettingsSchema = Type.Object(
+  {
+    ...VoiceSettingsConfigSchema.properties,
+    microphone: PermissionStatusSchema,
+  },
+  { additionalProperties: false },
+);
 
 export const BrowserComputerSettingsSchema = Type.Object(
   {
@@ -39,6 +58,7 @@ export const SettingsSnapshotSchema = Type.Object(
   {
     agent: AgentSettingsSchema,
     browserComputer: BrowserComputerSettingsSchema,
+    voice: VoiceSettingsSchema,
   },
   { additionalProperties: false },
 );
@@ -50,6 +70,11 @@ export const SettingsEmptyRequestSchema = Type.Object(
 
 export const AgentSettingsSaveRequestSchema = Type.Object(
   { agent: AgentSettingsSchema },
+  { additionalProperties: false },
+);
+
+export const VoiceSettingsSaveRequestSchema = Type.Object(
+  { voice: VoiceSettingsConfigSchema },
   { additionalProperties: false },
 );
 
@@ -79,6 +104,8 @@ export const SettingsSnapshotResponseSchema = operationResponse(
 );
 export const AgentSettingsSaveResponseSchema =
   operationResponse(AgentSettingsSchema);
+export const VoiceSettingsSaveResponseSchema =
+  operationResponse(VoiceSettingsSchema);
 export const BrowserActionResponseSchema = operationResponse(
   BrowserActionResultSchema,
 );

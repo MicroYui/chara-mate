@@ -1,5 +1,6 @@
 import type {
   PetCharacterSnapshot,
+  PetAnimation,
   PetDescriptor,
   PetFacing,
   PetLibrarySnapshot,
@@ -17,6 +18,7 @@ type PetChangeListener = () => void;
 
 export class PetService {
   private state: PetStoredState | undefined;
+  private runtimeAnimation: PetAnimation = "idle";
   private readonly listeners = new Set<PetChangeListener>();
 
   constructor(
@@ -90,7 +92,7 @@ export class PetService {
     const pets = await this.library.list();
     return {
       activePet: pets.find(({ id }) => id === state.activePetId) ?? null,
-      animation: "idle",
+      animation: this.runtimeAnimation,
       animationSpeed: state.animationSpeed,
       facing: state.facing,
       scale: state.scale,
@@ -144,6 +146,12 @@ export class PetService {
     const current = this.requireState();
     if (current.facing === facing) return;
     this.save({ ...current, facing, updatedAt: this.clock.now() });
+  }
+
+  setRuntimeAnimation(animation: PetAnimation): void {
+    if (this.runtimeAnimation === animation) return;
+    this.runtimeAnimation = animation;
+    for (const listener of this.listeners) listener();
   }
 
   updatePlacement(

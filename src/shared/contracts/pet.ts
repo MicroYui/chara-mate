@@ -7,6 +7,7 @@ import type {
   ResolveApprovalResponse,
 } from "./agent";
 import type { Approval } from "./run";
+import type { VoiceApi } from "./voice";
 
 import type {
   CodexPetManifestSchema,
@@ -98,4 +99,5 @@ export interface CharacterWindowApi {
   startDrag(point: PetDragPoint): Promise<PetDragResult>;
   subscribe(listener: (snapshot: PetCharacterSnapshot) => void): () => void;
   subscribeApproval(listener: (approval: Approval | null) => void): () => void;
+  voice: VoiceApi;
 }

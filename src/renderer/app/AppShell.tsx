@@ -33,6 +33,7 @@ import type { MemorySource } from "../../shared/contracts/memory";
 import type { PetDescriptor } from "../../shared/contracts/pet";
 import type { AgentSettings } from "../../shared/contracts/settings";
 import type { UserInputResolution } from "../../shared/contracts/run";
+import type { VoiceSessionSnapshot } from "../../shared/contracts/voice";
 import type { ChatDomainState } from "../features/chats/chatStore";
 import { ChatsPage } from "../features/chats/ChatsPage";
 import { ProviderSettingsPanel } from "../features/settings/ProviderSettingsPanel";
@@ -42,9 +43,11 @@ import { BrowserComputerSettingsPanel } from "../features/settings/BrowserComput
 import { ActivitySettingsPanel } from "../features/settings/ActivitySettingsPanel";
 import { McpSettingsPanel } from "../features/settings/McpSettingsPanel";
 import { SkillsSettingsPanel } from "../features/settings/SkillsSettingsPanel";
+import { VoiceSettingsPanel } from "../features/settings/VoiceSettingsPanel";
 import { TerritoryPage } from "../features/territory/TerritoryPage";
 import { MemoryPage } from "../features/memory/MemoryPage";
 import { ActivityPage } from "../features/activity/ActivityPage";
+import type { VoiceStore, VoiceUiState } from "../features/voice/voiceStore";
 import type {
   ChatView,
   ChatsUiAction,
@@ -104,6 +107,7 @@ interface AppShellProps {
   readonly onChatRestore: (chatId: string) => void;
   readonly onChatSetPinned: (chatId: string, pinned: boolean) => void;
   readonly onClearChatError: () => void;
+  readonly onClearVoiceError: () => void;
   readonly onBackgroundSchemeChange: (scheme: BackgroundScheme) => void;
   readonly onAgentSettingsChanged: (settings: AgentSettings) => void;
   readonly onProvidersChanged: () => void;
@@ -119,9 +123,16 @@ interface AppShellProps {
   readonly onRunResume: (runId: string) => void;
   readonly onRunSend: () => void;
   readonly onRunStop: () => void;
+  readonly onVoiceEnd: () => void;
+  readonly onVoiceMutedChange: (muted: boolean) => void;
+  readonly onVoiceRetry: () => void;
+  readonly onVoiceStart: () => void;
   readonly openCharacterSettingsToken: number;
   readonly petAnimationSpeed: number;
   readonly state: ChatsUiState;
+  readonly voiceSnapshot: VoiceSessionSnapshot | null;
+  readonly voiceStore: VoiceStore;
+  readonly voiceError: VoiceUiState["error"];
 }
 
 interface SidebarButtonProps {
@@ -672,6 +683,7 @@ function SettingsPage({
   onBackgroundSchemeChange,
   onProvidersChanged,
   openCharacterSettingsToken,
+  voiceStore,
 }: Pick<
   AppShellProps,
   | "backgroundScheme"
@@ -679,6 +691,7 @@ function SettingsPage({
   | "onBackgroundSchemeChange"
   | "onProvidersChanged"
   | "openCharacterSettingsToken"
+  | "voiceStore"
 >) {
   const [activeSection, setActiveSection] = useState<
     | "agent"
@@ -689,6 +702,7 @@ function SettingsPage({
     | "mcp"
     | "models"
     | "skills"
+    | "voice"
   >(openCharacterSettingsToken > 0 ? "character" : "appearance");
 
   return (
@@ -708,7 +722,11 @@ function SettingsPage({
         >
           Character
         </button>
-        <button type="button" disabled>
+        <button
+          type="button"
+          aria-current={activeSection === "voice" ? "page" : undefined}
+          onClick={() => setActiveSection("voice")}
+        >
           Voice
         </button>
         <button
@@ -796,6 +814,8 @@ function SettingsPage({
           </section>
         ) : activeSection === "character" ? (
           <CharacterSettingsPanel />
+        ) : activeSection === "voice" ? (
+          <VoiceSettingsPanel voiceStore={voiceStore} />
         ) : activeSection === "models" ? (
           <ProviderSettingsPanel onProfilesChanged={onProvidersChanged} />
         ) : activeSection === "agent" ? (
@@ -828,6 +848,7 @@ export function AppShell({
   onChatRestore,
   onChatSetPinned,
   onClearChatError,
+  onClearVoiceError,
   onBackgroundSchemeChange,
   onAgentSettingsChanged,
   onProvidersChanged,
@@ -836,9 +857,16 @@ export function AppShell({
   onRunResume,
   onRunSend,
   onRunStop,
+  onVoiceEnd,
+  onVoiceMutedChange,
+  onVoiceRetry,
+  onVoiceStart,
   openCharacterSettingsToken,
   petAnimationSpeed,
   state,
+  voiceSnapshot,
+  voiceStore,
+  voiceError,
 }: AppShellProps) {
   const [renameRequest, setRenameRequest] = useState<ChatRenameRequest | null>(
     null,
@@ -901,10 +929,27 @@ export function AppShell({
           renameRequest={renameRequest}
           state={state}
         />
-        {chatDomain.error ? (
+        {chatDomain.error || voiceError ? (
           <div className={styles["errorBanner"]} role="alert">
-            <span>{chatDomain.error}</span>
-            <button type="button" onClick={onClearChatError}>
+            <span>{chatDomain.error ?? voiceError?.message}</span>
+            {!chatDomain.error && voiceError?.retryable ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onClearVoiceError();
+                  onVoiceRetry();
+                }}
+              >
+                重试
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                onClearChatError();
+                onClearVoiceError();
+              }}
+            >
               关闭
             </button>
           </div>
@@ -920,8 +965,14 @@ export function AppShell({
               onResolveUserInput={onResolveUserInput}
               onSend={onRunSend}
               onStop={onRunStop}
+              onVoiceEnd={onVoiceEnd}
+              onVoiceMutedChange={onVoiceMutedChange}
+              onVoiceRetry={onVoiceRetry}
+              onVoiceStart={onVoiceStart}
               runtimeEnabled={state.modelId !== undefined}
               state={state}
+              voiceSnapshot={voiceSnapshot}
+              voiceStore={voiceStore}
             />
           ) : state.activePage === "settings" ? (
             <SettingsPage
@@ -931,6 +982,7 @@ export function AppShell({
               onBackgroundSchemeChange={onBackgroundSchemeChange}
               onProvidersChanged={onProvidersChanged}
               openCharacterSettingsToken={openCharacterSettingsToken}
+              voiceStore={voiceStore}
             />
           ) : state.activePage === "territory" ? (
             <TerritoryPage

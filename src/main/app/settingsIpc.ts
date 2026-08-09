@@ -7,6 +7,8 @@ import {
   BrowserActionResponseSchema,
   SettingsEmptyRequestSchema,
   SettingsSnapshotResponseSchema,
+  VoiceSettingsSaveRequestSchema,
+  VoiceSettingsSaveResponseSchema,
 } from "../../shared/schemas/settings";
 import { parseSchema } from "../../shared/schemas/validation";
 import type { SettingsService } from "./settingsService";
@@ -46,6 +48,20 @@ export function registerSettingsIpc(
       });
     } catch (error) {
       return parseSchema(AgentSettingsSaveResponseSchema, {
+        error: appError(error),
+        ok: false,
+      });
+    }
+  });
+  ipcMain.handle(SETTINGS_CHANNELS.saveVoice, (_event, input) => {
+    try {
+      const request = parseSchema(VoiceSettingsSaveRequestSchema, input);
+      return parseSchema(VoiceSettingsSaveResponseSchema, {
+        ok: true,
+        value: service.saveVoice(request.voice),
+      });
+    } catch (error) {
+      return parseSchema(VoiceSettingsSaveResponseSchema, {
         error: appError(error),
         ok: false,
       });

@@ -66,6 +66,7 @@ function fixture() {
       profileId: "10000000-0000-4000-8000-000000000007",
       profileName: "Test",
     },
+    source: "text",
     startedAt: NOW,
     status: "running",
   };
@@ -168,6 +169,7 @@ describe("Phase 2 runtime observability", () => {
       expect(response.status).toBe(200);
       const body = await response.text();
       expect(body).toContain('"toolName":"file.write"');
+      expect(body).toContain('"voice":');
       expect(body).not.toContain('"type":"model"');
     } finally {
       await dashboard.close();

@@ -8,7 +8,8 @@ export type AgentErrorCode =
   | "AGENT.IMAGE_INPUT_UNAVAILABLE"
   | "AGENT.RUN_NOT_ACTIVE"
   | "AGENT.RUN_NOT_FOUND"
-  | "AGENT.RUN_NOT_RESUMABLE";
+  | "AGENT.RUN_NOT_RESUMABLE"
+  | "AGENT.VOICE_SESSION_REQUIRED";
 
 export class AgentError extends Error {
   constructor(

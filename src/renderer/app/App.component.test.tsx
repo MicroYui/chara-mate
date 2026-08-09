@@ -20,6 +20,10 @@ import type {
   PetLibrarySnapshot,
   PetMainTarget,
 } from "../../shared/contracts/pet";
+import type {
+  VoiceApi,
+  VoiceSessionSnapshot,
+} from "../../shared/contracts/voice";
 import {
   chatDataSnapshotFixture,
   chatFixture,
@@ -58,6 +62,7 @@ afterEach(() => {
   document.documentElement.removeAttribute("data-foundation-ready");
   document.documentElement.removeAttribute("data-background-scheme");
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 function renderApp({
@@ -79,6 +84,8 @@ function renderApp({
   let petLibraryListener: ((snapshot: PetLibrarySnapshot) => void) | undefined;
   let petMainListener: ((target: PetMainTarget) => void) | undefined;
   let chatChangedListener: ((chat: Chat) => void) | undefined;
+  let voiceChangedListener:
+    ((snapshot: VoiceSessionSnapshot | null) => void) | undefined;
   const snapshots = new Map<string, ChatDataSnapshot>();
   for (const chat of chats) {
     snapshots.set(
@@ -151,6 +158,18 @@ function renderApp({
       value: { ...runFixture, chatId: CREATED_CHAT_ID },
     }),
   );
+  const voiceStart = vi.fn<VoiceApi["start"]>().mockResolvedValue({
+    error: {
+      code: "PROVIDER.UNREACHABLE",
+      message: "暂时无法连接 Realtime。",
+      retryable: true,
+    },
+    ok: false,
+  });
+  const voiceEnd = vi.fn<VoiceApi["end"]>().mockImplementation(() => {
+    voiceChangedListener?.(null);
+    return Promise.resolve({ ok: true, value: null });
+  });
   const desktopApi: CharaMateApi = {
     activity: {
       cleanup: vi.fn(),
@@ -351,11 +370,36 @@ function renderApp({
             profileDirectory: "/browser/profile",
             screenRecording: "unavailable",
           },
+          voice: {
+            inputMode: "hands_free",
+            instructions: "使用自然、简洁的中文口语。",
+            microphone: "granted",
+            providerProfileId: FIXTURE_IDS.provider,
+            voice: "verse",
+          },
         },
       }),
       importBrowserCookies: vi.fn(),
       openManagedBrowser: vi.fn(),
       saveAgent: vi.fn(),
+      saveVoice: vi.fn(),
+    },
+    voice: {
+      end: voiceEnd,
+      getActive: vi.fn().mockResolvedValue({ ok: true, value: null }),
+      preview: vi.fn(),
+      quickStart: vi.fn(),
+      report: vi.fn(),
+      setMuted: vi.fn(),
+      start: voiceStart,
+      subscribeChanged: vi.fn<VoiceApi["subscribeChanged"]>((listener) => {
+        voiceChangedListener = listener;
+        return () => {
+          if (voiceChangedListener === listener)
+            voiceChangedListener = undefined;
+        };
+      }),
+      subscribeCommand: vi.fn(() => () => undefined),
     },
   };
   Object.defineProperty(window, "charaMate", {
@@ -370,6 +414,8 @@ function renderApp({
       update(chat);
       chatChangedListener?.(chat);
     },
+    emitVoiceChanged: (snapshot: VoiceSessionSnapshot | null) =>
+      voiceChangedListener?.(snapshot),
     listProfiles,
     markRendererReady,
     openMain: (target: PetMainTarget) => petMainListener?.(target),
@@ -378,6 +424,8 @@ function renderApp({
       petLibraryListener?.(petLibrary);
     },
     start,
+    voiceEnd,
+    voiceStart,
   };
 }
 
@@ -462,6 +510,53 @@ describe("application shell", () => {
       "title",
       "请先选择可用模型",
     );
+  });
+
+  it("ends the active Voice session before opening a new Chat draft", async () => {
+    const { emitVoiceChanged, voiceEnd } = renderApp({ seeded: true });
+    await screen.findByRole("heading", { name: chatFixture.title });
+    act(() =>
+      emitVoiceChanged({
+        assistantTranscript: "",
+        chatId: chatFixture.id,
+        connectedAt: FIXTURE_TIMESTAMPS.updated,
+        createdAt: FIXTURE_TIMESTAMPS.created,
+        generation: 0,
+        inputMode: "hands_free",
+        muted: false,
+        phase: "listening",
+        sessionId: "20000000-0000-4000-8000-000000000001",
+        userTranscript: "",
+        voice: "verse",
+      }),
+    );
+    await screen.findByRole("button", { name: "结束语音" });
+
+    let finishEnd:
+      ((value: Awaited<ReturnType<VoiceApi["end"]>>) => void) | undefined;
+    voiceEnd.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishEnd = resolve;
+        }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
+
+    await waitFor(() =>
+      expect(voiceEnd).toHaveBeenCalledWith({
+        sessionId: "20000000-0000-4000-8000-000000000001",
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: chatFixture.title }),
+    ).toBeVisible();
+
+    act(() => {
+      finishEnd?.({ ok: true, value: null });
+    });
+    expect(
+      await screen.findByRole("heading", { name: "今天想从哪里开始？" }),
+    ).toBeVisible();
   });
 
   it("opens a new draft in Recent even when Archived is selected", async () => {
@@ -604,5 +699,42 @@ describe("application shell", () => {
     ).toBeVisible();
     expect(screen.getByText("还没有 Provider。")).toBeVisible();
     expect(listProfiles).toHaveBeenCalled();
+  });
+
+  it("offers a retry when Voice fails before creating a Realtime session", async () => {
+    const resume = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state: AudioContextState = "suspended";
+
+        close(): Promise<void> {
+          this.state = "closed";
+          return Promise.resolve();
+        }
+
+        async resume(): Promise<void> {
+          this.state = "running";
+          await resume();
+        }
+      },
+    );
+    const { create, voiceStart } = renderApp({ modelAvailable: true });
+    await screen.findByRole("heading", { name: "新对话" });
+
+    fireEvent.click(screen.getByRole("button", { name: "开始语音对话" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "暂时无法连接 Realtime。",
+    );
+    expect(resume).toHaveBeenCalledOnce();
+    expect(resume.mock.invocationCallOrder[0]).toBeLessThan(
+      create.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(voiceStart.mock.calls[0]?.[0]).not.toHaveProperty("inputMode");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(voiceStart).toHaveBeenCalledTimes(2));
+    expect(resume).toHaveBeenCalledTimes(2);
+    expect(voiceStart.mock.calls[1]?.[0]).not.toHaveProperty("inputMode");
   });
 });

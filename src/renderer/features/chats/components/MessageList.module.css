@@ -66,6 +66,12 @@
   opacity: 0.7;
 }
 
+.messageStatus {
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+}
+
 .message[data-role="user"] .messageActions {
   justify-content: flex-end;
 }

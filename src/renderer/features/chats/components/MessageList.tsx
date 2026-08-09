@@ -117,6 +117,9 @@ function Message({ value }: { readonly value: ChatMessageView }) {
           ))}
         </div>
       ) : null}
+      {value.record.status === "interrupted" ? (
+        <span className={styles["messageStatus"]}>已打断</span>
+      ) : null}
       <div className={styles["messageActions"]}>
         <CopyButton value={value.record.content} />
         {isUser ? (

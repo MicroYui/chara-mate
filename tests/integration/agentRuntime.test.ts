@@ -133,6 +133,7 @@ afterEach(async () => {
 function complete(responseId: string, inputTokens = 64): ModelEvent {
   return {
     responseId,
+    status: "completed",
     type: "response.completed",
     usage: { cachedInputTokens: 0, inputTokens, outputTokens: 8 },
   };
@@ -142,6 +143,22 @@ function finalTurn(text = "完成"): Turn {
   return () => [
     { delta: text, type: "text.delta" },
     complete(`response-${text}`),
+  ];
+}
+
+function hostedSearchTurn(text: string): Turn {
+  return () => [
+    {
+      item: {
+        action: { query: "海淀区未来一周天气", type: "search" },
+        id: "web-search-1",
+        status: "completed",
+        type: "web_search_call",
+      },
+      type: "output.item",
+    },
+    { delta: text, type: "text.delta" },
+    complete("response-hosted-search"),
   ];
 }
 
@@ -760,8 +777,10 @@ describe("Agent Runtime production path", () => {
     fixture.database.close();
   });
 
-  it("completes a Direct no-op Chat without exposing or calling capabilities", async () => {
-    const fixture = await createFixture([finalTurn("直接回答")]);
+  it("completes a direct Chat response with hosted search and no client loop", async () => {
+    const fixture = await createFixture([
+      hostedSearchTurn("海淀区天气查询结果。"),
+    ]);
     registerTool(fixture, {
       execute: () => Promise.resolve(successfulResult("unused")),
       name: "test.unused",
@@ -777,22 +796,78 @@ describe("Agent Runtime production path", () => {
     });
     await waitForStatus(fixture, run.id, "completed");
 
-    expect(fixture.provider.requests[0]?.toolNamespaces).toEqual([
-      expect.objectContaining({
-        name: "interaction",
-        tools: [
-          expect.objectContaining({
-            deferLoading: false,
-            name: "request_user_input",
-          }),
-        ],
-      }),
-    ]);
+    expect(fixture.provider.requests).toHaveLength(1);
+    expect(fixture.provider.requests[0]?.nativeWebSearch).toBe(true);
+    expect(fixture.provider.requests[0]?.instructions).toContain(
+      "answer without a plan or progress preamble",
+    );
+    expect(fixture.provider.requests[0]?.instructions).toContain(
+      "must not be searched for in the client registry",
+    );
+    expect(fixture.provider.requests[0]?.toolNamespaces).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "interaction",
+          tools: [
+            expect.objectContaining({
+              deferLoading: false,
+              name: "request_user_input",
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          name: "test",
+          tools: [expect.objectContaining({ name: "test.unused" })],
+        }),
+      ]),
+    );
     expect(
       fixture.runs
         .listRunItems(run.id)
         .filter(({ kind }) => kind === "tool_call"),
     ).toEqual([]);
+    expect(JSON.stringify(fixture.provider.requests[0])).not.toContain(
+      "web.search",
+    );
+    fixture.database.close();
+  });
+
+  it("lets Chat use plan and idempotent read tools while retaining the same Harness", async () => {
+    const plan = {
+      plan: [{ status: "in_progress" as const, step: "查询信息" }],
+    };
+    const fixture = await createFixture([
+      namespacedFunctionTurn("chat-plan", "update", "plan", plan),
+      functionTurn("chat-read", "test.read", { value: "海淀天气" }),
+      finalTurn("查询完成"),
+    ]);
+    registerPlanTool(fixture.tools);
+    let reads = 0;
+    registerTool(fixture, {
+      execute: () => {
+        reads += 1;
+        return Promise.resolve(successfulResult("晴朗"));
+      },
+      name: "test.read",
+    });
+
+    const run = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "查询海淀天气",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(reads).toBe(1);
+    expect(fixture.runs.listRunItems(run.id).map(({ kind }) => kind)).toEqual(
+      expect.arrayContaining(["plan", "tool_call"]),
+    );
+    expect(fixture.provider.requests[0]?.instructions).toContain(
+      "idempotent read-only query and plan tools",
+    );
     fixture.database.close();
   });
 

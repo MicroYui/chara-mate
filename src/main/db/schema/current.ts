@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "7";
+export const CURRENT_SCHEMA_VERSION = "8";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -205,6 +205,7 @@ export const CURRENT_SCHEMA_SQL = `
     chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
     execution_json TEXT NOT NULL CHECK (json_valid(execution_json)),
     provider_json TEXT NOT NULL CHECK (json_valid(provider_json)),
+    source TEXT NOT NULL DEFAULT 'text' CHECK (source IN ('text', 'voice')),
     status TEXT NOT NULL CHECK (
       status IN (
         'queued',
@@ -676,6 +677,72 @@ export const CURRENT_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS voice_settings (
+    settings_id TEXT PRIMARY KEY NOT NULL CHECK (settings_id = 'voice'),
+    provider_profile_id TEXT NOT NULL,
+    voice TEXT NOT NULL CHECK (
+      voice IN (
+        'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'
+      )
+    ),
+    instructions TEXT NOT NULL,
+    input_mode TEXT NOT NULL CHECK (
+      input_mode IN ('hands_free', 'push_to_talk')
+    ),
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS voice_sessions (
+    id TEXT PRIMARY KEY NOT NULL,
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    provider_json TEXT NOT NULL CHECK (json_valid(provider_json)),
+    voice TEXT NOT NULL CHECK (
+      voice IN (
+        'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'
+      )
+    ),
+    instructions TEXT NOT NULL,
+    input_mode TEXT NOT NULL CHECK (
+      input_mode IN ('hands_free', 'push_to_talk')
+    ),
+    status TEXT NOT NULL CHECK (
+      status IN ('connecting', 'active', 'interrupted', 'completed', 'failed')
+    ),
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    muted INTEGER NOT NULL CHECK (muted IN (0, 1)),
+    protocol_session_id TEXT,
+    last_run_id TEXT REFERENCES runs(id),
+    created_at TEXT NOT NULL,
+    connected_at TEXT,
+    ended_at TEXT,
+    error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json))
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS voice_turns (
+    id TEXT PRIMARY KEY NOT NULL,
+    session_id TEXT NOT NULL
+      REFERENCES voice_sessions(id) ON DELETE CASCADE,
+    generation INTEGER NOT NULL CHECK (generation >= 1),
+    status TEXT NOT NULL CHECK (
+      status IN ('listening', 'responding', 'completed', 'interrupted', 'failed')
+    ),
+    run_id TEXT REFERENCES runs(id),
+    user_message_id TEXT REFERENCES messages(id),
+    assistant_message_id TEXT REFERENCES messages(id),
+    user_item_id TEXT,
+    assistant_item_id TEXT,
+    response_id TEXT,
+    user_transcript TEXT NOT NULL,
+    assistant_transcript TEXT NOT NULL,
+    voice TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    interrupted INTEGER NOT NULL CHECK (interrupted IN (0, 1)),
+    audio_end_ms INTEGER CHECK (audio_end_ms IS NULL OR audio_end_ms >= 0),
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    UNIQUE (session_id, generation)
+  ) STRICT;
+
   CREATE INDEX IF NOT EXISTS chats_updated_idx
     ON chats(status, updated_at DESC, id);
   CREATE INDEX IF NOT EXISTS messages_chat_idx
@@ -721,6 +788,12 @@ export const CURRENT_SCHEMA_SQL = `
     ON mcp_servers(enabled, updated_at DESC, id);
   CREATE INDEX IF NOT EXISTS skill_versions_active_idx
     ON skill_versions(skill_id, enabled, archived_at, revision DESC);
+  CREATE INDEX IF NOT EXISTS voice_sessions_chat_idx
+    ON voice_sessions(chat_id, created_at DESC, id);
+  CREATE INDEX IF NOT EXISTS voice_turns_session_idx
+    ON voice_turns(session_id, generation, id);
+  CREATE INDEX IF NOT EXISTS voice_turns_run_idx
+    ON voice_turns(run_id, id);
   CREATE UNIQUE INDEX IF NOT EXISTS territory_one_active_scene_idx
     ON territory_scenes(is_active)
     WHERE is_active = 1;

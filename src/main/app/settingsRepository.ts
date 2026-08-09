@@ -1,8 +1,12 @@
 import type Database from "better-sqlite3";
 
-import type { AgentSettings } from "../../shared/contracts/settings";
+import type {
+  AgentSettings,
+  VoiceSettingsConfig,
+} from "../../shared/contracts/settings";
 import type { Timestamp } from "../../shared/contracts/primitives";
 import { AgentSettingsSchema } from "../../shared/schemas/settings";
+import { VoiceSettingsConfigSchema } from "../../shared/schemas/settings";
 import { parseSchema } from "../../shared/schemas/validation";
 
 interface AgentSettingsRow {
@@ -11,6 +15,19 @@ interface AgentSettingsRow {
   updated_at: Timestamp;
   working_directory: string;
 }
+
+interface VoiceSettingsRow {
+  input_mode: VoiceSettingsConfig["inputMode"];
+  instructions: string;
+  provider_profile_id: string;
+  voice: VoiceSettingsConfig["voice"];
+}
+
+export const DEFAULT_VOICE_INSTRUCTIONS =
+  "使用用户当前使用的语言自然、简洁地回应，并在用户切换语言时跟随；中文使用简体中文。角色整体开朗、有温度，处理任务时保持清楚可靠。允许自然停顿，不朗读命令、代码、JSON 和日志；涉及工具执行时只用一句短话说明正在做什么。";
+
+const DEFAULT_VOICE_PROVIDER_PROFILE_ID =
+  "d0197d17-a231-41e0-afe2-664791a531ec";
 
 export class SettingsRepository {
   constructor(
@@ -57,5 +74,55 @@ export class SettingsRepository {
       )
       .run({ ...value, updatedAt });
     return this.getAgent();
+  }
+
+  getVoice(): VoiceSettingsConfig {
+    const row = this.database
+      .prepare(
+        `SELECT provider_profile_id, voice, instructions, input_mode
+         FROM voice_settings WHERE settings_id = 'voice'`,
+      )
+      .get() as VoiceSettingsRow | undefined;
+    return parseSchema(
+      VoiceSettingsConfigSchema,
+      row
+        ? {
+            inputMode: row.input_mode,
+            instructions: row.instructions,
+            providerProfileId: row.provider_profile_id,
+            voice: row.voice,
+          }
+        : {
+            inputMode: "hands_free",
+            instructions: DEFAULT_VOICE_INSTRUCTIONS,
+            providerProfileId: DEFAULT_VOICE_PROVIDER_PROFILE_ID,
+            voice: "verse",
+          },
+    );
+  }
+
+  saveVoice(
+    settings: VoiceSettingsConfig,
+    updatedAt: Timestamp,
+  ): VoiceSettingsConfig {
+    const value = parseSchema(VoiceSettingsConfigSchema, settings);
+    this.database
+      .prepare(
+        `INSERT INTO voice_settings (
+           settings_id, provider_profile_id, voice, instructions,
+           input_mode, updated_at
+         ) VALUES (
+           'voice', @providerProfileId, @voice, @instructions,
+           @inputMode, @updatedAt
+         )
+         ON CONFLICT(settings_id) DO UPDATE SET
+           provider_profile_id = excluded.provider_profile_id,
+           voice = excluded.voice,
+           instructions = excluded.instructions,
+           input_mode = excluded.input_mode,
+           updated_at = excluded.updated_at`,
+      )
+      .run({ ...value, updatedAt });
+    return this.getVoice();
   }
 }

@@ -761,7 +761,8 @@ test("updates one stable Memory across Chats without leaving conflicting active 
     expect(taskBodies[0]).toContain('"name":"memory"');
     expect(taskBodies[0]).toContain('"name":"record"');
     expect(taskBodies[0]).toContain('"defer_loading":false');
-    expect(taskBodies[0]).not.toContain('"type":"tool_search"');
+    expect(taskBodies[0]).toContain('"type":"tool_search"');
+    expect(taskBodies[0]).toContain('"type":"web_search"');
     expect(taskBodies[2]).toContain("Relevant long-term memories");
     expect(taskBodies[2]).toContain("stableClaimSlot: preference.hobbies");
     expect(taskBodies[2]).toContain("用户的爱好是徒步。");

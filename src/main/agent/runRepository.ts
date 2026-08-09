@@ -40,6 +40,7 @@ interface RunRow {
   id: string;
   latest_sequence: number;
   provider_json: string;
+  source: Run["source"];
   started_at: string | null;
   status: string;
 }
@@ -126,6 +127,7 @@ function readRun(row: RunRow): Run {
     id: row.id,
     latestSequence: row.latest_sequence,
     provider: readJson(row.provider_json),
+    source: row.source,
     ...(row.started_at === null ? {} : { startedAt: row.started_at }),
     status: row.status,
   });
@@ -200,7 +202,8 @@ function assertRunIdentity(current: Run, next: Run, streamId: string): void {
     current.createdAt !== next.createdAt ||
     current.startedAt !== next.startedAt ||
     !isDeepStrictEqual(current.execution, next.execution) ||
-    !isDeepStrictEqual(current.provider, next.provider)
+    !isDeepStrictEqual(current.provider, next.provider) ||
+    current.source !== next.source
   ) {
     throw new Error(`Run ${streamId} changed immutable identity`);
   }
@@ -345,7 +348,7 @@ export class RunRepository {
   getSnapshot(chatId: string): RunPersistenceSnapshot {
     const runRows = this.database
       .prepare(
-        `SELECT id, chat_id, execution_json, provider_json, status,
+        `SELECT id, chat_id, execution_json, provider_json, source, status,
                 latest_sequence, created_at, started_at, ended_at, error_json
          FROM runs
          WHERE chat_id = ?
@@ -406,7 +409,7 @@ export class RunRepository {
   getActiveRun(chatId: string): Run | undefined {
     const row = this.database
       .prepare(
-        `SELECT id, chat_id, execution_json, provider_json, status,
+        `SELECT id, chat_id, execution_json, provider_json, source, status,
                 latest_sequence, created_at, started_at, ended_at, error_json
          FROM runs
          WHERE chat_id = ?
@@ -452,7 +455,7 @@ export class RunRepository {
     const placeholders = statuses.map(() => "?").join(", ");
     const rows = this.database
       .prepare(
-        `SELECT id, chat_id, execution_json, provider_json, status,
+        `SELECT id, chat_id, execution_json, provider_json, source, status,
                 latest_sequence, created_at, started_at, ended_at, error_json
          FROM runs
          WHERE status IN (${placeholders})
@@ -698,15 +701,16 @@ export class RunRepository {
     this.database
       .prepare(
         `INSERT INTO runs (
-          id, chat_id, execution_json, provider_json, status, latest_sequence,
+          id, chat_id, execution_json, provider_json, source, status, latest_sequence,
           created_at, started_at, ended_at, error_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         run.id,
         run.chatId,
         serializeForPersistence(run.execution),
         serializeForPersistence(run.provider),
+        run.source,
         run.status,
         run.latestSequence,
         run.createdAt,
@@ -863,7 +867,7 @@ export class RunRepository {
   private selectRunRow(runId: string): RunRow | undefined {
     return this.database
       .prepare(
-        `SELECT id, chat_id, execution_json, provider_json, status,
+        `SELECT id, chat_id, execution_json, provider_json, source, status,
                 latest_sequence, created_at, started_at, ended_at, error_json
          FROM runs
          WHERE id = ?`,

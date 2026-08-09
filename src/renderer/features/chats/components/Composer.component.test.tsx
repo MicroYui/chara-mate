@@ -22,10 +22,12 @@ function ComposerHarness({
   initial,
   onSend,
   onStop,
+  onVoiceStart,
 }: {
   readonly initial?: Partial<ChatsFixtureUiState>;
   readonly onSend?: () => void;
   readonly onStop?: () => void;
+  readonly onVoiceStart?: () => void;
 }) {
   const [state, dispatch] = useReducer(chatsFixtureUiReducer, {
     ...initialChatsFixtureUiState,
@@ -37,6 +39,7 @@ function ComposerHarness({
       models={chatsFixture.models}
       {...(onSend ? { onSend } : {})}
       {...(onStop ? { onStop } : {})}
+      {...(onVoiceStart ? { onVoiceStart } : {})}
       state={state}
     />
   );
@@ -99,6 +102,16 @@ describe("Composer", () => {
     fireEvent.click(screen.getByRole("button", { name: `移除 ${file.name}` }));
     expect(screen.queryByText(file.name)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "开始语音对话" })).toBeVisible();
+  });
+
+  it("uses the same settings-driven Voice start from both entry buttons", () => {
+    const onVoiceStart = vi.fn();
+    render(<ComposerHarness onVoiceStart={onVoiceStart} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "录入语音" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始语音对话" }));
+
+    expect(onVoiceStart).toHaveBeenCalledTimes(2);
   });
 
   it("sends with Enter, keeps Shift+Enter for multiline, and exposes Stop", () => {

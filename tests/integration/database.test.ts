@@ -75,7 +75,7 @@ describe("foundation database", () => {
     );
   });
 
-  it("migrates v4 Run data through the current Phase 3 schema", async () => {
+  it("migrates v4 Run data through the current schema", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "chara-mate-v4-migration-"),
     );
@@ -138,6 +138,9 @@ describe("foundation database", () => {
         .get(),
     ).toEqual({ kind: "plan", status: "completed" });
     expect(
+      database.prepare("SELECT source FROM runs WHERE id = 'run-v4'").get(),
+    ).toEqual({ source: "text" });
+    expect(
       database
         .prepare(
           "SELECT run_item_id FROM tool_artifacts WHERE artifact_id = 'artifact-v4'",
@@ -169,6 +172,11 @@ describe("foundation database", () => {
         .prepare("SELECT name FROM sqlite_master WHERE name = 'memory_claims'")
         .get(),
     ).toEqual({ name: "memory_claims" });
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE name = 'voice_sessions'")
+        .get(),
+    ).toEqual({ name: "voice_sessions" });
     expect(database.pragma("foreign_key_check")).toEqual([]);
     database.close();
   });

@@ -11,6 +11,7 @@ import type { Message } from "../../shared/contracts/chat";
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type {
   Approval,
+  AppError,
   ArtifactKind,
   PlanUpdate,
   RequestUserInputArguments,
@@ -53,7 +54,7 @@ import {
   type ModelToolNamespace,
 } from "./modelProvider";
 import { detectToolCycle, semanticToolSignature } from "./loopGuard";
-import { requiresApproval } from "./approvalPolicy";
+import { requiresApproval, toolAllowedInExecution } from "./approvalPolicy";
 import { AgentError } from "./agentError";
 import {
   ImageInputError,
@@ -65,6 +66,7 @@ import {
   isMemoryContextInput,
   materializeMemoryContextInput,
 } from "./memoryContext";
+import { TEXT_AGENT_BASE_INSTRUCTIONS } from "./agentInstructions";
 import type { RunRepository } from "./runRepository";
 import type { RunEventWriter } from "./runEventWriter";
 import {
@@ -76,17 +78,6 @@ import {
 } from "./runtimeCheckpoint";
 
 const APPROVAL_RUN_LIFETIME = "9999-12-31T23:59:59.999Z";
-const BASE_INSTRUCTIONS = `You are CharaMate's single Agent Runtime.
-Complete the user's actual goal using the available capabilities. When capabilities are needed, use the native tool search interface and then call only a loaded tool.
-Use Provider-native web search for current public information. Use the managed browser for webpage interaction or authenticated state, and macOS Computer only when the managed browser cannot access the needed interface.
-Treat every structured Tool Result as an observation: a rejected or failed action is not success. Change strategy when an operation makes no progress, and state honestly when a required result could not be obtained.
-For genuinely multi-step Agent work, call the always-loaded plan.update tool directly before other work, keep at most one step in_progress, and send the complete current plan again after meaningful progress. Do not search for plan.update, substitute a prose checklist, create a plan for simple work, or repeat the plan in prose because the product displays it.
-When a material choice or missing detail truly requires the user, call the always-loaded request_user_input tool directly. Do not search for it or replace its structured questions with a prose questionnaire.
-Relevant active long-term memories for the current request are preloaded as an evidence block. Do not repeat that retrieval or treat an empty result as proof. In Agent mode, only when the user explicitly asks to inspect or search memory records beyond the supplied context, load memory.search through native tool search.
-When the current user input directly states durable personal facts, preferences, ongoing projects, procedures, events, or commitments that will be useful beyond this turn, call the always-loaded memory.record tool before the final answer with basis explicit_user_statement. This internal product capability is available in both Chat and Agent mode and needs no execution approval. For a supported profile/preference field, choose the closed stable claimSlot by meaning, never by its current value: for example preference.hobbies stays unchanged when hiking becomes swimming. Use create only when establishing a genuinely new field; use replace when the user says a prior value is no longer current; use append/remove only when changing part of a set. Every update content must state the complete resulting memory after the operation, not only the added or removed fragment. For any update, include memoryId only if that exact ID appears in the preloaded memory evidence. If no exact target was supplied, the host will create a review candidate instead of risking a second active fact. Use basis inference for a plausible conclusion the user did not directly state, and basis run_observation only for a reusable conclusion supported by successful Agent execution; both create review candidates rather than active facts. Never record a transient request, assistant-authored claim, copied reference material, credential, secret, unchanged memory, or unsupported conclusion. Do not search for memory.record.
-Only give a final answer when the user goal is complete or when the remaining limitation is explicit. Never claim that an external action happened without a successful Tool Result.
-Visible progress may be concise, but do not expose hidden reasoning.`;
-
 const TERMINAL_STATUSES = new Set<Run["status"]>([
   "interrupted",
   "completed",
@@ -171,7 +162,10 @@ interface ActiveRun {
   readonly provider: ModelProvider;
   readonly runId: string;
   readonly steering: PendingSteering[];
+  readonly steeringWaiters: Set<() => void>;
+  readonly tools: ToolRegistry;
   interruptRequested: boolean;
+  interruptionError?: AppError;
   task?: Promise<void>;
   readonly inputWaiters: Map<string, (resolution: UserInputResolution) => void>;
   readonly waiters: Map<string, (decision: ApprovalDecision) => void>;
@@ -489,20 +483,20 @@ function chatModeToolResult(): ToolResult {
   const modelContent = {
     code: "TOOL.MODE_NOT_ALLOWED",
     message:
-      "Chat mode cannot execute capabilities. Explain the limitation or ask the user to switch explicitly to Agent mode.",
+      "Chat mode only allows idempotent read-only capabilities. Ask the user to switch explicitly to Agent mode for this action.",
   } satisfies JsonValue;
   return {
     artifacts: [],
     error: {
       code: "TOOL.MODE_NOT_ALLOWED",
-      message: "Chat 模式不能执行 Tool；请明确切换到 Agent 模式。",
+      message: "Chat 模式只允许幂等只读能力；该操作需要明确切换到 Agent 模式。",
       retryable: false,
     },
     evidenceHash: toolEvidenceHash(modelContent),
     modelContent,
     retryable: false,
     status: "error",
-    summary: "Chat 模式未执行工具",
+    summary: "Chat 模式未执行有副作用的能力",
   };
 }
 
@@ -790,11 +784,18 @@ export class AgentRuntime {
   }
 
   async start(request: StartRunRequest): Promise<Run> {
+    return this.#start(
+      request,
+      await this.providers.createChatModelRuntime(request.providerProfileId),
+    );
+  }
+
+  async #start(
+    request: StartRunRequest,
+    modelRuntime: ChatModelRuntime,
+  ): Promise<Run> {
     return this.chatTurns.runSerializedTurn(request.chatId, async () => {
       const priorMessages = this.chats.listMessages(request.chatId);
-      const modelRuntime = await this.providers.createChatModelRuntime(
-        request.providerProfileId,
-      );
       const limits = await modelRuntime.provider.resolveContextLimits(
         modelRuntime.snapshot.modelId,
       );
@@ -840,6 +841,7 @@ export class AgentRuntime {
         id: runId,
         latestSequence: 1,
         provider: modelRuntime.snapshot,
+        source: "text",
         startedAt: now,
         status: "running",
       });
@@ -944,30 +946,29 @@ export class AgentRuntime {
         false,
       );
     }
-    const message = this.chats.insertMessage({
-      chatId: run.chatId,
-      content: request.content,
-      createdAt: request.requestedAt,
-      id: this.ids.generate(),
-      role: "user",
-      runId: run.id,
-      status: "completed",
-      updatedAt: request.requestedAt,
-    });
-    const item = this.writer.startItem(run.id, "user_message", {
-      content: request.content,
-      messageId: message.id,
-      steering: true,
-    });
-    this.writer.completeItem(item.id, {
-      output: { messageId: message.id },
-      status: "completed",
-    });
-    active.steering.push({ content: request.content });
+    this.#queueSteering(active, run, request);
     return { runId: run.id };
   }
 
   async resume(request: ResumeRunRequest): Promise<{ runId: string }> {
+    const run = this.#requireRun(request.runId);
+    if (run.source === "voice") {
+      throw new AgentError(
+        "AGENT.VOICE_SESSION_REQUIRED",
+        "这个 Run 需要重新进入语音后继续。",
+        false,
+      );
+    }
+    return this.#resume(
+      request,
+      await this.providers.createChatModelRuntime(run.provider.profileId),
+    );
+  }
+
+  async #resume(
+    request: ResumeRunRequest,
+    modelRuntime: ChatModelRuntime,
+  ): Promise<{ runId: string }> {
     const run = this.#requireRun(request.runId);
     if (run.status !== "interrupted" && run.status !== "needs_input") {
       throw new AgentError(
@@ -991,9 +992,6 @@ export class AgentRuntime {
         false,
       );
     }
-    const modelRuntime = await this.providers.createChatModelRuntime(
-      run.provider.profileId,
-    );
     const data = decodeRuntimeCheckpoint(checkpoint.context);
     const limits =
       data.contextLimits ??
@@ -1210,6 +1208,8 @@ export class AgentRuntime {
       provider,
       runId,
       steering: [],
+      steeringWaiters: new Set(),
+      tools: this.tools,
       interruptRequested: false,
       waiters: new Map(),
     };
@@ -1277,9 +1277,18 @@ export class AgentRuntime {
       };
 
       for (const searchCall of turn.toolSearchCalls) {
-        const selected = this.tools.search(searchCall.query, searchCall.limit);
+        const selected = this.#searchTools(
+          active,
+          searchCall.query,
+          searchCall.limit,
+        );
+        const allowedTools = selected.map(({ descriptor }) => ({
+          name: descriptor.name,
+          namespace: descriptor.namespace,
+        }));
         active.data = {
           ...active.data,
+          ...(allowedTools.length === 0 ? {} : { allowedTools }),
           input: [
             ...active.data.input,
             {
@@ -1297,10 +1306,14 @@ export class AgentRuntime {
         await this.#handleToolCall(active, call);
       }
       const hadSteering = active.steering.length > 0;
+      if (turn.status === "cancelled" && !hadSteering) {
+        await this.#awaitSteering(active);
+      }
       this.#mergeSteering(active);
       this.#saveCheckpoint(active, "model");
 
       if (
+        turn.status === "cancelled" ||
         turn.toolSearchCalls.length > 0 ||
         turn.functionCalls.length > 0 ||
         hadSteering
@@ -1339,6 +1352,24 @@ export class AgentRuntime {
       provider: active.provider,
       signal: active.abort.signal,
     });
+  }
+
+  #availableTools(active: ActiveRun, run = this.#requireRun(active.runId)) {
+    return active.tools
+      .list()
+      .filter((definition) =>
+        toolAllowedInExecution(run.execution, definition.descriptor),
+      );
+  }
+
+  #searchTools(active: ActiveRun, query: string, limit: number) {
+    const available = new Set(
+      this.#availableTools(active).map(({ descriptor }) => descriptor.name),
+    );
+    return active.tools
+      .search(query, active.tools.list().length)
+      .filter(({ descriptor }) => available.has(descriptor.name))
+      .slice(0, limit);
   }
 
   async #modelTurn(active: ActiveRun): Promise<CollectedModelTurn> {
@@ -1381,16 +1412,9 @@ export class AgentRuntime {
         this.images,
         active.imageCache,
       )) as JsonValue[];
-      const registeredTools = this.tools.list();
+      const registeredTools = this.#availableTools(active, run);
       const baseToolNamespaces = withUserInputTool(
-        groupModelTools(
-          run.execution.mode === "agent"
-            ? registeredTools
-            : registeredTools.filter(
-                ({ descriptor }) =>
-                  descriptor.name === MEMORY_FORMATION_TOOL_NAME,
-              ),
-        ),
+        groupModelTools(registeredTools),
       );
       const toolNamespaces =
         run.execution.mode === "agent" &&
@@ -1400,10 +1424,10 @@ export class AgentRuntime {
           : baseToolNamespaces;
       const extra = this.additionalInstructions().trim();
       const instructions = [
-        BASE_INSTRUCTIONS,
+        TEXT_AGENT_BASE_INSTRUCTIONS,
         `Current timestamp: ${this.clock.now()}. User system time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}. Interpret relative dates such as today in that time zone.`,
         run.execution.mode === "chat"
-          ? "This Run is Chat mode. Do not call external-effect tools; memory.record is the sole internal persistence exception. Explain other capability limits or ask the user to switch explicitly to Agent mode."
+          ? "This Run is Chat mode. You may use the provided idempotent read-only query and plan tools. Never perform write, critical, or other external-effect actions; memory.record is the sole internal persistence exception. Ask the user to switch explicitly to Agent mode when another action is required."
           : "This Run is Agent mode. Follow its approval decisions and continue after structured rejection when a legitimate alternative exists.",
         extra,
       ]
@@ -1432,6 +1456,7 @@ export class AgentRuntime {
             ? {}
             : { maxOutputTokens: active.limits.maxOutputTokens }),
           modelId: run.provider.modelId,
+          nativeWebSearch: true,
           toolNamespaces,
         },
         active.abort.signal,
@@ -1442,11 +1467,12 @@ export class AgentRuntime {
         deltaBatcher.schedule();
       });
       deltaBatcher.flush();
+      const interrupted = turn.status === "cancelled";
       if (message) {
         message = this.chats.updateMessage({
           ...message,
           content: turn.text,
-          status: "completed",
+          status: interrupted ? "interrupted" : "completed",
           updatedAt: this.clock.now(),
         });
       }
@@ -1457,7 +1483,7 @@ export class AgentRuntime {
           responseId: turn.responseId,
           usage: turn.usage,
         }),
-        status: "completed",
+        status: interrupted ? "interrupted" : "completed",
       });
       return turn;
     } catch (error) {
@@ -1531,14 +1557,14 @@ export class AgentRuntime {
       await this.#handleImageInspectCall(active, call);
       return;
     }
-    const resolvedName = this.#resolveToolName(call);
+    const resolvedName = this.#resolveToolName(active, call);
     const pending: PendingToolCall = {
       arguments: call.arguments,
       callId: call.callId,
       name: resolvedName,
       rawItem: call.rawItem,
     };
-    const definition = this.tools.get(resolvedName);
+    const definition = active.tools.get(resolvedName);
     if (!definition) {
       const result = unexpectedToolResult(
         new TypeError(`Unknown Tool: ${resolvedName}`),
@@ -1548,12 +1574,12 @@ export class AgentRuntime {
     }
     const run = this.#requireRun(active.runId);
     const memoryFormation = resolvedName === MEMORY_FORMATION_TOOL_NAME;
-    if (run.execution.mode === "chat" && !memoryFormation) {
+    if (!toolAllowedInExecution(run.execution, definition.descriptor)) {
       this.#recordToolResult(active, pending, undefined, chatModeToolResult());
       return;
     }
     try {
-      this.tools.validateInput(resolvedName, call.arguments);
+      active.tools.validateInput(resolvedName, call.arguments);
     } catch (error) {
       this.#recordToolResult(
         active,
@@ -1829,12 +1855,12 @@ export class AgentRuntime {
       this.#recordToolResult(
         active,
         pending,
-        this.tools.get(pending.name)?.descriptor,
+        active.tools.get(pending.name)?.descriptor,
         rejectedToolResult(approval?.decisionReason),
       );
       return;
     }
-    const definition = this.tools.get(pending.name);
+    const definition = active.tools.get(pending.name);
     if (!definition) {
       this.#recordToolResult(
         active,
@@ -1885,7 +1911,7 @@ export class AgentRuntime {
     };
     const deltaBatcher = new RunDeltaBatcher(flushDelta);
     try {
-      result = await this.tools.execute(pending.name, pending.arguments, {
+      result = await active.tools.execute(pending.name, pending.arguments, {
         itemId: item.id,
         onDelta: (delta) => {
           pendingDelta += delta;
@@ -1961,7 +1987,7 @@ export class AgentRuntime {
       const cycle = detectToolCycle(boundaries);
       if (cycle) {
         const candidates = descriptor
-          ? this.tools.recoveryCandidates(pending.name)
+          ? active.tools.recoveryCandidates(pending.name)
           : [];
         const recoveryKey = descriptor?.recoveryGroup
           ? `candidate:${descriptor.recoveryGroup}`
@@ -2075,12 +2101,12 @@ export class AgentRuntime {
         this.#recordToolResult(
           active,
           pending,
-          this.tools.get(pending.name)?.descriptor,
+          active.tools.get(pending.name)?.descriptor,
           result,
         );
         return true;
       }
-      const definition = this.tools.get(pending.name);
+      const definition = active.tools.get(pending.name);
       if (!definition) {
         throw new GuardTerminalError({
           code: "AGENT.TOOL_UNAVAILABLE",
@@ -2269,6 +2295,52 @@ export class AgentRuntime {
     };
   }
 
+  #queueSteering(active: ActiveRun, run: Run, request: SteerRunRequest): void {
+    const message = this.chats.insertMessage({
+      chatId: run.chatId,
+      content: request.content,
+      createdAt: request.requestedAt,
+      id: this.ids.generate(),
+      role: "user",
+      runId: run.id,
+      status: "completed",
+      updatedAt: request.requestedAt,
+    });
+    const item = this.writer.startItem(run.id, "user_message", {
+      content: request.content,
+      messageId: message.id,
+      steering: true,
+    });
+    this.writer.completeItem(item.id, {
+      output: { messageId: message.id },
+      status: "completed",
+    });
+    active.steering.push({ content: request.content });
+    for (const resolve of active.steeringWaiters) resolve();
+    active.steeringWaiters.clear();
+  }
+
+  #awaitSteering(active: ActiveRun): Promise<void> {
+    if (active.steering.length > 0) return Promise.resolve();
+    active.abort.signal.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const steer = () => {
+        active.abort.signal.removeEventListener("abort", abort);
+        resolve();
+      };
+      const abort = () => {
+        active.steeringWaiters.delete(steer);
+        reject(
+          active.abort.signal.reason instanceof Error
+            ? active.abort.signal.reason
+            : new DOMException("Operation was aborted", "AbortError"),
+        );
+      };
+      active.steeringWaiters.add(steer);
+      active.abort.signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+
   #saveCheckpoint(active: ActiveRun, phase: CheckpointPhase): void {
     this.#mergeSteering(active);
     const run = this.#requireRun(active.runId);
@@ -2283,12 +2355,12 @@ export class AgentRuntime {
     });
   }
 
-  #resolveToolName(call: ModelFunctionCall): string {
-    if (this.tools.get(call.name)) return call.name;
+  #resolveToolName(active: ActiveRun, call: ModelFunctionCall): string {
+    if (active.tools.get(call.name)) return call.name;
     const namespaced = call.namespace
       ? `${call.namespace}.${call.name}`
       : call.name;
-    return this.tools.get(namespaced) ? namespaced : call.name;
+    return active.tools.get(namespaced) ? namespaced : call.name;
   }
 
   #handleDriveFailure(active: ActiveRun, error: unknown): void {
@@ -2321,11 +2393,15 @@ export class AgentRuntime {
       }
       if (active.interruptRequested) {
         this.#saveCheckpoint(active, "interrupted");
-        this.writer.transition(active.runId, "interrupted", {
-          code: "AGENT.APP_INTERRUPTED",
-          message: "应用退出中断了当前边界，可稍后继续。",
-          retryable: true,
-        });
+        this.writer.transition(
+          active.runId,
+          "interrupted",
+          active.interruptionError ?? {
+            code: "AGENT.APP_INTERRUPTED",
+            message: "应用退出中断了当前边界，可稍后继续。",
+            retryable: true,
+          },
+        );
       } else {
         this.writer.transition(active.runId, "cancelled");
         this.checkpoints.delete(active.runId);

@@ -138,6 +138,7 @@ async function collect(
         : [{ content: "test", role: "user", type: "message" }],
       instructions: "test",
       modelId,
+      nativeWebSearch: true,
       toolNamespaces: withTools
         ? [
             {
@@ -266,6 +267,7 @@ describe("OpenAI Responses Agent wire shape", () => {
         ],
         instructions: "test",
         modelId: "gpt-5.6-sol",
+        nativeWebSearch: true,
         toolNamespaces: [
           {
             description: "Structured interaction",
@@ -385,6 +387,7 @@ describe("OpenAI Responses Agent wire shape", () => {
       },
       {
         responseId: "response-1",
+        status: "completed",
         type: "response.completed",
         usage: { cachedInputTokens: 8, inputTokens: 17, outputTokens: 3 },
       },
@@ -633,8 +636,9 @@ describe("OpenAI Responses Agent wire shape", () => {
     const otherModelWire = JSON.stringify(bodies[1]);
     expect(otherModelWire).toContain('"type":"tool_search"');
     expect(otherModelWire).not.toContain('"prompt_cache_options"');
-    const azureChatWire = JSON.stringify(bodies[2]);
-    expect(azureChatWire).not.toContain('"tools"');
-    expect(azureChatWire).not.toContain('"tool_choice"');
+    expect(bodies[2]).toMatchObject({
+      tool_choice: "auto",
+      tools: [{ type: "web_search" }],
+    });
   });
 });

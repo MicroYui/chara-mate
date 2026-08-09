@@ -34,11 +34,19 @@ function createApi() {
           profileDirectory: "/browser/profile",
           screenRecording: "granted",
         },
+        voice: {
+          inputMode: "hands_free",
+          instructions: "使用自然、简洁的中文口语。",
+          microphone: "granted",
+          providerProfileId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          voice: "verse",
+        },
       },
     }),
     importBrowserCookies: vi.fn(),
     openManagedBrowser: vi.fn(),
     saveAgent,
+    saveVoice: vi.fn(),
   };
   return { api, saveAgent };
 }

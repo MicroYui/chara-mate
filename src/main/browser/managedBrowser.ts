@@ -345,8 +345,9 @@ export function registerBrowserTools(
 ): void {
   registry.register({
     descriptor: browserDescriptor({
-      description: "Navigate the managed browser to a URL.",
-      effect: "write",
+      description:
+        "Navigate the managed browser to a public URL or search-results URL for a read-only web lookup.",
+      effect: "read",
       idempotency: "idempotent",
       inputSchema: objectSchema({ url: { type: "string" } }, ["url"]),
       itemKind: "tool_call",
@@ -367,7 +368,8 @@ export function registerBrowserTools(
 
   registry.register({
     descriptor: browserDescriptor({
-      description: "Read the current page through its accessibility tree.",
+      description:
+        "Read the current non-empty page through its accessibility tree. Navigate first when no page is open.",
       effect: "read",
       idempotency: "idempotent",
       inputSchema: objectSchema({}, []),
@@ -378,7 +380,14 @@ export function registerBrowserTools(
     }),
     execute: async (_input, context) => {
       return browser.run(context.signal, async (page) => {
+        const url = page.url();
+        if (!url || url === "about:blank") {
+          throw new Error("当前没有可读取的网页，请先打开目标网址。");
+        }
         const snapshot = redactText(await page.locator("body").ariaSnapshot());
+        if (!snapshot.trim()) {
+          throw new Error("当前网页没有可读取的内容，请重新打开目标网址。");
+        }
         const presented = await artifacts.presentText(
           context.runId,
           "browser-accessibility-snapshot.txt",
@@ -387,7 +396,7 @@ export function registerBrowserTools(
         const modelContent = {
           snapshot: presented.displayOutput,
           title: await page.title(),
-          url: page.url(),
+          url,
         } satisfies JsonValue;
         return {
           ...result("已读取当前网页", modelContent),

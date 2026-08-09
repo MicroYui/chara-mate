@@ -4,72 +4,53 @@
 
 ## 当前里程碑
 
-**Phase 3 — Done（2026-08-09）**
+**Phase 4 — implementing（Realtime 原生语音 Agent，独立 worktree）**
 
-Phase 0–3 已完成。结构化输入、多模态图片输入、Memory、Context、Activity 与 Chat/Agent 自动形成均已进入唯一生产路径；跨 Chat 改口使用稳定 claim slot、当前 Run 目标 allowlist 与 Revision 精确更新，缺失目标、错 ID、字段冲突和旧数据首次绑定不会静默制造第二条 active 事实。Phase 6 的 Pet、Territory 基础、结构化 Item Manifest 与 Azure Image 工作包也已独立完成；Memory/Activity 到 Territory 的自动物件提案仍由后继集成包拥有。
+Phase 0–3 已完成；结构化输入、图片输入、Agent、Memory、Context 与 Activity 均为单一生产路径。主线的 Phase 6 Pet、Territory、结构化 Item Manifest 与 Azure Image 工作包也已完成。本 worktree 已对齐最新 `main`，当前只收口 Phase 4 Voice：文字 Chat/Agent 继续走 CharaMate Agent Harness；Voice 由 Azure Realtime 原生 speech-to-speech Agent 回答，同时复用客户端 Tool Registry、入口权限、Approval、Skill/Memory/Chat Context、Run/Item、标题和持久化边界。
 
 退出条件：
 
-- [x] `request_user_input` 是直接核心能力；问题卡支持选项/自由文本、取消、刷新与重启恢复，并在同一 Run 中只消费一次回答。
-- [x] 用户图片附件与 `image.inspect` 复用一条 Main-owned 像素管线；支持视觉的 Provider 收到真实图片内容，不支持时返回明确能力错误。
-- [x] Memory Revision、有效性、supersede、pin、归档/删除、来源、画像、候选、搜索和 `memory.search` 已贯通 Main、typed IPC 与 UI。
-- [x] Chat/Agent 同一 Run 能把用户明确陈述的长期事实或偏好直接形成/修订为有来源 Memory；跨 Chat 改口由稳定语义身份精确定位，错 ID、未命中与冲突不会制造第二条 active 事实。
-- [x] 生产只保留 SQLite FTS lexical Retrieval、`C2-PRE8` Context Recipe 和无 Graph 路径；dense、hybrid、rerank、向量表、模型 worker 与 Graph UI 均不存在。
-- [x] Activity 采用变化采集、8 分钟确定性 Episode、每日 Digest、每周跨日候选与蒸馏后分层清理；原始 event/截图不进入普通 Memory 检索。
-- [x] 数据库 v7、新装与 v4→v5→v6→v7、v5→v6→v7、v6→v7、引用清理、orphan sweep、重启恢复、Memory→Activity 来源跳转和截图证据均完成回归；migration 不猜测旧 Memory 的语义身份。
-- [x] 中文 Decision Record、非敏感证据 hash、失败候选删除证明、完整 offline/build/E2E/package/smoke 验收均已完成。
+- [x] `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT` 与 `VOICE-TOOL-JOIN` 记录最新产品选择、一手来源、实验边界与旧路径删除证明。
+- [x] Azure GA WebRTC 以显式 response 完成原生回答、Function Call continuation 和中英混合输入 Live，文字 Agent 不参与 Voice 回答。
+- [x] Realtime 获得入口允许的同一客户端 Tools，并沿现有 execution/Approval/Run Item 边界执行和回注 `function_call_output`。
+- [x] Voice 输入、输出转写、Tool/Approval 和标题进入现有 Chat/Run/Item；旧 `RealtimeSpeechOutput`、句子队列、TTS 与双回答链已删除。
+- [x] 最新 main 上的 focused、integration、完整 offline、build、Electron E2E、package/smoke 全绿。
+- [ ] 目标硬件完成真人麦克风、扬声器、自然插话和审批气泡人工验收，并带 Azure 配置启动供体验。
 
 ## 工作包状态
 
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
-| `P3-CONTRACT-INTEGRATION` | `main` | `done` | TypeBox Contract、typed IPC、Run Item 与数据库 v7 收口 |
-| `P3-STRUCTURED-INPUT` | `main` | `done` | 直接交互工具、持久化问题卡和 continuation |
-| `P3-MULTIMODAL-INPUT` | `main` | `done` | Composer 图片与 `image.inspect` 共用真实像素路径 |
-| `P3-MEMORY-DECISIONS` | `main` | `done` | Storage、Retrieval、Context、Graph 四项 Decision 完成 |
-| `P3-MEMORY-RUNTIME` / `P3-MEMORY-UI` | `main` | `done` | Revision、Profile、Candidate、Source、Usage 与单一路径检索 |
-| `P3-MEMORY-FORMATION` | `main` | `done` | `F2-IN-RUN-TOOL + U2-SLOT-GUARD`；稳定 claim 身份、目标 allowlist、追加/替换、冲突候选化与跨 Chat/重启闭环 |
-| `P3-ACTIVITY-DECISIONS` | `main` | `done` | Capture、Distillation、Retention 三项 Decision 完成 |
-| `P3-ACTIVITY-CAPTURE` / `DISTILL` / `RETENTION` | `main` | `done` | 采集、Episode/Digest、候选和有界清理 |
-| `P3-BENCHMARK` | `main` | `done` | 八份中文记录与仓库外 hash 证据；候选 runner 已删除 |
-| `P6-PET-FOUNDATION` / `P6-TERRITORY-BASE` / `P6-TERRITORY-ITEM-MANIFEST` | `main` | `done` | 桌宠、领地场景与单一结构化资产安装入口 |
-| `P6-TERRITORY-IMAGE` | `main` | `done` | Azure Generation/Edit、去背景、候选确认/恢复与内建 `territory.generate_item` Tool；Agent 只必填三个语义字段，尺寸、占地、锚点和插槽按同一 manifest 编译 |
+| `P3-RUNTIME-MEMORY-ACTIVITY` | `main` | `done` | Chat/Agent、结构化输入、Memory/Context/Activity 单一路径完成 |
+| `P6-PET-TERRITORY-IMAGE` | `main` | `done` | 桌宠、领地、Azure Image、候选确认与内建 Tool 完成 |
+| `P4-SOURCE-CONTRACT` | `codex/phase4-voice` | `contract-ready` | Realtime conversation、WebRTC interruption、Function Call 与锁定 SDK 类型已复核 |
+| `P4-VOICE-DECISIONS` | `codex/phase4-voice` | `integration-verified` | 透明修订为 Orchestrated Native Realtime；WebRTC + 串行 continuation |
+| `P4-VOICE-RUNTIME` | `codex/phase4-voice` | `integration-verified` | 原生 response、共享 Tool/Approval、Run/Item、打断、历史与非阻塞标题完成 |
+| `P4-VOICE-UI` | `codex/phase4-voice` | `integration-verified` | Voice Dock、设置、Composer 继承入口、桌宠完全访问声波入口与 Approval 气泡完成 |
+| `P4-VOICE-LANGUAGE` | `codex/phase4-voice` | `integration-verified` | `whisper-1 + 关键词 prompt + 不固定 language` 单一路径；Azure Live 通过 |
 
-当前无外部 blocker。Phase 4 生产实现仍以 `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT`、`VOICE-TOOL-JOIN` 三项 Decision 为 Gate；Automation、独立 Voice 研究和后继 Territory 工作可按 ROADMAP 的所有权边界推进。
+## 依赖与已知边界
 
-后续所有实验继续遵守十进制 **10 GB 实验进程总内存硬上限**：单模型、串行小批、流式落盘；不得为缩短耗时恢复全量 embedding 驻留或并发模型进程。Phase 3 dense 探针已在保守 `RSS + MPS driver < 7 GB` 边界内完成或提前停止，没有常驻实验进程。
+- Azure Realtime 当前没有 Responses Provider 托管的 `web_search`；它获得同一个客户端 Tool Registry，但不伪造本地 `web.search`。Chat/Agent 入口均可使用既有 `browser.navigate + browser.snapshot` 幂等查询链；Agent 还可按当前审批模式使用既有 `command.run` 以只读 `curl` 查询公开 HTTP/API。空白页或空内容不再伪装成成功 snapshot，其他 Browser/命令操作仍遵循入口权限与审批。
+- 目标 Azure `gpt-realtime-2.1` 于 2026-08-09 实测拒绝 Function Tool 根级 `anyOf`。Voice 仅在 Realtime 传输边界把对象联合投影为单一对象字段并集，实际调用仍由原 Tool Registry Schema 校验；这不是通用协议限制。
+- 当前 worktree 已对齐主线 `aefac18`；两个阶段性 stash 仅作冲突恢复备份，完成验收前不删除。
+- 合成音频 Live 能验证协议、VAD、转写与远端音轨，不能替代真人听感和麦克风验收。
 
 ## 最近绿色验证
 
-2026-08-09，Phase 3 主线与 Phase 6 Territory Image 合并验收：
+- 主线 `aefac18`：`npm run verify:phase0` 通过；offline 382 项、Electron E2E 16/16、开发/打包 smoke 与 macOS arm64 package 通过。
+- 当前 Voice 路径：`npm run verify:offline` 通过（contract 69、focused/component 230、integration 122，共 421 项）；`npm run test:e2e` 16/16 通过，其中桌宠声波入口的 hover 显示、点击后移开隐藏与不唤起主窗口已有桌面回归；build、macOS arm64 package、开发与打包 smoke 均通过。
+- 使用正常用户数据、真实 Azure 凭据和完整生产 Tool Registry 的冷启动 `voice.start → voice.end` 通过；标题 Provider 凭据不可读的回归用例也确认不会再阻断 Realtime Session。
+- 正常 Forge 进程中重新封装当前 Azure/本地 Chat 凭据后，普通无调试参数冷启动的实际 Voice 设置页完成音色试听，未再出现 `PROVIDER.STORAGE_FAILED`。
+- 真人输入暴露的 Turn 指令生命周期错误已修复：说话期间时间或 Memory 上下文变化时，最终指令作为本 Turn 快照更新，不再被误判为 immutable identity；延迟转写回归已覆盖。
+- 真人输入暴露的多输出 Item 错位已修复：同一 Voice Turn 按 Realtime `response_id/item_id/output_index` 维护唯一助手草稿，Chat、Run Item、Voice Dock 与最终转写共享同一聚合结果。
+- 真人查询日志确认首次天气查询已经成功；后续受管页变成 `about:blank` 时，旧实现把空 snapshot 错标为成功，用户打断后的新 Turn 又被 Realtime 误述为“查询仍在加载”。当前空白/空内容 snapshot 会返回真实工具失败，Realtime 收到结果后不得声称旧调用仍在进行，并按入口能力重新导航或使用既有只读查询工具。
+- 真人 Tool continuation 暴露的后半段静音已修复：工具前 response 与结果回注后的 response 共享一个 generation，旧实现收到前者的延迟停止事件时误停整个 generation。当前 WebRTC 播放开始、停止和清空均按 `response_id` 精确管理，旧 response 排空不会静音正在播放的新 response。
+- `npm run test:live` 曾在目标 Azure `gpt-realtime-2.1` 上 Voice 3/3 通过。本次完整复测中原生回答与 Function Call 2/2 通过，中英混合样本首次误识别后单项立即复测通过；该项是远端识别波动，不能表述为每次稳定通过。未配置的 Territory Image Live 1 项按预期跳过。
+- 旧 Shared Runtime 的 323 项 offline、9/9 E2E 与 2/2 Live 只作历史回归参考，不作为当前路径证据。
 
-- `npm run verify:phase0`：通过，约 85 秒；完整执行 offline、build、开发态 smoke、package、打包态 smoke 与 Electron E2E。
-- offline 共 382 项：65 contract、207 focused/component、110 integration；数据库新装与 v4/v5/v6→v7 迁移链、Territory Image Provider/持久化/Tool 均通过。Typecheck、Prettier 与 ESLint 通过，ESLint 为 0 error、2 warning。
-- Electron E2E：16/16 通过，17.2 秒；覆盖 Agent Tool 生成结构化候选、Azure Generation/Edit 恢复链、去背景与候选确认，同时保留跨 Chat Memory 精确更新旅程。
-- 开发态与打包态 smoke：SQLite、主 Renderer、桌宠 Renderer、固定 Chromium round-trip 均为 `true`，`visibleWindowCount=0`。
-- macOS arm64 package：通过；包含 native SQLite、固定 Chromium、两份初始 Provider metadata 与两只内置桌宠。生产 build 仅保留既有大型 lazy chunk 提示。
-- `npm run test:benchmark`：按设计报告 not-applicable；候选 runner 已删除，原始结果按各 Decision Record 的 SHA-256 保存在仓库外，获胜路径回归由 production tests 持有。
+## 来源快照
 
-ESLint 只有 TanStack Virtual 与 React Compiler 的两条已知兼容性提示，无 error；Memory/Activity 没有把返回函数传给 memoized 子组件。
-
-## Decision 与证据
-
-- [`MEMORY-STORAGE`](../benchmarks/memory-storage.md)：`WAL + synchronous=FULL`，不增加自定义 checkpoint job 或数据库设置档位。
-- [`MEMORY-RETRIEVAL`](../benchmarks/memory-retrieval.md)：选择 lexical FTS 单路径；记录并保留 Hybrid 在部分 reader 指标略高的机械结果及质量/成本/复杂度综合定案。
-- [`CONTEXT-RECIPE`](../benchmarks/context-recipe.md)：选择 `C2-PRE8`；每个新 Run 注入一次 goal-last Memory evidence，不在循环内重复自动检索。
-- [`MEMORY-GRAPH`](../benchmarks/memory-graph.md)：选择 `G0`，不建立 Graph 表、依赖或 UI。
-- [`MEMORY-FORMATION`](../benchmarks/memory-formation.md)：选择 `F2-IN-RUN-TOOL + U2-SLOT-GUARD`。基础形成使用同一 Chat/Agent Run 的 `memory.record`；身份后继实验 U0/U1/U2 分别为 8/16、12/16、16/16，U2 错目标 mutation 为 0/2。逐项 U01–U16、失败分析、哈希、生产重写和删除证明均已记录；目标 Chat Live 因当前 Azure 资源仅提供图片部署而无有效语义样本。
-- [`ACTIVITY-CAPTURE-RHYTHM`](../benchmarks/activity-capture.md)：`P15 + idle60 + S2-TRANSITION15M`。
-- [`ACTIVITY-DISTILLATION`](../benchmarks/activity-distillation.md)：8 分钟 Episode、每日 Digest、无模型周归纳与跨两个日期的候选证据。
-- [`ACTIVITY-RETENTION`](../benchmarks/activity-retention.md)：只清理已蒸馏原始层；截图 7 天、event 30 天、Episode 90 天、截图资产 512 MiB。
-- [`TERRITORY-IMAGE-PROCESSING`](../benchmarks/territory-image-processing.md)：固定同一 Azure deployment、`1024x1024 + medium + opaque`、Edit `high` fidelity、纯洋红背景与边缘连通移除；确认时默认 `96x96`，显式 `visualSizePx` 仍复用同一归一化和安装入口。
-
-所有自定数值门槛均作为决策证据而非自动否决线；记录同时报告质量、成本、延迟、资源、规模和复杂度，并在机械结论与产品选择不同时保留透明 amendment。
-
-## 已知边界
-
-- Chat 多模态真实像素路径由 Provider request-shape、附件/工具 E2E 和图片自然尺寸验证；尚未调用真实 Chat 视觉 endpoint。Territory Image 已用真实 Azure `gpt-image-2` 完成一次 Generation/Edit、去背景和候选确认桌面验收，但单样本不能外推质量、成本或延迟分布；完整发布环境 Live 批次留到 Phase 7。
-- 自动记忆的 Tool/宿主协议、稳定字段、目标 allowlist、去重、来源、Revision、候选、Context 复用和 UI 已由 integration 与 Electron E2E 验证；当前可用 Azure 资源是 `gpt-image-2` 图片部署，未把它伪装成 Chat Live 语义效果。若旧 Memory 未被本轮 Context 预载且模型又选错一个全新 slot，宿主没有足够证据推断跨 slot 冲突；目标 Chat Provider 的字段选择质量与长期候选率留到 Phase 7 Live。
-- Memory/Activity 已提供稳定来源，Territory 已提供统一候选 Tool 和确认入口；自动提案、来源关联、版本与 pin 仍由 `P6-TERRITORY-MEMORY` 集成包完成，不复制第二套状态机。
-- Electron Forge Vite Plugin 仍由上游标为 experimental；升级时必须重跑 build、native module、package、packaged smoke 与 Electron E2E。
-- 发布包仍较大；后续体积优化不得引入第二构建路径或破坏 Markdown、Pixi、native SQLite 与固定 Chromium。
+- OpenAI Realtime conversations 与 WebRTC 文档于 2026-08-09 复核：Realtime Session 是有状态 speech-to-speech conversation，支持 Function Call；WebRTC VAD 可中断活动 response 并自动截断未播放音频。
+- 锁定 `openai@6.49.0` tag commit `04671d278ef1531692ae31a870251eec90f3c2d2`；类型确认 `RealtimeFunctionTool`、`response.function_call_arguments.done`、`function_call_output`、`response.create`、输出音频转写的 `item_id/output_index` 与 Server VAD 当前字段。
+- Azure WebRTC 指南 source commit `ce66cc3b4f2a6be478aaa7ddedf9e2567fa638a5`（updated `2026-07-31`）与 Azure Realtime 协议 commit `6462e3bdaa191c85756377a92350c4cdf6768346`（updated `2026-07-09`）；目标 deployment 为 `gpt-realtime-2.1`。

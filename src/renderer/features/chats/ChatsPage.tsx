@@ -1,6 +1,7 @@
 import type { Dispatch } from "react";
 import type { UserInputResolution } from "../../../shared/contracts";
 
+import type { VoiceSessionSnapshot } from "../../../shared/contracts/voice";
 import { Composer } from "./components/Composer";
 import { MessageList } from "./components/MessageList";
 import { ActivePlan } from "./components/PlanDisplay";
@@ -11,6 +12,8 @@ import type {
   ChatsUiState,
 } from "./types";
 import styles from "./ChatsPage.module.css";
+import { VoiceDock } from "../voice/VoiceDock";
+import type { VoiceStore } from "../voice/voiceStore";
 
 interface ChatsPageProps {
   readonly activeChat: ChatView | undefined;
@@ -28,8 +31,14 @@ interface ChatsPageProps {
   ) => Promise<void>;
   readonly onSend: () => void;
   readonly onStop: () => void;
+  readonly onVoiceEnd: () => void;
+  readonly onVoiceMutedChange: (muted: boolean) => void;
+  readonly onVoiceRetry: () => void;
+  readonly onVoiceStart: () => void;
   readonly runtimeEnabled: boolean;
   readonly state: ChatsUiState;
+  readonly voiceSnapshot: VoiceSessionSnapshot | null;
+  readonly voiceStore: VoiceStore;
 }
 
 const suggestions = [
@@ -81,8 +90,14 @@ export function ChatsPage({
   onResolveUserInput,
   onSend,
   onStop,
+  onVoiceEnd,
+  onVoiceMutedChange,
+  onVoiceRetry,
+  onVoiceStart,
   runtimeEnabled,
   state,
+  voiceSnapshot,
+  voiceStore,
 }: ChatsPageProps) {
   const hasTimeline = Boolean(
     activeChat &&
@@ -110,14 +125,25 @@ export function ChatsPage({
           {activeRun ? (
             <ActivePlan key={activeRun.record.id} run={activeRun} />
           ) : null}
-          <Composer
-            dispatch={dispatch}
-            models={models}
-            onSend={onSend}
-            onStop={onStop}
-            runtimeEnabled={runtimeEnabled}
-            state={state}
-          />
+          {voiceSnapshot ? (
+            <VoiceDock
+              onEnd={onVoiceEnd}
+              onMutedChange={onVoiceMutedChange}
+              onRetry={onVoiceRetry}
+              snapshot={voiceSnapshot}
+              store={voiceStore}
+            />
+          ) : (
+            <Composer
+              dispatch={dispatch}
+              models={models}
+              onSend={onSend}
+              onStop={onStop}
+              onVoiceStart={onVoiceStart}
+              runtimeEnabled={runtimeEnabled}
+              state={state}
+            />
+          )}
         </div>
         <p>CharaMate 也可能出错，请核对重要信息。</p>
       </div>

@@ -86,6 +86,7 @@ export const RunSchema = Type.Object(
     id: EntityIdSchema,
     latestSequence: Type.Integer({ minimum: 0 }),
     provider: ProviderSnapshotSchema,
+    source: Type.Union([Type.Literal("text"), Type.Literal("voice")]),
     startedAt: Type.Optional(TimestampSchema),
     status: RunStatusSchema,
   },

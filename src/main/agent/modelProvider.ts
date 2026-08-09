@@ -29,12 +29,15 @@ export interface ModelUsage {
   readonly outputTokens: number;
 }
 
+export type ModelResponseStatus = "cancelled" | "completed";
+
 export interface ModelRequest {
   readonly allowedTools?: readonly ModelAllowedTool[];
   readonly input: readonly JsonValue[];
   readonly instructions: string;
   readonly maxOutputTokens?: number;
   readonly modelId: string;
+  readonly nativeWebSearch?: boolean;
   readonly toolNamespaces: readonly ModelToolNamespace[];
 }
 
@@ -55,6 +58,7 @@ export interface ModelOutputItemEvent {
 
 export interface ModelCompletedEvent {
   readonly responseId: string;
+  readonly status: ModelResponseStatus;
   readonly type: "response.completed";
   readonly usage: ModelUsage;
 }
@@ -63,6 +67,7 @@ export type ModelEvent =
   ModelTextDeltaEvent | ModelOutputItemEvent | ModelCompletedEvent;
 
 export interface ModelProvider {
+  readonly supportsNativeWebSearch?: boolean;
   resolveContextLimits(modelId: string): Promise<ModelContextLimits>;
   stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent>;
 }
@@ -86,6 +91,7 @@ export interface CollectedModelTurn {
   readonly functionCalls: readonly ModelFunctionCall[];
   readonly outputItems: readonly JsonValue[];
   readonly responseId: string;
+  readonly status: ModelResponseStatus;
   readonly text: string;
   readonly toolSearchCalls: readonly ModelToolSearchCall[];
   readonly usage: ModelUsage;
@@ -218,6 +224,7 @@ export async function collectModelTurn(
     functionCalls,
     outputItems,
     responseId: completed.responseId,
+    status: completed.status,
     text,
     toolSearchCalls,
     usage: completed.usage,

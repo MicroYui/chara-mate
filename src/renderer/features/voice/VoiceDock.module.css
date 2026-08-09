@@ -1,0 +1,112 @@
+.dock {
+  display: grid;
+  width: min(var(--composer-max), 100%);
+  min-height: 76px;
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 12px;
+  margin: 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  box-shadow: var(--composer-shadow);
+}
+
+.roundButton {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.roundButton:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.endButton {
+  background: #d94c4c;
+  color: #fff;
+}
+
+.endButton:hover {
+  background: #c73d3d;
+  color: #fff;
+}
+
+.body {
+  min-width: 0;
+}
+
+.statusRow {
+  display: flex;
+  min-height: 25px;
+  align-items: center;
+  gap: 8px;
+}
+
+.statusRow strong {
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.inputMode {
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.body p {
+  overflow: hidden;
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wave {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--accent);
+}
+
+.wave i {
+  width: 2px;
+  min-height: 4px;
+  max-height: 24px;
+  border-radius: 99px;
+  background: currentColor;
+  transition: height 70ms linear;
+}
+
+.pushToTalk {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font-size: 10.5px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.pushToTalk:active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}

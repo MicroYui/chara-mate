@@ -81,7 +81,7 @@ export class CharacterWindowController {
       acceptFirstMouse: true,
       alwaysOnTop: true,
       backgroundColor: "#00000000",
-      focusable: true,
+      focusable: process.platform !== "darwin",
       frame: false,
       fullscreenable: false,
       hasShadow: false,
@@ -92,6 +92,7 @@ export class CharacterWindowController {
       skipTaskbar: true,
       title: "CharaMate Character",
       transparent: true,
+      ...(process.platform === "darwin" ? { type: "panel" } : {}),
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,

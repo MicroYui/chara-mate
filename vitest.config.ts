@@ -37,6 +37,8 @@ export default defineConfig({
           environment: "node",
           include: ["tests/live/**/*.test.ts"],
           name: "live",
+          // Live harness watchdog; not a product Run or latency threshold.
+          testTimeout: 60_000,
         },
       },
     ],

@@ -1,6 +1,6 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done
+> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 正在实现 Realtime 原生语音 Agent
 > 日期：2026-08-09
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
@@ -245,26 +245,36 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## Phase 4 — Realtime Voice
 
+> 里程碑状态：Implementing（2026-08-09）。按真人体验反馈切换为单一 Orchestrated Native Realtime 路径，正在重跑离线、Live、E2E、package 与人工验收。
+
 ### 依赖与 Gate
 
 - Phase 2 的 Run、Tool、Approval、steering、generation 和 Provider Adapter 稳定；
 - 目标 Azure deployment Contract Test 已刷新；
-- `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT`、`VOICE-TOOL-JOIN` 全部完成，失败 Driver/Transport/Join 代码已删除。
+- `VOICE-ARCHITECTURE` 已透明修订为 Realtime 原生语音 Agent，`VOICE-TRANSPORT` 保持 WebRTC，`VOICE-TOOL-JOIN` 恢复为最小串行 continuation；旧 TTS/Shared Runtime 代码必须删除。
 
 ### 工作包
 
 - `P4-VOICE-DRIVER`：唯一媒体 Transport、鉴权、VAD、音频采集/播放和断线重连。
-- `P4-COORDINATOR`：VoiceRunCoordinator 将 transcript、response、Tool 和 interruption 映射到统一 Run。
-- `P4-VOICE-TOOLS`：获胜 Tool 调度/Join、结构化部分失败、单次 continuation 与迟到 generation 丢弃。
+- `P4-COORDINATOR`：完整输入转写创建正常 Voice Run；Realtime 原生生成音频、输出转写与 Function Call，应用显式驱动 response 并投影到同一 Chat/Run/Item。
+- `P4-VOICE-TOOLS`：Session 获得同一 Tool Registry 的权限过滤快照；Realtime Function Call 沿既有校验/Approval/executor 执行，`function_call_output` 回注后继续同一 generation。
 - `P4-VOICE-DATA`：VoiceSession/Turn、实际播放边界、interrupted 标记与 Chat 草稿原子完成。
 - `P4-VOICE-UI`：Voice Dock、波形、连接/聆听/工具/批准/说话状态、静音和结束。
+- `P4-VOICE-ENTRY`：Composer 继承当前模式/权限，桌宠声波入口创建 Agent 完全访问，新建 Chat 先结束活动 Voice；Approval 使用同一 Item 的桌宠气泡投影。
+- `P4-VOICE-HARNESS`：文字 Chat/Agent 使用 CharaMate Harness，Voice 使用 Realtime Agent；两者共用核心 instructions、Skill/Memory/Chat Context、Tool Registry、入口权限、Approval、Run/Item 与标题链路。Azure Realtime 没有 Responses 托管 `web_search`，不伪造本地 Tool。
+- `P4-VOICE-LANGUAGE`：多语言转写不固定语言，普通话落为简体，英文与混合语言保持原语言，输出音频跟随当前语言。
 - `P4-VOICE-SETTINGS`：音色试听、Persona 默认音色和 Realtime instructions。
 
 ### 验收
 
 - 真实 endpoint、麦克风和扬声器满足预注册首音频、打断和一致性门槛；
 - 任一时刻只有一个 audible response，旧 generation 注入和重复副作用为零；
-- 实际听到的自然语言、Chat 文本、Tool Item 和重启恢复一致；
+- Realtime 输出转写增量立即留在同一 Chat，音频由同一 response 连续播放，不等待文字 Run 完成，也不拆句做 TTS；
+- 实际听到的自然语言、同一 response 的输出转写、Tool Item 和重启历史一致；文字 Agent 不参与 Voice 回答；
+- Voice 标题按“语音对话 → 首条转写兜底 → 既有 AI 摘要”更新，未复制标题服务；
+- Composer 与桌宠入口权限明确，新建 Chat 能结束活动 Voice；桌宠 hover 后显示深色圆形声波图标，移开自动隐藏且点击不唤起主窗口；Chat 与 Agent 都有计划和幂等查询能力，简单查询不被强制计划化；
+- Voice 获得与入口相同的客户端 Tools 和权限；仓库不存在本地 `web.search`、Voice Tool 副本、TTS 或第二条回答 fallback；
+- 普通话、英文和混合语言的真实 Azure 输入转写与原生发声通过，且生产无翻译/繁简正则修补；
 - mock 测试只证明状态机，不代替 Live 体验结论；离线与 Live 结果分开报告。
 
 ## Phase 5 — Automations、主动聊天与可选成长能力

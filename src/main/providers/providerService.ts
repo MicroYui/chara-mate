@@ -53,6 +53,12 @@ export interface ChatModelRuntime {
   readonly snapshot: ProviderSnapshot;
 }
 
+export interface RealtimeProviderRuntime {
+  readonly apiKey: string;
+  readonly profile: ProviderProfileDraft;
+  readonly snapshot: ProviderSnapshot;
+}
+
 function recordToDraft(record: ProviderRecord): ProviderProfileDraft {
   const common = {
     baseUrl: record.baseUrl,
@@ -176,6 +182,71 @@ export class ProviderService {
       provider: this.modelProviderFactory(profile, apiKey),
       snapshot: this.createSnapshot(profileId),
     };
+  }
+
+  async createRealtimeProviderRuntime(
+    profileId: string,
+  ): Promise<RealtimeProviderRuntime> {
+    const record = this.#requireProfile(profileId);
+    if (!record.apiKeyRef) {
+      throw new ProviderError(
+        "PROVIDER.CREDENTIAL_REQUIRED",
+        "该 Provider 尚未保存 API Key。",
+        false,
+      );
+    }
+    if (record.apiStyle !== "azure-openai") {
+      throw new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "Realtime Voice 当前需要 Azure OpenAI Profile。",
+        false,
+      );
+    }
+    if (!record.realtimeEndpoint || !record.realtimeModel) {
+      throw new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "请先填写 Realtime Endpoint 与 Model。",
+        false,
+      );
+    }
+    const profile = normalizeProviderDraft(recordToDraft(record));
+    return {
+      apiKey: await this.secretStore.get(record.apiKeyRef),
+      profile,
+      snapshot: {
+        apiStyle: profile.apiStyle,
+        modelId: record.realtimeModel,
+        profileId: record.id,
+        profileName: record.name,
+      },
+    };
+  }
+
+  getDefaultChatProfileId(): string {
+    let profiles: ProviderRecord[];
+    try {
+      profiles = this.repository.list();
+    } catch {
+      throw new ProviderError(
+        "PROVIDER.STORAGE_FAILED",
+        "无法读取默认 Chat Provider。",
+        true,
+      );
+    }
+    const configured = profiles.filter(({ apiKeyRef, chatModel }) =>
+      Boolean(apiKeyRef && chatModel),
+    );
+    const selected =
+      configured.find(({ apiStyle }) => apiStyle === "openai-compatible") ??
+      configured[0];
+    if (!selected) {
+      throw new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "请先配置一个可用的 Chat Provider 与模型。",
+        false,
+      );
+    }
+    return selected.id;
   }
 
   createSnapshot(profileId: string, modelId?: string): ProviderSnapshot {

@@ -1,10 +1,13 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { AudioLines } from "lucide-react";
 
 import type {
   PetAnimation,
@@ -15,6 +18,7 @@ import type {
 import type { Approval } from "../../shared/contracts/run";
 import { getDragAnimation } from "./petAtlas";
 import { PixiPetCanvas } from "./PixiPetCanvas";
+import { VoiceStore } from "../features/voice/voiceStore";
 import styles from "./CharacterApp.module.css";
 
 function pointFromEvent(event: ReactPointerEvent): PetDragPoint | null {
@@ -31,6 +35,11 @@ export function CharacterApp() {
   const [approval, setApproval] = useState<Approval | null>(null);
   const [dragFacing, setDragFacing] = useState<PetFacing>("right");
   const [lookAngleDegrees, setLookAngleDegrees] = useState<number | null>(null);
+  const voiceStore = useMemo(
+    () => new VoiceStore(window.charaMateCharacter.voice),
+    [],
+  );
+  const voice = useSyncExternalStore(voiceStore.subscribe, voiceStore.getState);
   const activePointer = useRef<number | null>(null);
   const lastDragPoint = useRef<PetDragPoint | null>(null);
   const markedReady = useRef(false);
@@ -67,6 +76,7 @@ export function CharacterApp() {
   }, [markReady]);
 
   useEffect(() => window.charaMateCharacter.subscribeApproval(setApproval), []);
+  useEffect(() => voiceStore.startListening(), [voiceStore]);
 
   const decideApproval = (decision: "approved" | "rejected") => {
     if (!approval) return;
@@ -145,36 +155,19 @@ export function CharacterApp() {
     : lookAngleDegrees === null
       ? (snapshot?.animation ?? "idle")
       : "look";
+  const voiceActive = Boolean(voice.snapshot || voice.starting);
+
+  const stopPetInteraction = (event: ReactPointerEvent<HTMLElement>) => {
+    event.stopPropagation();
+  };
 
   return (
     <main
-      aria-label={
-        snapshot?.activePet
-          ? `${snapshot.activePet.displayName} 桌宠`
-          : "CharaMate 桌宠"
-      }
       className={styles["character"]}
-      data-dragging={dragging || undefined}
       onContextMenu={(event) => {
         event.preventDefault();
         window.charaMateCharacter.showContextMenu();
       }}
-      onDoubleClick={() => window.charaMateCharacter.focusMain()}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          window.charaMateCharacter.focusMain();
-        }
-      }}
-      onPointerCancel={finishDrag}
-      onPointerDown={handlePointerDown}
-      onPointerLeave={() => {
-        if (activePointer.current === null) setLookAngleDegrees(null);
-      }}
-      onPointerMove={handlePointerMove}
-      onPointerUp={finishDrag}
-      role="button"
-      tabIndex={0}
     >
       {approval ? (
         <section
@@ -183,6 +176,10 @@ export function CharacterApp() {
           onDoubleClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         >
+          <header>
+            <span>需要你的允许</span>
+            <small>{approval.toolName}</small>
+          </header>
           <p>{approval.parameterSummary}</p>
           <div>
             <button type="button" onClick={() => decideApproval("rejected")}>
@@ -199,26 +196,82 @@ export function CharacterApp() {
               详情
             </button>
             <button type="button" onClick={() => decideApproval("approved")}>
-              允许
+              允许一次
             </button>
           </div>
         </section>
       ) : null}
-      {startupError ? (
-        <span className={styles["status"]} role="alert">
-          {startupError}
+      {voice.error ? (
+        <span
+          className={styles["voiceError"]}
+          onPointerDown={stopPetInteraction}
+          role="alert"
+        >
+          {voice.error.message}
         </span>
-      ) : snapshot?.activePet ? (
-        <PixiPetCanvas
-          animation={animation}
-          animationSpeed={snapshot.animationSpeed}
-          lookAngleDegrees={lookAngleDegrees ?? 0}
-          onReady={markReady}
-          pet={snapshot.activePet}
-        />
-      ) : snapshot ? (
-        <span className={styles["status"]}>请在 Character 设置中导入桌宠</span>
       ) : null}
+      <div
+        aria-label={
+          snapshot?.activePet
+            ? `${snapshot.activePet.displayName} 桌宠`
+            : "CharaMate 桌宠"
+        }
+        className={styles["petSurface"]}
+        data-dragging={dragging || undefined}
+        onDoubleClick={() => window.charaMateCharacter.focusMain()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            window.charaMateCharacter.focusMain();
+          }
+        }}
+        onPointerCancel={finishDrag}
+        onPointerDown={handlePointerDown}
+        onPointerLeave={() => {
+          if (activePointer.current === null) setLookAngleDegrees(null);
+        }}
+        onPointerMove={handlePointerMove}
+        onPointerUp={finishDrag}
+        role="button"
+        tabIndex={0}
+      >
+        {startupError ? (
+          <span className={styles["status"]} role="alert">
+            {startupError}
+          </span>
+        ) : snapshot?.activePet ? (
+          <PixiPetCanvas
+            animation={animation}
+            animationSpeed={snapshot.animationSpeed}
+            lookAngleDegrees={lookAngleDegrees ?? 0}
+            onReady={markReady}
+            pet={snapshot.activePet}
+          />
+        ) : snapshot ? (
+          <span className={styles["status"]}>
+            请在 Character 设置中导入桌宠
+          </span>
+        ) : null}
+      </div>
+      <button
+        aria-label={voiceActive ? "结束语音聊天" : "开始语音聊天"}
+        aria-pressed={voiceActive}
+        className={styles["voiceButton"]}
+        data-active={voiceActive || undefined}
+        disabled={voice.starting && !voice.snapshot}
+        onClick={() => {
+          if (voiceActive) void voiceStore.end();
+          else void voiceStore.startQuick();
+        }}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onPointerCancel={stopPetInteraction}
+        onPointerDown={stopPetInteraction}
+        onPointerUp={stopPetInteraction}
+        title={voiceActive ? "结束语音聊天" : "开始语音聊天"}
+        type="button"
+      >
+        <AudioLines aria-hidden="true" size={20} strokeWidth={2.6} />
+      </button>
     </main>
   );
 }

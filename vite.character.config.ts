@@ -15,5 +15,6 @@ export default defineConfig({
     outDir: path.join(projectRoot, ".vite/renderer/character_window"),
     sourcemap: true,
   },
+  optimizeDeps: { include: ["lucide-react"] },
   plugins: [react()],
 });

@@ -137,7 +137,6 @@
   min-height: 280px !important;
 }
 
-.row,
 .actions,
 .statusRow {
   display: flex;
@@ -145,9 +144,16 @@
   gap: 7px;
 }
 
-.row > label,
+.fieldActionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 7px;
+}
+
+.fieldActionRow > label,
 .statusRow > div {
-  flex: 1;
+  min-width: 0;
 }
 
 .checkbox {
@@ -169,6 +175,12 @@
 .button {
   width: auto;
   cursor: pointer;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .primary {

@@ -68,6 +68,7 @@ import {
   type AgentSettingsSaveRequest,
   SETTINGS_CHANNELS,
   type SettingsApi,
+  type VoiceSettingsSaveRequest,
 } from "../shared/contracts/settings";
 import {
   PET_CHANNELS,
@@ -175,6 +176,8 @@ import {
   AgentSettingsSaveResponseSchema,
   BrowserActionResponseSchema,
   SettingsSnapshotResponseSchema,
+  VoiceSettingsSaveRequestSchema,
+  VoiceSettingsSaveResponseSchema,
 } from "../shared/schemas/settings";
 import {
   PetAnimationSpeedRequestSchema,
@@ -209,6 +212,7 @@ import {
   TerritorySnapshotResponseSchema,
 } from "../shared/schemas/territory";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
+import { createVoiceApi } from "./voiceApi";
 
 const chatApi: ChatApi = Object.freeze({
   archive: async (input: ChatIdRequest) => {
@@ -505,7 +509,17 @@ const settingsApi: SettingsApi = Object.freeze({
         parseSchemaWithoutCodeGeneration(AgentSettingsSaveRequestSchema, input),
       ),
     ),
+  saveVoice: async (input: VoiceSettingsSaveRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      VoiceSettingsSaveResponseSchema,
+      await ipcRenderer.invoke(
+        SETTINGS_CHANNELS.saveVoice,
+        parseSchemaWithoutCodeGeneration(VoiceSettingsSaveRequestSchema, input),
+      ),
+    ),
 });
+
+const voiceApi = createVoiceApi();
 
 const providerApi: ProviderApi = Object.freeze({
   deleteProfile: async (request: ProviderDeleteProfileRequest) =>
@@ -904,6 +918,7 @@ const desktopApi: CharaMateApi = Object.freeze({
   runEvents: runEventsApi,
   settings: settingsApi,
   territory: territoryApi,
+  voice: voiceApi,
 });
 
 contextBridge.exposeInMainWorld("charaMate", desktopApi);

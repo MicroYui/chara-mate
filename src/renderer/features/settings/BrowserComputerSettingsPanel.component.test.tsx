@@ -25,6 +25,13 @@ function createApi() {
       profileDirectory: "/browser/profile",
       screenRecording: "denied" as const,
     },
+    voice: {
+      inputMode: "hands_free" as const,
+      instructions: "使用自然、简洁的中文口语。",
+      microphone: "granted" as const,
+      providerProfileId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      voice: "verse" as const,
+    },
   };
   const getSnapshot = vi
     .fn<SettingsApi["getSnapshot"]>()
@@ -40,6 +47,7 @@ function createApi() {
     importBrowserCookies: vi.fn(),
     openManagedBrowser,
     saveAgent: vi.fn(),
+    saveVoice: vi.fn(),
   };
   return { api, getSnapshot, openManagedBrowser };
 }

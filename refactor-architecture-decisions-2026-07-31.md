@@ -1739,7 +1739,7 @@ V2 不意味着同时运行两个 Agent。Realtime Model 仍产生自然语言�
 
 | Arm | 连接 | 关键特性 |
 | --- | --- | --- |
-| W0 | Direct WebSocket：`wss://datasetannotator-openai.openai.azure.com/openai/v1/realtime?model=gpt-realtime-2.1-2` | Main 持 Key；客户端自行分帧、播放、截断 |
+| W0 | Direct WebSocket：`wss://datasetannotator-openai.openai.azure.com/openai/v1/realtime?model=gpt-realtime-2.1` | Main 持 Key；客户端自行分帧、播放、截断 |
 | W1 | WebRTC GA：Main 获取 ephemeral token，Renderer 建 media/data channel | 低延迟媒体、抖动/丢包处理、自动播放截断 |
 
 [Microsoft 当前一手文档](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/realtime-audio-webrtc)建议客户端实时音频优先 WebRTC，并把 WebSocket 定位为低延迟不是首要要求的 server-to-server 场景。因此先对 W1 做目标 deployment Contract Test 和短程体验门槛；W1 不支持或未达门槛时才实现 W0 的完整对照，不能为了表格对称先做两套生产级 Driver。

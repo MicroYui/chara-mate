@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type CharacterWindowApi, PET_CHANNELS } from "../shared/contracts/pet";
+import { VOICE_CHANNELS } from "../shared/contracts/voice";
 
 type IpcListener = (event: unknown, input: unknown) => void;
 
@@ -73,6 +74,7 @@ describe("Character Window typed preload boundary", () => {
         "startDrag",
         "subscribe",
         "subscribeApproval",
+        "voice",
       ].sort(),
     );
     await expect(api.getSnapshot()).resolves.toEqual(characterSnapshot);
@@ -95,6 +97,32 @@ describe("Character Window typed preload boundary", () => {
       api.startDrag({ screenX: Number.NaN, screenY: 240 }),
     ).rejects.toThrow();
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("exposes the Character-only Voice quick-start boundary", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(VOICE_CHANNELS.quickStart);
+        expect(input).toEqual({ requestedAt: "2026-08-09T06:00:00.000Z" });
+        return Promise.resolve({
+          ok: true,
+          value: {
+            callsUrl: "https://unit.openai.azure.com/openai/v1/realtime/calls",
+            clientSecret: "ephemeral",
+            expiresAt: "2026-08-09T06:01:00.000Z",
+            history: [],
+            inputMode: "hands_free",
+            sessionId: "10000000-0000-4000-8000-000000000001",
+            voice: "verse",
+          },
+        });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.voice.quickStart({ requestedAt: "2026-08-09T06:00:00.000Z" }),
+    ).resolves.toMatchObject({ ok: true, value: { voice: "verse" } });
   });
 
   it("passes only validated Character events and removes its wrapper", async () => {

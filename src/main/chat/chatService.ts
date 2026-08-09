@@ -70,6 +70,27 @@ export class ChatService {
     }
   }
 
+  adoptFirstMessageTitle(
+    chatId: string,
+    expectedPlaceholder: string,
+    firstMessage: string,
+  ): Chat {
+    const current = this.#requireChat(chatId);
+    if (
+      current.title !== expectedPlaceholder ||
+      this.chats.listMessages(chatId).some(({ role }) => role === "user")
+    ) {
+      return current;
+    }
+    const title = fallbackChatTitle(firstMessage);
+    if (title === current.title) return current;
+    return this.#updateChat({
+      ...current,
+      title,
+      updatedAt: this.clock.now(),
+    });
+  }
+
   delete(input: ChatIdRequest): { chatId: string } {
     const request = parseSchema(ChatIdRequestSchema, input);
     this.#requireChat(request.chatId);
@@ -171,7 +192,7 @@ export class ChatService {
 
   async runSerializedTurn<TResult>(
     chatId: string,
-    operation: () => Promise<TResult>,
+    operation: () => TResult | Promise<TResult>,
   ): Promise<TResult> {
     const request = parseSchema(ChatIdRequestSchema, { chatId });
     const predecessor = this.#turnTails.get(request.chatId);

@@ -9,6 +9,7 @@ import {
 
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
 import type { ApprovalNavigationTarget } from "../../shared/contracts/agent";
+import { VOICE_CHAT_FALLBACK_TITLE } from "../../shared/contracts/voice";
 import type {
   PetDescriptor,
   PetLibrarySnapshot,
@@ -16,6 +17,7 @@ import type {
 import { chatsUiReducer, initialChatsUiState } from "../features/chats/state";
 import { ChatDomainStore } from "../features/chats/chatStore";
 import { projectChatSnapshot } from "../features/chats/projection";
+import { VoiceStore } from "../features/voice/voiceStore";
 import styles from "./App.module.css";
 import { AppShell } from "./AppShell";
 import {
@@ -63,8 +65,11 @@ export function App() {
     chatStore.subscribe,
     chatStore.getState,
   );
+  const voiceStore = useMemo(() => new VoiceStore(window.charaMate.voice), []);
+  const voice = useSyncExternalStore(voiceStore.subscribe, voiceStore.getState);
 
   useEffect(() => chatStore.start(), [chatStore]);
+  useEffect(() => voiceStore.startListening(), [voiceStore]);
 
   useEffect(() => {
     let active = true;
@@ -235,6 +240,13 @@ export function App() {
     }
   }, [hasActiveRun, uiState.composerPhase]);
 
+  useEffect(() => {
+    const chatId = voice.snapshot?.chatId;
+    if (chatId && chatId !== uiState.activeChatId) {
+      dispatch({ chatId, type: "chat.selected" });
+    }
+  }, [uiState.activeChatId, voice.snapshot?.chatId]);
+
   if (foundation.status === "loading") {
     return (
       <main className={styles["startup"]} aria-live="polite">
@@ -263,7 +275,11 @@ export function App() {
     ({ id }) => id === petLibrary.activePetId,
   );
 
-  const createChat = () => {
+  const createChat = async () => {
+    if (voice.starting || voice.snapshot) {
+      const ended = await voiceStore.end();
+      if (!ended) return;
+    }
     dispatch({ type: "chat.new" });
   };
 
@@ -319,6 +335,28 @@ export function App() {
     }
   };
 
+  const startVoice = async (retry = false) => {
+    if (voice.starting || (voice.snapshot && !retry)) return;
+    const model = chatDomain.models.find(({ id }) => id === uiState.modelId);
+    if (!model) return;
+    voiceStore.preparePlayback();
+    let chatId = voice.snapshot?.chatId ?? uiState.activeChatId;
+    if (!chatId) {
+      const created = await chatStore.create(VOICE_CHAT_FALLBACK_TITLE);
+      chatId = created.id;
+      dispatch({ chatId, type: "chat.selected" });
+    }
+    await voiceStore.start({
+      chatProviderProfileId: model.provider.profileId,
+      chatId,
+      execution:
+        uiState.mode === "chat"
+          ? { mode: "chat" }
+          : { approvalMode: uiState.approvalMode, mode: "agent" },
+      requestedAt: new Date().toISOString(),
+    });
+  };
+
   return (
     <AppShell
       activeChat={activeChat}
@@ -338,7 +376,7 @@ export function App() {
           })
           .catch(() => undefined)
       }
-      onChatCreate={createChat}
+      onChatCreate={() => void createChat()}
       onChatDelete={(chatId) =>
         void chatStore
           .delete(chatId)
@@ -365,6 +403,7 @@ export function App() {
         void chatStore.setPinned(chatId, pinned).catch(() => undefined)
       }
       onClearChatError={() => chatStore.clearError()}
+      onClearVoiceError={() => voiceStore.clearError()}
       state={uiState}
       onBackgroundSchemeChange={setBackgroundScheme}
       onProvidersChanged={() => void chatStore.refreshModels()}
@@ -391,7 +430,14 @@ export function App() {
         dispatch({ phase: "stopping", type: "composer.phase-changed" });
         void chatStore.cancelActive(chatId).catch(() => undefined);
       }}
+      onVoiceEnd={() => void voiceStore.end()}
+      onVoiceMutedChange={(muted) => void voiceStore.setMuted(muted)}
+      onVoiceRetry={() => void startVoice(true)}
+      onVoiceStart={() => void startVoice()}
       openCharacterSettingsToken={openCharacterSettingsToken}
+      voiceSnapshot={voice.snapshot}
+      voiceStore={voiceStore}
+      voiceError={voice.error}
     />
   );
 }

@@ -5,6 +5,7 @@ import { CHAT_CHANNELS, CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { TERRITORY_CHANNELS } from "../shared/contracts/territory";
+import { VOICE_CHANNELS } from "../shared/contracts/voice";
 import {
   chatDataSnapshotFixture,
   FIXTURE_IDS,
@@ -60,6 +61,72 @@ beforeEach(() => {
 });
 
 describe("Phase 1 typed preload data boundary", () => {
+  it("validates Voice driver events and command subscriptions on both sides", async () => {
+    const sessionId = "20000000-0000-4000-8000-000000000001";
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(VOICE_CHANNELS.event);
+        expect(input).toMatchObject({
+          event: { generation: 1, type: "response.done" },
+          sessionId,
+        });
+        return Promise.resolve({ ok: true, value: null });
+      },
+    );
+    let commandListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(VOICE_CHANNELS.command);
+        commandListener = listener;
+      },
+    );
+    const api = await loadApi();
+    await expect(
+      api.voice.report({
+        event: {
+          generation: 1,
+          responseId: "response-1",
+          status: "completed",
+          type: "response.done",
+        },
+        occurredAt: "2026-08-08T12:00:00.000Z",
+        sessionId,
+      }),
+    ).resolves.toEqual({ ok: true, value: null });
+
+    const listener = vi.fn();
+    const unsubscribe = api.voice.subscribeCommand(listener);
+    commandListener?.(
+      {},
+      {
+        generation: 1,
+        instructions: "自然回答。",
+        requestId: FIXTURE_IDS.request,
+        sessionId,
+        type: "response.create",
+      },
+    );
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({ generation: 1, type: "response.create" }),
+    );
+    expect(() =>
+      commandListener?.(
+        {},
+        {
+          instructions: "缺少 generation。",
+          requestId: FIXTURE_IDS.request,
+          sessionId,
+          type: "response.create",
+        },
+      ),
+    ).toThrow();
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      VOICE_CHANNELS.command,
+      commandListener,
+    );
+  });
+
   it("validates Chat snapshot requests and Main responses", async () => {
     electron.ipcRenderer.invoke.mockImplementation(
       (channel: string, input: unknown) => {

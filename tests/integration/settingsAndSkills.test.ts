@@ -74,6 +74,7 @@ describe("Phase 2 Agent Settings", () => {
       browser,
       {
         read: () => "granted",
+        readMicrophone: () => "granted",
         readScreenRecording: () => "not_determined",
       },
       new FakeClock(NOW),
@@ -94,6 +95,14 @@ describe("Phase 2 Agent Settings", () => {
         browser: "ready",
         profileDirectory: path.join(root, "browser-profile"),
         screenRecording: "not_determined",
+      },
+      voice: {
+        inputMode: "hands_free",
+        instructions:
+          "使用用户当前使用的语言自然、简洁地回应，并在用户切换语言时跟随；中文使用简体中文。角色整体开朗、有温度，处理任务时保持清楚可靠。允许自然停顿，不朗读命令、代码、JSON 和日志；涉及工具执行时只用一句短话说明正在做什么。",
+        microphone: "granted",
+        providerProfileId: "d0197d17-a231-41e0-afe2-664791a531ec",
+        voice: "verse",
       },
     });
     await expect(

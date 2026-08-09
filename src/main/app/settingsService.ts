@@ -5,6 +5,8 @@ import type {
   AgentSettings,
   BrowserComputerSettings,
   SettingsSnapshot,
+  VoiceSettings,
+  VoiceSettingsConfig,
 } from "../../shared/contracts/settings";
 import type { Clock } from "../../shared/pure/clock";
 import type { ManagedBrowser } from "../browser/managedBrowser";
@@ -13,6 +15,7 @@ import type { SettingsRepository } from "./settingsRepository";
 export interface ComputerPermissionReader {
   read(): BrowserComputerSettings["accessibility"];
   readScreenRecording(): BrowserComputerSettings["screenRecording"];
+  readMicrophone(): VoiceSettings["microphone"];
 }
 
 export class SettingsService {
@@ -43,6 +46,7 @@ export class SettingsService {
         profileDirectory: this.browser.profileDirectory,
         screenRecording: this.permissions.readScreenRecording(),
       },
+      voice: this.getVoice(),
     };
   }
 
@@ -61,6 +65,18 @@ export class SettingsService {
       await this.onWorkingDirectoryChanged(saved.workingDirectory);
     }
     return saved;
+  }
+
+  getVoice(): VoiceSettings {
+    return {
+      ...this.repository.getVoice(),
+      microphone: this.permissions.readMicrophone(),
+    };
+  }
+
+  saveVoice(settings: VoiceSettingsConfig): VoiceSettings {
+    this.repository.saveVoice(settings, this.clock.now());
+    return this.getVoice();
   }
 
   async openManagedBrowser(): Promise<{ message: string }> {

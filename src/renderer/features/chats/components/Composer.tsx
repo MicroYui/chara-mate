@@ -42,6 +42,7 @@ interface ComposerProps {
   readonly models: readonly ChatModelOption[];
   readonly onSend?: () => void;
   readonly onStop?: () => void;
+  readonly onVoiceStart?: () => void;
   readonly runtimeEnabled?: boolean;
   readonly state: ChatsUiState;
 }
@@ -423,6 +424,7 @@ export function Composer({
   models,
   onSend,
   onStop,
+  onVoiceStart,
   runtimeEnabled = true,
   state,
 }: ComposerProps) {
@@ -543,6 +545,9 @@ export function Composer({
             className={styles["iconButton"]}
             type="button"
             aria-label="录入语音"
+            disabled={state.composerPhase !== "idle"}
+            title="使用 Voice 设置中的输入方式"
+            onClick={onVoiceStart}
           >
             <Mic aria-hidden="true" size={16} />
           </button>
@@ -614,6 +619,8 @@ export function Composer({
               className={styles["primaryButton"]}
               type="button"
               aria-label="开始语音对话"
+              title="使用 Voice 设置中的输入方式"
+              onClick={onVoiceStart}
             >
               <VoiceGlyph />
             </button>

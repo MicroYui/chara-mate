@@ -51,6 +51,7 @@ export class ChatTitleService implements ChatTitleGenerator {
             instructions: TITLE_INSTRUCTIONS,
             maxOutputTokens: 128,
             modelId: request.modelId,
+            nativeWebSearch: false,
             toolNamespaces: [],
           },
           request.signal,

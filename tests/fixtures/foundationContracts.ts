@@ -88,6 +88,7 @@ export const runFixture = {
   id: FIXTURE_IDS.run,
   latestSequence: 1,
   provider: providerSnapshotFixture,
+  source: "text",
   startedAt: FIXTURE_TIMESTAMPS.created,
   status: "running",
 } satisfies Run;

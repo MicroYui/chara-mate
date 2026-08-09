@@ -107,6 +107,7 @@ test("launches through the typed preload boundary", async () => {
       runEventKeys: Object.keys(window.charaMate.runEvents).sort(),
       settingsKeys: Object.keys(window.charaMate.settings).sort(),
       territoryKeys: Object.keys(window.charaMate.territory).sort(),
+      voiceKeys: Object.keys(window.charaMate.voice).sort(),
       exposesRawIpcRenderer: "ipcRenderer" in window.charaMate,
       exposesSecretReader: "getApiKey" in window.charaMate.provider,
     }));
@@ -196,6 +197,7 @@ test("launches through the typed preload boundary", async () => {
         "runEvents",
         "settings",
         "territory",
+        "voice",
       ],
       runEventKeys: ["replay", "subscribe"],
       settingsKeys: [
@@ -203,6 +205,7 @@ test("launches through the typed preload boundary", async () => {
         "importBrowserCookies",
         "openManagedBrowser",
         "saveAgent",
+        "saveVoice",
       ],
       territoryKeys: [
         "collectItem",
@@ -215,9 +218,98 @@ test("launches through the typed preload boundary", async () => {
         "retryImageCandidate",
         "selectScene",
       ],
+      voiceKeys: [
+        "end",
+        "getActive",
+        "preview",
+        "quickStart",
+        "report",
+        "setMuted",
+        "start",
+        "subscribeChanged",
+        "subscribeCommand",
+      ],
       exposesRawIpcRenderer: false,
       exposesSecretReader: false,
     });
+
+    await expect
+      .poll(() =>
+        application
+          ?.windows()
+          .map((window) => window.url())
+          .some((url) => url.includes("character_window")),
+      )
+      .toBe(true);
+    const characterPage = application
+      .windows()
+      .find((window) => window.url().includes("character_window"));
+    if (!characterPage) throw new Error("Character window did not open");
+    const characterChat = characterPage.getByRole("button", {
+      name: "开始语音聊天",
+    });
+    await expect(characterChat).toBeHidden();
+    await characterPage.getByRole("button", { name: /桌宠/u }).hover();
+    await expect(characterChat).toBeVisible();
+    await expect(characterChat).toHaveText("");
+    const characterWindowState = await application.evaluate(
+      ({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows().find(
+          (candidate) =>
+            candidate.webContents.getURL().includes("character_window") ||
+            candidate.webContents.getURL().includes("character.html"),
+        );
+        return window
+          ? { focusable: window.isFocusable(), found: true }
+          : { focusable: null, found: false };
+      },
+    );
+    expect(characterWindowState).toEqual({
+      focusable: process.platform !== "darwin",
+      found: true,
+    });
+    await expect(
+      characterPage.evaluate(() =>
+        Object.keys(window.charaMateCharacter.voice).sort(),
+      ),
+    ).resolves.toEqual([
+      "end",
+      "getActive",
+      "preview",
+      "quickStart",
+      "report",
+      "setMuted",
+      "start",
+      "subscribeChanged",
+      "subscribeCommand",
+    ]);
+    const voiceCallsUrl = "https://voice-csp.test/openai/v1/realtime/calls";
+    await page
+      .context()
+      .route(voiceCallsUrl, (route) =>
+        route.fulfill({ body: "voice-csp-ok", status: 200 }),
+      );
+    await expect(
+      characterPage.evaluate(
+        async (url) => (await fetch(url)).text(),
+        voiceCallsUrl,
+      ),
+    ).resolves.toBe("voice-csp-ok");
+    await characterChat.click();
+    await characterPage.mouse.move(-10, -10);
+    await expect(characterChat).toBeHidden();
+    await expect
+      .poll(() =>
+        application?.evaluate(({ BrowserWindow }) => {
+          const mainWindow = BrowserWindow.getAllWindows().find(
+            (candidate) =>
+              !candidate.webContents.getURL().includes("character_window") &&
+              !candidate.webContents.getURL().includes("character.html"),
+          );
+          return mainWindow?.isVisible() ?? false;
+        }),
+      )
+      .toBe(false);
 
     const snapshot = await page.evaluate(() =>
       window.charaMate.foundation.getSnapshot(),
@@ -228,6 +320,10 @@ test("launches through the typed preload boundary", async () => {
       electronVersion: "43.2.0",
       platform: "darwin",
     });
+
+    await expect(
+      page.evaluate(async (url) => (await fetch(url)).text(), voiceCallsUrl),
+    ).resolves.toBe("voice-csp-ok");
 
     const chatData = await page.evaluate(
       (chatId) => window.charaMate.chat.getSnapshot({ chatId }),
@@ -264,6 +360,51 @@ test("launches through the typed preload boundary", async () => {
     });
     expect(subscriptionShape).toBe("function");
 
+    await expect(
+      page.evaluate(() => window.charaMate.voice.getActive()),
+    ).resolves.toEqual({ ok: true, value: null });
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { exact: true, name: "Voice" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Realtime 语音" }),
+    ).toBeVisible();
+    const voiceSelect = page.getByLabel("音色");
+    const previewButton = page.getByRole("button", { name: "试听" });
+    const [voiceSelectBox, previewButtonBox] = await Promise.all([
+      voiceSelect.boundingBox(),
+      previewButton.boundingBox(),
+    ]);
+    expect(voiceSelectBox).not.toBeNull();
+    expect(previewButtonBox).not.toBeNull();
+    expect(
+      Math.abs(
+        voiceSelectBox!.y +
+          voiceSelectBox!.height -
+          (previewButtonBox!.y + previewButtonBox!.height),
+      ),
+    ).toBeLessThanOrEqual(1);
+    await expect(voiceSelect).toHaveValue("verse");
+    await voiceSelect.selectOption("coral");
+    await page.getByLabel("输入方式").selectOption("push_to_talk");
+    await page
+      .getByLabel("Realtime instructions")
+      .fill("  使用简洁自然的中文回答。  ");
+    await page.getByRole("button", { name: "保存" }).click();
+    await expect(page.getByRole("status")).toHaveText("Voice 设置已保存。");
+    await expect(
+      page.evaluate(() => window.charaMate.settings.getSnapshot()),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        voice: {
+          inputMode: "push_to_talk",
+          instructions: "使用简洁自然的中文回答。",
+          voice: "coral",
+        },
+      },
+    });
+    await page.getByRole("button", { name: "Chats" }).click();
+
     const invalidRequest = await page.evaluate(async () => {
       try {
         await window.charaMate.chat.getSnapshot({ chatId: "not-an-id" });
@@ -279,6 +420,14 @@ test("launches through the typed preload boundary", async () => {
       page.getByRole("heading", { name: chatFixture.title }),
     ).toBeVisible();
     await expect(page.getByText(messageFixture.content)).toBeVisible();
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { exact: true, name: "Voice" }).click();
+    await expect(page.getByLabel("音色")).toHaveValue("coral");
+    await expect(page.getByLabel("输入方式")).toHaveValue("push_to_talk");
+    await expect(page.getByLabel("Realtime instructions")).toHaveValue(
+      "使用简洁自然的中文回答。",
+    );
+    await page.getByRole("button", { name: "Chats" }).click();
     const snapshotAfterReload = await page.evaluate(
       (chatId) => window.charaMate.chat.getSnapshot({ chatId }),
       FIXTURE_IDS.chat,

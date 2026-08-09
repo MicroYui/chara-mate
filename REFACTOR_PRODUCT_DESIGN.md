@@ -24,7 +24,7 @@ CharaMate 是一个由常驻二次元桌面角色承载的个人 AI Agent。她�
 | 检索 | 产品只依赖一个冻结的 `RetrievalPipeline`；候选、模型与参数只存在于研究设计和实验工件 |
 | 行为理解 | 原始活动 → Episode → 周期摘要 → 长期记忆/画像/领地候选 → 定期删除低价值原始数据 |
 | 自我进化 | 由 `SELF-EVOLUTION` 实验决定是否进入产品；晋级后只保留一种异步复盘、候选、replay 与恢复流程 |
-| 实时语音 | Azure OpenAI `gpt-realtime-2.1` 全双工会话；事件驱动同一 Agent Loop、异步 Tool、打断和持久化 |
+| 实时语音 | Azure OpenAI `gpt-realtime-2.1` 全双工原生 Agent；共享客户端 Tool/Approval、上下文、Run/Item 与持久化边界 |
 | 浏览器与电脑操作 | Playwright/DOM 优先，App Action/Accessibility 次之，视觉 Computer Use 兜底 |
 | 扩展协议 | JSON Schema Tool、Agent Skills `SKILL.md`、MCP stdio/Streamable HTTP |
 | 桌宠素材 | CharaMate 自有目录；兼容导入 Codex pet v1/v2 文件夹 |
@@ -149,7 +149,7 @@ Main 进程是状态真源，Renderer 不自行推断“任务是否完成”。
 
 - **托盘状态**是系统菜单栏/托盘图标的轻量投影。运行中改变图标状态或 tooltip，等待批准时显示醒目标记，完成或失败后恢复；点击仍然打开对应 Chat。它不增加第二套任务状态。
 - **短提示音（earcon）**是很短的非语言声音，只用于应用在后台时提示“需要批准 / 已完成 / 失败”。它不朗读回答、不循环播放，并受一个简单的“提示音”开关和系统静音控制；具体时长按 UI 原型与听感测试冻结。
-- **实时说话**属于 Voice Session。语音模式开启后，面向用户的自然语言会同时流式显示文字并播放模型音频；命令、JSON、日志和代码块只显示，不逐字朗读。Realtime 正在说话时不叠加完成提示音。
+- **实时说话**属于 Voice Session。语音模式开启后，同一个 Realtime response 同时产生流式显示文字和输出音频；命令、JSON、日志和代码等原始过程留在结构化 Run Item，不混进这条自然语言回答。Realtime 正在说话时不叠加完成提示音。
 
 因此，用户与角色进行语音对话时看到和听到的是同一条助手消息的文字与音频；托盘与 earcon 只负责应用级状态提示。
 
@@ -278,6 +278,8 @@ userData/
 
 “新建 Chat”先进入右侧未持久化草稿态，不立即向侧栏插入“新对话”；用户首次发送时才创建真实 Chat 并出现在会话列表。创建后的即时兜底标题取首条用户消息的紧凑文本；首轮回答成功且所选 Provider 可用时，再以无 Tool 的后台模型请求生成简短摘要标题并实时替换。标题请求失败时保留兜底，若用户已经手工重命名，迟到的模型结果不得覆盖用户标题。
 
+Voice Session 是需要持久化的例外：开始语音时立即创建或绑定真实 Chat。桌宠“聊天”入口先显示“语音对话”，首条完整用户转写到达后调用同一个首消息兜底标题函数，首轮回答完成后再按需调用既有 `ChatTitleService` 生成摘要标题；Voice 不拥有另一套标题提示词、服务或状态。标题 Provider 只在摘要阶段惰性创建，其凭据或请求失败只保留上一层可读标题，不得阻断 Voice Session 启动、回答或结束。语音进行中点击“新建 Chat”时，必须先成功结束当前 Voice Session，再进入普通空白草稿；结束失败时保留原会话并显示错误，不能悄悄产生第二个会话。
+
 同一个 Chat 内 Turn 串行；不同 Chat 可并行。切换页面不会停止后台 Run。
 
 ### 4.2 Composer
@@ -307,10 +309,12 @@ userData/
 
 | 模式 | 能力 |
 | --- | --- |
-| Chat | 回答、读当前会话、检索记忆、分析附件；不执行有外部效果的 Tool |
-| Agent | 可使用本地、Browser、Computer Use、MCP 与 Skills；按本轮权限处理审批 |
+| Chat | 回答、计划、Provider 原生网页搜索、读当前会话、检索记忆、分析附件及其他幂等只读查询；不执行有外部效果的 Tool |
+| Agent | 具备 Chat 的查询能力，并可使用本地、Browser、Computer Use、MCP 与 Skills；按本轮权限处理审批 |
 
 LLM 如果在 Chat 中发现任务需要执行，只能回复建议并给出“一键切换 Agent”按钮；不能自行升级。
+
+Chat 与 Agent 使用同一个 Agent Runtime、Tool Registry、Context 和标题链路，只在 Tool 执行边界按 `effect=read && idempotency=idempotent` 限制 Chat。两种模式都加载计划能力和 Provider 原生网页搜索；简单问答或一次查询直接回答，不为展示流程而创建计划，只有真正的多步骤任务才调用计划工具。Voice 从 Composer 进入时继承当前 Chat/Agent 与 Agent 权限，从桌宠声波入口进入时创建 `Agent + 完全访问` 会话；开始后不再改写权限语义。
 
 当模型需要少量、明确且会改变后续执行的信息时，可以调用宿主直接提供的结构化 `request_user_input`，由 Chat 内卡片收集选项或自由文本，再继续同一个 Run。它不是外部副作用，不走 Approval，也不应先经 Tool Search；普通对话式追问仍可直接使用自然语言，不强迫所有问题结构化。
 
@@ -816,96 +820,106 @@ Activity 不是永久事件仓库。原始数据完成蒸馏后由 `ActivityRete
 
 ### 8.1 产品体验
 
-- 点击 Composer 麦克风或桌宠语音入口开始 Realtime Session。
+- 点击 Composer Voice 入口开始 Realtime Session，并继承该 Composer 当前的 Chat/Agent 与 Agent 权限；点击桌宠旁的声波按钮则新建 `Agent + 完全访问` 的语音 Chat，再次点击同一按钮结束。
 - 状态依次为连接、聆听、思考、调用工具、说话；角色动画同步。
 - 支持自然打断：用户开始说话后停止当前播放并继续同一轮上下文。
 - 支持静音、Push-to-Talk 和免手持模式。
-- 语音模式开启后，所有**面向用户的助手自然语言输出**都同时语音播放，包括最终回答和必要的短进度；原始命令、JSON、日志和代码块不逐字朗读。
+- 语音模式开启后，Azure Realtime 原生生成同一 response 的音频与输出转写；输出转写实时进入 Chat，工具、审批、命令和日志继续以结构化 Run Item 展示。文字 Agent 不参与这条语音回答，也没有额外 TTS 或朗读模型。
 - 语音结束后，用户和助手转写、工具步骤、最终回答都留在同一个 Chat。
 - 用户可回看一轮语音的文本；产品持久化转写、Run 和必要协议元数据，不长期保存原始会话音频。
+- Voice Session 的标题沿用普通 Chat 的既有链路：“语音对话”占位 → 首条用户转写兜底 → 首轮回答后的模型摘要；标题 Provider 按需惰性创建，任何一步失败都只保留上一层可读标题，不能阻断语音连接或回答。
 
 ### 8.2 Endpoint 与连接
 
 ```text
-配置 URI：
-https://datasetannotator-openai.openai.azure.com/openai/v1/realtime?model=gpt-realtime-2.1-2
+Realtime Endpoint：
+https://datasetannotator-openai.openai.azure.com/openai/v1/realtime
+
+Realtime Model / deployment：
+gpt-realtime-2.1
 ```
 
-该 URI 固定了 Azure resource 与 model/deployment。Provider Settings 把它展示为不含查询参数的 Realtime Endpoint 与单独的 Realtime Model；Model 填 Azure deployment 名称，是连接时唯一的 `model` 查询值。用户粘贴包含 `?model=` 的完整 URI 时，连接前仍以 Realtime Model 字段覆盖它，避免同一 Profile 出现两个模型来源。若 `VOICE-TRANSPORT` 选择 Direct WebSocket，连接时按协议转换为 `wss`；若选择 GA WebRTC，则从同一 resource/model 派生官方 `client_secrets` 与 `calls` 端点。Settings 仍只保存一个规范化 Realtime 配置，不让用户维护两套 URI。
+Provider Settings 分开保存无查询参数的 Realtime Endpoint 与 Azure deployment 名称。Main 从该 Endpoint 唯一派生 `POST /openai/v1/realtime/client_secrets` 与 `POST /openai/v1/realtime/calls`：前者使用长期 `api-key` 创建临时 client secret，后者由 Renderer 使用临时 Bearer 凭据提交 SDP offer。长期凭据不进入 Renderer；GA Realtime 不使用 date-based `api-version`。
 
-公开 Realtime 协议提供 VAD、显式 `response.create`、Function Call 和 `function_call_output` 等构件，因此“Realtime 负责流式语音、应用持有统一 Run”具备可验证基础；目标 Azure deployment 是否完整支持以及该结构是否在体验上获胜，仍由 Contract Test 与 `VOICE-ARCHITECTURE` 实验决定。
+生产媒体路径固定为 Azure GA WebRTC：麦克风和远端音频走 media channel，Realtime 事件走 data channel，普通 JSON IPC 不承载 PCM。目标 Azure resource 对 `gpt-4o-mini-transcribe` 返回 `DeploymentNotFound`，因此输入转写使用已实测可用的 `whisper-1`，不固定 `language`，以允许用户自然切换语言；prompt 只保留简体中文、英文和产品术语关键词，不在转写后增加翻译、繁简转换、韩文检测或正则修补。来源与取舍见 [`VOICE-TRANSPORT`](./docs/benchmarks/voice-transport.md)。
 
-给定 Azure resource 与 deployment 是产品配置；媒体 Transport 不是用户设置。[Microsoft 当前文档](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/realtime-audio-webrtc)把 WebRTC 作为客户端低延迟音频的优先路径，因此先验证目标 deployment 的 WebRTC Contract 与体验门槛；只有不支持或未达门槛时，才完整推进 Direct WebSocket 对照。`VOICE-TRANSPORT` 决策完成后，本节更新为唯一获胜 Transport 的连接、鉴权和媒体路径；生产代码不得同时保留两套 Transport、自动 fallback 或协议选择器。
+媒体 Transport 不是用户设置。生产没有 Direct WebSocket 音频 Driver、协议选择器或自动 fallback；Provider 的 WebSocket 连接测试只是配置探测，不属于 Voice 媒体路径。
 
-### 8.3 VoiceRunCoordinator
+### 8.3 Realtime Voice Agent
 
-语音不建立第二套 Agent。`VoiceRunCoordinator` 是唯一稳定适配层：它把获胜 Voice Driver 的转写、模型事件、音频和 Tool Call 映射为同一个 Chat/Run，Tool、Approval、Memory、Context 和持久化仍由统一 Harness 负责。
+文字 Chat/Agent 继续由 CharaMate `AgentRuntime` 回答；Voice 由 Azure Realtime 自己的 speech-to-speech Agent 回答。两者不是同一个模型循环，但共用同一个产品能力边界：Chat 历史、核心行为 instructions、Persona/Voice instructions、Workspace Skill instructions、相关 Memory evidence、Tool Registry、入口 Chat/Agent 权限过滤、Approval、Run/Item、标题和持久化。Voice 不把转写转交给文字 Agent，也不把文字 Agent 输出再交给 Realtime 改写或朗读。
+
+每条完整用户转写创建一个普通 `source=voice` Run。应用以显式 `response.create` 让 Realtime 基于已经提交到会话的输入音频直接回答；Realtime 的输出转写 delta 与音频来自同一个 response，前者按协议 `response_id/item_id/output_index` 聚合到本 Turn 唯一一条 Chat 助手草稿，后者由唯一远端 `<audio>` 播放。若 Realtime 选择客户端 Function Call，Main 使用现有 Tool Registry 执行并创建正常 Tool/Approval Item，再把完整结构化 Tool Result 作为 `function_call_output` 回注，继续同一 generation。没有 Voice 专用 Tool 实现、TTS、句子切分器、文字转述 fallback 或架构开关。
+
+文字 Responses Provider 的托管 `web_search` 不是客户端 Tool Registry 的成员；当前 Azure Realtime Session 没有这项托管能力。因此 Voice 获得相同的客户端 Tools，但不会伪造本地 `web.search`。适合的 Browser/查询能力存在时可按入口权限使用，否则 Realtime 应简短说明限制。
+
+受管浏览器的 `browser.navigate + browser.snapshot` 是幂等只读查询链，因此 Chat 入口的 Voice 也可用它查询公开网页；点击、填写、下载等操作仍只在 Agent 入口按原审批规则开放。Realtime 不因缺少 Provider 托管 `web_search` 而忽略已经注入的 Browser 查询能力。空白页或空内容的 snapshot 是工具失败而不是查询证据，Realtime 应重新打开目标网址；Agent 入口还可在其既有审批模式内使用同一个 `command.run` 以只读 `curl` 直接查询公开 HTTP/API，不新增 Voice 专用 curl 或搜索 Tool。
 
 ```mermaid
 sequenceDiagram
     participant Mic as Media Capture
     participant Renderer
-    participant Voice as VoiceRunCoordinator
-    participant Driver as Selected Voice Driver
-    participant Agent as Agent Runtime
-    participant Tools as Tool Scheduler
+    participant Voice as Voice Service
+    participant Driver as WebRTC Driver
+    participant Azure as Azure Realtime Agent
+    participant Tools as shared Tool Registry
 
-    Mic->>Renderer: audio frames
-    Renderer->>Voice: selected media path
-    Voice->>Driver: input audio
-    Driver-->>Voice: speech boundary / transcript
-    Voice->>Agent: start or steer Run
-    Agent-->>Voice: context ready
-    Voice->>Driver: context / continuation
-    Driver-->>Voice: audio/text delta or function_call
-    Voice-->>Renderer: audio + transcript delta
-    Voice->>Agent: append ToolCall Item(s)
-    Agent->>Tools: execute by selected policy
-    Tools-->>Agent: structured result(s)
-    Agent-->>Voice: continuation payload
-    Voice->>Driver: structured tool result(s)
-    Voice->>Driver: continue
+    Voice-->>Renderer: ephemeral secret / calls URL
+    Mic->>Driver: MediaStream
+    Driver->>Azure: WebRTC media + data channel
+    Azure-->>Driver: speech boundary / input transcript
+    Driver-->>Voice: normalized typed events
+    Voice->>Voice: create Voice Run + user Message
+    Voice-->>Driver: response.create(generation)
+    Driver->>Azure: explicit native response
+    Azure-->>Driver: output audio + transcript delta
+    Driver-->>Voice: transcript / playback events
+    Voice->>Voice: assistant Message + Run Item
+    opt Realtime Function Call
+        Azure-->>Driver: function arguments done
+        Driver-->>Voice: typed tool.call
+        Voice->>Tools: existing validation / Approval / execution
+        Tools-->>Voice: structured Tool Result
+        Voice-->>Driver: tool.result
+        Driver->>Azure: function_call_output + response.create
+    end
 ```
 
-Driver 的具体事件、turn-control 与 continuation 流程由 `VOICE-ARCHITECTURE` 胜者写回本节。决策前不创建双 Driver；决策后不保留失败架构的 STT/TTS、Realtime 自动 turn 或手动 turn 分支。
+Azure `server_vad` 设置 `create_response=false`、`interrupt_response=true`。VAD 自动取消并截断 WebRTC 中尚未播放的活动 response；Main 仍等非空完整转写落入 Chat/Run 后才显式创建新 response，避免产生没有持久化身份的回答。`speech_stopped` 只表示输入音频边界，不表示已经进入思考；没有可用转写时保持聆听。每个 response、Function Call 和 Tool Result 携带 generation/callId，旧 generation 事件只可收口旧 Turn，不能触发当前回答。这里没有句长、等待时间、语种纠偏或文本切分阈值。
+
+Renderer 在用户点击 Composer Voice 或桌宠聊天按钮的同步调用栈中创建并恢复唯一 `AudioContext`，供输入/输出波形分析使用，再进行可能异步的 Chat 创建、Provider 准备和 WebRTC 协商。实际出声只走一个挂载于当前 Renderer 文档的原生 `<audio>`：远端 WebRTC `MediaStream` 直接赋给 `srcObject`，元素先以静音状态启动，播放时解除静音并显式等待 `play()` 成功；Web Audio 分支只接零增益分析节点，不能再承担扬声器输出。Driver 只有在媒体元素确认播放且远端输出 item 已知时才上报 `audio.started`；`play()` 失败必须显示播放错误，不能把服务端缓冲开始或分析 Context 运行误报成用户已经听到声音。工具前 response 与 `function_call_output` 后的 continuation 可以属于同一个 Voice generation，所有音频开始、停止和清空事件必须按协议 `response_id` 精确管理；旧 response 延迟到达的停止事件不能静音正在播放的新 response。
 
 “全双工”在产品中的准确含义是：麦克风在助手播放音频时仍可检测用户说话，用户可以自然打断；输入采集、网络收发和播放并行。它不表示两个助手回答可以同时播放，任一时刻只允许一个 audible response。
 
-### 8.4 异步 Tool 与 Join
+### 8.4 Tool 与 Approval 复用
 
-Realtime Tool Call 不走旁路：每个调用都创建普通 Tool/Approval Item，使用同一 Tool Registry、权限和结果协议。
+Session 创建时，Voice 从同一个 Tool Registry 生成一次工具快照：Agent 入口获得全部注册工具，Chat 入口只获得幂等只读工具以及内部 `memory.record` 例外；工具执行时再次应用同一规则。Realtime Function 名使用稳定的 `.`/`-` 到 `_` 映射，Main 保留 alias 到真实 ToolDefinition 的一一对应并拒绝冲突，不复制 Tool Schema 或 executor。2026-08-09 目标 Azure `gpt-realtime-2.1` 实测拒绝 Function Tool 根级 `anyOf`，因此 Realtime Adapter 仅在外部 wire 边界把对象联合投影成顶层 `object` 字段并集；真实参数仍必须通过原 Tool Registry Schema 校验。该行为是目标部署兼容映射，不被表述为通用协议硬限制，也不产生第二套执行 Schema。
 
-Voice Driver 产生的 Tool 请求全部进入统一调度器；串行还是依赖感知并行由 `VOICE-TOOL-JOIN` 选择一次：
+生产设置 `parallel_tool_calls=false`，一次只处理一个待审批或执行中的调用，结果回注后由 Realtime 决定下一步。现有证据已证明目标模型能产生多个调用，但当前产品没有需要 Voice 专用并发 Join 的代表性收益；选择串行路径以复用现有 Approval/Run 生命周期。证据与限制记录在 [`VOICE-TOOL-JOIN`](./docs/benchmarks/voice-tool-join.md)。
 
 ```text
-voice tool request(s)
-  → Run ToolCall Item(s)
-  → selected ToolScheduler policy
-  → structured Tool Result(s)
-  → one selected-driver continuation
+voice transcript → Voice Run → Realtime response
+  → optional Realtime Function Call
+  → shared Tool/Approval execution
+  → function_call_output → Realtime continuation
+  → output transcript + audio in the same Turn
 ```
 
-并发规则：
-
-- 若并行方案晋级，只有输入完整、资源不冲突且无前后依赖的调用可以并行；文件写入、同一 Browser Profile 和 Computer Use 仍串行。
-- 每个 Tool 独立校验、审批、超时、取消和持久化；一个失败不丢弃其他成功结果。
-- 获胜 continuation 规则等待本轮必要结果，将成功与结构化错误分别写回，再只触发一次后续模型响应；若并行方案晋级，这个等待点才实现为 Join。
-- 不预设 Azure 模型一定会在一次响应中发出多个 Function Call；只有协议实际返回多个调用，或统一 Harness 已得到可验证的独立计划时才 fan-out。是否提高成功率与时延由语音专项实验验证。
-- 长工具等待期间可以播放一句已经完成的短进度话术，但不能让“稍等一下”等音频与最终回答重叠。
-
-语音不拥有专用 Tool Scheduler；调度器、审批、Tool Result、Run Item 与 ContextCompiler 全部复用文字 Agent。若 `VOICE-TOOL-JOIN` 选择串行，代码中不创建 `ToolJoinGroup`；若选择并行，只实现胜者定义的一种 Join。
+每个客户端 Tool 按现有 Tool Registry、JSON Schema、execution/Approval 和取消规则独立校验、执行与持久化。生产没有 `ToolJoinGroup`、依赖图、并发设置、Voice Tool Registry 或 Voice 专用 executor。
 
 ### 8.5 打断、steering 与竞态
 
-当获胜 Voice Driver 发出规范化 `speech_started` 事件：
+当 WebRTC Driver 发出规范化 `speech_started` 事件：
 
-1. 立即停止本地播放并取消当前模型 response；
-2. 通知唯一 Transport 丢弃尚未播放的响应尾部，并执行该协议要求的 cancel/truncate；
-3. 新转写作为当前 Run 的 steering，而不是另开一个不可见会话；
+1. 立即静音本地远端音轨，并请求取消当前模型 response；
+2. `server_vad.interrupt_response=true` 让 WebRTC 服务端截断尚未播放的响应尾部，Driver 接收协议产生的 `conversation.item.truncated` 边界；
+3. 当前 Voice Run 标记 interrupted；下一条完整转写像普通 Chat 消息一样创建新的可见 Voice Run；
 4. 尚未开始且已不再需要的 Tool 取消；已产生副作用的 Tool 不回滚、不自动重放，结果仍作为 Item 保存；
 5. 每个响应、Tool 与 Join 都携带 `sessionId/runId/turnId/generation/callId`，旧 generation 的迟到结果不能自动触发新回答，只有当前 Run 接受后才能写回模型。
 
-如果用户只是补充条件，Harness 在当前 Run 的一致性边界合入并继续；如果用户改变目标，取消尚未执行的旧计划并重新编排。语音断线不丢 Chat 与 Run，重连只新建协议 Session。
+语音断线不丢 Chat 与已完成/已打断 Run。重试沿用同一逻辑 VoiceSession，重新申请临时凭据、重建 Azure 协议 Session，并将已有的完整 Chat 消息按原角色写入新会话；断线中的 Voice Run 保留 interrupted 边界，下一条转写创建新 Run，不依赖文字 Agent checkpoint。
+
+2026-08-09 复核的 Azure GA [Realtime client events reference](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/realtime-audio-reference-ga)（source commit `777f84fbedeb0995f4fdea6c65bee2f2a4af1657`，updated `2026-06-05`）和 [OpenAI WebRTC Realtime 指南](https://developers.openai.com/api/docs/guides/realtime-webrtc)确认 WebRTC 的服务端 VAD 可取消活动 response，并自动截断客户端尚未播放的音频。生产因此不估算或主动发送 `audio_end_ms`，也不维护手工 truncate 补偿状态；本地立即静音负责即时听感，服务端 `conversation.item.truncated` 只用于记录实际边界。取消已结束 response 返回的结构化 `response_cancel_not_active` 视为幂等收口，其他 Realtime 错误仍进入可见失败状态。
 
 ### 8.6 持久化
 
@@ -918,7 +932,7 @@ run_items
 
 每个语音 Turn 保存开始/结束、用户转写、助手转写、关联消息、关联 Run、打断标记、音色和 instructions 快照。Chat 消息是用户回看的主视图，`voice_turns` 保存实时协议元数据。
 
-语音文本与普通消息使用同一渲染和复制能力。助手音频 delta 与 transcript delta 共同更新一条草稿消息，`response.done` 后原子完成。打断时保存 `audio_end_ms`、`interrupted=true` 和当时可用的 transcript，并把消息显示为“已打断”；由于音频与 transcript 不保证逐字精确对齐，不把近似字符位置伪装成精确听取边界，也不把未播放尾部显示成一条完整回答。
+语音文本与普通消息使用同一渲染和复制能力。Realtime 输出 transcript delta 更新一条助手草稿，`response.done` 后完成 Run；音频来自同一 response。打断时保存 `audio_end_ms`、`interrupted=true` 和当时可用的 transcript，并把消息显示为“已打断”；由于音频与 transcript 不保证逐字时间对齐，不把毫秒边界伪装成精确字符位置。
 
 ### 8.7 音色与 instructions
 
@@ -930,15 +944,15 @@ Settings 提供：
 - 可编辑并保存的 Realtime instructions；
 - 语速/情绪由 instructions 表达，不堆叠大量滑条。
 
-默认中文 instructions 示例：
+默认多语言 instructions 示例：
 
-> 使用自然、简洁的中文口语。角色整体开朗、有温度；用户分享好消息时表现出真诚的兴奋，处理任务时保持清楚可靠。允许自然停顿，不朗读命令、代码和日志；涉及工具执行时用一句短话说明正在做什么。
+> 跟随用户当前使用的语言自然回答；用户使用普通话时输出简体中文，用户切换到英文或其他语言时保持该语言，不擅自翻译。角色整体开朗、有温度，处理任务时清楚可靠。允许自然停顿，不朗读命令、代码和日志；涉及工具执行时只用一句短话说明正在做什么。
 
 ### 8.8 性能指标与验收
 
-开发看板记录：连接耗时、speech end → first audio、首转写、打断停止耗时、误打断率、Tool Call/Join 往返、并行节省时间、音频 underrun、断线重连、迟到结果丢弃和端到端 p50/p95。语音回归需要真实 endpoint、真实麦克风和扬声器；fake 只能验证状态机。
+开发看板记录已实际观测到的连接耗时、speech end → first transcript、speech end → first audio、打断到 truncate 确认、Tool Call、断线/重连、迟到事件丢弃、turn 数和 token usage，并显示 p50/p95。没有可靠观测源的误打断率或 underrun 不伪造指标。语音回归需要真实 endpoint、真实麦克风和扬声器；fake 只能验证状态机。
 
-语音实现前必须完成 `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT` 与 `VOICE-TOOL-JOIN` 决策。每项只交付一个胜者，并在本章写明其协议与验收结果；失败候选的 Driver、依赖、配置与测试适配层不得进入生产合并。真实 endpoint、真实麦克风和扬声器的性能与体验门槛不能由 mock 宣称通过。
+`VOICE-ARCHITECTURE` 于 2026-08-09 按真人体验反馈透明修订为 Orchestrated Native Realtime；`VOICE-TRANSPORT` 保持 WebRTC，`VOICE-TOOL-JOIN` 选择最小串行 continuation。生产只有本章描述的一条媒体、回答和 Tool 路径。旧 Shared Runtime/TTS 的历史结果只作修订证据，不算当前路径验收。
 
 ---
 
@@ -1324,7 +1338,7 @@ http://127.0.0.1:<dynamic-port>/dev
 - Agent：任务成功率、模型调用数、Tool Call 数、工具选择/参数正确率、重复调用率、端到端时延、逻辑 Token、Provider cache read/write 与实际计费成本。
 - Memory：Decision Record 冻结 K 下的 Recall/Hit/MRR/nDCG、知识更新、过期误召回、abstention、context token 构成。
 - Storage：每次事务写入、journal 增长、checkpoint、所选索引工件占用、清理耗时与相关进程 RSS。
-- Voice：连接、首转写、首音频、打断停止、误打断、Tool continuation、迟到结果、断线恢复。
+- Voice：连接、首转写、用户停止说话到首音频、打断停止、误打断、迟到结果、断线恢复；Tool 指标沿用 Agent 口径。
 - Activity：原始事件/episode 比、摘要压缩率、候选接受/编辑/拒绝率、过期清理量、原始数据占用与孤儿资产。
 - Territory：候选到生成转化、生成成功率、首次可见时间、asset cache 命中。
 
@@ -1716,7 +1730,7 @@ Renderer 断线后传 `afterSequence` 补事件；不依赖“刚好在线”才
 
 ### 15.3 Realtime 音频
 
-音频只走 `VOICE-TRANSPORT` 决定指定的唯一媒体路径，不经过普通 JSON IPC。转写、状态、Tool Call、Tool Result/continuation 和错误始终走同一 typed event。Renderer 是否参与鉴权、媒体与 ring buffer 由该 Transport 的协议决定，但不得持有长期 API Key。决策完成后本节必须写成具体实现，不保留双 Transport 分支。
+音频只走 Renderer 的 Azure GA WebRTC media channel，不经过普通 JSON IPC。Main 用 Provider 长期凭据申请临时 client secret，Renderer 只持有该临时值和 `calls` URL，并用原生 `RTCPeerConnection` 完成麦克风采集与远端播放；Realtime data channel 事件经共享 Schema 归一化后通过 narrow Preload API 交给 Main。Main 返回的 capture、response、truncate 和 close 命令走同一 typed IPC。生产没有 PCM ring buffer、WebSocket 音频 Driver、Transport fallback 或长期 Key 暴露。
 
 ### 15.4 IPC 一致性
 
@@ -1813,7 +1827,7 @@ Playwright 官方当前把 Electron automation 标为 experimental，因此 Phas
 7. Memory 编辑和明确改口产生同一 Memory ID 的 Revision；错 ID、未命中与同字段冲突只失败或进入候选，不产生 A/B 双活；旧来源仍可追溯，改口后旧事实不进入默认 Context。
 8. 发布版只加载实验选出的一个检索实现；未获胜候选的模型、依赖和配置不存在。
 9. 大量 Activity 被压缩成少量 Episode/Digest，不逐条生成长期记忆；过期原始事件、截图、OCR、索引和孤儿文件会被完整清理。
-10. Realtime 可在说话时被打断，Tool 能审批、返回并继续说话，用户实际听到的转写写回 Chat；若并行 Join 晋级，还必须验证独立 Tool 的依赖/资源冲突检查与单次 continuation。
+10. Realtime 原生语音 Agent 可在说话时被打断；它获得与文字 Agent 相同的客户端 Tool Registry、入口权限和 Approval 规则，Tool 结果回注后继续说话，实际输入与输出转写写回同一 Chat 和 Run/Item。
 11. 用户填写 URL/Key 后模型列表加载，Key 不出现在数据库、日志和错误。
 12. Codex v1/v2 pet 文件夹导入 CharaMate 自有目录后动画正确；角色拖到任意位置并跨重启恢复。
 13. 领地初始可见，记忆物件可生成、放置、追溯、收回；失败不破坏场景。
@@ -1972,8 +1986,8 @@ flowchart TD
 Phase 4 的实验与实现可在 Phase 2 稳定后和 Phase 3 后半段并行，不依赖 Activity；Context 中需要 Memory 的体验验收在 Phase 3 集成后补齐。
 
 - 刷新 Azure 一手协议并对目标 deployment 做 Contract Test；
-- 完成 `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT`、`VOICE-TOOL-JOIN`，只保留唯一 Driver/媒体路径/Join；
-- 实现 VoiceRunCoordinator，把 VAD、transcript、audio/text delta、Function Call、Approval 和 continuation 映射到统一 Run；
+- 完成 `VOICE-ARCHITECTURE` 与 `VOICE-TRANSPORT`，归档不再适用的 `VOICE-TOOL-JOIN`，只保留唯一 Driver、媒体和回答路径；
+- 实现 Orchestrated Native Realtime，把 VAD、输入/输出转写、Realtime Function Call、共享 Tool/Approval、Run/Item 和输出音频映射到同一 Chat；
 - 实现自然打断、generation/callId 竞态隔离、单 audible response、迟到结果丢弃和断线重连；
 - 持久化 VoiceSession/Turn、实际播放边界、interrupted 标记、用户/助手转写和关联 Run；
 - React Voice Dock、PixiJS speaking/listening 状态、音色试听与 Persona instructions；
@@ -2032,7 +2046,7 @@ CharaMate 达到首个完整产品版本时，应满足：
 - Agent 没有固定 12 步限制，长任务可压缩、追加输入、暂停、恢复和取消。
 - Browser、Computer Use、File、Command、App、MCP、Skills 共用同一 Tool/Approval/Run 模型。
 - 每个 Agent Task 在 Chat 中有持久化、可折叠的完整过程和结果。
-- Realtime 低延迟、可打断、可调用同样的 Tool，并留下可回看的文本。
+- Realtime 输入/输出可打断，语音转写通过同一个 Agent Runtime 使用相同模型与 Tool，并留下可回看的文本。
 - 长期记忆可编辑、可追溯、可更新、可衰减，画像能回到证据；若图关系晋级，关系也必须回到证据，否则产品中不存在图谱入口。
 - Activity 被蒸馏为高信息摘要和候选；低价值原始数据定期删除，不淹没长期记忆或无限占用磁盘。
 - Provider URL/Key/Model 配置顺畅，Key 简单加密且不进入业务数据。

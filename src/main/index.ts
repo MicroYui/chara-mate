@@ -9,11 +9,16 @@ import { AGENT_CHANNELS } from "../shared/contracts/agent";
 import { CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
+import { VOICE_CHANNELS } from "../shared/contracts/voice";
 import { SystemClock } from "../shared/pure/clock";
 import { CryptoIdGenerator } from "../shared/pure/id";
 import { PetMainNavigationSchema } from "../shared/schemas/pet";
 import { ApprovalNavigationTargetSchema } from "../shared/schemas/agent";
 import { parseSchema } from "../shared/schemas/validation";
+import {
+  VoiceClientCommandSchema,
+  VoiceSessionSnapshotSchema,
+} from "../shared/schemas/voice";
 import { registerAgentIpc } from "./agent/agentIpc";
 import { AgentRuntime } from "./agent/agentRuntime";
 import { ElectronImageInputProvider } from "./agent/imageInput";
@@ -102,6 +107,11 @@ import { registerTerritoryProtocol } from "./territory/territoryProtocol";
 import { TerritoryRepository } from "./territory/territoryRepository";
 import { TerritoryService } from "./territory/territoryService";
 import { registerTerritoryTools } from "./territory/territoryTools";
+import { AzureWebRtcSessionIssuer } from "./voice/azureWebRtcSession";
+import { registerVoiceIpc } from "./voice/voiceIpc";
+import { VoiceRepository } from "./voice/voiceRepository";
+import { VoiceService } from "./voice/voiceService";
+import { VoiceMetrics } from "./voice/voiceMetrics";
 
 const logger = createAppLogger();
 const backgroundTest = process.env["CHARAMATE_TEST_BACKGROUND"] === "1";
@@ -143,6 +153,7 @@ let unregisterPetIpc: (() => void) | undefined;
 let unregisterPetProtocol: (() => void) | undefined;
 let unregisterTerritoryIpc: (() => void) | undefined;
 let unregisterTerritoryProtocol: (() => void) | undefined;
+let unregisterVoiceIpc: (() => void) | undefined;
 let providerService: ProviderService | undefined;
 let characterWindowController: CharacterWindowController | undefined;
 let agentRuntime: AgentRuntime | undefined;
@@ -151,6 +162,7 @@ let activityService: ActivityService | undefined;
 let managedBrowser: ManagedBrowser | undefined;
 let mcpService: McpService | undefined;
 let devDashboard: DevDashboard | undefined;
+let voiceService: VoiceService | undefined;
 let stopPromise: Promise<void> | undefined;
 let shutdownComplete = false;
 
@@ -194,6 +206,9 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterTerritoryIpc = undefined;
     unregisterTerritoryProtocol?.();
     unregisterTerritoryProtocol = undefined;
+    unregisterVoiceIpc?.();
+    unregisterVoiceIpc = undefined;
+    voiceService?.shutdown();
     await agentRuntime?.interruptAll();
     managedBrowser?.setActivityObserver(undefined);
     const activityStops = await Promise.allSettled([
@@ -216,6 +231,7 @@ async function stopApplicationInfrastructure(): Promise<void> {
     managedBrowser = undefined;
     mcpService = undefined;
     devDashboard = undefined;
+    voiceService = undefined;
     characterWindowController?.destroy();
     characterWindowController = undefined;
     mainWindowController?.destroy();
@@ -264,6 +280,7 @@ async function startApplication(): Promise<void> {
   const runRepository = new RunRepository(applicationDatabase);
   const checkpointRepository = new CheckpointRepository(applicationDatabase);
   const runtimeObservability = new RuntimeObservability(runRepository, logger);
+  let voiceMetrics: VoiceMetrics | undefined;
   const windowPlacementRepository = new WindowPlacementRepository(
     applicationDatabase,
   );
@@ -304,7 +321,8 @@ async function startApplication(): Promise<void> {
     },
   });
   if (!app.isPackaged && process.env["CHARAMATE_DEV_DASHBOARD"] !== "0") {
-    devDashboard = new DevDashboard(runtimeObservability);
+    voiceMetrics = new VoiceMetrics();
+    devDashboard = new DevDashboard(runtimeObservability, voiceMetrics);
     logger.info("DEV_DASHBOARD_READY", {
       url: await devDashboard.start(),
     });
@@ -351,15 +369,18 @@ async function startApplication(): Promise<void> {
       const run = runRepository.getRun(runId);
       if (!run) throw new TypeError("Memory evidence Run is unavailable");
       const checkpoint = checkpointRepository.get(runId);
-      const allowedMemoryIds = checkpoint
-        ? [
-            ...new Set(
-              decodeRuntimeCheckpoint(checkpoint.context).input.flatMap(
-                memoryContextTargetIds,
-              ),
-            ),
-          ]
-        : [];
+      const allowedMemoryIds =
+        run.source === "voice"
+          ? [...(voiceService?.getMemoryContextIds(runId) ?? [])]
+          : checkpoint
+            ? [
+                ...new Set(
+                  decodeRuntimeCheckpoint(checkpoint.context).input.flatMap(
+                    memoryContextTargetIds,
+                  ),
+                ),
+              ]
+            : [];
       if (basis === "run_observation") {
         return {
           allowedMemoryIds,
@@ -393,7 +414,7 @@ async function startApplication(): Promise<void> {
             ? `用户消息 ${evidenceId}`
             : `结构化回答 ${evidenceId}`,
         referenceId: run.chatId,
-        sourceType: "chat",
+        sourceType: run.source === "voice" ? "voice" : "chat",
       };
     },
   );
@@ -491,6 +512,12 @@ async function startApplication(): Promise<void> {
         if (status === "not-determined") return "not_determined";
         return status === "unknown" ? "unavailable" : status;
       },
+      readMicrophone: () => {
+        if (process.platform !== "darwin") return "unavailable";
+        const status = systemPreferences.getMediaAccessStatus("microphone");
+        if (status === "not-determined") return "not_determined";
+        return status === "unknown" ? "unavailable" : status;
+      },
     },
     clock,
     (directory) => skillService.setWorkspaceDirectory(directory),
@@ -571,6 +598,7 @@ async function startApplication(): Promise<void> {
       return settingsService.resolveWorkingPath(source);
     }
   });
+  const chatTitleService = new ChatTitleService(chatService, logger);
   agentRuntime = new AgentRuntime(
     chatRepository,
     chatService,
@@ -583,12 +611,11 @@ async function startApplication(): Promise<void> {
     clock,
     undefined,
     () => skillService.instructions(),
-    new ChatTitleService(chatService, logger),
+    chatTitleService,
     imageInput,
     memoryServiceInstance,
   );
   await agentRuntime.initialize();
-  unregisterAgentIpc = registerAgentIpc(agentRuntime);
 
   const petLibrary = new PetLibraryRepository(path.join(userDataPath, "pets"));
   await installBundledPets(
@@ -606,6 +633,81 @@ async function startApplication(): Promise<void> {
     clock,
   );
   await petService.initialize();
+  voiceService = new VoiceService(
+    new VoiceRepository(applicationDatabase),
+    settingsRepository,
+    providerService,
+    new AzureWebRtcSessionIssuer(),
+    toolRegistry,
+    runRepository,
+    writer,
+    chatService,
+    chatRepository,
+    idGenerator,
+    clock,
+    {
+      command(command) {
+        const value = parseSchema(VoiceClientCommandSchema, command);
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.webContents.isDestroyed()) {
+            window.webContents.send(VOICE_CHANNELS.command, value);
+          }
+        }
+      },
+      snapshot(voiceSnapshot) {
+        const value =
+          voiceSnapshot === null
+            ? null
+            : parseSchema(VoiceSessionSnapshotSchema, voiceSnapshot);
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.webContents.isDestroyed()) {
+            window.webContents.send(VOICE_CHANNELS.changed, value);
+          }
+        }
+      },
+    },
+    () => skillService.instructions(),
+    chatTitleService,
+    memoryServiceInstance,
+    (phase) => {
+      petService.setRuntimeAnimation(
+        phase === "failed" || phase === "interrupted"
+          ? "failed"
+          : phase === "thinking" || phase === "waiting_approval"
+            ? "waiting"
+            : phase === "using_tool"
+              ? "running"
+              : phase === "speaking"
+                ? "waving"
+                : phase === "listening"
+                  ? "review"
+                  : "idle",
+      );
+    },
+    voiceMetrics,
+  );
+  voiceService.initialize();
+  const voiceRuntime = voiceService;
+  unregisterAgentIpc = registerAgentIpc({
+    cancel: (request) => {
+      const run = runRepository.getRun(request.runId);
+      return run?.source === "voice"
+        ? voiceRuntime.cancelRun(request)
+        : agentRuntime!.cancel(request);
+    },
+    getPendingApproval: () => runRepository.getLatestPendingApproval() ?? null,
+    resolveApproval: (request) => {
+      const approval = runRepository.getApproval(request.approvalId);
+      const run = approval ? runRepository.getRun(approval.runId) : undefined;
+      return run?.source === "voice"
+        ? voiceRuntime.resolveApproval(request)
+        : agentRuntime!.resolveApproval(request);
+    },
+    resolveUserInput: (request) => agentRuntime!.resolveUserInput(request),
+    resume: (request) => agentRuntime!.resume(request),
+    start: (request) => agentRuntime!.start(request),
+    steer: (request) => agentRuntime!.steer(request),
+  });
   unregisterPetProtocol = registerPetProtocol(petLibrary);
 
   const mainWindows = new MainWindowController(
@@ -625,6 +727,11 @@ async function startApplication(): Promise<void> {
   mainWindowController = mainWindows;
   unregisterSettingsIpc = registerSettingsIpc(settingsService, () =>
     mainWindows.getWindow(),
+  );
+  unregisterVoiceIpc = registerVoiceIpc(
+    voiceService,
+    () => mainWindows.getWindow(),
+    () => characterWindowController?.getWindow() ?? null,
   );
 
   let resolveRendererReady: (() => void) | undefined;

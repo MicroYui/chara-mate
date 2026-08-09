@@ -20,7 +20,18 @@ import { parseSchema } from "../../shared/schemas/validation";
 import { toAgentAppError } from "./agentError";
 import type { AgentRuntime } from "./agentRuntime";
 
-export function registerAgentIpc(runtime: AgentRuntime): () => void {
+type AgentIpcRuntime = Pick<
+  AgentRuntime,
+  | "cancel"
+  | "getPendingApproval"
+  | "resolveApproval"
+  | "resolveUserInput"
+  | "resume"
+  | "start"
+  | "steer"
+>;
+
+export function registerAgentIpc(runtime: AgentIpcRuntime): () => void {
   ipcMain.handle(AGENT_CHANNELS.pendingApproval, (_event, input) => {
     try {
       parseSchema(PendingApprovalRequestSchema, input);

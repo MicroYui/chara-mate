@@ -254,6 +254,7 @@ const designRun = {
     id: ids.designRun,
     latestSequence: designItems.length,
     provider,
+    source: "text",
     startedAt: timestamps.designCreated,
     status: "completed",
   } satisfies Run,
@@ -280,6 +281,7 @@ const travelRunRecord = {
   id: ids.travelRun,
   latestSequence: 2,
   provider,
+  source: "text",
   startedAt: timestamps.travelCreated,
   status: "completed",
 } satisfies Run;
@@ -393,6 +395,7 @@ const approvalRun = {
     id: ids.approvalRun,
     latestSequence: 3,
     provider,
+    source: "text",
     startedAt: "2026-08-01T08:12:00.000Z",
     status: "waiting_approval",
   } satisfies Run,
