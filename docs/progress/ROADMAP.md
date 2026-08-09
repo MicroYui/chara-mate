@@ -303,9 +303,9 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P6-PET-RUNTIME`：PixiJS sprite runtime、CompanionState 动画、气泡和 Voice envelope 联动。
 - `P6-PET-IMPORT`：Codex v1/v2 校验、复制安装、自有目录和缺失 look row 降级；发布包内置 Columbinya v2 与 Linnea v1，首次启动沿同一路径幂等复制且不覆盖同 ID 用户资产。
 - `P6-TERRITORY-BASE`：基础像素场景、图层、nav grid、角色移动、布置和收藏库。
-- `P6-TERRITORY-ITEM-MANIFEST`：2.5D 深度锚点、地面平面、占用/碰撞 mask、单层承载插槽、附件关系与结构化 authoring 校验；接收已落盘图片和 manifest，完成归一化 asset、不可变 definition/item、受控 URL 与 Renderer 投影，只提供 Territory 领域入口，不注册 Harness Tool。
+- `P6-TERRITORY-ITEM-MANIFEST`：2.5D 深度锚点、地面平面、占用/碰撞 mask、单层承载插槽、附件关系与结构化 authoring 校验；接收已落盘图片和 manifest，完成归一化 asset、不可变 definition/item、受控 URL 与 Renderer 投影；该包只拥有 Territory 安装入口，不自行分叉 Agent Runtime。
 - `P6-TERRITORY-MEMORY`：Memory/Activity candidate、来源追溯、容量回收、版本与 pin。
-- `P6-TERRITORY-IMAGE`：同一 deployment 的 Generation/Edit 路由、统一 style prompt、去背景、候选确认和失败恢复；接受后调用唯一的 Territory asset + manifest 领域入口，不另建资产存储路径。
+- `P6-TERRITORY-IMAGE`：同一 deployment 的 Generation/Edit 路由、统一 style prompt、去背景、候选确认和失败恢复；注册一个延迟发现的内建 `territory.generate_item` Tool，模型只必填名称、含义和视觉意图，活动场景/Provider 由宿主解析，可选结构参数由 Territory 编译为同一 manifest；接受后调用唯一的 Territory asset + manifest 领域入口，不另建资产存储路径。
 
 ### 验收
 
@@ -314,6 +314,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - 首次领地无需等待生图即可完整显示，移动/放置/追溯/收回确定性；
 - 角色、地面物件和附件按结构化 manifest 确定碰撞、遮挡与承载关系，父物件变换和重启不会破坏附件；
 - 生图失败不损坏场景，超过容量只回收藏库，不删除 Memory 或资产版本。
+- Agent 可经统一 Run/Tool/Approval 路径生成持久化候选；Tool 不绕过用户确认，默认结构和显式尺寸、占地、锚点、插槽都能恢复为同一 manifest。
 
 ## Phase 7 — 整体体验收口
 

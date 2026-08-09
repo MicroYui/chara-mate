@@ -34,7 +34,7 @@
     "check:fast": "npm run typecheck && npm run lint && npm run format:check && npm run test:contract",
     "verify:offline": "npm run check:fast && npm run test:focused && npm run test:integration",
     "verify:phase0": "npm run verify:offline && npm run build && npm run smoke:dev && npm run package && npm run smoke:package && npm run test:e2e",
-    "test:live": "node scripts/optional-suite.mjs live",
+    "test:live": "vitest run --project live",
     "test:benchmark": "node scripts/optional-suite.mjs benchmark"
   },
   "dependencies": {

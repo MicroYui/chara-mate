@@ -318,6 +318,9 @@ function renderApp({
         ok: true,
         value: emptyTerritorySnapshot,
       }),
+      confirmImageCandidate: vi.fn(),
+      editImageCandidate: vi.fn(),
+      generateImageCandidate: vi.fn(),
       getSnapshot: vi.fn().mockResolvedValue({
         ok: true,
         value: emptyTerritorySnapshot,
@@ -327,6 +330,7 @@ function renderApp({
         ok: true,
         value: emptyTerritorySnapshot,
       }),
+      retryImageCandidate: vi.fn(),
       selectScene: vi.fn().mockResolvedValue({
         ok: true,
         value: emptyTerritorySnapshot,

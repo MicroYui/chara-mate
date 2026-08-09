@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { ProviderApi } from "../../../shared/contracts/provider";
 import type {
   TerritoryApi,
   TerritoryItem,
@@ -112,6 +113,7 @@ vi.mock("./PixiTerritoryCanvas", () => ({
 afterEach(cleanup);
 
 function makeApi() {
+  const candidateId = "5bc2c1bc-3dbe-49cd-964d-e0f60891f501";
   const hearth = activeTerritorySnapshot.activeScene?.placements[0];
   if (!hearth || !activeTerritorySnapshot.activeScene) {
     throw new Error("Missing active Territory fixture");
@@ -139,6 +141,19 @@ function makeApi() {
   const collectItem = vi
     .fn<TerritoryApi["collectItem"]>()
     .mockResolvedValue({ ok: true, value: collected });
+  const imageMutation = {
+    ok: true as const,
+    value: { candidateId, snapshot: activeTerritorySnapshot },
+  };
+  const confirmImageCandidate = vi
+    .fn<TerritoryApi["confirmImageCandidate"]>()
+    .mockResolvedValue(imageMutation);
+  const editImageCandidate = vi
+    .fn<TerritoryApi["editImageCandidate"]>()
+    .mockResolvedValue(imageMutation);
+  const generateImageCandidate = vi
+    .fn<TerritoryApi["generateImageCandidate"]>()
+    .mockResolvedValue(imageMutation);
   const getSnapshot = vi.fn<TerritoryApi["getSnapshot"]>().mockResolvedValue({
     ok: true,
     value: emptyTerritorySnapshot,
@@ -161,19 +176,30 @@ function makeApi() {
     ok: true,
     value: activeTerritorySnapshot,
   });
+  const retryImageCandidate = vi
+    .fn<TerritoryApi["retryImageCandidate"]>()
+    .mockResolvedValue(imageMutation);
   const api: TerritoryApi = {
     collectItem,
+    confirmImageCandidate,
+    editImageCandidate,
+    generateImageCandidate,
     getSnapshot,
     movePet,
     placeItem,
+    retryImageCandidate,
     selectScene,
   };
   return {
     api,
     collectItem,
+    confirmImageCandidate,
+    editImageCandidate,
+    generateImageCandidate,
     getSnapshot,
     movePet,
     placeItem,
+    retryImageCandidate,
     selectScene,
   };
 }
@@ -182,7 +208,14 @@ describe("Territory first experience and editor host", () => {
   it("selects a local scene and moves the pet through the typed API", async () => {
     const { api, movePet, selectScene } = makeApi();
     render(
-      <TerritoryPage activePet={undefined} animationSpeed={0.75} api={api} />,
+      <TerritoryPage
+        activePet={undefined}
+        animationSpeed={0.75}
+        api={api}
+        providerApi={{
+          listProfiles: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+        }}
+      />,
     );
 
     expect(
@@ -230,7 +263,14 @@ describe("Territory first experience and editor host", () => {
       },
     });
     render(
-      <TerritoryPage activePet={undefined} animationSpeed={0.75} api={api} />,
+      <TerritoryPage
+        activePet={undefined}
+        animationSpeed={0.75}
+        api={api}
+        providerApi={{
+          listProfiles: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+        }}
+      />,
     );
     await screen.findByRole("img", { name: "测试领地画布" });
 
@@ -415,5 +455,227 @@ describe("Territory first experience and editor host", () => {
         },
       }),
     );
+  });
+
+  it("generates, edits and confirms a persisted image candidate", async () => {
+    const profileId = "d0197d17-a231-41e0-afe2-664791a531ec";
+    const firstId = "5bc2c1bc-3dbe-49cd-964d-e0f60891f501";
+    const editId = "311b6772-af77-48ba-a545-9c1940544154";
+    const readyCandidate = {
+      acceptedItemId: null,
+      createdAt: "2026-08-08T10:00:00.000Z",
+      description: "留一盏灯，纪念完成项目的夜晚。",
+      editInstruction: null,
+      error: null,
+      id: firstId,
+      name: "长夜台灯",
+      operation: "generate" as const,
+      providerProfileId: profileId,
+      sceneId: "forest-cabin" as const,
+      sourceCandidateId: null,
+      status: "ready" as const,
+      structure: null,
+      updatedAt: "2026-08-08T10:01:00.000Z",
+      visualPrompt: "一盏小巧的黄铜工坊台灯",
+    };
+    const generatedSnapshot = {
+      ...activeTerritorySnapshot,
+      imageCandidates: [readyCandidate],
+    };
+    const editedCandidate = {
+      ...readyCandidate,
+      createdAt: "2026-08-08T10:02:00.000Z",
+      editInstruction: "把灯罩改成琥珀玻璃",
+      id: editId,
+      operation: "edit" as const,
+      sourceCandidateId: firstId,
+      updatedAt: "2026-08-08T10:03:00.000Z",
+    };
+    const editedSnapshot = {
+      ...activeTerritorySnapshot,
+      imageCandidates: [editedCandidate, readyCandidate],
+    };
+    const acceptedSnapshot = {
+      ...editedSnapshot,
+      imageCandidates: [
+        {
+          ...editedCandidate,
+          acceptedItemId: `generated.${editId}`,
+          status: "accepted" as const,
+          updatedAt: "2026-08-08T10:04:00.000Z",
+        },
+        readyCandidate,
+      ],
+    };
+    const {
+      api,
+      confirmImageCandidate,
+      editImageCandidate,
+      generateImageCandidate,
+      getSnapshot,
+    } = makeApi();
+    getSnapshot.mockResolvedValueOnce({
+      ok: true,
+      value: activeTerritorySnapshot,
+    });
+    generateImageCandidate.mockResolvedValueOnce({
+      ok: true,
+      value: { candidateId: firstId, snapshot: generatedSnapshot },
+    });
+    editImageCandidate.mockResolvedValueOnce({
+      ok: true,
+      value: { candidateId: editId, snapshot: editedSnapshot },
+    });
+    confirmImageCandidate.mockResolvedValueOnce({
+      ok: true,
+      value: { candidateId: editId, snapshot: acceptedSnapshot },
+    });
+    const providerApi: Pick<ProviderApi, "listProfiles"> = {
+      listProfiles: vi.fn().mockResolvedValue({
+        ok: true,
+        value: [
+          {
+            apiStyle: "azure-openai",
+            apiVersion: "2025-04-01-preview",
+            baseUrl: "https://azure.example.com",
+            createdAt: "2026-08-08T08:00:00.000Z",
+            hasApiKey: true,
+            id: profileId,
+            imageGenerationEndpoint:
+              "https://azure.example.com/openai/deployments/gpt-image-2/images/generations",
+            imageModel: "gpt-image-2",
+            name: "azure",
+            updatedAt: "2026-08-08T08:00:00.000Z",
+          },
+        ],
+      }),
+    };
+    render(
+      <TerritoryPage
+        activePet={undefined}
+        animationSpeed={0.75}
+        api={api}
+        providerApi={providerApi}
+      />,
+    );
+    await screen.findByRole("img", { name: "测试领地画布" });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成物件" }));
+    expect(await screen.findByText("使用 azure · gpt-image-2")).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), {
+      target: { value: "长夜台灯" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "简短描述" }), {
+      target: { value: "留一盏灯，纪念完成项目的夜晚。" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "想生成的样子" }), {
+      target: { value: "一盏小巧的黄铜工坊台灯" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
+
+    await waitFor(() =>
+      expect(generateImageCandidate).toHaveBeenCalledWith({
+        description: "留一盏灯，纪念完成项目的夜晚。",
+        name: "长夜台灯",
+        providerProfileId: profileId,
+        sceneId: "forest-cabin",
+        visualPrompt: "一盏小巧的黄铜工坊台灯",
+      }),
+    );
+    expect(
+      await screen.findByRole("img", { name: "长夜台灯预览" }),
+    ).toBeVisible();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "继续修改" }), {
+      target: { value: "把灯罩改成琥珀玻璃" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成修改版" }));
+    await waitFor(() =>
+      expect(editImageCandidate).toHaveBeenCalledWith({
+        candidateId: firstId,
+        instruction: "把灯罩改成琥珀玻璃",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "确认加入收藏库" }),
+    );
+    await waitFor(() =>
+      expect(confirmImageCandidate).toHaveBeenCalledWith({
+        candidateId: editId,
+      }),
+    );
+    expect(
+      await screen.findByRole("complementary", { name: "领地收藏库" }),
+    ).toBeVisible();
+  });
+
+  it("restores a failed candidate and exposes its retry action", async () => {
+    const candidateId = "61e0b15d-a46d-4268-9a2c-6c4bd271a627";
+    const failedCandidate = {
+      acceptedItemId: null,
+      createdAt: "2026-08-08T10:00:00.000Z",
+      description: "一枚安静的小纪念。",
+      editInstruction: null,
+      error: {
+        code: "PROVIDER.RATE_LIMITED",
+        message: "Provider 暂时限制了请求，请稍后重试。",
+        retryable: true,
+      },
+      id: candidateId,
+      name: "微光摆件",
+      operation: "generate" as const,
+      providerProfileId: "d0197d17-a231-41e0-afe2-664791a531ec",
+      sceneId: "forest-cabin" as const,
+      sourceCandidateId: null,
+      status: "failed" as const,
+      structure: null,
+      updatedAt: "2026-08-08T10:01:00.000Z",
+      visualPrompt: "一枚发出微光的小摆件",
+    };
+    const failedSnapshot = {
+      ...activeTerritorySnapshot,
+      imageCandidates: [failedCandidate],
+    };
+    const readySnapshot = {
+      ...failedSnapshot,
+      imageCandidates: [
+        {
+          ...failedCandidate,
+          error: null,
+          status: "ready" as const,
+          updatedAt: "2026-08-08T10:02:00.000Z",
+        },
+      ],
+    };
+    const { api, getSnapshot, retryImageCandidate } = makeApi();
+    getSnapshot.mockResolvedValueOnce({ ok: true, value: failedSnapshot });
+    retryImageCandidate.mockResolvedValueOnce({
+      ok: true,
+      value: { candidateId, snapshot: readySnapshot },
+    });
+    render(
+      <TerritoryPage
+        activePet={undefined}
+        animationSpeed={0.75}
+        api={api}
+        providerApi={{
+          listProfiles: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+        }}
+      />,
+    );
+    await screen.findByRole("img", { name: "测试领地画布" });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成物件" }));
+    expect(
+      await screen.findByText("Provider 暂时限制了请求，请稍后重试。"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    await waitFor(() =>
+      expect(retryImageCandidate).toHaveBeenCalledWith({ candidateId }),
+    );
+    expect(
+      await screen.findByRole("img", { name: "微光摆件预览" }),
+    ).toBeVisible();
   });
 });

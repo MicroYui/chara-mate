@@ -5,7 +5,16 @@ import type {
   TerritoryCollectItemRequestSchema,
   TerritoryCollectionTargetSchema,
   TerritoryFacingSchema,
+  TerritoryGeneratedItemStructureSchema,
+  TerritoryEditImageRequestSchema,
+  TerritoryGenerateImageRequestSchema,
   TerritoryGroundTargetSchema,
+  TerritoryImageCandidateIdRequestSchema,
+  TerritoryImageCandidateOperationSchema,
+  TerritoryImageCandidateSchema,
+  TerritoryImageCandidateStatusSchema,
+  TerritoryImageMutationResponseSchema,
+  TerritoryImageMutationResultSchema,
   TerritoryInstallGeneratedItemInputSchema,
   TerritoryItemSchema,
   TerritoryItemTargetSchema,
@@ -28,9 +37,13 @@ import type {
 
 export const TERRITORY_CHANNELS = {
   collectItem: "territory.item.collect",
+  confirmImageCandidate: "territory.image.confirm",
+  editImageCandidate: "territory.image.edit",
+  generateImageCandidate: "territory.image.generate",
   getSnapshot: "territory.snapshot.get",
   movePet: "territory.pet.move",
   placeItem: "territory.item.place",
+  retryImageCandidate: "territory.image.retry",
   selectScene: "territory.scene.select",
 } as const;
 
@@ -54,6 +67,18 @@ export type TerritorySceneTarget = Static<typeof TerritorySceneTargetSchema>;
 export type TerritoryItemTarget = Static<typeof TerritoryItemTargetSchema>;
 export type TerritoryItem = Static<typeof TerritoryItemSchema>;
 export type TerritoryActiveScene = Static<typeof TerritoryActiveSceneSchema>;
+export type TerritoryImageCandidateOperation = Static<
+  typeof TerritoryImageCandidateOperationSchema
+>;
+export type TerritoryImageCandidateStatus = Static<
+  typeof TerritoryImageCandidateStatusSchema
+>;
+export type TerritoryGeneratedItemStructure = Static<
+  typeof TerritoryGeneratedItemStructureSchema
+>;
+export type TerritoryImageCandidate = Static<
+  typeof TerritoryImageCandidateSchema
+>;
 export type TerritorySnapshot = Static<typeof TerritorySnapshotSchema>;
 export type TerritorySelectSceneRequest = Static<
   typeof TerritorySelectSceneRequestSchema
@@ -67,6 +92,15 @@ export type TerritoryPlaceItemRequest = Static<
 export type TerritoryCollectItemRequest = Static<
   typeof TerritoryCollectItemRequestSchema
 >;
+export type TerritoryGenerateImageRequest = Static<
+  typeof TerritoryGenerateImageRequestSchema
+>;
+export type TerritoryEditImageRequest = Static<
+  typeof TerritoryEditImageRequestSchema
+>;
+export type TerritoryImageCandidateIdRequest = Static<
+  typeof TerritoryImageCandidateIdRequestSchema
+>;
 export type TerritoryInstallGeneratedItemInput = Static<
   typeof TerritoryInstallGeneratedItemInputSchema
 >;
@@ -75,16 +109,34 @@ export type TerritorySnapshotResponse = Static<
 >;
 export type TerritoryMoveResult = Static<typeof TerritoryMoveResultSchema>;
 export type TerritoryMoveResponse = Static<typeof TerritoryMoveResponseSchema>;
+export type TerritoryImageMutationResult = Static<
+  typeof TerritoryImageMutationResultSchema
+>;
+export type TerritoryImageMutationResponse = Static<
+  typeof TerritoryImageMutationResponseSchema
+>;
 
 export interface TerritoryApi {
   collectItem(
     request: TerritoryCollectItemRequest,
   ): Promise<TerritorySnapshotResponse>;
+  confirmImageCandidate(
+    request: TerritoryImageCandidateIdRequest,
+  ): Promise<TerritoryImageMutationResponse>;
+  editImageCandidate(
+    request: TerritoryEditImageRequest,
+  ): Promise<TerritoryImageMutationResponse>;
+  generateImageCandidate(
+    request: TerritoryGenerateImageRequest,
+  ): Promise<TerritoryImageMutationResponse>;
   getSnapshot(): Promise<TerritorySnapshotResponse>;
   movePet(request: TerritoryMovePetRequest): Promise<TerritoryMoveResponse>;
   placeItem(
     request: TerritoryPlaceItemRequest,
   ): Promise<TerritorySnapshotResponse>;
+  retryImageCandidate(
+    request: TerritoryImageCandidateIdRequest,
+  ): Promise<TerritoryImageMutationResponse>;
   selectScene(
     request: TerritorySelectSceneRequest,
   ): Promise<TerritorySnapshotResponse>;

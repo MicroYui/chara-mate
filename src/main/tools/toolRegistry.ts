@@ -19,6 +19,7 @@ import { Bm25SearchIndex } from "./bm25";
 export interface ToolExecutionContext {
   readonly itemId: string;
   readonly onDelta: (delta: string) => void;
+  readonly providerProfileId?: string;
   readonly runId: string;
   readonly signal: AbortSignal;
 }

@@ -227,4 +227,36 @@ describe("foundation database", () => {
     expect(database.pragma("foreign_key_check")).toEqual([]);
     database.close();
   });
+
+  it("migrates v6 data by adding Territory image candidates", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-v6-migration-"),
+    );
+    temporaryDirectories.push(directory);
+    const databasePath = path.join(directory, "charamate.sqlite");
+    let database = openApplicationDatabase(databasePath);
+    database.transaction(() => {
+      database.exec("DROP TABLE territory_image_candidates");
+      database
+        .prepare(
+          "UPDATE app_metadata SET value = '6' WHERE key = 'schema_version'",
+        )
+        .run();
+    })();
+    database.close();
+
+    database = openApplicationDatabase(databasePath);
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE name = ?")
+        .get("territory_image_candidates"),
+    ).toEqual({ name: "territory_image_candidates" });
+    expect(
+      database
+        .prepare("SELECT value FROM app_metadata WHERE key = 'schema_version'")
+        .get(),
+    ).toEqual({ value: CURRENT_SCHEMA_VERSION });
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
+  });
 });

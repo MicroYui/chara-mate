@@ -3,7 +3,11 @@ import { ipcMain } from "electron";
 import { TERRITORY_CHANNELS } from "../../shared/contracts/territory";
 import {
   TerritoryCollectItemRequestSchema,
+  TerritoryEditImageRequestSchema,
   TerritoryEmptyRequestSchema,
+  TerritoryGenerateImageRequestSchema,
+  TerritoryImageCandidateIdRequestSchema,
+  TerritoryImageMutationResponseSchema,
   TerritoryMovePetRequestSchema,
   TerritoryMoveResponseSchema,
   TerritoryPlaceItemRequestSchema,
@@ -12,9 +16,13 @@ import {
 } from "../../shared/schemas/territory";
 import { parseSchema } from "../../shared/schemas/validation";
 import { toTerritoryAppError } from "./territoryError";
+import type { TerritoryImageService } from "./territoryImageService";
 import type { TerritoryService } from "./territoryService";
 
-export function registerTerritoryIpc(service: TerritoryService): () => void {
+export function registerTerritoryIpc(
+  service: TerritoryService,
+  images: TerritoryImageService,
+): () => void {
   ipcMain.handle(TERRITORY_CHANNELS.getSnapshot, (_event, input) => {
     try {
       parseSchema(TerritoryEmptyRequestSchema, input);
@@ -89,6 +97,84 @@ export function registerTerritoryIpc(service: TerritoryService): () => void {
       });
     }
   });
+
+  ipcMain.handle(
+    TERRITORY_CHANNELS.generateImageCandidate,
+    async (_event, input) => {
+      try {
+        const request = parseSchema(TerritoryGenerateImageRequestSchema, input);
+        return parseSchema(TerritoryImageMutationResponseSchema, {
+          ok: true,
+          value: await images.generate(request),
+        });
+      } catch (error) {
+        return parseSchema(TerritoryImageMutationResponseSchema, {
+          error: toTerritoryAppError(error),
+          ok: false,
+        });
+      }
+    },
+  );
+
+  ipcMain.handle(
+    TERRITORY_CHANNELS.editImageCandidate,
+    async (_event, input) => {
+      try {
+        const request = parseSchema(TerritoryEditImageRequestSchema, input);
+        return parseSchema(TerritoryImageMutationResponseSchema, {
+          ok: true,
+          value: await images.edit(request),
+        });
+      } catch (error) {
+        return parseSchema(TerritoryImageMutationResponseSchema, {
+          error: toTerritoryAppError(error),
+          ok: false,
+        });
+      }
+    },
+  );
+
+  ipcMain.handle(
+    TERRITORY_CHANNELS.retryImageCandidate,
+    async (_event, input) => {
+      try {
+        const request = parseSchema(
+          TerritoryImageCandidateIdRequestSchema,
+          input,
+        );
+        return parseSchema(TerritoryImageMutationResponseSchema, {
+          ok: true,
+          value: await images.retry(request),
+        });
+      } catch (error) {
+        return parseSchema(TerritoryImageMutationResponseSchema, {
+          error: toTerritoryAppError(error),
+          ok: false,
+        });
+      }
+    },
+  );
+
+  ipcMain.handle(
+    TERRITORY_CHANNELS.confirmImageCandidate,
+    async (_event, input) => {
+      try {
+        const request = parseSchema(
+          TerritoryImageCandidateIdRequestSchema,
+          input,
+        );
+        return parseSchema(TerritoryImageMutationResponseSchema, {
+          ok: true,
+          value: await images.confirm(request),
+        });
+      } catch (error) {
+        return parseSchema(TerritoryImageMutationResponseSchema, {
+          error: toTerritoryAppError(error),
+          ok: false,
+        });
+      }
+    },
+  );
 
   return () => {
     for (const channel of Object.values(TERRITORY_CHANNELS)) {

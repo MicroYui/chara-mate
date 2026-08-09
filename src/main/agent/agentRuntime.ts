@@ -1891,6 +1891,7 @@ export class AgentRuntime {
           pendingDelta += delta;
           deltaBatcher.schedule();
         },
+        providerProfileId: this.#requireRun(active.runId).provider.profileId,
         runId: active.runId,
         signal: active.abort.signal,
       });

@@ -94,10 +94,14 @@ import { registerLocalTools } from "./tools/localTools";
 import { ToolRegistry } from "./tools/toolRegistry";
 import { registerTerritoryIpc } from "./territory/territoryIpc";
 import { TerritoryAssetStore } from "./territory/territoryAssetStore";
+import { TerritoryCandidateStore } from "./territory/territoryCandidateStore";
+import { ElectronTerritoryCandidateProcessor } from "./territory/electronTerritoryCandidateProcessor";
 import { ElectronTerritoryImageNormalizer } from "./territory/electronTerritoryImageNormalizer";
+import { TerritoryImageService } from "./territory/territoryImageService";
 import { registerTerritoryProtocol } from "./territory/territoryProtocol";
 import { TerritoryRepository } from "./territory/territoryRepository";
 import { TerritoryService } from "./territory/territoryService";
+import { registerTerritoryTools } from "./territory/territoryTools";
 
 const logger = createAppLogger();
 const backgroundTest = process.env["CHARAMATE_TEST_BACKGROUND"] === "1";
@@ -513,6 +517,44 @@ async function startApplication(): Promise<void> {
   await mcpService.initialize();
   unregisterExtensionIpc = registerExtensionIpc(mcpService, skillService);
 
+  const territoryRepository = new TerritoryRepository(applicationDatabase);
+  const territoryAssets = new TerritoryAssetStore(
+    path.join(userDataPath, "territory", "assets"),
+    new ElectronTerritoryImageNormalizer(),
+  );
+  const territoryCandidates = new TerritoryCandidateStore(
+    path.join(userDataPath, "territory", "candidates"),
+    new ElectronTerritoryCandidateProcessor(),
+  );
+  const territoryService = new TerritoryService(
+    territoryRepository,
+    territoryAssets,
+    clock,
+  );
+  const territoryImageService = new TerritoryImageService(
+    territoryRepository,
+    territoryCandidates,
+    territoryService,
+    providerService,
+    idGenerator,
+    clock,
+  );
+  territoryImageService.recoverInterruptedCandidates();
+  registerTerritoryTools(toolRegistry, {
+    images: territoryImageService,
+    providers: providerService,
+    territory: territoryService,
+  });
+  unregisterTerritoryProtocol = registerTerritoryProtocol(
+    territoryRepository,
+    territoryAssets,
+    territoryCandidates,
+  );
+  unregisterTerritoryIpc = registerTerritoryIpc(
+    territoryService,
+    territoryImageService,
+  );
+
   const writer = new RunEventWriter(
     runRepository,
     runEventService,
@@ -565,18 +607,6 @@ async function startApplication(): Promise<void> {
   );
   await petService.initialize();
   unregisterPetProtocol = registerPetProtocol(petLibrary);
-  const territoryRepository = new TerritoryRepository(applicationDatabase);
-  const territoryAssets = new TerritoryAssetStore(
-    path.join(userDataPath, "territory", "assets"),
-    new ElectronTerritoryImageNormalizer(),
-  );
-  unregisterTerritoryProtocol = registerTerritoryProtocol(
-    territoryRepository,
-    territoryAssets,
-  );
-  unregisterTerritoryIpc = registerTerritoryIpc(
-    new TerritoryService(territoryRepository, territoryAssets, clock),
-  );
 
   const mainWindows = new MainWindowController(
     () => createMainWindow(windowPlacementRepository, clock, !backgroundTest),

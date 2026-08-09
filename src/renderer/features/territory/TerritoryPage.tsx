@@ -2,6 +2,7 @@ import {
   Archive,
   FlipHorizontal2,
   Grid3X3,
+  ImagePlus,
   Map,
   PackageOpen,
   RotateCw,
@@ -20,6 +21,7 @@ import {
 } from "react";
 
 import type { PetDescriptor } from "../../../shared/contracts/pet";
+import type { ProviderApi } from "../../../shared/contracts/provider";
 import type {
   TerritoryApi,
   TerritoryItem,
@@ -32,6 +34,7 @@ import type {
 } from "../../../shared/contracts/territory";
 import { territoryAssetUrl } from "../../../shared/pure/territoryAsset";
 import styles from "./TerritoryPage.module.css";
+import { TerritoryImagePanel } from "./TerritoryImagePanel";
 import type { TerritoryItemTransform as ItemTransform } from "./territoryItemLayer";
 import type {
   RenderedPetPosition,
@@ -47,6 +50,7 @@ interface TerritoryPageProps {
   readonly activePet: PetDescriptor | undefined;
   readonly animationSpeed: number;
   readonly api?: TerritoryApi;
+  readonly providerApi?: Pick<ProviderApi, "listProfiles">;
 }
 
 function scenePreviewStyle(scene: TerritorySceneSummary): CSSProperties {
@@ -181,6 +185,7 @@ export function TerritoryPage({
   activePet,
   animationSpeed,
   api = window.charaMate.territory,
+  providerApi,
 }: TerritoryPageProps) {
   const [snapshot, setSnapshot] = useState<TerritorySnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -188,6 +193,7 @@ export function TerritoryPage({
   const [mode, setMode] = useState<"edit" | "explore">("explore");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [scenePickerOpen, setScenePickerOpen] = useState(false);
+  const [imagePanelOpen, setImagePanelOpen] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [selectedTransform, setSelectedTransform] = useState<ItemTransform>({
     flipped: false,
@@ -479,6 +485,17 @@ export function TerritoryPage({
           <button
             className={styles["toolbarButton"]}
             type="button"
+            onClick={() => {
+              setDrawerOpen(false);
+              setImagePanelOpen((open) => !open);
+            }}
+          >
+            <ImagePlus aria-hidden="true" size={15} />
+            生成物件
+          </button>
+          <button
+            className={styles["toolbarButton"]}
+            type="button"
             onClick={() => setScenePickerOpen(true)}
           >
             <Sparkles aria-hidden="true" size={15} />
@@ -601,6 +618,22 @@ export function TerritoryPage({
               </div>
             ) : null}
           </article>
+        ) : null}
+
+        {imagePanelOpen ? (
+          <TerritoryImagePanel
+            api={api}
+            candidates={snapshot.imageCandidates}
+            onAccepted={() => {
+              setImagePanelOpen(false);
+              setMode("edit");
+              setDrawerOpen(true);
+            }}
+            onClose={() => setImagePanelOpen(false)}
+            onSnapshot={setSnapshot}
+            providerApi={providerApi ?? window.charaMate.provider}
+            sceneId={activeScene.definition.id}
+          />
         ) : null}
 
         {drawerOpen ? (

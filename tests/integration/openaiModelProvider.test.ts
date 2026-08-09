@@ -195,6 +195,24 @@ async function collect(
                 },
               ],
             },
+            {
+              description: "Territory item generation",
+              name: "territory",
+              tools: [
+                {
+                  description: "Generate a Territory item candidate",
+                  inputSchema: {
+                    additionalProperties: false,
+                    properties: { name: { type: "string" } },
+                    required: ["name"],
+                    type: "object",
+                  },
+                  name: "territory.generate_item",
+                  namespace: "territory",
+                  strict: false,
+                },
+              ],
+            },
           ]
         : [],
       ...(withTools
@@ -406,6 +424,11 @@ describe("OpenAI Responses Agent wire shape", () => {
           tools: [{ defer_loading: false, name: "update", type: "function" }],
           type: "namespace",
         },
+        {
+          name: "territory",
+          tools: [{ name: "generate_item", type: "function" }],
+          type: "namespace",
+        },
         { type: "tool_search" },
         { type: "web_search" },
       ],
@@ -432,6 +455,7 @@ describe("OpenAI Responses Agent wire shape", () => {
     });
     expect(wire).not.toContain('"name":"browser.navigate"');
     expect(wire).not.toContain('"name":"computer.snapshot"');
+    expect(wire).not.toContain('"name":"territory.generate_item"');
     expect(wire).toContain(
       '"prompt_cache_options":{"mode":"implicit","ttl":"30m"}',
     );

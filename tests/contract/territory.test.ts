@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  TerritoryEditImageRequestSchema,
+  TerritoryGenerateImageRequestSchema,
+  TerritoryImageMutationResponseSchema,
   TerritoryInstallGeneratedItemInputSchema,
   TerritoryMovePetRequestSchema,
   TerritoryMoveResponseSchema,
@@ -73,6 +76,53 @@ describe("Territory IPC contracts", () => {
       ).toMatchObject({
         manifest: { visual: { source: { kind: "asset" } } },
       });
+      const candidateId = "61e0b15d-a46d-4268-9a2c-6c4bd271a627";
+      expect(
+        parse(TerritoryGenerateImageRequestSchema, {
+          description: "留一盏灯，纪念完成项目的夜晚。",
+          name: "长夜台灯",
+          providerProfileId: "d0197d17-a231-41e0-afe2-664791a531ec",
+          sceneId: "forest-cabin",
+          structure: {
+            footprintTiles: { height: 2, width: 3 },
+            placement: "ground_object",
+            surfaceSlots: [
+              {
+                anchorPx: { x: 72, y: 48 },
+                id: "center",
+                maxItemSizePx: { height: 32, width: 32 },
+              },
+            ],
+            visualSizePx: { height: 120, width: 144 },
+          },
+          visualPrompt: "一盏小巧的黄铜工坊台灯",
+        }),
+      ).toMatchObject({
+        name: "长夜台灯",
+        structure: {
+          footprintTiles: { height: 2, width: 3 },
+          surfaceSlots: [{ id: "center" }],
+          visualSizePx: { height: 120, width: 144 },
+        },
+      });
+      expect(
+        parse(TerritoryEditImageRequestSchema, {
+          candidateId,
+          instruction: "把灯罩改成琥珀玻璃",
+        }),
+      ).toEqual({
+        candidateId,
+        instruction: "把灯罩改成琥珀玻璃",
+      });
+      expect(
+        parse(TerritoryImageMutationResponseSchema, {
+          ok: true,
+          value: {
+            candidateId,
+            snapshot: activeTerritorySnapshot,
+          },
+        }),
+      ).toMatchObject({ ok: true });
       expect(
         parse(TerritoryMoveResponseSchema, {
           ok: true,
@@ -117,6 +167,12 @@ describe("Territory IPC contracts", () => {
             x: 1,
             y: 1,
           },
+        }),
+      ).toThrow();
+      expect(() =>
+        parse(TerritoryEditImageRequestSchema, {
+          candidateId: "../preview",
+          instruction: "修改",
         }),
       ).toThrow();
       expect(() =>
