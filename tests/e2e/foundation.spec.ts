@@ -180,9 +180,13 @@ test("launches through the typed preload boundary", async () => {
       ],
       territoryKeys: [
         "collectItem",
+        "confirmImageCandidate",
+        "editImageCandidate",
+        "generateImageCandidate",
         "getSnapshot",
         "movePet",
         "placeItem",
+        "retryImageCandidate",
         "selectScene",
       ],
       exposesRawIpcRenderer: false,

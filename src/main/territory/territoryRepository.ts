@@ -4,6 +4,7 @@ import type Database from "better-sqlite3";
 
 import type {
   TerritoryFacing,
+  TerritoryImageCandidate,
   TerritoryItem,
   TerritoryItemTarget,
   TerritoryRotation,
@@ -12,6 +13,13 @@ import type {
 } from "../../shared/contracts/territory";
 import type { TerritoryItemManifestV1 } from "../../shared/contracts/territoryItemManifest";
 import type { Timestamp } from "../../shared/contracts/primitives";
+import type { AppError } from "../../shared/contracts/run";
+import { serializeForPersistence } from "../db/persistenceBoundary";
+import { AppErrorSchema } from "../../shared/schemas/error";
+import {
+  TerritoryImageCandidateContentSchema,
+  TerritoryImageCandidateSchema,
+} from "../../shared/schemas/territory";
 import { TerritoryItemManifestV1Schema } from "../../shared/schemas/territoryItemManifest";
 import { parseSchema } from "../../shared/schemas/validation";
 import {
@@ -70,6 +78,20 @@ interface TerritoryAssetRow {
 interface TerritoryIdentityRow {
   definition_id: string;
   definition_revision: number;
+}
+
+interface TerritoryImageCandidateRow {
+  accepted_item_id: string | null;
+  candidate_id: string;
+  created_at: string;
+  error_json: string | null;
+  operation: TerritoryImageCandidate["operation"];
+  provider_profile_id: string;
+  request_json: string;
+  scene_id: TerritorySceneId;
+  source_candidate_id: string | null;
+  status: TerritoryImageCandidate["status"];
+  updated_at: string;
 }
 
 export interface TerritorySceneRecord {
@@ -166,6 +188,37 @@ function mapItem(row: TerritoryItemRow): TerritoryItemRecord {
     updatedAt: row.updated_at,
   };
 }
+
+function mapImageCandidate(
+  row: TerritoryImageCandidateRow,
+): TerritoryImageCandidate {
+  const content = parseSchema(
+    TerritoryImageCandidateContentSchema,
+    JSON.parse(row.request_json),
+  );
+  return parseSchema(TerritoryImageCandidateSchema, {
+    acceptedItemId: row.accepted_item_id,
+    createdAt: row.created_at,
+    ...content,
+    error: row.error_json
+      ? parseSchema(AppErrorSchema, JSON.parse(row.error_json))
+      : null,
+    id: row.candidate_id,
+    operation: row.operation,
+    providerProfileId: row.provider_profile_id,
+    sceneId: row.scene_id,
+    sourceCandidateId: row.source_candidate_id,
+    status: row.status,
+    updatedAt: row.updated_at,
+  });
+}
+
+const imageCandidateSelect = `
+  SELECT candidate_id, provider_profile_id, scene_id, operation,
+         source_candidate_id, request_json, status, error_json,
+         accepted_item_id, created_at, updated_at
+  FROM territory_image_candidates
+`;
 
 const itemSelect = `
   SELECT i.item_id, i.definition_id, i.definition_revision,
@@ -298,6 +351,161 @@ export class TerritoryRepository {
           width: row.width,
         }
       : undefined;
+  }
+
+  getImageCandidate(candidateId: string): TerritoryImageCandidate | undefined {
+    const row = this.database
+      .prepare(`${imageCandidateSelect} WHERE candidate_id = ?`)
+      .get(candidateId) as TerritoryImageCandidateRow | undefined;
+    return row ? mapImageCandidate(row) : undefined;
+  }
+
+  listImageCandidates(): TerritoryImageCandidate[] {
+    return (
+      this.database
+        .prepare(
+          `${imageCandidateSelect}
+           ORDER BY created_at DESC, candidate_id DESC`,
+        )
+        .all() as TerritoryImageCandidateRow[]
+    ).map(mapImageCandidate);
+  }
+
+  createImageCandidate(candidate: TerritoryImageCandidate): void {
+    if (
+      candidate.status !== "generating" ||
+      candidate.error !== null ||
+      candidate.acceptedItemId !== null
+    ) {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_CANDIDATE_STATE",
+        "新的图片候选必须处于生成中状态。",
+        false,
+      );
+    }
+    const content = {
+      description: candidate.description,
+      editInstruction: candidate.editInstruction,
+      name: candidate.name,
+      structure: candidate.structure,
+      visualPrompt: candidate.visualPrompt,
+    };
+    this.database
+      .prepare(
+        `INSERT INTO territory_image_candidates (
+           candidate_id, provider_profile_id, scene_id, operation,
+           source_candidate_id, request_json, status, error_json,
+           accepted_item_id, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 'generating', NULL, NULL, ?, ?)`,
+      )
+      .run(
+        candidate.id,
+        candidate.providerProfileId,
+        candidate.sceneId,
+        candidate.operation,
+        candidate.sourceCandidateId,
+        serializeForPersistence(content),
+        candidate.createdAt,
+        candidate.updatedAt,
+      );
+  }
+
+  markImageCandidateReady(candidateId: string, now: Timestamp): void {
+    const result = this.database
+      .prepare(
+        `UPDATE territory_image_candidates
+         SET status = 'ready', error_json = NULL, updated_at = ?
+         WHERE candidate_id = ? AND status = 'generating'`,
+      )
+      .run(now, candidateId);
+    if (result.changes !== 1) {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_CANDIDATE_STATE",
+        "图片候选当前不能完成生成。",
+        false,
+      );
+    }
+  }
+
+  markImageCandidateFailed(
+    candidateId: string,
+    error: AppError,
+    now: Timestamp,
+  ): void {
+    const result = this.database
+      .prepare(
+        `UPDATE territory_image_candidates
+         SET status = 'failed', error_json = ?, accepted_item_id = NULL,
+             updated_at = ?
+         WHERE candidate_id = ? AND status = 'generating'`,
+      )
+      .run(serializeForPersistence(error), now, candidateId);
+    if (result.changes !== 1) {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_CANDIDATE_STATE",
+        "图片候选当前不能记录失败。",
+        false,
+      );
+    }
+  }
+
+  retryImageCandidate(candidateId: string, now: Timestamp): void {
+    const result = this.database
+      .prepare(
+        `UPDATE territory_image_candidates
+         SET status = 'generating', error_json = NULL, updated_at = ?
+         WHERE candidate_id = ? AND status = 'failed'`,
+      )
+      .run(now, candidateId);
+    if (result.changes !== 1) {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_CANDIDATE_STATE",
+        "只有失败的图片候选可以重试。",
+        false,
+      );
+    }
+  }
+
+  acceptImageCandidate(
+    candidateId: string,
+    itemId: string,
+    now: Timestamp,
+  ): void {
+    const current = this.getImageCandidate(candidateId);
+    if (!current) {
+      throw new TerritoryError(
+        "TERRITORY.CANDIDATE_NOT_FOUND",
+        "找不到这个图片候选。",
+        false,
+      );
+    }
+    if (current.status === "accepted" && current.acceptedItemId === itemId) {
+      return;
+    }
+    const result = this.database
+      .prepare(
+        `UPDATE territory_image_candidates
+         SET status = 'accepted', accepted_item_id = ?, updated_at = ?
+         WHERE candidate_id = ? AND status = 'ready'`,
+      )
+      .run(itemId, now, candidateId);
+    if (result.changes !== 1) {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_CANDIDATE_STATE",
+        "只有生成完成的图片候选可以加入收藏库。",
+        false,
+      );
+    }
+  }
+
+  recoverInterruptedImageCandidates(error: AppError, now: Timestamp): number {
+    return this.database
+      .prepare(
+        `UPDATE territory_image_candidates
+         SET status = 'failed', error_json = ?, updated_at = ?
+         WHERE status = 'generating'`,
+      )
+      .run(serializeForPersistence(error), now).changes;
   }
 
   listSceneItems(sceneId: TerritorySceneId): TerritoryItemRecord[] {

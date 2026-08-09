@@ -69,6 +69,9 @@ import {
 import {
   type TerritoryApi,
   type TerritoryCollectItemRequest,
+  type TerritoryEditImageRequest,
+  type TerritoryGenerateImageRequest,
+  type TerritoryImageCandidateIdRequest,
   TERRITORY_CHANNELS,
   type TerritoryMovePetRequest,
   type TerritoryPlaceItemRequest,
@@ -150,6 +153,10 @@ import {
 } from "../shared/schemas/provider";
 import {
   TerritoryCollectItemRequestSchema,
+  TerritoryEditImageRequestSchema,
+  TerritoryGenerateImageRequestSchema,
+  TerritoryImageCandidateIdRequestSchema,
+  TerritoryImageMutationResponseSchema,
   TerritoryMovePetRequestSchema,
   TerritoryMoveResponseSchema,
   TerritoryPlaceItemRequestSchema,
@@ -572,6 +579,39 @@ const territoryApi: TerritoryApi = Object.freeze({
         ),
       ),
     ),
+  confirmImageCandidate: async (input: TerritoryImageCandidateIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritoryImageMutationResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.confirmImageCandidate,
+        parseSchemaWithoutCodeGeneration(
+          TerritoryImageCandidateIdRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  editImageCandidate: async (input: TerritoryEditImageRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritoryImageMutationResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.editImageCandidate,
+        parseSchemaWithoutCodeGeneration(
+          TerritoryEditImageRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  generateImageCandidate: async (input: TerritoryGenerateImageRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritoryImageMutationResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.generateImageCandidate,
+        parseSchemaWithoutCodeGeneration(
+          TerritoryGenerateImageRequestSchema,
+          input,
+        ),
+      ),
+    ),
   getSnapshot: async () =>
     parseSchemaWithoutCodeGeneration(
       TerritorySnapshotResponseSchema,
@@ -592,6 +632,17 @@ const territoryApi: TerritoryApi = Object.freeze({
         TERRITORY_CHANNELS.placeItem,
         parseSchemaWithoutCodeGeneration(
           TerritoryPlaceItemRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  retryImageCandidate: async (input: TerritoryImageCandidateIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritoryImageMutationResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.retryImageCandidate,
+        parseSchemaWithoutCodeGeneration(
+          TerritoryImageCandidateIdRequestSchema,
           input,
         ),
       ),

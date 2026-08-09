@@ -4,6 +4,7 @@ import type { ProviderProfileDraft } from "../../shared/contracts/provider";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
 import type { ProviderHttpAdapter } from "./openaiProviderAdapter";
+import type { TerritoryImageProvider } from "./azureImageProvider";
 import { INITIAL_PROVIDER_PROFILES } from "./initialProviderProfiles";
 import { ProviderError } from "./providerError";
 import type {
@@ -11,7 +12,10 @@ import type {
   ProviderRecord,
 } from "./providerRepository";
 import { ProviderService } from "./providerService";
-import type { ProviderAdapterFactory } from "./providerService";
+import type {
+  ImageProviderFactory,
+  ProviderAdapterFactory,
+} from "./providerService";
 import type { ProviderSecretStore } from "./secretStore";
 
 const PROFILE_ID = "77777777-7777-4777-8777-777777777777";
@@ -122,13 +126,20 @@ function createService(
     testRealtimeConnection: vi.fn().mockResolvedValue(undefined),
     verifyImageConfiguration: vi.fn().mockResolvedValue(undefined),
   },
+  imageProvider: TerritoryImageProvider = {
+    edit: vi.fn(),
+    generate: vi.fn(),
+  },
 ) {
   const repository = new MemoryProviderRepository();
   const secrets = new MemorySecretStore();
   const logger = { warn: vi.fn() };
   const adapterFactory: ProviderAdapterFactory = vi.fn(() => adapter);
+  const imageProviderFactory: ImageProviderFactory = vi.fn(() => imageProvider);
   return {
     adapterFactory,
+    imageProvider,
+    imageProviderFactory,
     logger,
     repository,
     secrets,
@@ -139,6 +150,8 @@ function createService(
       new FixedClock(),
       logger,
       adapterFactory,
+      undefined,
+      imageProviderFactory,
     ),
   };
 }
@@ -219,6 +232,41 @@ describe("Provider Service", () => {
     expect(adapterFactory).toHaveBeenCalledWith(
       expect.objectContaining({ id: PROFILE_ID }),
       secret,
+    );
+  });
+
+  it("opens an Image runtime with the saved credential and image model snapshot", async () => {
+    const { imageProvider, imageProviderFactory, service } = createService();
+    const profile = await service.saveProfile({
+      credential: { mode: "replace", value: "azure-image-secret" },
+      profile: {
+        apiStyle: "azure-openai",
+        apiVersion: "2025-04-01-preview",
+        baseUrl: "https://azure.example.com",
+        imageGenerationEndpoint:
+          "https://azure.example.com/openai/deployments/gpt-image-2/images/generations",
+        imageModel: "gpt-image-2",
+        name: "Azure Image",
+      },
+    });
+
+    await expect(service.createImageProvider(profile.id)).resolves.toBe(
+      imageProvider,
+    );
+    expect(service.resolveImageProfileId(profile.id)).toBe(profile.id);
+    expect(service.resolveImageProfileId("chat-only-profile")).toBe(profile.id);
+    expect(imageProviderFactory).toHaveBeenCalledWith(
+      expect.objectContaining({ imageModel: "gpt-image-2" }),
+      "azure-image-secret",
+    );
+  });
+
+  it("requires one complete saved Azure image profile for domain resolution", async () => {
+    const { service } = createService();
+    await service.initialize();
+
+    expect(() => service.resolveImageProfileId()).toThrow(
+      "请先配置一个带凭据、Image Generation Endpoint 与 Image Model 的 Azure Provider",
     );
   });
 

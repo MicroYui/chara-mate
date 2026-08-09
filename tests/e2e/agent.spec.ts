@@ -23,6 +23,7 @@ import {
   type ElectronApplication,
   type Page,
 } from "playwright";
+import { createPng } from "../fixtures/png";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -128,7 +129,44 @@ async function startFakeProvider(browserUrl?: string) {
       const responseId = `response-${String(responseSequence)}`;
       const browserTask = body.includes("浏览器");
       const planTask = body.includes("计划测试");
-      if (planTask) {
+      const territoryTask = body.includes("领地物件");
+      if (territoryTask) {
+        if (
+          body.includes('"call_id":"territory-generate"') &&
+          body.includes("function_call_output")
+        ) {
+          writeSse(response, finalAnswer(responseId, "领地候选已生成"));
+        } else if (body.includes("tool_search_output")) {
+          writeSse(response, [
+            functionCall("territory-generate", "generate_item", "territory", {
+              description: "纪念完成一次完整的 Agent 领地生成。",
+              name: "Agent 纪念灯",
+              structure: {
+                depthAnchorPx: { x: 72, y: 120 },
+                footprintTiles: { height: 2, width: 3 },
+                surfaceSlots: [
+                  {
+                    anchorPx: { x: 72, y: 54 },
+                    id: "center",
+                    maxItemSizePx: { height: 32, width: 32 },
+                  },
+                ],
+                visualSizePx: { height: 120, width: 144 },
+              },
+              visualPrompt: "一盏小巧的深蓝黄铜像素工坊灯",
+            }),
+            completed(responseId),
+          ]);
+        } else {
+          writeSse(response, [
+            searchCall(
+              "territory-search",
+              "generate a Territory item candidate",
+            ),
+            completed(responseId),
+          ]);
+        }
+      } else if (planTask) {
         if (
           body.includes('"call_id":"plan-final"') &&
           body.includes("function_call_output")
@@ -348,6 +386,9 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
 
     const approval = first.main.getByLabel("需要你的确认");
     await expect(approval).toBeVisible();
+    expect(provider.bodies[0]).toContain('"name":"territory"');
+    expect(provider.bodies[0]).toContain('"name":"generate_item"');
+    expect(provider.bodies[0]).toContain('"defer_loading":true');
     await expect(approval).toContainText("写入文件 e2e-note.txt");
     await expect(first.character.getByLabel("桌宠审批提醒")).toContainText(
       "写入文件 e2e-note.txt",
@@ -406,6 +447,115 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
   } finally {
     await application?.close();
     await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("generates a structured Territory candidate through the Agent Tool", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-agent-territory-e2e-"),
+  );
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const image = createPng(16, 16, (x, y) =>
+    x >= 5 && x <= 10 && y >= 4 && y <= 11
+      ? [45, 93, 164, 255]
+      : [255, 0, 255, 255],
+  );
+  let imageRequests = 0;
+  const imageServer = createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://localhost");
+    expect(request.headers["api-key"]).toBe("agent-territory-image-key");
+    expect(requestUrl.pathname).toContain("/images/generations");
+    request.resume();
+    request.on("end", () => {
+      imageRequests += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({ data: [{ b64_json: image.toString("base64") }] }),
+      );
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    imageServer.once("error", reject);
+    imageServer.listen(0, "127.0.0.1", resolve);
+  });
+  const imageAddress = imageServer.address() as AddressInfo;
+  const imageBaseUrl = `http://127.0.0.1:${String(imageAddress.port)}`;
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    const prepared = await launched.main.evaluate(
+      async ({ baseUrl }) => {
+        const saved = await window.charaMate.provider.saveProfile({
+          credential: { mode: "replace", value: "agent-territory-image-key" },
+          profile: {
+            apiStyle: "azure-openai",
+            apiVersion: "2025-04-01-preview",
+            baseUrl,
+            imageGenerationEndpoint: `${baseUrl}/openai/deployments/gpt-image-2/images/generations?api-version=2025-04-01-preview`,
+            imageModel: "gpt-image-2",
+            name: "Agent Territory Image",
+          },
+        });
+        const scene = await window.charaMate.territory.selectScene({
+          sceneId: "star-workshop",
+        });
+        return { saved, scene };
+      },
+      { baseUrl: imageBaseUrl },
+    );
+    expect(prepared.saved).toMatchObject({ ok: true });
+    expect(prepared.scene).toMatchObject({ ok: true });
+
+    await selectAgent(launched.main, "完全访问");
+    await launched.main
+      .getByRole("textbox", { name: "消息" })
+      .fill("生成一个领地物件来纪念这次 Agent 端到端验收");
+    await launched.main.getByRole("button", { name: "发送" }).click();
+
+    await expect(launched.main.getByText("领地候选已生成")).toBeVisible();
+    const snapshot = await launched.main.evaluate(async () => {
+      const response = await window.charaMate.territory.getSnapshot();
+      return response.ok ? response.value : null;
+    });
+    expect(snapshot?.imageCandidates[0]).toMatchObject({
+      name: "Agent 纪念灯",
+      status: "ready",
+      structure: {
+        footprintTiles: { height: 2, width: 3 },
+        surfaceSlots: [{ id: "center" }],
+        visualSizePx: { height: 120, width: 144 },
+      },
+    });
+    expect(snapshot?.collection).toHaveLength(3);
+    expect(imageRequests).toBe(1);
+    expect(
+      provider.bodies.some((body) => body.includes("awaiting_confirmation")),
+    ).toBe(true);
+
+    await launched.main.getByRole("button", { name: "Territory" }).click();
+    await expect(launched.main.getByTestId("territory-canvas")).toBeVisible();
+    await launched.main.getByRole("button", { name: "生成物件" }).click();
+    await expect(
+      launched.main.getByRole("img", { name: "Agent 纪念灯预览" }),
+    ).toBeVisible();
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await new Promise<void>((resolve) => {
+      imageServer.closeAllConnections();
+      imageServer.close(() => resolve());
+    });
     await rm(root, { force: true, recursive: true });
   }
 });

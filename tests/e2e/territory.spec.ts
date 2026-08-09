@@ -1,4 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +18,7 @@ import { TerritoryRepository } from "../../src/main/territory/territoryRepositor
 import { TerritoryService } from "../../src/main/territory/territoryService";
 import { territoryAssetUrl } from "../../src/shared/pure/territoryAsset";
 import { FakeClock } from "../fixtures/fakeClock";
-import { createSolidPng } from "../fixtures/png";
+import { createPng, createSolidPng } from "../fixtures/png";
 import { territoryCupManifest } from "../fixtures/territoryItemManifests";
 
 const projectRoot = path.resolve(
@@ -444,6 +446,180 @@ test("loads a generated image asset through the manifest domain path and restore
     expect(afterRestart).toEqual(beforeRestart);
   } finally {
     await application?.close();
+    await rm(userDataDirectory, { force: true, recursive: true });
+  }
+});
+
+test("recovers Azure Generation, edits the preview, removes its background and confirms it", async () => {
+  const userDataDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-territory-image-e2e-"),
+  );
+  const generatedPng = createPng(16, 16, (x, y) =>
+    x >= 5 && x <= 10 && y >= 4 && y <= 11
+      ? [45, 93, 164, 255]
+      : [255, 0, 255, 255],
+  );
+  const requests: { contentType: string; path: string }[] = [];
+  let generationAttempts = 0;
+  const server = createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://localhost");
+    expect(request.headers["api-key"]).toBe("e2e-azure-image-key");
+    expect(requestUrl.searchParams.get("api-version")).toBe(
+      "2025-04-01-preview",
+    );
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: unknown) => {
+      if (typeof chunk === "string") chunks.push(Buffer.from(chunk));
+      else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+    });
+    request.on("end", () => {
+      requests.push({
+        contentType: String(request.headers["content-type"] ?? ""),
+        path: requestUrl.pathname,
+      });
+      if (requestUrl.pathname.endsWith("/images/generations")) {
+        generationAttempts += 1;
+        if (generationAttempts === 1) {
+          response.writeHead(429, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({ error: { message: "temporary rate limit" } }),
+          );
+          return;
+        }
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          data: [{ b64_json: generatedPng.toString("base64") }],
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+  const endpoint = `http://127.0.0.1:${String(address.port)}`;
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launch(userDataDirectory);
+    application = launched.application;
+    const saved = await launched.page.evaluate(
+      ({ baseUrl }) =>
+        window.charaMate.provider.saveProfile({
+          credential: { mode: "replace", value: "e2e-azure-image-key" },
+          profile: {
+            apiStyle: "azure-openai",
+            apiVersion: "2025-04-01-preview",
+            baseUrl,
+            imageGenerationEndpoint: `${baseUrl}/openai/deployments/gpt-image-2/images/generations?api-version=2025-04-01-preview`,
+            imageModel: "gpt-image-2",
+            name: "E2E Azure Image",
+          },
+        }),
+      { baseUrl: endpoint },
+    );
+    expect(saved).toMatchObject({ ok: true });
+
+    await openTerritory(launched.page);
+    await launched.page.getByRole("button", { name: /林间小屋/u }).click();
+    await expect(launched.page.getByTestId("territory-canvas")).toBeVisible();
+    await launched.page.getByRole("button", { name: "生成物件" }).click();
+    await expect(
+      launched.page.getByText("使用 E2E Azure Image · gpt-image-2"),
+    ).toBeVisible();
+    await launched.page.getByRole("textbox", { name: "名称" }).fill("E2E 台灯");
+    await launched.page
+      .getByRole("textbox", { name: "简短描述" })
+      .fill("一次可恢复的本地端到端生成。 ");
+    await launched.page
+      .getByRole("textbox", { name: "想生成的样子" })
+      .fill("一盏小巧的黄铜像素台灯");
+    await launched.page.getByRole("button", { name: "生成预览" }).click();
+
+    await expect(
+      launched.page.getByText("Provider 暂时限制了请求，请稍后重试。"),
+    ).toBeVisible();
+    await launched.page.getByRole("button", { name: "重试" }).click();
+    const preview = launched.page.getByRole("img", { name: "E2E 台灯预览" });
+    await expect(preview).toBeVisible();
+    const firstPreviewUrl = await preview.getAttribute("src");
+    expect(firstPreviewUrl).toBeTruthy();
+    await expect
+      .poll(() =>
+        launched.page.evaluate(async (url) => {
+          if (!url) return null;
+          const response = await fetch(url);
+          const blob = await response.blob();
+          const image = await createImageBitmap(blob);
+          const canvas = document.createElement("canvas");
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const context = canvas.getContext("2d");
+          context?.drawImage(image, 0, 0);
+          return {
+            backgroundAlpha: context?.getImageData(0, 0, 1, 1).data[3],
+            objectAlpha: context?.getImageData(8, 8, 1, 1).data[3],
+            height: image.height,
+            status: response.status,
+            width: image.width,
+          };
+        }, firstPreviewUrl),
+      )
+      .toEqual({
+        backgroundAlpha: 0,
+        height: 16,
+        objectAlpha: 255,
+        status: 200,
+        width: 16,
+      });
+
+    await launched.page
+      .getByRole("textbox", { name: "继续修改" })
+      .fill("把灯罩改成琥珀玻璃");
+    await launched.page.getByRole("button", { name: "生成修改版" }).click();
+    await expect
+      .poll(() => preview.getAttribute("src"))
+      .not.toBe(firstPreviewUrl);
+    await launched.page.getByRole("button", { name: "确认加入收藏库" }).click();
+    const drawer = launched.page.getByRole("complementary", {
+      name: "领地收藏库",
+    });
+    await expect(drawer).toBeVisible();
+    await expect(
+      drawer.getByRole("button", { name: /E2E 台灯/u }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        launched.page.evaluate(async () => {
+          const response = await window.charaMate.territory.getSnapshot();
+          if (!response.ok) return null;
+          const candidate = response.value.imageCandidates.find(
+            ({ status }) => status === "accepted",
+          );
+          return {
+            acceptedItemId: candidate?.acceptedItemId,
+            status: candidate?.status,
+          };
+        }),
+      )
+      .toMatchObject({
+        acceptedItemId: expect.stringMatching(/^generated\./u),
+        status: "accepted",
+      });
+
+    expect(requests.map(({ path: requestPath }) => requestPath)).toEqual([
+      "/openai/deployments/gpt-image-2/images/generations",
+      "/openai/deployments/gpt-image-2/images/generations",
+      "/openai/deployments/gpt-image-2/images/edits",
+    ]);
+    expect(requests[0]?.contentType).toBe("application/json");
+    expect(requests[2]?.contentType).toContain("multipart/form-data");
+  } finally {
+    await application?.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(userDataDirectory, { force: true, recursive: true });
   }
 });

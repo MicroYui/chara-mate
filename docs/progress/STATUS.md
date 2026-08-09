@@ -37,7 +37,8 @@ Phase 0、Phase 1 与 Phase 2 已完成。Phase 2 将已接受的 `HARNESS-LOOP`
 - `P3-STRUCTURED-INPUT`、`P3-MULTIMODAL-INPUT`：owner `main`，状态 `specified`。前者补齐直接 `request_user_input`、持久化回答卡和同 Run continuation；后者补齐用户图片附件与条件直载 `image.inspect` 共用的真实像素 → Provider 多模态输入路径。两者只依赖 Phase 1/2，可与 Memory Decision 并行。
 - `P2-AGENT-DECISION-EVIDENCE`：owner `main`，状态 `done`。完整设置校准、逐轮晋升/淘汰、机械结论、产品 amendment、限制和外部证据 hash 分别保存在 [`HARNESS-LOOP`](../benchmarks/harness-loop.md)、[`TOOL-DISCOVERY`](../benchmarks/tool-discovery.md) 与 [`PROVIDER-PROMPT-CACHE`](../benchmarks/provider-prompt-cache.md)。
 - `P6-PET-FOUNDATION`、`P6-TERRITORY-BASE`、`P6-TERRITORY-ITEM-MANIFEST`：状态 `done`；Pet foundation 已补齐随包分发与幂等首次安装，其他已完成实现保持不变。
-- 下一主线为 Phase 3：结构化输入/多模态输入可先与 Memory 决策并行；Voice Contract/实验、Automation 基础、独立 Multi-agent 实验和后继 Territory 图片工作也可按不重叠所有权并行。
+- `P6-TERRITORY-IMAGE`：owner `codex/phase6-territory-image`，状态 `done`。同一 Azure Image deployment 的 Generation/Edit、统一场景 style prompt、本地透明背景处理、持久化候选确认、显式重试和启动恢复已贯通；内建延迟发现 Tool `territory.generate_item` 只要求 Agent 提供名称、含义与视觉意图，宿主解析活动场景和 Image Provider，可选结构参数覆盖最终尺寸、2.5D 占地、锚点及承载插槽。Tool 只创建候选，不自动确认；确认后只调用 `TerritoryService.installGeneratedItem`。取舍见 [`TERRITORY-IMAGE-PROCESSING`](../benchmarks/territory-image-processing.md)，生产树没有第二资产路径、Provider fallback、运行时 Arm 或调参设置。
+- 下一主线为 Phase 3：结构化输入/多模态输入可先与 Memory 决策并行；Voice Contract/实验、Automation 基础、独立 Multi-agent 实验也可按不重叠所有权并行。`P6-TERRITORY-MEMORY` 继续等待 Memory/Activity 真源，不与本次 Image 完成状态混写。
 
 ## Decision 与阻塞
 
@@ -45,23 +46,19 @@ Phase 0、Phase 1 与 Phase 2 已完成。Phase 2 将已接受的 `HARNESS-LOOP`
 - Phase 3 生产实现受 `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH`、`ACTIVITY-DISTILLATION` 与 `ACTIVITY-RETENTION` 阻塞。
 - Phase 4 受 `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT` 与 `VOICE-TOOL-JOIN` 阻塞。
 - Multi-agent 与自进化分别受 `MULTI-AGENT`、`SELF-EVOLUTION` 阻塞；未晋级前没有生产协议、表、组件或设置。
-- 生产 Image Generation/Edit、去背景、style prompt 与候选确认仍属于 `P6-TERRITORY-IMAGE`；当前 Territory 只接收已落盘候选图片和 manifest。
+- `TERRITORY-IMAGE-PROCESSING` 已接受：`1024x1024 + medium + opaque`、Edit `high` fidelity、纯洋红 prompt、边缘中位色四连通移除、色差 `96` 与确认后默认 `96x96` 归一化成为唯一生产路径；Tool 可显式提供 `visualSizePx`，但仍复用同一归一化与安装入口，不形成尺寸模式或第二资产路径。付费质量与真实图片观感没有被离线小样本夸大为已证明结论。
 
 ## 最近绿色验证
 
-- `P1-CONTENT-CJK`：截图原句型回归先稳定复现失败，接入 `remark-cjk-friendly@2.3.1` 与 GFM 删除线 companion 的 parse-only 入口后通过；`npm run check:fast` 通过（65 contract），`npm run test:focused` 通过（163 unit/component），`npm run build` 通过。
-- `npm run verify:offline`：通过；65 个 contract、162 个 focused/component、56 个 integration，共 283 个测试；typecheck、ESLint 与全仓 Prettier 同时通过；新增覆盖新建草稿不落库、首次发送兜底标题、AI 标题纯文本规整、首轮完成触发、typed change event、生成失败降级和手工改名保护，原有 Context/Plan/steering/耗时等确定性回归保持通过。
-- `npm run test:e2e`：通过；production build 与完整 9/9 Electron E2E 全绿，修正 bridge shape 后又以后台模式完整重跑 9/9。所有会启动 Electron 的自动回归（E2E、dev smoke、packaged smoke）统一设置 `CHARAMATE_TEST_BACKGROUND=1`：macOS 隐藏测试 App 的 Dock，Main 与 Pet 窗口加载但不 show、focus 或 activate；foundation 与 smoke 结果都会拒绝任何可见测试窗口。Chats 真实旅程新增覆盖“新建不进侧栏 → 首次发送出现首条消息标题 → AI 摘要实时替换 → 手工重命名/搜索/归档/重启”，现有 Agent、Plan、审批、一次性副作用、重启不重放、Managed Browser、Provider、Pet、Territory 和干净退出保持通过。
-- Plan 悬浮卡已以真实 Electron 窗口做截图 QA；紧凑态不遮挡 Composer，完整卡片向上展开且不混入当前 Tool 流程。
-- Browser & Computer 已以真实 Electron 窗口做截图 QA；权限状态为两条紧凑行，长 Profile 路径截断，页面无原先的超大系统权限标题。
-- `npm run smoke:dev`：通过；四项 round-trip 均为 `true`，首次启动可见 `azure`、`copilot_api`、`columbinya` 与 `linnea`，且 Renderer 无 CSP 报错。
-- `npm run package && npm run smoke:package`：通过；macOS arm64 `.app` 同样加载两份初始 Provider 元数据与两只内置桌宠，四项 round-trip 均为 `true`，native `better-sqlite3` 与内置 Chromium 可用；后台 smoke 实测 `backgroundTest=true`、`dockVisible=false`、`visibleWindowCount=0`。
-- `git diff --check` 与顶层依赖树检查通过；没有残留 Electron/Forge/CharaMate 测试进程。
-- Copilot API `gpt-5.6-sol` Live 通过：原生 `web_search` probe 实际发出 1 次搜索；桌面 Chat 以“今天海淀的天气怎么样”复测，5 秒完成、未打开 Managed Browser，并按系统日期返回 2026-08-08 的实时天气。Phase 2 默认回归仍为离线确定性套件。
-- MCP 配置查询补充只读 `mcp_config.server_list`；`file.search` 不再递归扫描依赖、版本库与构建产物。桌面 Agent 以“你现在下载了哪些MCP”复测，专用工具 14ms 返回、整轮 8 秒完成并正确列出已连接的 Playwright MCP；未再调用文件搜索。
+- 2026-08-08 `npm run verify:offline`：15.15 秒通过；9 个 contract 文件 / 65 项、42 个 focused/component 文件 / 181 项、13 个 integration 文件 / 61 项，typecheck、ESLint 与全仓 Prettier 同时通过。
+- `npm run test:e2e`：22.03 秒通过，production build 与完整 11/11 Electron E2E 全绿；除 Azure 429 持久化失败、显式重试、Generation、去背景、Edit 和候选确认外，新增 Agent → Tool Search → `territory.generate_item` → Azure Adapter → 持久化候选 → Territory 预览旅程，验证自定义 `144x120`、`3x2` 占地与单插槽参数，并确认 Tool 不会自动安装物件。
+- `npm run package`：14.25 秒通过；`npm run smoke:package` 4.44 秒、`npm run smoke:dev` 4.99 秒通过，SQLite、主/桌宠 Renderer、内置 Chromium 均完成 round-trip，后台测试没有可见窗口。
+- `npm run test:live` 正确发现 P6 Azure Generation/Edit live case；环境变量未单独注入，自动 live suite 因而为 1/1 skipped。另使用隔离的 Electron 用户目录和现有本机 Image Profile 完成真实桌面点击验收：Generation 在 `42.286s` 后返回带透明背景的候选，Edit 保留 alpha，确认后 `96x96` PNG 出现在收藏库；该单样本只证明真实产品链路可用，不代表视觉质量、成本或延迟分布已完成统计验证。
+- 单路径审计、`git diff --check` 与顶层依赖树检查通过；没有新增依赖、实验 runner、模型包、候选 Adapter、质量/阈值开关或残留测试进程。
 
 ## 来源快照
 
+- P6 Image 于 2026-08-08 复核 OpenAI Image guide、Microsoft Azure OpenAI REST `2025-04-01-preview`、锁定 `openai@6.49.0` tag commit `04671d278ef1531692ae31a870251eec90f3c2d2` 与 Electron `43.2.0` `nativeImage`。协议硬约束、SDK 当前行为与 CharaMate 启发式已分列在 [`TERRITORY-IMAGE-PROCESSING`](../benchmarks/territory-image-processing.md)。
 - Context 窗口解析于 2026-08-08 复核 OpenAI 官方 `gpt-5.6-sol` 模型页、`codex-cli 0.145.0` catalog 与 Codex commit `3aae5d885bac39c1262491aa3fd100dfd8b3919f`：Codex 当前 `272,000 × 95% = 258,400` 是该 runtime 的有效窗口；本机 `copilot_api 1.15.2` commit `ded2357a5a0486422e925d4f2e8107d1b57693a1` 列表端点则为同名模型返回 `922,000` max prompt、详情端点 404。生产按 Provider 元数据解析，不把二者混成 Model ID 常量；90% 仍是 CharaMate 已选启发式。
 - 生产重写于 2026-08-08 复核 Codex 公开源码 commit `3aae5d885bac39c1262491aa3fd100dfd8b3919f`（提交时间 `2026-08-08T04:57:06Z`）；本轮另核对其 `update_plan` 由 core utility 直接注册、`defer_loading: None`、普通模式 exposure 为 `Direct`，参数是完整有序快照与 `pending / in_progress / completed` 三态。该计划没有节点依赖边，也不同于 Codex Plan mode；CharaMate 以命名空间核心工具 `plan.update` 接入既有 Run/Item。其当前行为是参考候选，不是协议硬限制或运行时依赖。
 - 同一 Codex 快照的其余 core/direct 家族均有能力门控：Shell、Patch 与 Image 依赖执行环境和模型；MCP Resource 依赖已连接 Server；结构化用户输入、权限请求、Token Budget、当前时间/等待、插件安装与 Collaboration 分别依赖 feature、模式或版本。CharaMate 当前始终直载的客户端工具精确为 `plan.update`；Provider 原生 Tool Search/Web Search 按支持情况直出，其余 action capability 继续遵循已接受的延迟发现路径。当前日期/时区由每轮请求注入，Context 与 Approval 由宿主管理，因此本轮未发现另一个应无条件直载的 Phase 2 核心工具。
@@ -72,7 +69,7 @@ Phase 0、Phase 1 与 Phase 2 已完成。Phase 2 将已接受的 `HARNESS-LOOP`
 ## 已知产品影响问题
 
 - H7 专用 Timing 没有运行，不能把描述性延迟改写成机械门通过；实际 TTFT、成本和缓存命中继续由单路径可观测性记录。
-- Azure、已登录网页与 macOS Accessibility/Screen Recording 仍需对应用户环境和系统权限；本轮已补充 Copilot API 原生 Web Search Live，完整发布环境 Live 旅程仍留在 Phase 7。
+- 自动 live suite 尚未通过独立环境变量形成可重复批次，因此仍为 1/1 skipped；本轮真实桌面单样本已验证 Azure Generation/Edit、去背景和确认链路，但不能外推视觉质量、成本或延迟分布。完整发布环境 Live 批次仍留在 Phase 7。
 - Electron Forge Vite Plugin 仍由上游标为 experimental；当前精确版本已经过开发、native module、build、package、packaged smoke 和 Electron E2E，升级时必须重跑同一兼容链。
 - packaged `.app` 仍较大；发布优化不得引入第二构建路径或破坏内容渲染、Pixi、native SQLite 与内置 Chromium。
 - 结构化 `request_user_input` 与本地图片语义读取尚未实现，现已分别由 Phase 3 的 `P3-STRUCTURED-INPUT` 与 `P3-MULTIMODAL-INPUT` 正式拥有；它们不再是无归属的“以后再做”，但也不回写成 Phase 2 已完成能力。

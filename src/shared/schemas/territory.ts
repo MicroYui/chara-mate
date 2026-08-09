@@ -1,8 +1,16 @@
 import { Type, type TSchema } from "@sinclair/typebox";
 
 import { AppErrorSchema } from "./error";
-import { NonBlankStringSchema, TimestampSchema } from "./primitives";
-import { TerritoryItemManifestV1Schema } from "./territoryItemManifest";
+import {
+  EntityIdSchema,
+  NonBlankStringSchema,
+  TimestampSchema,
+} from "./primitives";
+import {
+  TerritoryItemManifestV1Schema,
+  TerritoryPixelPointSchema,
+  TerritoryPositiveSizeSchema,
+} from "./territoryItemManifest";
 import { TerritoryRotationSchema } from "./territoryPrimitives";
 
 export { TerritoryRotationSchema } from "./territoryPrimitives";
@@ -151,6 +159,86 @@ export const TerritoryActiveSceneSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const TerritoryImageCandidateOperationSchema = Type.Union([
+  Type.Literal("generate"),
+  Type.Literal("edit"),
+]);
+
+export const TerritoryImageCandidateStatusSchema = Type.Union([
+  Type.Literal("generating"),
+  Type.Literal("ready"),
+  Type.Literal("failed"),
+  Type.Literal("accepted"),
+]);
+
+export const TerritoryGeneratedItemStructureSchema = Type.Object(
+  {
+    attachmentAnchorPx: Type.Optional(TerritoryPixelPointSchema),
+    depthAnchorPx: Type.Optional(TerritoryPixelPointSchema),
+    flippable: Type.Optional(Type.Boolean()),
+    footprintTiles: Type.Optional(TerritoryPositiveSizeSchema),
+    placement: Type.Optional(
+      Type.Union([
+        Type.Literal("ground_object"),
+        Type.Literal("ground_underlay"),
+        Type.Literal("surface"),
+      ]),
+    ),
+    rotations: Type.Optional(
+      Type.Array(TerritoryRotationSchema, {
+        maxItems: 4,
+        minItems: 1,
+        uniqueItems: true,
+      }),
+    ),
+    surfaceSlots: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            anchorPx: TerritoryPixelPointSchema,
+            id: Type.String({
+              maxLength: 48,
+              pattern: "^[a-z][a-z0-9-]*$",
+            }),
+            maxItemSizePx: TerritoryPositiveSizeSchema,
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
+    visualSizePx: Type.Optional(TerritoryPositiveSizeSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryImageCandidateContentSchema = Type.Object(
+  {
+    description: NonBlankStringSchema,
+    editInstruction: Type.Union([NonBlankStringSchema, Type.Null()]),
+    name: NonBlankStringSchema,
+    structure: Type.Union([TerritoryGeneratedItemStructureSchema, Type.Null()]),
+    visualPrompt: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryImageCandidateSchema = Type.Object(
+  {
+    acceptedItemId: Type.Union([TerritoryItemIdSchema, Type.Null()]),
+    createdAt: TimestampSchema,
+    ...TerritoryImageCandidateContentSchema.properties,
+    error: Type.Union([AppErrorSchema, Type.Null()]),
+    id: EntityIdSchema,
+    operation: TerritoryImageCandidateOperationSchema,
+    providerProfileId: EntityIdSchema,
+    sceneId: TerritorySceneIdSchema,
+    sourceCandidateId: Type.Union([EntityIdSchema, Type.Null()]),
+    status: TerritoryImageCandidateStatusSchema,
+    updatedAt: TimestampSchema,
+  },
+  { additionalProperties: false },
+);
+
 export const TerritorySnapshotSchema = Type.Object(
   {
     activeScene: Type.Union([TerritoryActiveSceneSchema, Type.Null()]),
@@ -159,6 +247,7 @@ export const TerritorySnapshotSchema = Type.Object(
       minItems: 4,
     }),
     collection: Type.Array(TerritoryItemSchema),
+    imageCandidates: Type.Array(TerritoryImageCandidateSchema),
   },
   { additionalProperties: false },
 );
@@ -201,6 +290,31 @@ export const TerritoryCollectItemRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const TerritoryGenerateImageRequestSchema = Type.Object(
+  {
+    description: NonBlankStringSchema,
+    name: NonBlankStringSchema,
+    providerProfileId: EntityIdSchema,
+    sceneId: TerritorySceneIdSchema,
+    structure: Type.Optional(TerritoryGeneratedItemStructureSchema),
+    visualPrompt: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryEditImageRequestSchema = Type.Object(
+  {
+    candidateId: EntityIdSchema,
+    instruction: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryImageCandidateIdRequestSchema = Type.Object(
+  { candidateId: EntityIdSchema },
+  { additionalProperties: false },
+);
+
 export const TerritoryInstallGeneratedItemInputSchema = Type.Object(
   {
     itemId: TerritoryItemIdSchema,
@@ -225,6 +339,18 @@ function operationResponse<TValue extends TSchema>(value: TValue) {
 
 export const TerritorySnapshotResponseSchema = operationResponse(
   TerritorySnapshotSchema,
+);
+
+export const TerritoryImageMutationResultSchema = Type.Object(
+  {
+    candidateId: EntityIdSchema,
+    snapshot: TerritorySnapshotSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryImageMutationResponseSchema = operationResponse(
+  TerritoryImageMutationResultSchema,
 );
 
 export const TerritoryMoveResultSchema = Type.Object(

@@ -46,6 +46,7 @@ export const emptyTerritorySnapshot: TerritorySnapshot = {
   activeScene: null,
   availableScenes: territorySceneSummaries,
   collection: [],
+  imageCandidates: [],
 };
 
 export const activeTerritorySnapshot: TerritorySnapshot = {
@@ -101,4 +102,5 @@ export const activeTerritorySnapshot: TerritorySnapshot = {
   },
   availableScenes: territorySceneSummaries,
   collection: [],
+  imageCandidates: [],
 };

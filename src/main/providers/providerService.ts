@@ -16,6 +16,10 @@ import { ProviderProfileSchema } from "../../shared/schemas/provider";
 import { parseSchema } from "../../shared/schemas/validation";
 import type { AppLogger } from "../observability/logger";
 import {
+  AzureTerritoryImageProvider,
+  type TerritoryImageProvider,
+} from "./azureImageProvider";
+import {
   OpenAISdkProviderAdapter,
   type ProviderHttpAdapter,
 } from "./openaiProviderAdapter";
@@ -38,6 +42,11 @@ export type ModelProviderFactory = (
   profile: ProviderProfileDraft,
   apiKey: string,
 ) => ModelProvider;
+
+export type ImageProviderFactory = (
+  profile: ProviderProfileDraft,
+  apiKey: string,
+) => TerritoryImageProvider;
 
 export interface ChatModelRuntime {
   readonly provider: ModelProvider;
@@ -93,7 +102,64 @@ export class ProviderService {
       profile,
       apiKey,
     ) => new OpenAIResponsesModelProvider(profile, apiKey),
+    private readonly imageProviderFactory: ImageProviderFactory = (
+      profile,
+      apiKey,
+    ) => new AzureTerritoryImageProvider(profile, apiKey),
   ) {}
+
+  async createImageProvider(
+    profileId: string,
+  ): Promise<TerritoryImageProvider> {
+    const record = this.#requireProfile(profileId);
+    if (!record.apiKeyRef) {
+      throw new ProviderError(
+        "PROVIDER.CREDENTIAL_REQUIRED",
+        "该 Provider 尚未保存 API Key。",
+        false,
+      );
+    }
+    if (!record.imageModel) {
+      throw new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "请先为该 Provider 配置 Image Model。",
+        false,
+      );
+    }
+    const apiKey = await this.secretStore.get(record.apiKeyRef);
+    const profile = normalizeProviderDraft(recordToDraft(record));
+    return this.imageProviderFactory(profile, apiKey);
+  }
+
+  resolveImageProfileId(preferredProfileId?: string): string {
+    let profiles: ProviderRecord[];
+    try {
+      profiles = this.repository.list();
+    } catch {
+      throw new ProviderError(
+        "PROVIDER.STORAGE_FAILED",
+        "无法读取 Provider Profiles。",
+        true,
+      );
+    }
+    const available = profiles.filter(
+      (profile) =>
+        profile.apiStyle === "azure-openai" &&
+        profile.apiKeyRef !== undefined &&
+        profile.imageGenerationEndpoint !== undefined &&
+        profile.imageModel !== undefined,
+    );
+    const selected =
+      available.find(({ id }) => id === preferredProfileId) ?? available[0];
+    if (!selected) {
+      throw new ProviderError(
+        "PROVIDER.INVALID_CONFIGURATION",
+        "请先配置一个带凭据、Image Generation Endpoint 与 Image Model 的 Azure Provider。",
+        false,
+      );
+    }
+    return selected.id;
+  }
 
   async createChatModelRuntime(profileId: string): Promise<ChatModelRuntime> {
     const record = this.#requireProfile(profileId);

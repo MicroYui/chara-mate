@@ -85,6 +85,7 @@ export class TerritoryService {
         : null,
       availableScenes: listTerritorySceneSummaries(),
       collection: this.repository.listCollectionItems(),
+      imageCandidates: this.repository.listImageCandidates(),
     };
   }
 

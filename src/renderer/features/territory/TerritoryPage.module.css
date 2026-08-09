@@ -213,6 +213,268 @@
   backdrop-filter: blur(18px);
 }
 
+.imagePanel {
+  position: absolute;
+  z-index: 7;
+  top: 24px;
+  right: 24px;
+  bottom: 24px;
+  display: flex;
+  width: min(360px, calc(100% - 48px));
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 13%, var(--border));
+  border-radius: 14px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--surface) 95%, transparent);
+  box-shadow: 0 20px 60px rgba(25, 29, 38, 0.22);
+  backdrop-filter: blur(18px);
+}
+
+.imagePanel header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.imagePanel header > span {
+  display: grid;
+  gap: 3px;
+}
+
+.imagePanel header strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 640;
+}
+
+.imagePanel header small {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.imagePanel header > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 7px;
+  padding: 0;
+  place-items: center;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.candidateHistory {
+  display: flex;
+  align-items: end;
+  gap: 7px;
+}
+
+.candidateHistory label {
+  min-width: 0;
+  flex: 1;
+}
+
+.candidateHistory button,
+.candidateTitle button,
+.candidateEdit button,
+.candidateForm > button,
+.confirmCandidate {
+  display: inline-flex;
+  min-height: 31px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 9px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.candidateHistory button:disabled,
+.candidateTitle button:disabled,
+.candidateEdit button:disabled,
+.candidateForm > button:disabled,
+.confirmCandidate:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.candidateForm,
+.candidateDetail,
+.candidateEdit {
+  display: grid;
+  gap: 10px;
+}
+
+.candidateForm label,
+.candidateEdit label,
+.candidateHistory label {
+  display: grid;
+  gap: 5px;
+}
+
+.candidateForm label > span,
+.candidateEdit label > span,
+.candidateHistory label > span {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 610;
+}
+
+.candidateForm input,
+.candidateForm select,
+.candidateForm textarea,
+.candidateEdit textarea,
+.candidateHistory select {
+  width: 100%;
+  min-height: 32px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 8px;
+  outline: none;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+}
+
+.candidateForm textarea,
+.candidateEdit textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.candidateForm input:focus,
+.candidateForm select:focus,
+.candidateForm textarea:focus,
+.candidateEdit textarea:focus,
+.candidateHistory select:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+}
+
+.candidateForm > button,
+.confirmCandidate {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+
+.candidatePreview {
+  display: grid;
+  min-height: 230px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  place-items: center;
+  background-color: var(--surface-subtle);
+  background-image:
+    linear-gradient(45deg, rgba(128, 128, 128, 0.08) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(128, 128, 128, 0.08) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, 0.08) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.08) 75%);
+  background-position:
+    0 0,
+    0 6px,
+    6px -6px,
+    -6px 0;
+  background-size: 12px 12px;
+}
+
+.candidatePreview[data-status="ready"],
+.candidatePreview[data-status="accepted"] {
+  animation: candidate-reveal 720ms ease-out both;
+}
+
+.candidatePreview img {
+  display: block;
+  width: 100%;
+  height: 230px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.candidatePreview span {
+  max-width: 230px;
+  padding: 18px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.candidateTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.candidateTitle > span {
+  display: grid;
+  gap: 2px;
+}
+
+.candidateTitle small {
+  color: var(--text-secondary);
+  font-size: 9.5px;
+}
+
+.candidateTitle strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 630;
+}
+
+.candidateDescription {
+  margin: -4px 0 0;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.providerHint,
+.imageProgress,
+.imageError {
+  margin: 0;
+  border-radius: 8px;
+  padding: 8px 9px;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.providerHint,
+.imageProgress {
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+}
+
+.imageError {
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  color: var(--text-primary);
+}
+
+@keyframes candidate-reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .collectionDrawer header {
   display: flex;
   align-items: flex-start;
@@ -714,6 +976,11 @@
     width: auto;
     max-height: 55%;
   }
+  .imagePanel {
+    inset: auto 8px 8px;
+    width: auto;
+    max-height: 78%;
+  }
   .itemDetail {
     right: 16px;
     bottom: 16px;
@@ -733,7 +1000,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sceneCard {
+  .sceneCard,
+  .candidatePreview[data-status="ready"],
+  .candidatePreview[data-status="accepted"] {
     transition: none;
+    animation: none;
   }
 }

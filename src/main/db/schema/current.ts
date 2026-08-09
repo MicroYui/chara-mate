@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "4";
+export const CURRENT_SCHEMA_VERSION = "5";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -157,6 +157,45 @@ export const CURRENT_SCHEMA_SQL = `
         location = 'collection' AND scene_id IS NULL AND
         placement_kind IS NULL AND grid_x IS NULL AND grid_y IS NULL AND
         support_item_id IS NULL AND slot_id IS NULL AND placed_at IS NULL
+      )
+    )
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS territory_image_candidates (
+    candidate_id TEXT PRIMARY KEY NOT NULL,
+    provider_profile_id TEXT NOT NULL,
+    scene_id TEXT NOT NULL CHECK (
+      scene_id IN (
+        'forest-cabin',
+        'seaside-room',
+        'city-rooftop',
+        'star-workshop'
+      )
+    ),
+    operation TEXT NOT NULL CHECK (operation IN ('generate', 'edit')),
+    source_candidate_id TEXT REFERENCES territory_image_candidates(candidate_id),
+    request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+    status TEXT NOT NULL CHECK (
+      status IN ('generating', 'ready', 'failed', 'accepted')
+    ),
+    error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+    accepted_item_id TEXT REFERENCES territory_items(item_id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (
+      (operation = 'generate' AND source_candidate_id IS NULL) OR
+      (operation = 'edit' AND source_candidate_id IS NOT NULL)
+    ),
+    CHECK (
+      (
+        status IN ('generating', 'ready') AND
+        error_json IS NULL AND accepted_item_id IS NULL
+      ) OR (
+        status = 'failed' AND
+        error_json IS NOT NULL AND accepted_item_id IS NULL
+      ) OR (
+        status = 'accepted' AND
+        error_json IS NULL AND accepted_item_id IS NOT NULL
       )
     )
   ) STRICT;
@@ -384,4 +423,6 @@ export const CURRENT_SCHEMA_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS territory_one_item_per_surface_slot_idx
     ON territory_placements(support_item_id, slot_id)
     WHERE location = 'scene' AND placement_kind = 'surface';
+  CREATE INDEX IF NOT EXISTS territory_image_candidates_created_idx
+    ON territory_image_candidates(created_at DESC, candidate_id DESC);
 `;

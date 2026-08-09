@@ -32,6 +32,13 @@ export default defineConfig({
           name: "integration",
         },
       },
+      {
+        test: {
+          environment: "node",
+          include: ["tests/live/**/*.test.ts"],
+          name: "live",
+        },
+      },
     ],
   },
 });

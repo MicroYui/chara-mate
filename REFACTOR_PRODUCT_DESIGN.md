@@ -1024,10 +1024,12 @@ https://datasetannotator-openai.openai.azure.com/openai/deployments/gpt-image-2/
 
 1. 每个基础场景有固定 palette、tile scale、可放置 mask 和统一 style prompt。
 2. 新物件使用 Generation route；用户基于已有预览继续描述修改时，使用同一 deployment 派生的 Edit route，并带入参考图、visual prompt、场景 style prompt 与冻结的尺寸/质量约束。
-3. 生成结果去背景、缩放到 tile、生成缩略图并缓存为 asset。
+3. 生成结果去背景并缓存为候选预览；用户确认后再缩放到 tile，并沿唯一 Territory asset 入口安装。
 4. 场景由底图、地面层、物件层、角色层和特效层确定性合成。
 5. 整体场景大改只在用户主动选择“场景演化”时生成预览，确认后应用。
 6. 失败时保留候选和重试入口，不破坏当前场景。
+
+`TERRITORY-IMAGE-PROCESSING` 已固定 Phase 6 的单一路径：Generation/Edit 都请求 `1024x1024`、`medium`、opaque PNG，Edit 使用 `high` input fidelity；统一 prompt 要求纯洋红背景与完整留白，Main 按图片边缘中位色和固定色差 `96` 移除四连通背景。确认时默认归一化为 `96x96` tile asset；内建 Territory Tool 可为单个候选显式声明最终 `visualSizePx`，但不会改变远端请求尺寸或建立另一条处理路径。选择原因、离线标注结果和限制见 [`docs/benchmarks/territory-image-processing.md`](./docs/benchmarks/territory-image-processing.md)。这些值不是 Settings 或运行时模式；若未来真实图片证据要求改变，应替换本段与唯一实现，而不是保留并行路径。
 
 ### 10.5 布置与交互
 
@@ -1122,7 +1124,28 @@ manifest 还必须通过领域语义校验：ID/插槽唯一；尺寸为正；�
 
 #### 10.5.2 结构化生成边界
 
-未来生成 Skill/Tool 的产物是 `item.json + sprite asset`，而不是 SQL、Pixi `zIndex`、世界坐标或任意脚本。管线先校验 manifest，再生成带占用、碰撞、深度锚点和插槽叠层的预览；只有通过校验并经产品流程接受后，才由 Territory Service 创建不可变 definition revision 与 item instance。Skill 可以负责图像与结构化草案，Tool 只消费同一 Schema 和领域 API；在 Agent Runtime/Tool Discovery 稳定前不注册生产 Tool，也不修改 Harness 实验路径。
+结构化生成的产物是 `item.json + sprite asset`，而不是 SQL、Pixi `zIndex`、世界坐标或任意脚本。管线先校验 manifest，再生成带占用、碰撞、深度锚点和插槽叠层的预览；只有通过校验并经产品流程接受后，才由 Territory Service 创建不可变 definition revision 与 item instance。
+
+Phase 2 的 Agent Runtime/Tool Discovery 已稳定，因此 Phase 6 注册一个内建、延迟发现的写入 Tool：`territory.generate_item`。Agent 只需提供 `name`、`description` 与 `visualPrompt` 三个语义字段；当前活动场景和可用 Azure Image Profile 由宿主解析，不向模型暴露数据库 ID。可选 `structure` 提供以下关键 authoring 参数：
+
+```ts
+interface TerritoryGeneratedItemStructure {
+  visualSizePx?: { width: number; height: number }
+  placement?: "ground_object" | "ground_underlay" | "surface"
+  footprintTiles?: { width: number; height: number }
+  depthAnchorPx?: TerritoryPixelPoint
+  attachmentAnchorPx?: TerritoryPixelPoint
+  surfaceSlots?: Array<{
+    id: string
+    anchorPx: TerritoryPixelPoint
+    maxItemSizePx: { width: number; height: number }
+  }>
+  rotations?: TerritoryRotation[]
+  flippable?: boolean
+}
+```
+
+省略结构参数时，领域编译器使用已接受的 `96x96`、`2x2` 地面物件、底边中心深度锚点、底行占用/碰撞、无插槽、可翻转和仅 `0°` 的默认值。`surfaceSlots` 数组本身同时表达数量和位置，不保存重复的 `slotCount`；v1 插槽类型固定为 `tabletop`。地面覆盖物不产生碰撞且不能提供插槽；桌面小物不接受地面占地或插槽。Tool 只创建经过同一 Generation/去背景管线处理的持久化候选，不自动确认或放入场景；用户仍在 Territory 中预览、继续编辑、重试并明确加入收藏库。
 
 Territory 领域入口固定为一个异步调用：
 
@@ -1142,7 +1165,7 @@ interface TerritoryService {
 
 `sourceImagePath` 指向 Image Driver 或 Tool Artifact 已落盘的候选图片，只在 Main 进程安装期间使用，不进入 SQLite、Renderer projection 或 manifest。领域入口按 `manifest.visual.sizePx` 使用 Electron `nativeImage` 解码和缩放，统一编码为 PNG，复核输出尺寸后写入 Territory 自有 asset 目录；随后计算 SHA-256，并把 media type、尺寸、字节数、hash 和相对 storage key 与 definition/item 在一个 SQLite 事务中登记。相同 `assetId + 归一化内容 + manifest revision + itemId` 重试是幂等的；同 assetId 不同内容、同 definition revision 不同 manifest 或同 itemId 不同 definition 都拒绝覆盖。文件先通过独立 staging 目录落盘，数据库失败时回滚本次新建文件，已存在资产不删除。
 
-Renderer 只通过受控 `chara-mate-territory://asset/<assetId>/sprite.png` URL 读取已登记资产；收藏库缩略图与 Pixi Sprite 消费同一 PNG，不读取任意文件路径。当前入口已经适合未来 Agent Tool 调用，但 Tool 注册、图片生成/编辑请求、style prompt、去背景和候选确认仍分别属于 Agent Runtime/Tool Discovery 与 `P6-TERRITORY-IMAGE`，本阶段不伪造这些能力。
+Renderer 只通过受控 `chara-mate-territory://asset/<assetId>/sprite.png` URL 读取已登记资产；收藏库缩略图与 Pixi Sprite 消费同一 PNG，不读取任意文件路径。`P6-TERRITORY-IMAGE` 的手工面板与 `territory.generate_item` 在用户确认候选后都调用这一入口，Generation/Edit、style prompt、去背景与候选状态不会分叉资产协议。
 
 PixiJS `8.19.0` 当前发布包的 `Container.sortableChildren`/`zIndex` 与父子局部坐标变换足以承载上述语义。CharaMate 选择的 mask、插槽和单层附件是产品约束，不是 Pixi 协议硬限制。
 
@@ -1163,11 +1186,11 @@ territory_item_definitions
 territory_items
 territory_item_sources
 territory_placements
-territory_generation_jobs
+territory_image_candidates
 territory_assets
 ```
 
-`territory_assets` 保存归一化 PNG 的 media type、宽高、字节数、SHA-256 和相对 storage key；图片字节位于 Territory 自有 asset 目录，表中不存 BLOB 或原始外部路径。`territory_item_definitions` 保存不可变 manifest revision 与可空 asset 外键，并用数据库约束保证 asset 外键与 manifest 的 `visual.source` 一致；内置和生成物件都通过同一 manifest 投影进入 Renderer。`territory_items` 是实例并引用确定的 definition revision。
+`territory_image_candidates` 保存 Generation/Edit 请求、来源候选与 `generating / ready / failed / accepted` 状态；候选 PNG 位于独立 preview cache，不写 BLOB。启动时遗留的 `generating` 会转成可重试失败，安装失败则保持 `ready`，不会改动当前场景。`territory_assets` 保存确认后归一化 PNG 的 media type、宽高、字节数、SHA-256 和相对 storage key；图片字节位于 Territory 自有 asset 目录，表中不存 BLOB 或原始外部路径。`territory_item_definitions` 保存不可变 manifest revision 与可空 asset 外键，并用数据库约束保证 asset 外键与 manifest 的 `visual.source` 一致；内置和生成物件都通过同一 manifest 投影进入 Renderer。`territory_items` 是实例并引用确定的 definition revision。
 
 `placement` 保存场景 ID、item ID、朝向和 pin，并使用互斥目标：地面物件保存网格坐标，附件保存 `supportItemId + slotId`。渲染平面和深度由 manifest 推导，不保存任意 `zIndex`；同一插槽最多一个附件。图像在 asset 目录，数据库不存大 BLOB。
 
@@ -1607,7 +1630,7 @@ userData/
 | Automation | `automations`（包含 Reminder、Agent Task 与主动触发规则）, `automation_runs` |
 | Extension | `mcp_servers`, `skill_versions`, `skill_usage` |
 | Provider | `provider_profiles`（无明文 Key） |
-| Territory | `territory_scenes`, `territory_scene_revisions`, `territory_items`, `territory_item_sources`, `territory_placements`, `territory_generation_jobs`, `territory_assets` |
+| Territory | `territory_scenes`, `territory_scene_revisions`, `territory_items`, `territory_item_sources`, `territory_placements`, `territory_image_candidates`, `territory_assets` |
 | App | `personas`, `pet_installations`, `window_placements`, `settings` |
 
 ### 14.3 数据不变量
