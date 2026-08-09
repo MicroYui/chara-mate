@@ -2,6 +2,7 @@ import type { Static } from "@sinclair/typebox";
 
 import type { FoundationSnapshotSchema } from "../schemas/foundation";
 import type { AgentApi } from "./agent";
+import type { ActivityApi } from "./activity";
 import type { ChatApi } from "./chat";
 import type { ExtensionsApi } from "./extensions";
 import type { LocalFilesApi } from "./files";
@@ -10,6 +11,7 @@ import type { SettingsApi } from "./settings";
 import type { PetManagementApi } from "./pet";
 import type { ProviderApi } from "./provider";
 import type { TerritoryApi } from "./territory";
+import type { MemoryApi } from "./memory";
 
 export const FOUNDATION_CHANNELS = {
   getSnapshot: "app.foundation.getSnapshot",
@@ -24,8 +26,10 @@ export interface FoundationApi {
 }
 
 export interface DesktopApi {
+  activity: ActivityApi;
   files: LocalFilesApi;
   foundation: FoundationApi;
+  memory: MemoryApi;
   pet: PetManagementApi;
   provider: ProviderApi;
   settings: SettingsApi;

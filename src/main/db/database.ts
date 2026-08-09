@@ -9,6 +9,7 @@ import {
   CURRENT_SCHEMA_VERSION,
   METADATA_SCHEMA_SQL,
 } from "./schema/current";
+import { migrateV4ToV5 } from "./schema/migrateV4ToV5";
 
 interface MetadataRow {
   value: string;
@@ -20,7 +21,9 @@ function initializeCurrentSchema(database: Database.Database): void {
     .prepare("SELECT value FROM app_metadata WHERE key = ?")
     .get("schema_version") as MetadataRow | undefined;
 
-  if (
+  if (schemaVersion?.value === "4") {
+    migrateV4ToV5(database);
+  } else if (
     schemaVersion !== undefined &&
     schemaVersion.value !== CURRENT_SCHEMA_VERSION
   ) {
@@ -46,6 +49,8 @@ export function openApplicationDatabase(
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const database = new Database(databasePath);
   try {
+    database.pragma("journal_mode = WAL");
+    database.pragma("synchronous = FULL");
     database.pragma("foreign_keys = ON");
     initializeCurrentSchema(database);
     return database;

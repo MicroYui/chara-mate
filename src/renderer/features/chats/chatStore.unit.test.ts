@@ -125,6 +125,7 @@ function createApis() {
     cancel: vi.fn(),
     getPendingApproval: vi.fn(),
     resolveApproval: vi.fn(),
+    resolveUserInput: vi.fn(),
     resume,
     start,
     steer,

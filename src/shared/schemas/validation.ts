@@ -2,6 +2,8 @@ import Ajv from "ajv";
 import type { Static, TSchema } from "@sinclair/typebox";
 
 import {
+  CALENDAR_DATE_FORMAT,
+  isCalendarDate,
   isUtcTimestamp,
   JsonValueSchema,
   UTC_TIMESTAMP_FORMAT,
@@ -12,6 +14,7 @@ const ajv = new Ajv({
   strict: true,
 });
 ajv.addFormat(UTC_TIMESTAMP_FORMAT, isUtcTimestamp);
+ajv.addFormat(CALENDAR_DATE_FORMAT, isCalendarDate);
 ajv.addSchema(JsonValueSchema);
 const validators = new WeakMap<TSchema, ReturnType<typeof ajv.compile>>();
 const jsonValueValidator = ajv.getSchema(JsonValueSchema.$id ?? "");

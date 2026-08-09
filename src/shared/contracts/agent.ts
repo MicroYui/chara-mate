@@ -8,6 +8,8 @@ import type {
   PendingApprovalResponseSchema,
   ResolveApprovalRequestSchema,
   ResolveApprovalResponseSchema,
+  ResolveUserInputRequestSchema,
+  ResolveUserInputResponseSchema,
   ResumeRunRequestSchema,
   RunCancelResponseSchema,
   RunMutationResponseSchema,
@@ -22,6 +24,7 @@ export const AGENT_CHANNELS = {
   pendingApproval: "approval.pending",
   openApproval: "approval.open",
   resolveApproval: "approval.resolve",
+  resolveUserInput: "input.resolve",
   resume: "run.resume",
   start: "run.start",
   steer: "run.steer",
@@ -52,6 +55,12 @@ export type RunCancelResponse = Static<typeof RunCancelResponseSchema>;
 export type ResolveApprovalResponse = Static<
   typeof ResolveApprovalResponseSchema
 >;
+export type ResolveUserInputRequest = Static<
+  typeof ResolveUserInputRequestSchema
+>;
+export type ResolveUserInputResponse = Static<
+  typeof ResolveUserInputResponseSchema
+>;
 
 export interface AgentApi {
   cancel(request: RunCancelRequest): Promise<RunCancelResponse>;
@@ -61,6 +70,9 @@ export interface AgentApi {
   resolveApproval(
     request: ResolveApprovalRequest,
   ): Promise<ResolveApprovalResponse>;
+  resolveUserInput(
+    request: ResolveUserInputRequest,
+  ): Promise<ResolveUserInputResponse>;
   resume(request: ResumeRunRequest): Promise<RunMutationResponse>;
   start(request: StartRunRequest): Promise<StartRunResponse>;
   steer(request: SteerRunRequest): Promise<RunMutationResponse>;

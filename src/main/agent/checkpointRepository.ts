@@ -5,7 +5,8 @@ import { JsonValueSchema } from "../../shared/schemas/primitives";
 import { parseSchema } from "../../shared/schemas/validation";
 import { serializeForPersistence } from "../db/persistenceBoundary";
 
-export type CheckpointPhase = "model" | "tool" | "approval" | "interrupted";
+export type CheckpointPhase =
+  "model" | "tool" | "approval" | "input" | "interrupted";
 
 export interface AgentCheckpoint {
   readonly context: JsonValue;

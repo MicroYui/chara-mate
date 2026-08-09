@@ -10,7 +10,7 @@ console.log(
     suite,
     reason:
       suite === "live"
-        ? "Phase 2 production verification is offline by default; this checkout has no configured external Provider or Computer Use endpoint case."
-        : "Phase 2 winner evidence is preserved outside the repository by hash; disposable candidate runners are not part of the production tree.",
+        ? "Production verification is offline by default; this checkout has no explicitly configured external endpoint case."
+        : "Accepted Decision evidence is archived outside the repository by hash; winner behavior is covered by deterministic production regressions and disposable candidate runners are not shipped.",
   }),
 );

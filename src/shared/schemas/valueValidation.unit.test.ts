@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 
-import { JsonValueSchema } from "./primitives";
+import { CalendarDateSchema, JsonValueSchema } from "./primitives";
 import { parseSchema } from "./validation";
 import { parseSchemaWithoutCodeGeneration } from "./valueValidation";
 
@@ -19,6 +19,15 @@ describe("code-generation-free schema validation", () => {
       parseSchemaWithoutCodeGeneration(schema, { sequence: 0 }),
     ).toThrow(/sequence/u);
   });
+
+  it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
+    "validates calendar dates through %s",
+    (parse) => {
+      expect(parse(CalendarDateSchema, "2026-08-09")).toBe("2026-08-09");
+      expect(() => parse(CalendarDateSchema, "2026-02-29")).toThrow();
+      expect(() => parse(CalendarDateSchema, "2026-8-9")).toThrow();
+    },
+  );
 
   it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
     "validates the reusable recursive JSON schema through %s",

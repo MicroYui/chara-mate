@@ -1,4 +1,5 @@
 import type { Dispatch } from "react";
+import type { UserInputResolution } from "../../../shared/contracts";
 
 import { Composer } from "./components/Composer";
 import { MessageList } from "./components/MessageList";
@@ -20,6 +21,11 @@ interface ChatsPageProps {
     approvalId: string,
     decision: "approved" | "rejected",
   ) => void;
+  readonly onResolveUserInput: (
+    runId: string,
+    itemId: string,
+    resolution: UserInputResolution,
+  ) => Promise<void>;
   readonly onSend: () => void;
   readonly onStop: () => void;
   readonly runtimeEnabled: boolean;
@@ -34,7 +40,7 @@ const suggestions = [
 
 const ACTIVE_RUN_STATUSES = new Set<
   ChatView["runs"][number]["record"]["status"]
->(["queued", "running", "waiting_approval"]);
+>(["queued", "running", "waiting_approval", "needs_input"]);
 
 export function activeRunForChat(chat: ChatView | undefined) {
   return chat
@@ -72,6 +78,7 @@ export function ChatsPage({
   models,
   onResumeRun,
   onResolveApproval,
+  onResolveUserInput,
   onSend,
   onStop,
   runtimeEnabled,
@@ -91,6 +98,7 @@ export function ChatsPage({
             dispatch={dispatch}
             onResumeRun={onResumeRun}
             onResolveApproval={onResolveApproval}
+            onResolveUserInput={onResolveUserInput}
             state={state}
           />
         ) : (

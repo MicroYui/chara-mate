@@ -11,6 +11,10 @@ import type { ToolResult } from "../../src/shared/contracts/tool";
 import { SystemClock, type Clock } from "../../src/shared/pure/clock";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { AgentRuntime } from "../../src/main/agent/agentRuntime";
+import type {
+  ImageInputProvider,
+  PreparedImageInput,
+} from "../../src/main/agent/imageInput";
 import { CheckpointRepository } from "../../src/main/agent/checkpointRepository";
 import { registerPlanTool } from "../../src/main/agent/planTool";
 import type {
@@ -26,6 +30,11 @@ import { ChatRepository } from "../../src/main/chat/chatRepository";
 import { ChatService } from "../../src/main/chat/chatService";
 import type { ChatTitleGenerator } from "../../src/main/chat/chatTitleService";
 import { openApplicationDatabase } from "../../src/main/db/database";
+import { LexicalRetrievalPipeline } from "../../src/main/memory/lexicalRetrievalPipeline";
+import { MemoryRepository } from "../../src/main/memory/memoryRepository";
+import { MemoryService } from "../../src/main/memory/memoryService";
+import { registerMemoryTool } from "../../src/main/memory/memoryTool";
+import { ProviderError } from "../../src/main/providers/providerError";
 import {
   ToolRegistry,
   toolEvidenceHash,
@@ -118,11 +127,11 @@ afterEach(async () => {
   );
 });
 
-function complete(responseId: string): ModelEvent {
+function complete(responseId: string, inputTokens = 64): ModelEvent {
   return {
     responseId,
     type: "response.completed",
-    usage: { cachedInputTokens: 0, inputTokens: 64, outputTokens: 8 },
+    usage: { cachedInputTokens: 0, inputTokens, outputTokens: 8 },
   };
 }
 
@@ -157,6 +166,7 @@ function namespacedFunctionTurn(
   name: string,
   namespace: string,
   arguments_: Readonly<Record<string, JsonValue>>,
+  inputTokens = 64,
 ): Turn {
   return () => [
     {
@@ -169,7 +179,7 @@ function namespacedFunctionTurn(
       },
       type: "output.item",
     },
-    complete(`response-${callId}`),
+    complete(`response-${callId}`, inputTokens),
   ];
 }
 
@@ -191,6 +201,8 @@ async function createFixture(
   turns: Turn[],
   clock: Clock = new SystemClock(),
   chatTitles?: ChatTitleGenerator,
+  images?: ImageInputProvider,
+  contextLimits?: ModelContextLimits,
 ): Promise<RuntimeFixture> {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "chara-mate-agent-runtime-"),
@@ -205,7 +217,7 @@ async function createFixture(
   const collector = new EventCollector();
   const events = new RunEventService(runs, collector);
   const writer = new RunEventWriter(runs, events, ids, clock);
-  const provider = new ScriptedProvider(turns);
+  const provider = new ScriptedProvider(turns, contextLimits);
   const tools = new ToolRegistry();
   const checkpoints = new CheckpointRepository(database);
   const runtime = new AgentRuntime(
@@ -232,6 +244,7 @@ async function createFixture(
     undefined,
     undefined,
     chatTitles,
+    images,
   );
   return {
     chatId: chat.id,
@@ -245,9 +258,24 @@ async function createFixture(
   };
 }
 
+function preparedImage(label: string): PreparedImageInput {
+  return {
+    byteLength: 12,
+    content: {
+      detail: "auto",
+      image_url: `data:image/png;base64,${label}`,
+      type: "input_image",
+    },
+    height: 24,
+    mediaType: "image/png",
+    width: 32,
+  };
+}
+
 function createRuntimeFor(
   fixture: RuntimeFixture,
   provider: ScriptedProvider,
+  memory?: MemoryService,
 ): AgentRuntime {
   const ids = new CryptoIdGenerator();
   const clock = new SystemClock();
@@ -275,6 +303,11 @@ function createRuntimeFor(
     },
     ids,
     clock,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    memory,
   );
 }
 
@@ -366,6 +399,61 @@ async function waitForStatus(
 }
 
 describe("Agent Runtime production path", () => {
+  it("preinjects one top-8 memory snapshot before the current question", async () => {
+    const fixture = await createFixture([]);
+    const clock = new SystemClock();
+    const ids = new CryptoIdGenerator();
+    const repository = new MemoryRepository(fixture.database);
+    const memory = new MemoryService(
+      repository,
+      new LexicalRetrievalPipeline(fixture.database, repository, clock),
+      ids,
+      clock,
+    );
+    const created = memory.create({
+      confidence: 1,
+      content: "技术回答先给结论，再给必要依据。",
+      importance: 0.9,
+      reason: "用户明确偏好",
+      sources: [],
+      type: "preference",
+    });
+    registerMemoryTool(fixture.tools, memory);
+    const provider = new ScriptedProvider([finalTurn("已按偏好回答")]);
+    const runtime = createRuntimeFor(fixture, provider, memory);
+
+    const run = await runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "技术回答应该怎样组织？",
+      execution: { approvalMode: "full_access", mode: "agent" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    const input = provider.requests[0]?.input ?? [];
+    expect(input.at(-1)).toEqual({
+      content: "技术回答应该怎样组织？",
+      role: "user",
+      type: "message",
+    });
+    expect(input.at(-2)).toMatchObject({ role: "developer", type: "message" });
+    expect(JSON.stringify(input.at(-2))).toContain(created.memory.id);
+    expect(JSON.stringify(input.at(-2))).toContain(
+      created.memory.currentRevisionId,
+    );
+    expect(
+      provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "memory")
+        ?.tools.find(({ name }) => name === "memory.search"),
+    ).toMatchObject({ deferLoading: true });
+    expect(
+      fixture.database.prepare("SELECT consumer FROM memory_usage").all(),
+    ).toEqual([{ consumer: "context" }]);
+    fixture.database.close();
+  });
+
   it("requests an AI title only after the first persisted Turn completes", async () => {
     const generate = vi.fn<ChatTitleGenerator["generate"]>(() =>
       Promise.resolve(),
@@ -407,11 +495,29 @@ describe("Agent Runtime production path", () => {
         { status: "pending" as const, step: "运行验收" },
       ],
     };
-    const fixture = await createFixture([
-      namespacedFunctionTurn("plan-first", "update", "plan", initialPlan),
-      namespacedFunctionTurn("plan-progress", "update", "plan", progressedPlan),
-      finalTurn(),
-    ]);
+    const fixture = await createFixture(
+      [
+        namespacedFunctionTurn(
+          "plan-first",
+          "update",
+          "plan",
+          initialPlan,
+          100,
+        ),
+        namespacedFunctionTurn(
+          "plan-progress",
+          "update",
+          "plan",
+          progressedPlan,
+          100,
+        ),
+        finalTurn(),
+      ],
+      undefined,
+      undefined,
+      undefined,
+      { effectiveInputTokens: 100 },
+    );
     registerPlanTool(fixture.tools);
 
     const run = await startAgent(fixture);
@@ -449,7 +555,18 @@ describe("Agent Runtime production path", () => {
           .filter(({ deferLoading }) => deferLoading === false)
           .map(({ name }) => name),
       ),
-    ).toEqual(["plan.update"]);
+    ).toEqual(["request_user_input", "plan.update"]);
+    expect(JSON.stringify(fixture.provider.requests[1]?.input)).toContain(
+      "[plan:in_progress] 检查现有实现",
+    );
+    expect(JSON.stringify(fixture.provider.requests[1]?.input)).toContain(
+      "[plan:pending] 运行验收",
+    );
+    expect(
+      fixture.runs
+        .listRunItems(run.id)
+        .some(({ kind }) => kind === "context_compaction"),
+    ).toBe(true);
     fixture.database.close();
   });
 
@@ -504,12 +621,429 @@ describe("Agent Runtime production path", () => {
     });
     await waitForStatus(fixture, run.id, "completed");
 
-    expect(fixture.provider.requests[0]?.toolNamespaces).toEqual([]);
+    expect(fixture.provider.requests[0]?.toolNamespaces).toEqual([
+      expect.objectContaining({
+        name: "interaction",
+        tools: [
+          expect.objectContaining({
+            deferLoading: false,
+            name: "request_user_input",
+          }),
+        ],
+      }),
+    ]);
     expect(
       fixture.runs
         .listRunItems(run.id)
         .filter(({ kind }) => kind === "tool_call"),
     ).toEqual([]);
+    fixture.database.close();
+  });
+
+  it("pauses for direct structured input, consumes one answer, and continues the same Run", async () => {
+    const questions = [
+      {
+        header: "范围",
+        id: "scope",
+        options: [
+          { description: "只处理当前文件。", label: "当前文件" },
+          { description: "处理整个目录。", label: "整个目录" },
+        ],
+        question: "这次要处理多大范围？",
+      },
+    ];
+    const fixture = await createFixture([
+      namespacedFunctionTurn(
+        "input-scope",
+        "request_user_input",
+        "interaction",
+        { questions },
+      ),
+      () => {
+        throw new ProviderError(
+          "PROVIDER.CONTEXT_LIMIT_EXCEEDED",
+          "context is full",
+          true,
+        );
+      },
+      finalTurn("已按选择完成"),
+    ]);
+
+    const run = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "先问清楚范围再继续",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "needs_input");
+    const item = fixture.runs
+      .listRunItems(run.id)
+      .find(({ kind }) => kind === "input_request");
+    expect(item).toMatchObject({
+      input: { questions },
+      status: "waiting_input",
+    });
+    expect(fixture.checkpoints.get(run.id)).toMatchObject({ phase: "input" });
+
+    const resolution = {
+      answers: [
+        {
+          questionId: "scope",
+          value: { kind: "option" as const, label: "整个目录" },
+        },
+      ],
+      resolvedAt: REQUESTED_AT,
+      status: "answered" as const,
+    };
+    await fixture.runtime.resolveUserInput({
+      itemId: item!.id,
+      resolution,
+      runId: run.id,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    const resolvedItem = fixture.runs.getRunItem(item!.id);
+    expect(resolvedItem).toMatchObject({
+      output: resolution,
+      status: "completed",
+    });
+    const continuedInput = JSON.stringify(fixture.provider.requests[1]?.input);
+    expect(continuedInput).toContain('"call_id":"input-scope"');
+    expect(continuedInput).toContain("整个目录");
+    expect(continuedInput.match(/input-scope/gu)).toHaveLength(2);
+    const compactedInput = JSON.stringify(fixture.provider.requests[2]?.input);
+    expect(compactedInput).toContain("先问清楚范围再继续");
+    expect(compactedInput).toContain("structured answers");
+    expect(compactedInput).toContain("整个目录");
+    expect(compactedInput).not.toContain("input-scope");
+    expect(fixture.provider.requests[0]?.instructions).toContain(
+      "call the always-loaded request_user_input tool directly",
+    );
+
+    const duplicate = await fixture.runtime.resolveUserInput({
+      itemId: item!.id,
+      resolution,
+      runId: run.id,
+    });
+    expect(duplicate.status).toBe("completed");
+    expect(
+      fixture.collector.events.filter(
+        ({ event }) => event.type === "input.resolved",
+      ),
+    ).toHaveLength(1);
+    fixture.database.close();
+  });
+
+  it("restores a pending structured question after restart and accepts cancellation", async () => {
+    const questions = [
+      {
+        header: "输出",
+        id: "format",
+        options: [
+          { description: "保存为 Markdown。", label: "Markdown" },
+          { description: "只在聊天中回答。", label: "聊天回答" },
+        ],
+        question: "希望如何交付结果？",
+      },
+    ];
+    const fixture = await createFixture([
+      namespacedFunctionTurn(
+        "input-format",
+        "request_user_input",
+        "interaction",
+        { questions },
+      ),
+    ]);
+    const run = await startAgent(fixture);
+    await waitForStatus(fixture, run.id, "needs_input");
+    const item = fixture.runs
+      .listRunItems(run.id)
+      .find(({ kind }) => kind === "input_request");
+
+    const restartedProvider = new ScriptedProvider([
+      finalTurn("已尊重取消并完成"),
+    ]);
+    const restartedRuntime = createRuntimeFor(fixture, restartedProvider);
+    await restartedRuntime.initialize();
+    await restartedRuntime.resolveUserInput({
+      itemId: item!.id,
+      resolution: { resolvedAt: REQUESTED_AT, status: "cancelled" },
+      runId: run.id,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(restartedProvider.requests).toHaveLength(1);
+    expect(JSON.stringify(restartedProvider.requests[0]?.input)).toContain(
+      '\\"status\\":\\"cancelled\\"',
+    );
+    expect(fixture.runs.getRunItem(item!.id)).toMatchObject({
+      output: { status: "cancelled" },
+      status: "completed",
+    });
+    fixture.database.close();
+  });
+
+  it("sends user image attachments as real Provider image content", async () => {
+    const prepare = vi.fn<ImageInputProvider["prepare"]>((source) =>
+      Promise.resolve(preparedImage(Buffer.from(source).toString("base64"))),
+    );
+    const fixture = await createFixture(
+      [finalTurn("我已读取图片")],
+      new SystemClock(),
+      undefined,
+      { prepare },
+    );
+
+    const run = await fixture.runtime.start({
+      attachments: [
+        {
+          artifactId: "20000000-0000-4000-8000-000000000001",
+          byteLength: 123,
+          displayName: "layout.png",
+          kind: "image",
+          mediaType: "image/png",
+          storageKey: "/workspace/layout.png",
+        },
+      ],
+      chatId: fixture.chatId,
+      content: "这张图有什么问题？",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(prepare).toHaveBeenCalledWith("/workspace/layout.png");
+    const input = fixture.provider.requests[0]?.input[0];
+    expect(input).toMatchObject({ role: "user", type: "message" });
+    expect(JSON.stringify(input)).toContain('"type":"input_image"');
+    expect(JSON.stringify(input)).toContain("data:image/png;base64,");
+    expect(JSON.stringify(input)).not.toContain("/workspace/layout.png");
+    fixture.database.close();
+  });
+
+  it("persists image references while materializing pixels only for the Provider", async () => {
+    let releaseTurn: (() => void) | undefined;
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    const prepare = vi.fn<ImageInputProvider["prepare"]>(() =>
+      Promise.resolve(preparedImage("cGl4ZWxz")),
+    );
+    const fixture = await createFixture(
+      [
+        async () => {
+          await turnGate;
+          return [
+            { delta: "我已读取图片", type: "text.delta" },
+            complete("response-image-reference"),
+          ];
+        },
+      ],
+      new SystemClock(),
+      undefined,
+      { prepare },
+    );
+
+    const run = await fixture.runtime.start({
+      attachments: [
+        {
+          artifactId: "20000000-0000-4000-8000-000000000004",
+          displayName: "layout.png",
+          kind: "image",
+          mediaType: "image/png",
+          storageKey: "/workspace/layout.png",
+        },
+      ],
+      chatId: fixture.chatId,
+      content: "读取这张图",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await vi.waitFor(() => expect(fixture.provider.requests).toHaveLength(1));
+
+    const checkpoint = JSON.stringify(fixture.checkpoints.get(run.id)?.context);
+    expect(checkpoint).toContain("charamate_image_reference");
+    expect(checkpoint).toContain("/workspace/layout.png");
+    expect(checkpoint).not.toContain("data:image");
+    expect(checkpoint).not.toContain("cGl4ZWxz");
+    expect(JSON.stringify(fixture.provider.requests[0]?.input)).toContain(
+      "data:image/png;base64,cGl4ZWxz",
+    );
+
+    releaseTurn?.();
+    await waitForStatus(fixture, run.id, "completed");
+    fixture.database.close();
+  });
+
+  it("rejects image input before the request when model metadata says vision is unsupported", async () => {
+    const prepare = vi.fn<ImageInputProvider["prepare"]>(() =>
+      Promise.resolve(preparedImage("aW1hZ2U=")),
+    );
+    const fixture = await createFixture(
+      [finalTurn("不应发送")],
+      new SystemClock(),
+      undefined,
+      { prepare },
+      { effectiveInputTokens: 100_000, supportsVision: false },
+    );
+
+    await expect(
+      fixture.runtime.start({
+        attachments: [
+          {
+            artifactId: "20000000-0000-4000-8000-000000000003",
+            displayName: "unsupported.png",
+            kind: "image",
+            storageKey: "/workspace/unsupported.png",
+          },
+        ],
+        chatId: fixture.chatId,
+        content: "读取图片",
+        execution: { mode: "chat" },
+        providerProfileId: PROFILE_ID,
+        requestedAt: REQUESTED_AT,
+      }),
+    ).rejects.toMatchObject({ code: "AGENT.IMAGE_INPUT_UNAVAILABLE" });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(fixture.provider.requests).toHaveLength(0);
+    fixture.database.close();
+  });
+
+  it("loads image.inspect pixels into the next Agent model turn", async () => {
+    const prepare = vi.fn<ImageInputProvider["prepare"]>(() =>
+      Promise.resolve(preparedImage("aW1hZ2U=")),
+    );
+    const fixture = await createFixture(
+      [
+        namespacedFunctionTurn("inspect-1", "inspect", "image", {
+          path: "run/image.png",
+        }),
+        () => {
+          throw new ProviderError(
+            "PROVIDER.CONTEXT_LIMIT_EXCEEDED",
+            "context is full",
+            true,
+          );
+        },
+        finalTurn("图片是一张界面截图"),
+      ],
+      new SystemClock(),
+      undefined,
+      { prepare },
+    );
+
+    const run = await startAgent(fixture);
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(prepare).toHaveBeenCalledWith("run/image.png");
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces.find(
+        ({ name }) => name === "image",
+      )?.tools[0],
+    ).toMatchObject({ deferLoading: false, name: "image.inspect" });
+    const continued = JSON.stringify(fixture.provider.requests[1]?.input);
+    expect(continued).toContain('"call_id":"inspect-1"');
+    expect(continued).toContain('"type":"input_image"');
+    expect(continued).toContain("data:image/png;base64,aW1hZ2U=");
+    const compacted = JSON.stringify(fixture.provider.requests[2]?.input);
+    expect(compacted).toContain("完成测试任务");
+    expect(compacted).toContain('"type":"input_image"');
+    expect(compacted).toContain("data:image/png;base64,aW1hZ2U=");
+    expect(
+      fixture.runs
+        .listRunItems(run.id)
+        .find(
+          ({ input }) =>
+            typeof input === "object" &&
+            input !== null &&
+            !Array.isArray(input) &&
+            input["toolName"] === "image.inspect",
+        ),
+    ).toMatchObject({ status: "completed" });
+    fixture.database.close();
+  });
+
+  it("reports an explicit capability error when a Provider rejects image input", async () => {
+    const fixture = await createFixture(
+      [
+        () => {
+          throw new ProviderError(
+            "PROVIDER.REQUEST_FAILED",
+            "bad request",
+            false,
+          );
+        },
+      ],
+      new SystemClock(),
+      undefined,
+      { prepare: () => Promise.resolve(preparedImage("aW1hZ2U=")) },
+    );
+
+    const run = await fixture.runtime.start({
+      attachments: [
+        {
+          artifactId: "20000000-0000-4000-8000-000000000002",
+          displayName: "unsupported.png",
+          kind: "image",
+          storageKey: "/workspace/unsupported.png",
+        },
+      ],
+      chatId: fixture.chatId,
+      content: "读取图片",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "failed");
+
+    expect(fixture.runs.getRun(run.id)?.error).toMatchObject({
+      code: "PROVIDER.IMAGE_INPUT_UNAVAILABLE",
+      retryable: false,
+    });
+    fixture.database.close();
+  });
+
+  it("keeps a transient Provider image request failure retryable", async () => {
+    const fixture = await createFixture(
+      [
+        () => {
+          throw new ProviderError(
+            "PROVIDER.REQUEST_FAILED",
+            "temporary upstream failure",
+            true,
+          );
+        },
+      ],
+      new SystemClock(),
+      undefined,
+      { prepare: () => Promise.resolve(preparedImage("aW1hZ2U=")) },
+    );
+
+    const run = await fixture.runtime.start({
+      attachments: [
+        {
+          artifactId: "20000000-0000-4000-8000-000000000003",
+          displayName: "retryable.png",
+          kind: "image",
+          storageKey: "/workspace/retryable.png",
+        },
+      ],
+      chatId: fixture.chatId,
+      content: "读取图片",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "interrupted");
+
+    expect(fixture.runs.getRun(run.id)?.error).toMatchObject({
+      code: "PROVIDER.REQUEST_FAILED",
+      retryable: true,
+    });
     fixture.database.close();
   });
 
@@ -605,7 +1139,9 @@ describe("Agent Runtime production path", () => {
     expect(calls).toBe(24);
     expect(fixture.provider.requests).toHaveLength(26);
     expect(
-      fixture.provider.requests[0]?.toolNamespaces[0]?.tools[0],
+      fixture.provider.requests[0]?.toolNamespaces.find(
+        ({ name }) => name === "test",
+      )?.tools[0],
     ).toMatchObject({ name: "test.read" });
     expect(fixture.provider.requests[1]?.input).toContainEqual(
       expect.objectContaining({
@@ -723,6 +1259,7 @@ describe("Agent Runtime production path", () => {
 
     expect(alternativeCalls).toBe(1);
     expect(fixture.provider.requests[5]?.allowedTools).toEqual([
+      { name: "request_user_input", namespace: "interaction" },
       { name: "test.alternative", namespace: "test" },
     ]);
     expect(fixture.provider.requests[5]?.input).not.toContainEqual(
@@ -747,6 +1284,7 @@ describe("Agent Runtime production path", () => {
     const run = await startAgent(fixture);
     await waitForStatus(fixture, run.id, "failed");
     expect(fixture.provider.requests[5]?.allowedTools).toEqual([
+      { name: "request_user_input", namespace: "interaction" },
       { name: "test.lonely", namespace: "test" },
     ]);
     expect(

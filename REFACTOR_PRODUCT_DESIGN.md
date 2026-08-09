@@ -640,9 +640,7 @@ interface MemoryRevision {
 
 ### 6.5 图关系能力
 
-图关系不是首版必带模块。`MEMORY-GRAPH` 实验只有证明它提高最终回答或用户理解、且收益覆盖表、索引和维护成本时，才进入唯一发布实现；否则产品没有 Graph 表、Graph 检索分支或图谱 UI。
-
-若图关系晋级，其产品语义固定为：连接人物、项目、地点、偏好、事件与作品；每条关系指向 Memory Revision 证据；只服务个人记忆，不建设通用世界知识图谱。具体存储和在线使用方式由该 Decision Record 唯一确定。
+`MEMORY-GRAPH` 已选择无图实现：oracle-quality 一跳关系没有改善冻结 graph 问题的 evidence reach。发布版没有 Graph 表、索引、检索分支、文件、设置或图谱 UI；Memory 之间的组合回答只使用唯一 Retrieval Pipeline 返回的 Revision evidence。该结论不是运行时开关，未来若真实产品数据形成不同证据，应新开 Decision，而不是预留空图模块。
 
 ### 6.6 唯一 Retrieval Pipeline
 
@@ -654,10 +652,12 @@ interface RetrievalPipeline {
 }
 ```
 
+`MEMORY-RETRIEVAL` 已选择单路 SQLite FTS5：文本先做 NFKC、中文/英文 word segmentation，并为连续 Han 词补相邻二元词；按 BM25 召回。查询先过滤删除、状态、有效时间与 `asOf` Revision；相同 relevance 才依次用 pin、importance、confidence、last access、updated time 与稳定 ID 打破平局。Revision 与 FTS 在同一事务更新，不在启动时全量重建。
+
 发布版遵守：
 
 1. 只有一条在线路径、一组参数和一个索引生命周期；
-2. `ContextCompiler`、`search_memory` 和 Memory 页面搜索复用它，不各自维护排序；
+2. `ContextCompiler`、`memory.search` 和 Memory 页面搜索复用它，不各自维护排序；
 3. 时间、有效性、冲突、Revision 和来源追溯是稳定语义；
 4. 用户和 Settings 看不到内部模型、融合、topK、重排或索引档位；
 5. 在 `MEMORY-RETRIEVAL` Decision Record 完成前不得实现生产检索；完成后本节只写入胜者，不把候选搬回来；
@@ -665,9 +665,7 @@ interface RetrievalPipeline {
 
 ### 6.7 检索运行时工件
 
-获胜 Pipeline 若需要模型或专用索引，发布物只包含 Decision Record 冻结的一个模型工件、量化、维度、instruction、索引类型和执行位置；若不需要，则不创建向量表、worker 或模型下载流程。应用不会同时维护本地/远程、exact/ANN 或有模型/无模型的备用路径。
-
-模型或索引不可用时，Run 如实返回该能力暂不可用并保留可恢复状态，不静默切换到另一套未经本轮选择的排序算法。
+获胜 Pipeline 不需要 embedding、reranker 或专用向量索引。发布物不包含检索模型、向量表、segment、worker、下载流程或本地/远程 fallback；FTS 与 Memory Revision 同属一个 SQLite 生命周期。索引事务失败时该 Memory 写入整体失败，不静默切换到另一套排序算法。
 
 ### 6.8 Context Engineering
 
@@ -681,7 +679,9 @@ interface RetrievalPipeline {
 - 会话摘要是带覆盖水位和来源的版本化工件，能够表达目标、约束、完成动作、重要决定与未解决问题；
 - Persona、近期原文、摘要、长期记忆、Activity Digest 和 Tool 结果的具体顺序、预算、topK 与裁剪规则由 `CONTEXT-RECIPE` 实验一次选定。
 
-发布版只有一套冻结的 Context Recipe，不按模型、设备或用户设置维护多种装配模式。
+`CONTEXT-RECIPE` 已选择 `C2 PRE8 + goal-last`：每个新 Run 只执行一次当前请求的 R0 top8 检索，把带 Memory/Revision ID、时间、状态和来源的 evidence 存入 checkpoint；有界活跃上下文与结构化 handoff 在前，当前用户输入靠近末尾。模型续步、Tool continuation、恢复和 run 内 steering 不重复初始检索；压缩仍保留该 evidence 与当前/最新结构化用户输入、未完成宿主状态和最新必要 action Tool Result。
+
+`memory.search` 是 deferred Agent 能力，只在用户明确要求检查或搜索预注入范围之外的 Memory 记录时经 Tool Search 加载；它不常驻普通 Chat/Agent 上下文，也不作为自动 Recipe 的第二检索阶段。发布版不按模型、设备或用户设置维护其他顺序、动态 topK 或装配模式。
 
 ### 6.9 Activity 蒸馏为记忆
 
@@ -698,7 +698,7 @@ Raw events
 
 ### 6.10 存储与写放大
 
-`better-sqlite3` 保存 Chat、Run、Memory Revision 和其他关系型元数据，并开启外键一致性。journal、synchronous、busy timeout、checkpoint、批量大小、向量字节位置与计算进程由 `MEMORY-STORAGE` 实验一次选定；产品文档不预先写死 WAL、段文件或 worker。
+`better-sqlite3` 保存 Chat、Run、Memory Revision 和其他关系型元数据，并开启外键一致性。`MEMORY-STORAGE` 已选择 `WAL + synchronous=FULL` 与 SQLite 默认 autocheckpoint；产品不增加自定义 checkpoint job、busy-timeout 档位或存储设置。长清理与重建不进入交互事务，Activity 和批量使用记录在领域事务内提交。检索未选择专用向量工件时，不创建向量表、segment、worker 或本地模型服务。
 
 稳定存储分工：
 
@@ -710,8 +710,8 @@ Raw events
 
 降低写放大：
 
-- Activity 事务批量、检索使用记录、索引更新、提交与 GC 采用 `MEMORY-STORAGE` 胜者冻结的唯一策略，不在产品文档预设批量值或进程形态；
-- 派生数据不应让 Memory 主行在每次命中时变成热写点，具体记录方式随同一 Storage Decision 固化；
+- Activity Episode/Digest 与检索使用记录使用各自领域的显式事务；索引和 Revision 与真源同事务更新，文件 GC 在数据库提交后执行并由 orphan sweep 收口；
+- 检索命中批量追加到 `memory_usage`，`lastAccessedAt` 从使用记录投影，不在每次命中时改写 Memory 主行；
 - 原图等大资产单独保存，数据库只保存路径、尺寸、时间和摘要；
 - 清理、重建与长模型调用不进入交互事务，Renderer 不承担存储或索引计算。
 
@@ -746,12 +746,12 @@ Memory 页面包含：
 ### 7.2 采集与 Episode
 
 - 前台应用变化立即结束上一段并开始下一段。
-- 相同应用和相近窗口在短间隔内合并。
+- 同 actor、同应用和同窗口在 8 分钟内合并；不同窗口不因应用名相同而混为一段。
 - Browser 标签停留和 Active App 统一到时间线，但保留来源。
-- 截图使用目标设备长时测试后冻结的一种低频采集节奏，并可由应用/窗口变化触发；最终只保留这一种策略，内部频率不做用户档位。
+- 前台状态每 15 秒读取一次且只在状态变化时落 event；连续 idle 60 秒、锁屏或休眠切断 Episode。
+- 截图只在用户前台状态变化时触发，且距上次成功截图至少 15 分钟；失败不阻断 metadata event，内部频率不做用户档位。
 - 原图单独保存；数据库仅保存路径、尺寸、时间和摘要。
-- Idle、锁屏和休眠切断 Episode。
-- 先用时间、应用变化、Idle 等确定性边界形成 Episode；标签、合并和摘要方式由 `ACTIVITY-DISTILLATION` 选择一次，发布版不逐事件调用模型。
+- 先用时间、应用变化和 Idle 等确定性边界形成 Episode；Agent 操作使用独立 actor，不归因给用户，发布版不逐事件调用模型。
 
 ### 7.3 Activity 页面
 
@@ -767,11 +767,11 @@ Memory 页面包含：
 
 | 频率 | 输入 | 输出 |
 | --- | --- | --- |
-| 实时/短周期 | 原始事件 | Episode 边界与轻量标签 |
-| 定期蒸馏 | 已闭合 Episode、聊天摘要 | Period Digest、候选记忆、候选画像变化 |
-| 跨周期归纳 | 多个 Digest、现有长期记忆 | 稳定模式、冲突/过期建议、领地物件候选 |
+| 8 分钟闭合窗口 | 原始 transition event | 确定性 Episode 边界与轻量标签 |
+| 每日 | 已闭合 Episode | Daily Digest |
+| 每周 | 多日 Episode/Digest | 至少两个不同日期支持的 `activity_digest` Memory 候选 |
 
-具体周期、是否需要第二层跨周期归纳及其批量由 `ACTIVITY-DISTILLATION` Decision 一次选定。蒸馏结果进入 Memory 候选而不是直接无限累积；稳定偏好需要跨事件证据或用户明确表达。
+蒸馏采用 `ACTIVITY-DISTILLATION` 选出的无模型单路径，不从任意窗口或截图推断复杂意图，也不自动写 Profile。跨日归纳只陈述可由 app/domain、日期和时长证明的模式，先进入用户可见候选；明确聊天表达仍具有更高事实优先级。
 
 ### 7.5 保留与定期删除
 
@@ -787,9 +787,9 @@ Activity 不是永久事件仓库。原始数据完成蒸馏后由 `ActivityRete
 
 - 在线记忆检索不直接召回原始事件或截图，只召回 Digest、Memory 和必要的 Episode 摘要，避免低信息活动污染回答。
 - 删除作业同时清理文件、缩略图、OCR、获胜检索索引引用和数据库行；空闲时再做所选数据库维护、空间回收与 asset orphan sweep。
-- 达到 `ACTIVITY-RETENTION` 胜者定义的回收条件时，只回收已经完成必要蒸馏的原始层；具体使用时间窗、容量还是两者组合由实验一次决定，长期记忆与领地物件不随原始截图过期而删除。
+- 只有 `distilled_at` 已提交的原始层可以回收：截图 7 天、raw event 30 天、Episode 90 天，Digest 与已接受 Memory 使用自己的生命周期；截图资产层同时受 512 MiB 上限约束。
 - Digest 和 Memory 的来源保存到稳定摘要证据；原始资产删除后显示“原始活动已按保留策略清理”，不留下失效文件链接。
-- 保留窗口、容量和清理批量由 `ACTIVITY-RETENTION` 实验选择一次，发布版固化为一个产品策略；Settings 不提供多档算法或模型兼容选项，只保留暂停采集、查看占用和立即清理。
+- 立即清理只提前处理同样已完成蒸馏的原始层，不越过 eligibility；Settings 不提供 TTL、容量或算法档位，只保留暂停采集、查看占用和立即清理。
 
 ---
 
@@ -1914,7 +1914,7 @@ flowchart TD
 - `P3-MULTIMODAL-INPUT`：用户图片附件与条件直载 `image.inspect` 共用一条 Main 图片解码/校验和 Provider 多模态输入路径；不支持视觉的模型诚实停止，不保留第二识别 fallback；
 - 在一次性 worktree 完成 `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE` 与 `MEMORY-GRAPH`；存储的向量/worker 阶段只有 dense lane 达到触发门槛才实现；
 - 用 `better-sqlite3` prepared SQL 实现 Memory/Revision/Source、validity、supersede、pin、archive/delete 与 Profile 投影；
-- 只实现获胜的 Retrieval Pipeline、Context Recipe、索引生命周期和 `search_memory`；Graph 未晋级时没有表、文件或 UI；
+- 只实现获胜的 Retrieval Pipeline、Context Recipe、索引生命周期和 `memory.search`；Graph 未晋级时没有表、文件或 UI；
 - Memory 页面完成搜索、筛选、来源、Revision、画像、候选与领地入口；
 - 完成 `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 后，实现 Active App/Browser/Screenshot/OCR metadata/Idle 采集、确定性 Episode 与获胜 Digest/候选流程；
 - 实现文件、缩略图、OCR、索引引用、数据库行和 orphan asset 的一致清理；

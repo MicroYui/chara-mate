@@ -3,6 +3,9 @@ import type { AppError } from "../../shared/contracts/run";
 export type AgentErrorCode =
   | "AGENT.APPROVAL_NOT_PENDING"
   | "AGENT.CHECKPOINT_UNAVAILABLE"
+  | "AGENT.INPUT_NOT_PENDING"
+  | "AGENT.IMAGE_INPUT_INVALID"
+  | "AGENT.IMAGE_INPUT_UNAVAILABLE"
   | "AGENT.RUN_NOT_ACTIVE"
   | "AGENT.RUN_NOT_FOUND"
   | "AGENT.RUN_NOT_RESUMABLE";

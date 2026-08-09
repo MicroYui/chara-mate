@@ -5,7 +5,7 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { useReducer } from "react";
+import { useReducer, type ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { chatsFixture, chatsFixtureIds } from "../fixtures";
@@ -30,6 +30,7 @@ function runByChatId(chatId: string): FixtureRun {
 function RunHarness({
   onResume = vi.fn(),
   onResolveApproval = vi.fn(),
+  onResolveUserInput = vi.fn(() => Promise.resolve()),
   run,
 }: {
   readonly onResume?: (runId: string) => void;
@@ -37,6 +38,9 @@ function RunHarness({
     approvalId: string,
     decision: "approved" | "rejected",
   ) => void;
+  readonly onResolveUserInput?: ComponentProps<
+    typeof RunProcess
+  >["onResolveUserInput"];
   readonly run: FixtureRun;
 }) {
   const [state, dispatch] = useReducer(
@@ -48,6 +52,7 @@ function RunHarness({
       dispatch={dispatch}
       onResume={onResume}
       onResolveApproval={onResolveApproval}
+      onResolveUserInput={onResolveUserInput}
       run={run}
       state={state}
     />

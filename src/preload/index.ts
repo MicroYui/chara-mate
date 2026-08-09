@@ -6,6 +6,7 @@ import {
   type ApprovalNavigationTarget,
   type PendingApprovalRequest,
   type ResolveApprovalRequest,
+  type ResolveUserInputRequest,
   type ResumeRunRequest,
   type StartRunRequest,
   type SteerRunRequest,
@@ -26,6 +27,25 @@ import {
   type CharaMateApi,
   FOUNDATION_CHANNELS,
 } from "../shared/contracts/foundation";
+import {
+  MEMORY_CHANNELS,
+  type MemoryApi,
+  type MemoryCandidateIdRequest,
+  type MemoryCreateRequest,
+  type MemoryIdRequest,
+  type MemoryListRequest,
+  type MemoryReviseRequest,
+  type MemorySetPinnedRequest,
+} from "../shared/contracts/memory";
+import {
+  ACTIVITY_CHANNELS,
+  type ActivityApi,
+  type ActivityCleanupRequest,
+  type ActivityEpisodeIdRequest,
+  type ActivitySetPausedRequest,
+  type ActivitySnapshotRequest,
+  type ActivityUpdateEpisodeRequest,
+} from "../shared/contracts/activity";
 import {
   EXTENSION_CHANNELS,
   type ExtensionsApi,
@@ -90,6 +110,8 @@ import {
 import {
   ResolveApprovalRequestSchema,
   ResolveApprovalResponseSchema,
+  ResolveUserInputRequestSchema,
+  ResolveUserInputResponseSchema,
   ResumeRunRequestSchema,
   RunCancelResponseSchema,
   RunMutationResponseSchema,
@@ -101,6 +123,29 @@ import {
   ApprovalNavigationTargetSchema,
 } from "../shared/schemas/agent";
 import { FoundationSnapshotSchema } from "../shared/schemas/foundation";
+import {
+  MemoryCandidateIdRequestSchema,
+  MemoryCandidateMutationResponseSchema,
+  MemoryCreateRequestSchema,
+  MemoryDetailResponseSchema,
+  MemoryIdRequestSchema,
+  MemoryListRequestSchema,
+  MemoryListResponseSchema,
+  MemoryMutationResponseSchema,
+  MemoryPurgeResponseSchema,
+  MemoryReviseRequestSchema,
+  MemorySetPinnedRequestSchema,
+} from "../shared/schemas/memory";
+import {
+  ActivityCleanupRequestSchema,
+  ActivityCleanupResponseSchema,
+  ActivityEpisodeIdRequestSchema,
+  ActivityEpisodeResponseSchema,
+  ActivitySetPausedRequestSchema,
+  ActivitySnapshotRequestSchema,
+  ActivitySnapshotResponseSchema,
+  ActivityUpdateEpisodeRequestSchema,
+} from "../shared/schemas/activity";
 import {
   McpDeleteResponseSchema,
   McpIdRequestSchema,
@@ -271,6 +316,14 @@ const agentApi: AgentApi = Object.freeze({
       await ipcRenderer.invoke(
         AGENT_CHANNELS.resolveApproval,
         parseSchemaWithoutCodeGeneration(ResolveApprovalRequestSchema, input),
+      ),
+    ),
+  resolveUserInput: async (input: ResolveUserInputRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      ResolveUserInputResponseSchema,
+      await ipcRenderer.invoke(
+        AGENT_CHANNELS.resolveUserInput,
+        parseSchemaWithoutCodeGeneration(ResolveUserInputRequestSchema, input),
       ),
     ),
   resume: async (input: ResumeRunRequest) =>
@@ -609,7 +662,175 @@ const territoryApi: TerritoryApi = Object.freeze({
     ),
 });
 
+const memoryApi: MemoryApi = Object.freeze({
+  acceptCandidate: async (input: MemoryCandidateIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryCandidateIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryMutationResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.acceptCandidate, request),
+    );
+  },
+  archive: async (input: MemoryIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryMutationResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.archive, request),
+    );
+  },
+  create: async (input: MemoryCreateRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryCreateRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryMutationResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.create, request),
+    );
+  },
+  delete: async (input: MemoryIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryMutationResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.delete, request),
+    );
+  },
+  get: async (input: MemoryIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryDetailResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.get, request),
+    );
+  },
+  list: async (input: MemoryListRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryListRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryListResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.list, request),
+    );
+  },
+  purge: async (input: MemoryIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryPurgeResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.purge, request),
+    );
+  },
+  rejectCandidate: async (input: MemoryCandidateIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryCandidateIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.rejectCandidate, request),
+    );
+  },
+  restore: async (input: MemoryIdRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryIdRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryMutationResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.restore, request),
+    );
+  },
+  revise: async (input: MemoryReviseRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryReviseRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryMutationResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.revise, request),
+    );
+  },
+  setPinned: async (input: MemorySetPinnedRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemorySetPinnedRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryMutationResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.setPinned, request),
+    );
+  },
+});
+
+const activityApi: ActivityApi = Object.freeze({
+  cleanup: async (input: ActivityCleanupRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      ActivityCleanupResponseSchema,
+      await ipcRenderer.invoke(
+        ACTIVITY_CHANNELS.cleanup,
+        parseSchemaWithoutCodeGeneration(ActivityCleanupRequestSchema, input),
+      ),
+    ),
+  deleteEpisode: async (input: ActivityEpisodeIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      ActivitySnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        ACTIVITY_CHANNELS.deleteEpisode,
+        parseSchemaWithoutCodeGeneration(ActivityEpisodeIdRequestSchema, input),
+      ),
+    ),
+  getEpisode: async (input: ActivityEpisodeIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      ActivityEpisodeResponseSchema,
+      await ipcRenderer.invoke(
+        ACTIVITY_CHANNELS.getEpisode,
+        parseSchemaWithoutCodeGeneration(ActivityEpisodeIdRequestSchema, input),
+      ),
+    ),
+  getSnapshot: async (input: ActivitySnapshotRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      ActivitySnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        ACTIVITY_CHANNELS.getSnapshot,
+        parseSchemaWithoutCodeGeneration(ActivitySnapshotRequestSchema, input),
+      ),
+    ),
+  setPaused: async (input: ActivitySetPausedRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      ActivitySnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        ACTIVITY_CHANNELS.setPaused,
+        parseSchemaWithoutCodeGeneration(ActivitySetPausedRequestSchema, input),
+      ),
+    ),
+  updateEpisode: async (input: ActivityUpdateEpisodeRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      ActivityEpisodeResponseSchema,
+      await ipcRenderer.invoke(
+        ACTIVITY_CHANNELS.updateEpisode,
+        parseSchemaWithoutCodeGeneration(
+          ActivityUpdateEpisodeRequestSchema,
+          input,
+        ),
+      ),
+    ),
+});
+
 const desktopApi: CharaMateApi = Object.freeze({
+  activity: activityApi,
   agent: agentApi,
   chat: chatApi,
   extensions: extensionsApi,
@@ -626,6 +847,7 @@ const desktopApi: CharaMateApi = Object.freeze({
       ipcRenderer.send(FOUNDATION_CHANNELS.rendererReady, {});
     },
   }),
+  memory: memoryApi,
   pet: petApi,
   provider: providerApi,
   runEvents: runEventsApi,

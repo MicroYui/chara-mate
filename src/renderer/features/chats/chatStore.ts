@@ -10,6 +10,7 @@ import type {
   ArtifactReference,
   Run,
   RunExecution,
+  UserInputResolution,
 } from "../../../shared/contracts/run";
 import type {
   RunEventEnvelope,
@@ -41,6 +42,7 @@ const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
   "queued",
   "running",
   "waiting_approval",
+  "needs_input",
 ]);
 
 const initialState: ChatDomainState = {
@@ -291,6 +293,25 @@ export class ChatDomainStore {
         ({ id }) => id === result.value.runId,
       );
       if (run) await this.loadSnapshot(run.chatId);
+    } catch (error) {
+      this.#setState({ error: errorMessage(error) });
+      throw error;
+    }
+  }
+
+  async resolveUserInput(
+    runId: string,
+    itemId: string,
+    resolution: UserInputResolution,
+  ): Promise<void> {
+    try {
+      const result = await this.agentApi.resolveUserInput({
+        itemId,
+        resolution,
+        runId,
+      });
+      if (!result.ok) throw new Error(result.error.message);
+      await this.loadSnapshot(result.value.chatId);
     } catch (error) {
       this.#setState({ error: errorMessage(error) });
       throw error;

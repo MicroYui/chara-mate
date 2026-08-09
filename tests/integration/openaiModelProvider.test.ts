@@ -211,6 +211,102 @@ async function collect(
 }
 
 describe("OpenAI Responses Agent wire shape", () => {
+  it("preserves image content and omits Tool Search for an always-loaded core namespace", async () => {
+    const bodies: JsonValue[] = [];
+    const baseUrl = await listen(
+      createServer((request, response) => {
+        void requestBody(request).then((body) => {
+          bodies.push(body);
+          writeEventStream(response);
+        });
+      }),
+    );
+    const provider = new OpenAIResponsesModelProvider(
+      {
+        apiStyle: "openai-compatible",
+        baseUrl,
+        name: "Test Provider",
+      },
+      "test-secret",
+    );
+    const events: ModelEvent[] = [];
+    for await (const event of provider.stream(
+      {
+        input: [
+          {
+            content: [
+              { text: "inspect", type: "input_text" },
+              {
+                detail: "auto",
+                image_url: "data:image/png;base64,aW1hZ2U=",
+                type: "input_image",
+              },
+            ],
+            role: "user",
+            type: "message",
+          },
+        ],
+        instructions: "test",
+        modelId: "gpt-5.6-sol",
+        toolNamespaces: [
+          {
+            description: "Structured interaction",
+            name: "interaction",
+            tools: [
+              {
+                deferLoading: false,
+                description: "Ask the user",
+                inputSchema: {
+                  additionalProperties: false,
+                  properties: { questions: { type: "array" } },
+                  required: ["questions"],
+                  type: "object",
+                },
+                name: "request_user_input",
+                namespace: "interaction",
+                strict: true,
+              },
+            ],
+          },
+        ],
+      },
+      new AbortController().signal,
+    )) {
+      events.push(event);
+    }
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(bodies[0]).toMatchObject({
+      input: [
+        {
+          content: [
+            { type: "input_text" },
+            {
+              detail: "auto",
+              image_url: "data:image/png;base64,aW1hZ2U=",
+              type: "input_image",
+            },
+          ],
+        },
+      ],
+      tools: [
+        {
+          name: "interaction",
+          tools: [
+            {
+              defer_loading: false,
+              name: "request_user_input",
+              type: "function",
+            },
+          ],
+          type: "namespace",
+        },
+        { type: "web_search" },
+      ],
+    });
+    expect(JSON.stringify(bodies[0])).not.toContain('"type":"tool_search"');
+  });
+
   it("uses the accepted native Tool Search, allowed_tools and selected implicit cache shape", async () => {
     const bodies: JsonValue[] = [];
     const baseUrl = await listen(
@@ -360,7 +456,12 @@ describe("OpenAI Responses Agent wire shape", () => {
                     max_context_window_tokens: 1_050_000,
                     max_output_tokens: 128_000,
                     max_prompt_tokens: 922_000,
+                    vision: {
+                      max_prompt_images: 1,
+                      supported_media_types: ["image/png"],
+                    },
                   },
+                  supports: { vision: true },
                 },
                 id: "gpt-5.6-sol",
                 object: "model",
@@ -387,6 +488,7 @@ describe("OpenAI Responses Agent wire shape", () => {
         maxContextTokens: 1_050_000,
         maxOutputTokens: 128_000,
         maxPromptTokens: 922_000,
+        supportsVision: true,
       },
     );
     expect(requests).toEqual(["GET /v1/models"]);

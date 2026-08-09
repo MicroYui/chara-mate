@@ -410,7 +410,7 @@ export class RunRepository {
                 latest_sequence, created_at, started_at, ended_at, error_json
          FROM runs
          WHERE chat_id = ?
-           AND status IN ('queued', 'running', 'waiting_approval')
+           AND status IN ('queued', 'running', 'waiting_approval', 'needs_input')
          ORDER BY created_at, id
          LIMIT 1`,
       )
@@ -543,7 +543,8 @@ export class RunRepository {
         }
         if (
           (currentItem.status !== "running" &&
-            currentItem.status !== "waiting_approval") ||
+            currentItem.status !== "waiting_approval" &&
+            currentItem.status !== "waiting_input") ||
           !TERMINAL_RUN_ITEM_STATUSES.has(event.item.status)
         ) {
           throw new Error(`Invalid completed state for item ${event.item.id}`);
@@ -599,6 +600,60 @@ export class RunRepository {
           envelope.sequence,
           currentRun.status === "waiting_approval" ? "running" : undefined,
         );
+        return;
+      }
+      case "input.requested": {
+        const currentItemRow = this.selectRunItem(event.item.id);
+        if (!currentItemRow) {
+          throw new Error(`Run item ${event.item.id} does not exist`);
+        }
+        const currentItem = this.readRunItem(currentItemRow);
+        assertItemIdentity(currentItem, event.item);
+        assertRunIdentity(currentRun, event.run, envelope.streamId);
+        if (
+          currentRun.status !== "running" ||
+          currentItem.status !== "running" ||
+          event.item.runId !== envelope.streamId ||
+          event.item.kind !== "input_request" ||
+          event.item.status !== "waiting_input" ||
+          event.run.status !== "needs_input" ||
+          event.run.latestSequence !== envelope.sequence ||
+          event.run.endedAt !== undefined ||
+          event.run.error !== undefined
+        ) {
+          throw new Error(
+            `Invalid input.requested event for ${envelope.streamId}`,
+          );
+        }
+        this.updateRunItem(event.item);
+        this.updateRun(event.run);
+        return;
+      }
+      case "input.resolved": {
+        const currentItemRow = this.selectRunItem(event.item.id);
+        if (!currentItemRow) {
+          throw new Error(`Run item ${event.item.id} does not exist`);
+        }
+        const currentItem = this.readRunItem(currentItemRow);
+        assertItemIdentity(currentItem, event.item);
+        assertRunIdentity(currentRun, event.run, envelope.streamId);
+        if (
+          currentRun.status !== "needs_input" ||
+          currentItem.status !== "waiting_input" ||
+          event.item.runId !== envelope.streamId ||
+          event.item.kind !== "input_request" ||
+          event.item.status !== "completed" ||
+          event.run.status !== "running" ||
+          event.run.latestSequence !== envelope.sequence ||
+          event.run.endedAt !== undefined ||
+          event.run.error !== undefined
+        ) {
+          throw new Error(
+            `Invalid input.resolved event for ${envelope.streamId}`,
+          );
+        }
+        this.updateRunItem(event.item);
+        this.updateRun(event.run);
         return;
       }
       case "run.needs_input":

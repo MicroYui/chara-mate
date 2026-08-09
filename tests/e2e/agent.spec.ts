@@ -5,6 +5,7 @@ import {
   readFile,
   readdir,
   rm,
+  writeFile,
 } from "node:fs/promises";
 import {
   createServer,
@@ -126,9 +127,61 @@ async function startFakeProvider(browserUrl?: string) {
       bodies.push(body);
       responseSequence += 1;
       const responseId = `response-${String(responseSequence)}`;
+      const titleTask = body.includes("Generate one concise chat title");
       const browserTask = body.includes("浏览器");
+      const imageInputTask = body.includes("图片输入测试");
+      const imageToolTask = body.includes("图片工具测试");
       const planTask = body.includes("计划测试");
-      if (planTask) {
+      const structuredInputTask = body.includes("结构化输入测试");
+      if (titleTask) {
+        writeSse(response, finalAnswer(responseId, "E2E 对话标题"));
+      } else if (imageInputTask) {
+        writeSse(response, finalAnswer(responseId, "已读取本地图片像素"));
+      } else if (imageToolTask) {
+        if (
+          body.includes('"call_id":"image-inspect"') &&
+          body.includes("function_call_output")
+        ) {
+          writeSse(response, finalAnswer(responseId, "图片工具读取完成"));
+        } else {
+          writeSse(response, [
+            functionCall("image-inspect", "image.inspect", "image", {
+              path: "inspect.png",
+            }),
+            completed(responseId),
+          ]);
+        }
+      } else if (structuredInputTask) {
+        if (
+          body.includes('"call_id":"input-request"') &&
+          body.includes("function_call_output")
+        ) {
+          writeSse(response, finalAnswer(responseId, "已按安静路线继续"));
+        } else {
+          writeSse(response, [
+            functionCall("input-request", "request_user_input", "interaction", {
+              questions: [
+                {
+                  header: "路线",
+                  id: "route",
+                  options: [
+                    {
+                      description: "减少排队和噪音。",
+                      label: "安静路线",
+                    },
+                    {
+                      description: "优先热门景点。",
+                      label: "热门路线",
+                    },
+                  ],
+                  question: "请选择路线偏好",
+                },
+              ],
+            }),
+            completed(responseId),
+          ]);
+        }
+      } else if (planTask) {
         if (
           body.includes('"call_id":"plan-final"') &&
           body.includes("function_call_output")
@@ -384,7 +437,7 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
     await application.close();
     application = undefined;
     expectCleanApplicationShutdown(first.stderr);
-    const second = await launchApplication(userData, workspace, "创建测试文件");
+    const second = await launchApplication(userData, workspace, "E2E 对话标题");
     application = second.application;
     await expect(second.main.getByText("文件任务完成")).toBeVisible();
     expect(provider.bodies).toHaveLength(requestCount);
@@ -403,6 +456,222 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
       .get() as { count: number };
     database.close();
     expect(checkpointCount.count).toBe(0);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("answers a direct structured question and continues the same Chat Run", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "chara-mate-input-e2e-"));
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    await launched.main
+      .getByRole("textbox", { name: "消息" })
+      .fill("结构化输入测试：先问我路线偏好再继续");
+    await launched.main.getByRole("button", { name: "发送" }).click();
+
+    const request = launched.main.getByLabel("需要补充信息");
+    await expect(request).toBeVisible();
+    await expect(request).toContainText("请选择路线偏好");
+    expect(provider.bodies).toHaveLength(1);
+    expect(provider.bodies[0]).toContain('"name":"interaction"');
+    expect(provider.bodies[0]).toContain('"name":"request_user_input"');
+    expect(provider.bodies[0]).toContain('"defer_loading":false');
+    expect(provider.bodies[0]).not.toContain("tool_search_output");
+
+    await request.getByRole("radio", { name: /安静路线/u }).click();
+    await request.getByRole("button", { name: "提交并继续" }).click();
+    await expect(launched.main.getByText("已按安静路线继续")).toBeVisible();
+
+    const state = await launched.main.evaluate(async () => {
+      const chats = await window.charaMate.chat.list({ status: "active" });
+      if (!chats.ok || !chats.value[0]) return null;
+      return window.charaMate.chat.getSnapshot({ chatId: chats.value[0].id });
+    });
+    if (!state?.ok || !state.value) {
+      throw new Error("Missing structured input E2E state");
+    }
+    expect(state.value.runs).toHaveLength(1);
+    expect(state.value.runs[0]?.status).toBe("completed");
+    const inputItems = state.value.runItems.filter(
+      ({ kind }) => kind === "input_request",
+    );
+    expect(inputItems).toHaveLength(1);
+    expect(inputItems[0]).toMatchObject({
+      output: {
+        answers: [
+          {
+            questionId: "route",
+            value: { kind: "option", label: "安静路线" },
+          },
+        ],
+        status: "answered",
+      },
+      status: "completed",
+    });
+    const taskBodies = provider.bodies.filter(
+      (body) => !body.includes("Generate one concise chat title"),
+    );
+    expect(taskBodies).toHaveLength(2);
+    expect(taskBodies[1]?.match(/input-request/gu)).toHaveLength(2);
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("sends a local image as Provider image content from the Chat composer", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "chara-mate-image-e2e-"));
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  const imagePath = path.join(workspace, "pixel.png");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    imagePath,
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    await launched.main
+      .locator('input[type="file"][accept="image/*"]')
+      .setInputFiles(imagePath);
+    await expect(launched.main.getByLabel("待发送附件")).toContainText(
+      "pixel.png",
+    );
+    await launched.main
+      .getByRole("textbox", { name: "消息" })
+      .fill("图片输入测试：读取这张图的真实像素");
+    await launched.main.getByRole("button", { name: "发送" }).click();
+
+    await expect(launched.main.getByText("已读取本地图片像素")).toBeVisible();
+    const taskBodies = provider.bodies.filter(
+      (body) => !body.includes("Generate one concise chat title"),
+    );
+    expect(taskBodies).toHaveLength(1);
+    expect(taskBodies[0]).toContain('"type":"input_image"');
+    expect(taskBodies[0]).toContain("data:image/png;base64,");
+    expect(taskBodies[0]).not.toContain(imagePath);
+
+    const state = await launched.main.evaluate(async () => {
+      const chats = await window.charaMate.chat.list({ status: "active" });
+      if (!chats.ok || !chats.value[0]) return null;
+      return window.charaMate.chat.getSnapshot({ chatId: chats.value[0].id });
+    });
+    if (!state?.ok || !state.value) {
+      throw new Error("Missing image input E2E state");
+    }
+    expect(state.value.attachments).toHaveLength(1);
+    expect(state.value.attachments[0]).toMatchObject({
+      displayName: "pixel.png",
+      kind: "image",
+      mediaType: "image/png",
+    });
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("loads a known local image through image.inspect in Agent mode", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-image-tool-e2e-"),
+  );
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    path.join(workspace, "inspect.png"),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    await selectAgent(launched.main);
+    await launched.main
+      .getByRole("textbox", { name: "消息" })
+      .fill("图片工具测试：读取工作目录中的 inspect.png");
+    await launched.main.getByRole("button", { name: "发送" }).click();
+
+    await expect(launched.main.getByText("图片工具读取完成")).toBeVisible();
+    const taskBodies = provider.bodies.filter(
+      (body) => !body.includes("Generate one concise chat title"),
+    );
+    expect(taskBodies).toHaveLength(2);
+    const initialRequest = JSON.parse(taskBodies[0]!) as {
+      tools?: Array<{
+        name?: string;
+        tools?: Array<{ defer_loading?: boolean; name?: string }>;
+      }>;
+    };
+    const imageNamespace = initialRequest.tools?.find(
+      ({ name }) => name === "image",
+    );
+    expect(imageNamespace?.tools).toContainEqual(
+      expect.objectContaining({ defer_loading: false, name: "inspect" }),
+    );
+    expect(taskBodies[1]).toContain('"type":"input_image"');
+    expect(taskBodies[1]).toContain("data:image/png;base64,");
+
+    const state = await launched.main.evaluate(async () => {
+      const chats = await window.charaMate.chat.list({ status: "active" });
+      if (!chats.ok || !chats.value[0]) return null;
+      return window.charaMate.chat.getSnapshot({ chatId: chats.value[0].id });
+    });
+    if (!state?.ok || !state.value) {
+      throw new Error("Missing image Tool E2E state");
+    }
+    expect(
+      state.value.runItems.find(
+        ({ input, kind }) =>
+          kind === "tool_call" &&
+          typeof input === "object" &&
+          input !== null &&
+          !Array.isArray(input) &&
+          input["toolName"] === "image.inspect",
+      ),
+    ).toMatchObject({
+      displayOutput: "1 × 1 · image/png",
+      status: "completed",
+    });
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
   } finally {
     await application?.close();
     await provider.close();

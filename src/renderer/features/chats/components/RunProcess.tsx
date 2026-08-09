@@ -12,11 +12,16 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type Dispatch } from "react";
 
-import type { Approval, RunItem } from "../../../../shared/contracts";
+import type {
+  Approval,
+  RunItem,
+  UserInputResolution,
+} from "../../../../shared/contracts";
 import type { ChatRunView, ChatsUiAction, ChatsUiState } from "../types";
 import { CopyButton } from "./CopyButton";
 import { ArchivedPlan, planUpdateFromItem } from "./PlanDisplay";
 import styles from "./RunProcess.module.css";
+import { UserInputCard } from "./UserInputCard";
 
 interface RunProcessProps {
   readonly dispatch: Dispatch<ChatsUiAction>;
@@ -25,6 +30,11 @@ interface RunProcessProps {
     approvalId: string,
     decision: "approved" | "rejected",
   ) => void;
+  readonly onResolveUserInput: (
+    runId: string,
+    itemId: string,
+    resolution: UserInputResolution,
+  ) => Promise<void>;
   readonly run: ChatRunView;
   readonly state: ChatsUiState;
 }
@@ -43,6 +53,7 @@ const LIVE_RUN_STATUSES = new Set<ChatRunView["record"]["status"]>([
   "queued",
   "running",
   "waiting_approval",
+  "needs_input",
 ]);
 
 function runDuration(run: ChatRunView, now: number): number {
@@ -95,6 +106,8 @@ function itemTitle(item: RunItem): string {
       return item.error?.message ?? "执行遇到问题";
     case "approval":
       return "等待你确认";
+    case "input_request":
+      return item.status === "waiting_input" ? "等待你回答" : "已收到补充信息";
     case "user_message":
       return "已收到消息";
     case "assistant_message":
@@ -304,6 +317,7 @@ export function RunProcess({
   dispatch,
   onResume,
   onResolveApproval,
+  onResolveUserInput,
   run,
   state,
 }: RunProcessProps) {
@@ -378,6 +392,20 @@ export function RunProcess({
                   onResolveApproval={onResolveApproval}
                 />
               ) : null;
+            }
+            if (
+              item.kind === "input_request" &&
+              item.status === "waiting_input"
+            ) {
+              return (
+                <UserInputCard
+                  key={item.id}
+                  input={item.input}
+                  onResolve={(resolution) =>
+                    onResolveUserInput(run.record.id, item.id, resolution)
+                  }
+                />
+              );
             }
             return (
               <RunItemRow

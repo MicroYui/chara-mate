@@ -18,7 +18,12 @@ import type {
   RunItemStatusSchema,
   RunSchema,
   RunStatusSchema,
+  RequestUserInputArgumentsSchema,
   TerminalRunStatusSchema,
+  UserInputAnswerSchema,
+  UserInputOptionSchema,
+  UserInputQuestionSchema,
+  UserInputResolutionSchema,
 } from "../schemas/run";
 
 export type AppError = Static<typeof AppErrorSchema>;
@@ -28,6 +33,13 @@ export type ApprovalMode = Static<typeof ApprovalModeSchema>;
 export type PlanStepStatus = Static<typeof PlanStepStatusSchema>;
 export type PlanStep = Static<typeof PlanStepSchema>;
 export type PlanUpdate = Static<typeof PlanUpdateSchema>;
+export type UserInputOption = Static<typeof UserInputOptionSchema>;
+export type UserInputQuestion = Static<typeof UserInputQuestionSchema>;
+export type RequestUserInputArguments = Static<
+  typeof RequestUserInputArgumentsSchema
+>;
+export type UserInputAnswer = Static<typeof UserInputAnswerSchema>;
+export type UserInputResolution = Static<typeof UserInputResolutionSchema>;
 export type RunExecution = Static<typeof RunExecutionSchema>;
 export type RunStatus = Static<typeof RunStatusSchema>;
 export type TerminalRunStatus = Static<typeof TerminalRunStatusSchema>;

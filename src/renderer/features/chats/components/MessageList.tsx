@@ -9,7 +9,10 @@ import {
 } from "lucide-react";
 import { type Dispatch, useEffect, useMemo, useRef, useState } from "react";
 
-import type { EntityId } from "../../../../shared/contracts";
+import type {
+  EntityId,
+  UserInputResolution,
+} from "../../../../shared/contracts";
 import { MarkdownRenderer } from "../content/MarkdownRenderer";
 import type {
   ChatAttachmentView,
@@ -43,6 +46,11 @@ interface MessageListProps {
     approvalId: string,
     decision: "approved" | "rejected",
   ) => void;
+  readonly onResolveUserInput: (
+    runId: string,
+    itemId: string,
+    resolution: UserInputResolution,
+  ) => Promise<void>;
   readonly state: ChatsUiState;
 }
 
@@ -177,6 +185,7 @@ export function MessageList({
   dispatch,
   onResumeRun,
   onResolveApproval,
+  onResolveUserInput,
   state,
 }: MessageListProps) {
   const scrollElementRef = useRef<HTMLDivElement>(null);
@@ -243,6 +252,7 @@ export function MessageList({
                     dispatch={dispatch}
                     onResume={onResumeRun}
                     onResolveApproval={onResolveApproval}
+                    onResolveUserInput={onResolveUserInput}
                     state={state}
                   />
                 )}

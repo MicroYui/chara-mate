@@ -1,4 +1,5 @@
 import path from "node:path";
+import { access } from "node:fs/promises";
 
 import { app, BrowserWindow, shell, systemPreferences } from "electron";
 import type Database from "better-sqlite3";
@@ -15,6 +16,7 @@ import { ApprovalNavigationTargetSchema } from "../shared/schemas/agent";
 import { parseSchema } from "../shared/schemas/validation";
 import { registerAgentIpc } from "./agent/agentIpc";
 import { AgentRuntime } from "./agent/agentRuntime";
+import { ElectronImageInputProvider } from "./agent/imageInput";
 import { CheckpointRepository } from "./agent/checkpointRepository";
 import { RunEventService } from "./agent/runEventService";
 import { RunEventWriter } from "./agent/runEventWriter";
@@ -31,6 +33,14 @@ import { createMainWindow } from "./app/windows";
 import { registerSettingsIpc } from "./app/settingsIpc";
 import { SettingsRepository } from "./app/settingsRepository";
 import { SettingsService } from "./app/settingsService";
+import { MacOsActiveApplicationProbe } from "./activity/activeApplicationProbe";
+import { ActivityAssetStore } from "./activity/activityAssetStore";
+import { ActivityCaptureCoordinator } from "./activity/activityCaptureCoordinator";
+import { registerActivityIpc } from "./activity/activityIpc";
+import { registerActivityProtocol } from "./activity/activityProtocol";
+import { ActivityRepository } from "./activity/activityRepository";
+import { ActivityService } from "./activity/activityService";
+import { ElectronActivitySystemSource } from "./activity/activitySystemSource";
 import { ChatRepository } from "./chat/chatRepository";
 import { ChatService } from "./chat/chatService";
 import { ChatTitleService } from "./chat/chatTitleService";
@@ -56,6 +66,11 @@ import { McpRepository } from "./extensions/mcpRepository";
 import { McpService } from "./extensions/mcpService";
 import { SkillRepository } from "./extensions/skillRepository";
 import { SkillService } from "./extensions/skillService";
+import { LexicalRetrievalPipeline } from "./memory/lexicalRetrievalPipeline";
+import { registerMemoryIpc } from "./memory/memoryIpc";
+import { MemoryRepository } from "./memory/memoryRepository";
+import { MemoryService } from "./memory/memoryService";
+import { registerMemoryTool } from "./memory/memoryTool";
 import { CharacterWindowController } from "./pet/characterWindowController";
 import { bundledPetsDirectory, installBundledPets } from "./pet/bundledPets";
 import { registerPetIpc } from "./pet/petIpc";
@@ -107,9 +122,12 @@ function getSupportedPlatform(): FoundationSnapshot["platform"] {
 let mainWindowController: MainWindowController | undefined;
 let applicationDatabase: Database.Database | undefined;
 let unregisterChatIpc: (() => void) | undefined;
+let unregisterActivityIpc: (() => void) | undefined;
+let unregisterActivityProtocol: (() => void) | undefined;
 let unregisterAgentIpc: (() => void) | undefined;
 let unregisterExtensionIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
+let unregisterMemoryIpc: (() => void) | undefined;
 let unregisterProviderIpc: (() => void) | undefined;
 let unregisterSettingsIpc: (() => void) | undefined;
 let unregisterPetIpc: (() => void) | undefined;
@@ -119,6 +137,8 @@ let unregisterTerritoryProtocol: (() => void) | undefined;
 let providerService: ProviderService | undefined;
 let characterWindowController: CharacterWindowController | undefined;
 let agentRuntime: AgentRuntime | undefined;
+let activityCapture: ActivityCaptureCoordinator | undefined;
+let activityService: ActivityService | undefined;
 let managedBrowser: ManagedBrowser | undefined;
 let mcpService: McpService | undefined;
 let devDashboard: DevDashboard | undefined;
@@ -139,6 +159,10 @@ function openMainWindow(target?: MainWindowTarget): void {
 async function stopApplicationInfrastructure(): Promise<void> {
   if (stopPromise) return stopPromise;
   stopPromise = (async () => {
+    unregisterActivityIpc?.();
+    unregisterActivityIpc = undefined;
+    unregisterActivityProtocol?.();
+    unregisterActivityProtocol = undefined;
     unregisterAgentIpc?.();
     unregisterAgentIpc = undefined;
     unregisterExtensionIpc?.();
@@ -147,6 +171,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterChatIpc = undefined;
     unregisterFoundationIpc?.();
     unregisterFoundationIpc = undefined;
+    unregisterMemoryIpc?.();
+    unregisterMemoryIpc = undefined;
     unregisterProviderIpc?.();
     unregisterProviderIpc = undefined;
     unregisterSettingsIpc?.();
@@ -160,12 +186,24 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterTerritoryProtocol?.();
     unregisterTerritoryProtocol = undefined;
     await agentRuntime?.interruptAll();
+    managedBrowser?.setActivityObserver(undefined);
+    const activityStops = await Promise.allSettled([
+      activityCapture?.stop() ?? Promise.resolve(),
+      activityService?.stopMaintenance() ?? Promise.resolve(),
+    ]);
+    for (const result of activityStops) {
+      if (result.status === "rejected") {
+        logger.warn("ACTIVITY_SHUTDOWN_ERROR", { error: result.reason });
+      }
+    }
     await Promise.allSettled([
       managedBrowser?.close() ?? Promise.resolve(),
       mcpService?.close() ?? Promise.resolve(),
       devDashboard?.close() ?? Promise.resolve(),
     ]);
     agentRuntime = undefined;
+    activityCapture = undefined;
+    activityService = undefined;
     managedBrowser = undefined;
     mcpService = undefined;
     devDashboard = undefined;
@@ -206,6 +244,14 @@ async function startApplication(): Promise<void> {
   const idGenerator = new CryptoIdGenerator();
   const clock = new SystemClock();
   const chatRepository = new ChatRepository(applicationDatabase);
+  const memoryRepository = new MemoryRepository(applicationDatabase);
+  const memoryServiceInstance = new MemoryService(
+    memoryRepository,
+    new LexicalRetrievalPipeline(applicationDatabase, memoryRepository, clock),
+    idGenerator,
+    clock,
+  );
+  unregisterMemoryIpc = registerMemoryIpc(memoryServiceInstance);
   const runRepository = new RunRepository(applicationDatabase);
   const runtimeObservability = new RuntimeObservability(runRepository, logger);
   const windowPlacementRepository = new WindowPlacementRepository(
@@ -231,6 +277,15 @@ async function startApplication(): Promise<void> {
         runtimeObservability.record(envelope);
       } catch (error) {
         logger.warn("RUNTIME_OBSERVABILITY_ERROR", {
+          error,
+          runId: envelope.streamId,
+          sequence: envelope.sequence,
+        });
+      }
+      try {
+        activityCapture?.observeRun(envelope);
+      } catch (error) {
+        logger.warn("ACTIVITY_RUN_CAPTURE_ERROR", {
           error,
           runId: envelope.streamId,
           sequence: envelope.sequence,
@@ -278,6 +333,7 @@ async function startApplication(): Promise<void> {
     logger,
   );
   const toolRegistry = new ToolRegistry();
+  registerMemoryTool(toolRegistry, memoryServiceInstance);
   const artifactStore = new ArtifactStore(
     path.join(userDataPath, "artifacts"),
     idGenerator,
@@ -320,6 +376,42 @@ async function startApplication(): Promise<void> {
         ? bundledChromiumExecutablePath(process.resourcesPath)
         : undefined),
   );
+  const screenCapture = new ElectronScreenCapture();
+  const activityRepository = new ActivityRepository(applicationDatabase);
+  const activityAssets = new ActivityAssetStore(
+    path.join(userDataPath, "activity", "assets"),
+  );
+  activityService = new ActivityService(
+    activityRepository,
+    memoryServiceInstance,
+    activityAssets,
+    screenCapture,
+    idGenerator,
+    clock,
+  );
+  await activityService.initialize();
+  unregisterActivityProtocol = registerActivityProtocol(
+    activityRepository,
+    activityAssets,
+  );
+  unregisterActivityIpc = registerActivityIpc(activityService);
+  activityCapture = new ActivityCaptureCoordinator(
+    activityService,
+    new MacOsActiveApplicationProbe(),
+    new ElectronActivitySystemSource(60),
+    clock,
+    logger,
+  );
+  if (!backgroundTest) {
+    const capture = activityCapture;
+    managedBrowser.setActivityObserver((state) =>
+      capture.observeBrowser(state),
+    );
+    capture.start();
+  }
+  activityService.startMaintenance((error) => {
+    logger.warn("ACTIVITY_MAINTENANCE_ERROR", { error });
+  });
   const settingsService = new SettingsService(
     settingsRepository,
     managedBrowser,
@@ -355,7 +447,7 @@ async function startApplication(): Promise<void> {
     registerComputerTools(
       toolRegistry,
       new MacOsComputerAdapter(),
-      new ElectronScreenCapture(),
+      screenCapture,
       artifactStore,
     );
   }
@@ -368,6 +460,16 @@ async function startApplication(): Promise<void> {
     idGenerator,
     clock,
   );
+  const imageInput = new ElectronImageInputProvider(async (source) => {
+    if (path.isAbsolute(source)) return path.resolve(source);
+    try {
+      const artifactPath = artifactStore.resolvePath(source);
+      await access(artifactPath);
+      return artifactPath;
+    } catch {
+      return settingsService.resolveWorkingPath(source);
+    }
+  });
   agentRuntime = new AgentRuntime(
     chatRepository,
     chatService,
@@ -381,6 +483,8 @@ async function startApplication(): Promise<void> {
     undefined,
     () => skillService.instructions(),
     new ChatTitleService(chatService, logger),
+    imageInput,
+    memoryServiceInstance,
   );
   await agentRuntime.initialize();
   unregisterAgentIpc = registerAgentIpc(agentRuntime);

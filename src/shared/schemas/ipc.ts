@@ -56,6 +56,22 @@ export const RunEventSchema = Type.Union([
     { additionalProperties: false },
   ),
   Type.Object(
+    {
+      item: RunItemSchema,
+      run: RunSchema,
+      type: Type.Literal("input.requested"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      item: RunItemSchema,
+      run: RunSchema,
+      type: Type.Literal("input.resolved"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
     { run: RunSchema, type: Type.Literal("run.needs_input") },
     { additionalProperties: false },
   ),

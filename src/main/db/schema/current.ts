@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "4";
+export const CURRENT_SCHEMA_VERSION = "5";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -218,6 +218,229 @@ export const CURRENT_SCHEMA_SQL = `
       REFERENCES messages(id, chat_id) ON DELETE CASCADE
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS memories (
+    id TEXT PRIMARY KEY NOT NULL,
+    type TEXT NOT NULL CHECK (
+      type IN (
+        'profile',
+        'preference',
+        'project',
+        'event',
+        'procedure',
+        'commitment',
+        'activity_digest',
+        'agent_learning'
+      )
+    ),
+    status TEXT NOT NULL CHECK (
+      status IN ('active', 'superseded', 'archived')
+    ),
+    current_revision_id TEXT NOT NULL,
+    importance REAL NOT NULL CHECK (importance >= 0 AND importance <= 1),
+    confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    valid_from TEXT,
+    valid_to TEXT,
+    pinned_at TEXT,
+    superseded_by_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+    deleted_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (valid_from IS NULL OR valid_to IS NULL OR valid_from < valid_to),
+    UNIQUE (id, current_revision_id),
+    FOREIGN KEY (current_revision_id, id)
+      REFERENCES memory_revisions(id, memory_id)
+      DEFERRABLE INITIALLY DEFERRED
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS memory_revisions (
+    id TEXT PRIMARY KEY NOT NULL,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    content TEXT NOT NULL CHECK (length(trim(content)) > 0),
+    source_type TEXT NOT NULL CHECK (
+      source_type IN (
+        'chat', 'voice', 'activity', 'tool', 'user_edit', 'distillation'
+      )
+    ),
+    reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+    created_at TEXT NOT NULL,
+    UNIQUE (id, memory_id)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS memory_sources (
+    id TEXT PRIMARY KEY NOT NULL,
+    type TEXT NOT NULL CHECK (
+      type IN (
+        'chat', 'voice', 'activity', 'tool', 'user_edit', 'distillation'
+      )
+    ),
+    reference_id TEXT NOT NULL,
+    label TEXT,
+    created_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS memory_revision_sources (
+    revision_id TEXT NOT NULL
+      REFERENCES memory_revisions(id) ON DELETE CASCADE,
+    source_id TEXT NOT NULL REFERENCES memory_sources(id) ON DELETE CASCADE,
+    PRIMARY KEY (revision_id, source_id)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS memory_usage (
+    id TEXT PRIMARY KEY NOT NULL,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    revision_id TEXT NOT NULL,
+    consumer TEXT NOT NULL CHECK (consumer IN ('context', 'tool')),
+    used_at TEXT NOT NULL,
+    FOREIGN KEY (revision_id, memory_id)
+      REFERENCES memory_revisions(id, memory_id) ON DELETE CASCADE
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS memory_candidates (
+    id TEXT PRIMARY KEY NOT NULL,
+    type TEXT NOT NULL CHECK (
+      type IN (
+        'profile',
+        'preference',
+        'project',
+        'event',
+        'procedure',
+        'commitment',
+        'activity_digest',
+        'agent_learning'
+      )
+    ),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'rejected')),
+    content TEXT NOT NULL CHECK (length(trim(content)) > 0),
+    reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+    source_ids_json TEXT NOT NULL CHECK (json_valid(source_ids_json)),
+    source_labels_json TEXT NOT NULL CHECK (json_valid(source_labels_json)),
+    source_type TEXT NOT NULL CHECK (
+      source_type IN (
+        'chat', 'voice', 'activity', 'tool', 'user_edit', 'distillation'
+      )
+    ),
+    confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    importance REAL NOT NULL CHECK (importance >= 0 AND importance <= 1),
+    novelty REAL NOT NULL CHECK (novelty >= 0 AND novelty <= 1),
+    valid_from TEXT,
+    valid_to TEXT,
+    supersedes_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+    accepted_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (valid_from IS NULL OR valid_to IS NULL OR valid_from < valid_to)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS profile_fields (
+    memory_id TEXT PRIMARY KEY NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    revision_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (revision_id, memory_id)
+      REFERENCES memory_revisions(id, memory_id) ON DELETE CASCADE
+  ) STRICT;
+
+  CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+    tokens,
+    memory_id UNINDEXED,
+    revision_id UNINDEXED,
+    tokenize = 'porter unicode61 remove_diacritics 2'
+  );
+
+  CREATE TABLE IF NOT EXISTS activity_state (
+    state_id TEXT PRIMARY KEY NOT NULL CHECK (state_id = 'activity'),
+    paused INTEGER NOT NULL CHECK (paused IN (0, 1)),
+    last_cleanup_at TEXT,
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS activity_assets (
+    id TEXT PRIMARY KEY NOT NULL,
+    storage_key TEXT NOT NULL UNIQUE,
+    media_type TEXT NOT NULL CHECK (media_type = 'image/png'),
+    width INTEGER NOT NULL CHECK (width > 0),
+    height INTEGER NOT NULL CHECK (height > 0),
+    byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    created_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS activity_events (
+    id TEXT PRIMARY KEY NOT NULL,
+    actor TEXT NOT NULL CHECK (actor IN ('user', 'agent', 'system')),
+    source TEXT NOT NULL CHECK (
+      source IN (
+        'active_app', 'managed_browser', 'screenshot', 'idle', 'agent_run'
+      )
+    ),
+    details_json TEXT NOT NULL CHECK (json_valid(details_json)),
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    episode_id TEXT REFERENCES activity_episodes(id) ON DELETE SET NULL,
+    distilled_at TEXT,
+    created_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS activity_episodes (
+    id TEXT PRIMARY KEY NOT NULL,
+    actor TEXT NOT NULL CHECK (actor IN ('user', 'agent', 'system')),
+    title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+    summary TEXT NOT NULL CHECK (length(trim(summary)) > 0),
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    source_types_json TEXT NOT NULL CHECK (json_valid(source_types_json)),
+    app_names_json TEXT NOT NULL CHECK (json_valid(app_names_json)),
+    domains_json TEXT NOT NULL CHECK (json_valid(domains_json)),
+    screenshot_storage_keys_json TEXT NOT NULL CHECK (
+      json_valid(screenshot_storage_keys_json)
+    ),
+    event_count INTEGER NOT NULL CHECK (event_count >= 1),
+    digest_id TEXT,
+    raw_cleared_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS activity_digests (
+    id TEXT PRIMARY KEY NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('daily', 'weekly')),
+    title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+    summary TEXT NOT NULL CHECK (length(trim(summary)) > 0),
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    evidence_days INTEGER NOT NULL CHECK (evidence_days >= 1),
+    candidate_ids_json TEXT NOT NULL CHECK (json_valid(candidate_ids_json)),
+    created_at TEXT NOT NULL,
+    CHECK (period_start < period_end)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS activity_digest_evidence (
+    digest_id TEXT NOT NULL REFERENCES activity_digests(id) ON DELETE CASCADE,
+    episode_id TEXT NOT NULL,
+    evidence_label TEXT NOT NULL CHECK (length(trim(evidence_label)) > 0),
+    PRIMARY KEY (digest_id, episode_id)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS distillation_runs (
+    id TEXT PRIMARY KEY NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+    CHECK (period_start < period_end)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS retention_runs (
+    id TEXT PRIMARY KEY NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    deleted_assets INTEGER NOT NULL CHECK (deleted_assets >= 0),
+    deleted_events INTEGER NOT NULL CHECK (deleted_events >= 0),
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json))
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS run_items (
     id TEXT PRIMARY KEY NOT NULL,
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -227,6 +450,7 @@ export const CURRENT_SCHEMA_SQL = `
         'user_message',
         'assistant_message',
         'plan',
+        'input_request',
         'tool_call',
         'command',
         'file_change',
@@ -240,6 +464,7 @@ export const CURRENT_SCHEMA_SQL = `
         'queued',
         'running',
         'waiting_approval',
+        'waiting_input',
         'completed',
         'failed',
         'cancelled',
@@ -305,7 +530,7 @@ export const CURRENT_SCHEMA_SQL = `
     run_id TEXT PRIMARY KEY NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
     generation INTEGER NOT NULL CHECK (generation >= 1),
     phase TEXT NOT NULL CHECK (
-      phase IN ('model', 'tool', 'approval', 'interrupted')
+      phase IN ('model', 'tool', 'approval', 'input', 'interrupted')
     ),
     context_json TEXT NOT NULL CHECK (json_valid(context_json)),
     last_completed_sequence INTEGER NOT NULL CHECK (
@@ -359,11 +584,35 @@ export const CURRENT_SCHEMA_SQL = `
     ON messages(chat_id, created_at, id);
   CREATE INDEX IF NOT EXISTS attachments_message_idx
     ON attachments(message_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS memories_list_idx
+    ON memories(deleted_at, status, type, pinned_at DESC, updated_at DESC, id);
+  CREATE INDEX IF NOT EXISTS memory_revisions_memory_idx
+    ON memory_revisions(memory_id, created_at DESC, id);
+  CREATE INDEX IF NOT EXISTS memory_revision_sources_source_idx
+    ON memory_revision_sources(source_id, revision_id);
+  CREATE INDEX IF NOT EXISTS memory_sources_reference_idx
+    ON memory_sources(type, reference_id, id);
+  CREATE INDEX IF NOT EXISTS memory_usage_memory_idx
+    ON memory_usage(memory_id, used_at DESC, id);
+  CREATE INDEX IF NOT EXISTS memory_candidates_status_idx
+    ON memory_candidates(status, created_at DESC, id);
+  CREATE INDEX IF NOT EXISTS activity_events_time_idx
+    ON activity_events(started_at, id);
+  CREATE INDEX IF NOT EXISTS activity_events_episode_idx
+    ON activity_events(episode_id, started_at, id);
+  CREATE INDEX IF NOT EXISTS activity_events_retention_idx
+    ON activity_events(distilled_at, ended_at, id);
+  CREATE INDEX IF NOT EXISTS activity_episodes_time_idx
+    ON activity_episodes(started_at, ended_at, id);
+  CREATE INDEX IF NOT EXISTS activity_episodes_retention_idx
+    ON activity_episodes(raw_cleared_at, ended_at, id);
+  CREATE UNIQUE INDEX IF NOT EXISTS activity_digests_period_idx
+    ON activity_digests(kind, period_start, period_end);
   CREATE INDEX IF NOT EXISTS runs_chat_idx
     ON runs(chat_id, created_at, id);
   CREATE UNIQUE INDEX IF NOT EXISTS runs_one_active_turn_per_chat_idx
     ON runs(chat_id)
-    WHERE status IN ('queued', 'running', 'waiting_approval');
+    WHERE status IN ('queued', 'running', 'waiting_approval', 'needs_input');
   CREATE INDEX IF NOT EXISTS run_items_run_idx
     ON run_items(run_id, sequence);
   CREATE INDEX IF NOT EXISTS tool_artifacts_item_idx

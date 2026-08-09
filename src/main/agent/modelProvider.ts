@@ -20,6 +20,7 @@ export interface ModelContextLimits {
   readonly maxContextTokens?: number;
   readonly maxOutputTokens?: number;
   readonly maxPromptTokens?: number;
+  readonly supportsVision?: boolean;
 }
 
 export interface ModelUsage {

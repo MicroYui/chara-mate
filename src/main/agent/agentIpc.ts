@@ -4,6 +4,8 @@ import { AGENT_CHANNELS } from "../../shared/contracts/agent";
 import {
   ResolveApprovalRequestSchema,
   ResolveApprovalResponseSchema,
+  ResolveUserInputRequestSchema,
+  ResolveUserInputResponseSchema,
   ResumeRunRequestSchema,
   RunCancelResponseSchema,
   RunMutationResponseSchema,
@@ -98,6 +100,20 @@ export function registerAgentIpc(runtime: AgentRuntime): () => void {
       });
     } catch (error) {
       return parseSchema(ResolveApprovalResponseSchema, {
+        error: toAgentAppError(error),
+        ok: false,
+      });
+    }
+  });
+  ipcMain.handle(AGENT_CHANNELS.resolveUserInput, async (_event, input) => {
+    try {
+      const request = parseSchema(ResolveUserInputRequestSchema, input);
+      return parseSchema(ResolveUserInputResponseSchema, {
+        ok: true,
+        value: await runtime.resolveUserInput(request),
+      });
+    } catch (error) {
+      return parseSchema(ResolveUserInputResponseSchema, {
         error: toAgentAppError(error),
         ok: false,
       });

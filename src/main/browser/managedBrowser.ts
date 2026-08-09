@@ -22,6 +22,12 @@ interface BrowserLocatorInput {
   readonly selector?: string;
 }
 
+export interface ManagedBrowserActivityState {
+  readonly action?: string;
+  readonly title?: string;
+  readonly url: string;
+}
+
 export function bundledChromiumExecutablePath(resourcesPath: string): string {
   const developmentPath = chromium.executablePath();
   let revisionDirectory = path.dirname(developmentPath);
@@ -99,6 +105,8 @@ function importCookie(value: unknown): BrowserCookie {
 
 export class ManagedBrowser {
   #context: BrowserContext | undefined;
+  #activityObserver:
+    ((state: ManagedBrowserActivityState) => Promise<void>) | undefined;
 
   constructor(
     readonly profileDirectory: string,
@@ -109,6 +117,13 @@ export class ManagedBrowser {
   ) {}
 
   #queue: Promise<void> = Promise.resolve();
+
+  setActivityObserver(
+    observer:
+      ((state: ManagedBrowserActivityState) => Promise<void>) | undefined,
+  ): void {
+    this.#activityObserver = observer;
+  }
 
   async status(): Promise<BrowserComputerSettings["browser"]> {
     if (this.#context) return "open";
@@ -168,6 +183,7 @@ export class ManagedBrowser {
         signal.throwIfAborted();
         return await action(page);
       } finally {
+        await this.#publishActivity(page);
         signal.removeEventListener("abort", abort);
       }
     };
@@ -203,7 +219,28 @@ export class ManagedBrowser {
         headless: false,
       },
     );
+    const bindPage = (page: Page) => {
+      page.on("domcontentloaded", () => void this.#publishActivity(page));
+      page.on("framenavigated", (frame) => {
+        if (frame === page.mainFrame()) void this.#publishActivity(page);
+      });
+    };
+    for (const page of this.#context.pages()) bindPage(page);
+    this.#context.on("page", bindPage);
     return this.#context;
+  }
+
+  async #publishActivity(page: Page): Promise<void> {
+    const observer = this.#activityObserver;
+    if (!observer || page.isClosed()) return;
+    try {
+      const title = await page.title();
+      const url = page.url();
+      if (!url || url === "about:blank") return;
+      await observer({ ...(title ? { title } : {}), url });
+    } catch {
+      // Navigation or cancellation may close the page before metadata settles.
+    }
   }
 
   #resolvedExecutablePath(): string {

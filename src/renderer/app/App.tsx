@@ -222,7 +222,8 @@ export function App() {
       ({ status }) =>
         status === "queued" ||
         status === "running" ||
-        status === "waiting_approval",
+        status === "waiting_approval" ||
+        status === "needs_input",
     ),
   );
 
@@ -376,6 +377,9 @@ export function App() {
       }
       onResolveApproval={(approvalId, decision) =>
         void chatStore.resolveApproval(approvalId, decision)
+      }
+      onResolveUserInput={(runId, itemId, resolution) =>
+        chatStore.resolveUserInput(runId, itemId, resolution)
       }
       onRunResume={(runId) =>
         void chatStore.resume(runId).catch(() => undefined)

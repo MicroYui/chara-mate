@@ -9,6 +9,10 @@ import {
   ToolDescriptorSchema,
   ToolResultSchema,
 } from "../../shared/schemas/tool";
+import {
+  isUtcTimestamp,
+  UTC_TIMESTAMP_FORMAT,
+} from "../../shared/schemas/primitives";
 import { parseSchema } from "../../shared/schemas/validation";
 import { Bm25SearchIndex } from "./bm25";
 
@@ -58,6 +62,10 @@ export class ToolRegistry {
   readonly #ajv = new Ajv({ allErrors: true, strict: true });
   readonly #tools = new Map<string, RegisteredTool>();
   #searchIndex = new Bm25SearchIndex<ToolDefinition>([]);
+
+  constructor() {
+    this.#ajv.addFormat(UTC_TIMESTAMP_FORMAT, isUtcTimestamp);
+  }
 
   register(input: ToolDefinition): void {
     const descriptor = parseSchema(ToolDescriptorSchema, input.descriptor);

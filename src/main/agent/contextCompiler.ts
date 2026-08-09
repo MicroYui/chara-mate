@@ -1,10 +1,13 @@
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { ModelContextLimits, ModelUsage } from "./modelProvider";
+import { isMemoryContextInput } from "./memoryContext";
 
 const COMPACTION_RATIO = 0.9;
 
 export interface ContextCheckpoint {
+  readonly currentUserInput?: JsonValue;
   readonly items: readonly JsonValue[];
+  readonly latestUserInput?: JsonValue;
   readonly lastRequestBytes?: number;
   readonly lastUsage?: ModelUsage;
   readonly recentUsers: readonly string[];
@@ -42,6 +45,42 @@ function requestBytes(items: readonly JsonValue[]): number {
   return Buffer.byteLength(JSON.stringify(items), "utf8");
 }
 
+function record(value: JsonValue): Readonly<Record<string, JsonValue>> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value
+    : null;
+}
+
+function hostStateCall(value: Readonly<Record<string, JsonValue>>): boolean {
+  const name = value["name"];
+  const namespace = value["namespace"];
+  return (
+    (name === "update" && namespace === "plan") ||
+    name === "plan.update" ||
+    (name === "request_user_input" &&
+      (namespace === undefined || namespace === "interaction")) ||
+    name === "interaction.request_user_input"
+  );
+}
+
+function latestToolBoundary(items: readonly JsonValue[]): JsonValue[] {
+  for (let outputIndex = items.length - 1; outputIndex >= 0; outputIndex -= 1) {
+    const output = record(items[outputIndex]!);
+    if (output?.["type"] !== "function_call_output") continue;
+    const callId = output["call_id"];
+    if (typeof callId !== "string") continue;
+    for (let callIndex = outputIndex - 1; callIndex >= 0; callIndex -= 1) {
+      const call = record(items[callIndex]!);
+      if (call?.["type"] !== "function_call" || call["call_id"] !== callId) {
+        continue;
+      }
+      if (hostStateCall(call)) break;
+      return [items[callIndex]!, items[outputIndex]!];
+    }
+  }
+  return [];
+}
+
 export class ContextCompiler {
   shouldCompact(
     checkpoint: ContextCheckpoint,
@@ -74,6 +113,15 @@ export class ContextCompiler {
     handoff: HandoffSummary,
   ): JsonValue[] {
     const latestUser = checkpoint.recentUsers.at(-1);
+    const currentUserInput = checkpoint.currentUserInput;
+    const latestUserInput = checkpoint.latestUserInput;
+    const preservedInputs = [
+      ...(currentUserInput ? [currentUserInput] : []),
+      ...(latestUserInput &&
+      JSON.stringify(latestUserInput) !== JSON.stringify(currentUserInput)
+        ? [latestUserInput]
+        : []),
+    ];
     const handoffText = [
       "Context handoff:",
       `currentProgress: ${JSON.stringify(handoff.currentProgress)}`,
@@ -81,21 +129,26 @@ export class ContextCompiler {
       `constraints: ${JSON.stringify(handoff.constraints)}`,
       `nextSteps: ${JSON.stringify(handoff.nextSteps)}`,
     ].join("\n");
+    const memoryContext = checkpoint.items.findLast(isMemoryContextInput);
     return [
-      ...(latestUser
-        ? [
-            {
-              content: latestUser,
-              role: "user",
-              type: "message",
-            } satisfies JsonValue,
-          ]
-        : []),
       {
         content: handoffText,
         role: "developer",
         type: "message",
       },
+      ...(memoryContext ? [memoryContext] : []),
+      ...latestToolBoundary(checkpoint.items),
+      ...(preservedInputs.length > 0
+        ? preservedInputs
+        : latestUser
+          ? [
+              {
+                content: latestUser,
+                role: "user",
+                type: "message",
+              } satisfies JsonValue,
+            ]
+          : []),
     ];
   }
 }

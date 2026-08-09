@@ -19,21 +19,32 @@ import {
   SquarePen,
   Trash2,
 } from "lucide-react";
-import { useRef, useState, type Dispatch, type ReactNode } from "react";
+import {
+  useCallback,
+  useRef,
+  useState,
+  type Dispatch,
+  type ReactNode,
+} from "react";
 
 import type { Chat } from "../../shared/contracts/chat";
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
+import type { MemorySource } from "../../shared/contracts/memory";
 import type { PetDescriptor } from "../../shared/contracts/pet";
 import type { AgentSettings } from "../../shared/contracts/settings";
+import type { UserInputResolution } from "../../shared/contracts/run";
 import type { ChatDomainState } from "../features/chats/chatStore";
 import { ChatsPage } from "../features/chats/ChatsPage";
 import { ProviderSettingsPanel } from "../features/settings/ProviderSettingsPanel";
 import { CharacterSettingsPanel } from "../features/settings/CharacterSettingsPanel";
 import { AgentSettingsPanel } from "../features/settings/AgentSettingsPanel";
 import { BrowserComputerSettingsPanel } from "../features/settings/BrowserComputerSettingsPanel";
+import { ActivitySettingsPanel } from "../features/settings/ActivitySettingsPanel";
 import { McpSettingsPanel } from "../features/settings/McpSettingsPanel";
 import { SkillsSettingsPanel } from "../features/settings/SkillsSettingsPanel";
 import { TerritoryPage } from "../features/territory/TerritoryPage";
+import { MemoryPage } from "../features/memory/MemoryPage";
+import { ActivityPage } from "../features/activity/ActivityPage";
 import type {
   ChatView,
   ChatsUiAction,
@@ -100,6 +111,11 @@ interface AppShellProps {
     approvalId: string,
     decision: "approved" | "rejected",
   ) => void;
+  readonly onResolveUserInput: (
+    runId: string,
+    itemId: string,
+    resolution: UserInputResolution,
+  ) => Promise<void>;
   readonly onRunResume: (runId: string) => void;
   readonly onRunSend: () => void;
   readonly onRunStop: () => void;
@@ -666,6 +682,7 @@ function SettingsPage({
 >) {
   const [activeSection, setActiveSection] = useState<
     | "agent"
+    | "activity"
     | "appearance"
     | "browser-computer"
     | "character"
@@ -731,7 +748,11 @@ function SettingsPage({
         >
           MCP
         </button>
-        <button type="button" disabled>
+        <button
+          type="button"
+          aria-current={activeSection === "activity" ? "page" : undefined}
+          onClick={() => setActiveSection("activity")}
+        >
           Activity
         </button>
         <button type="button" disabled>
@@ -783,8 +804,10 @@ function SettingsPage({
           <BrowserComputerSettingsPanel />
         ) : activeSection === "skills" ? (
           <SkillsSettingsPanel />
-        ) : (
+        ) : activeSection === "mcp" ? (
           <McpSettingsPanel />
+        ) : (
+          <ActivitySettingsPanel />
         )}
       </div>
     </div>
@@ -809,6 +832,7 @@ export function AppShell({
   onAgentSettingsChanged,
   onProvidersChanged,
   onResolveApproval,
+  onResolveUserInput,
   onRunResume,
   onRunSend,
   onRunStop,
@@ -819,6 +843,9 @@ export function AppShell({
   const [renameRequest, setRenameRequest] = useState<ChatRenameRequest | null>(
     null,
   );
+  const [activityTarget, setActivityTarget] = useState<{
+    readonly episodeId: string;
+  } | null>(null);
   const renameRequestSequence = useRef(0);
   const requestChatRename = (chat: Chat) => {
     if (state.activeChatId !== chat.id) {
@@ -831,6 +858,19 @@ export function AppShell({
       title: chat.title,
     });
   };
+  const openMemorySource = (source: MemorySource) => {
+    if (source.type === "activity") {
+      setActivityTarget({
+        episodeId: source.referenceId,
+      });
+      dispatch({ page: "activity", type: "page.selected" });
+      return;
+    }
+    if (source.type === "chat" || source.type === "voice") {
+      dispatch({ chatId: source.referenceId, type: "chat.selected" });
+    }
+  };
+  const consumeActivityTarget = useCallback(() => setActivityTarget(null), []);
 
   return (
     <div className={styles["shell"]} data-platform={foundation.platform}>
@@ -877,6 +917,7 @@ export function AppShell({
               models={chatDomain.models}
               onResumeRun={onRunResume}
               onResolveApproval={onResolveApproval}
+              onResolveUserInput={onResolveUserInput}
               onSend={onRunSend}
               onStop={onRunStop}
               runtimeEnabled={state.modelId !== undefined}
@@ -895,6 +936,20 @@ export function AppShell({
             <TerritoryPage
               activePet={activePet}
               animationSpeed={petAnimationSpeed}
+            />
+          ) : state.activePage === "memory" ? (
+            <MemoryPage
+              onOpenSource={openMemorySource}
+              onOpenTerritory={() =>
+                dispatch({ page: "territory", type: "page.selected" })
+              }
+            />
+          ) : state.activePage === "activity" ? (
+            <ActivityPage
+              {...(activityTarget
+                ? { focusEpisodeId: activityTarget.episodeId }
+                : {})}
+              onFocusConsumed={consumeActivityTarget}
             />
           ) : (
             <PlaceholderPage page={state.activePage} />

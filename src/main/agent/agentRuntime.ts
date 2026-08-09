@@ -2,6 +2,7 @@ import type {
   ApprovalDecision,
   ApprovalNavigationTarget,
   ResolveApprovalRequest,
+  ResolveUserInputRequest,
   ResumeRunRequest,
   StartRunRequest,
   SteerRunRequest,
@@ -11,13 +12,21 @@ import type { JsonValue } from "../../shared/contracts/primitives";
 import type {
   Approval,
   ArtifactKind,
+  PlanUpdate,
+  RequestUserInputArguments,
   Run,
   RunCancelRequest,
   RunCancelResult,
+  UserInputResolution,
 } from "../../shared/contracts/run";
 import type { ToolDefinition, ToolRegistry } from "../tools/toolRegistry";
 import type { ToolDescriptor, ToolResult } from "../../shared/contracts/tool";
 import { ToolResultSchema } from "../../shared/schemas/tool";
+import {
+  PlanUpdateSchema,
+  RequestUserInputArgumentsSchema,
+  UserInputResolutionSchema,
+} from "../../shared/schemas/run";
 import { parseSchema } from "../../shared/schemas/validation";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
@@ -25,12 +34,13 @@ import { redactText } from "../../shared/pure/redaction";
 import type { ChatRepository } from "../chat/chatRepository";
 import type { ChatService } from "../chat/chatService";
 import type { ChatTitleGenerator } from "../chat/chatTitleService";
+import type { MemoryService } from "../memory/memoryService";
 import type { ChatModelRuntime } from "../providers/providerService";
 import { ProviderError, toProviderAppError } from "../providers/providerError";
 import { toolEvidenceHash } from "../tools/toolRegistry";
 import type { CheckpointPhase } from "./checkpointRepository";
 import type { CheckpointRepository } from "./checkpointRepository";
-import { ContextCompiler } from "./contextCompiler";
+import { ContextCompiler, type HandoffSummary } from "./contextCompiler";
 import {
   collectModelTurn,
   supportsStrictToolSchema,
@@ -44,11 +54,22 @@ import {
 import { detectToolCycle, semanticToolSignature } from "./loopGuard";
 import { requiresApproval } from "./approvalPolicy";
 import { AgentError } from "./agentError";
+import {
+  ImageInputError,
+  type ImageInputProvider,
+  type PreparedImageInput,
+} from "./imageInput";
+import {
+  createMemoryContextInput,
+  isMemoryContextInput,
+  materializeMemoryContextInput,
+} from "./memoryContext";
 import type { RunRepository } from "./runRepository";
 import type { RunEventWriter } from "./runEventWriter";
 import {
   checkpointJson,
   decodeRuntimeCheckpoint,
+  type PendingInputRequest,
   type PendingToolCall,
   type RuntimeCheckpointState,
 } from "./runtimeCheckpoint";
@@ -59,11 +80,12 @@ Complete the user's actual goal using the available capabilities. When capabilit
 Use Provider-native web search for current public information. Use the managed browser for webpage interaction or authenticated state, and macOS Computer only when the managed browser cannot access the needed interface.
 Treat every structured Tool Result as an observation: a rejected or failed action is not success. Change strategy when an operation makes no progress, and state honestly when a required result could not be obtained.
 For genuinely multi-step Agent work, call the always-loaded plan.update tool directly before other work, keep at most one step in_progress, and send the complete current plan again after meaningful progress. Do not search for plan.update, substitute a prose checklist, create a plan for simple work, or repeat the plan in prose because the product displays it.
+When a material choice or missing detail truly requires the user, call the always-loaded request_user_input tool directly. Do not search for it or replace its structured questions with a prose questionnaire.
+Relevant active long-term memories for the current request are preloaded as an evidence block. Do not repeat that retrieval or treat an empty result as proof. In Agent mode, only when the user explicitly asks to inspect or search memory records beyond the supplied context, load memory.search through native tool search.
 Only give a final answer when the user goal is complete or when the remaining limitation is explicit. Never claim that an external action happened without a successful Tool Result.
 Visible progress may be concise, but do not expose hidden reasoning.`;
 
 const TERMINAL_STATUSES = new Set<Run["status"]>([
-  "needs_input",
   "interrupted",
   "completed",
   "failed",
@@ -79,6 +101,49 @@ const USER_ATTACHMENT_KINDS = new Set<ArtifactKind>([
 ]);
 
 const ALWAYS_LOADED_CLIENT_TOOLS = new Set(["plan.update"]);
+const USER_INPUT_NAMESPACE = "interaction";
+const USER_INPUT_TOOL_NAME = "request_user_input";
+const USER_INPUT_ALLOWED_TOOL = {
+  name: USER_INPUT_TOOL_NAME,
+  namespace: USER_INPUT_NAMESPACE,
+} as const;
+const USER_INPUT_TOOL: ModelFunctionTool = {
+  deferLoading: false,
+  description:
+    "Ask the user one to three concise structured questions and wait for the answers before continuing the same run.",
+  inputSchema: RequestUserInputArgumentsSchema,
+  name: USER_INPUT_TOOL_NAME,
+  namespace: USER_INPUT_NAMESPACE,
+  strict: supportsStrictToolSchema(RequestUserInputArgumentsSchema),
+};
+const IMAGE_INSPECT_NAMESPACE = "image";
+const IMAGE_INSPECT_TOOL_NAME = "image.inspect";
+const IMAGE_REFERENCE_TYPE = "charamate_image_reference";
+const IMAGE_INSPECT_ALLOWED_TOOL = {
+  name: IMAGE_INSPECT_TOOL_NAME,
+  namespace: IMAGE_INSPECT_NAMESPACE,
+} as const;
+const IMAGE_INSPECT_TOOL: ModelFunctionTool = {
+  deferLoading: false,
+  description:
+    "Load the real pixels of a known local image or image artifact into the next model turn.",
+  inputSchema: {
+    additionalProperties: false,
+    properties: {
+      path: {
+        description:
+          "Absolute path, workspace-relative path, or artifact storage key",
+        minLength: 1,
+        type: "string",
+      },
+    },
+    required: ["path"],
+    type: "object",
+  },
+  name: IMAGE_INSPECT_TOOL_NAME,
+  namespace: IMAGE_INSPECT_NAMESPACE,
+  strict: true,
+};
 
 interface ProviderRuntimeFactory {
   createChatModelRuntime(profileId: string): Promise<ChatModelRuntime>;
@@ -92,12 +157,14 @@ interface ActiveRun {
   readonly abort: AbortController;
   data: RuntimeCheckpointState;
   generation: number;
+  readonly imageCache: Map<string, PreparedImageInput>;
   readonly limits: ModelContextLimits;
   readonly provider: ModelProvider;
   readonly runId: string;
   readonly steering: PendingSteering[];
   interruptRequested: boolean;
   task?: Promise<void>;
+  readonly inputWaiters: Map<string, (resolution: UserInputResolution) => void>;
   readonly waiters: Map<string, (decision: ApprovalDecision) => void>;
 }
 
@@ -138,6 +205,55 @@ function messageInput(content: string): JsonValue {
   return { content, role: "user", type: "message" };
 }
 
+function imageMessageReference(
+  text: string,
+  sources: readonly string[],
+): JsonValue {
+  return {
+    content: [
+      { text, type: "input_text" },
+      ...sources.map((source) => ({ source, type: IMAGE_REFERENCE_TYPE })),
+    ],
+    role: "user",
+    type: "message",
+  };
+}
+
+async function materializeModelInput(
+  value: JsonValue,
+  images: ImageInputProvider | undefined,
+  cache: Map<string, PreparedImageInput>,
+): Promise<JsonValue> {
+  if (Array.isArray(value)) {
+    const materialized: JsonValue[] = [];
+    for (const item of value) {
+      materialized.push(await materializeModelInput(item, images, cache));
+    }
+    return materialized;
+  }
+  if (typeof value !== "object" || value === null) return value;
+  if (isMemoryContextInput(value)) {
+    return materializeMemoryContextInput(value);
+  }
+  if (value["type"] === IMAGE_REFERENCE_TYPE) {
+    const source = value["source"];
+    if (typeof source !== "string" || !source || !images) {
+      throw new ImageInputError("图片引用已失效，无法恢复真实像素。");
+    }
+    let prepared = cache.get(source);
+    if (!prepared) {
+      prepared = await images.prepare(source);
+      cache.set(source, prepared);
+    }
+    return prepared.content;
+  }
+  const materialized: Record<string, JsonValue> = {};
+  for (const [name, nested] of Object.entries(value)) {
+    materialized[name] = await materializeModelInput(nested, images, cache);
+  }
+  return materialized;
+}
+
 function developerInput(content: string): JsonValue {
   return { content, role: "developer", type: "message" };
 }
@@ -165,6 +281,146 @@ function toolOutput(callId: string, result: ToolResult): JsonValue {
     output: JSON.stringify(result),
     type: "function_call_output",
   };
+}
+
+function userInputOutput(
+  callId: string,
+  resolution: UserInputResolution,
+): JsonValue {
+  return {
+    call_id: callId,
+    output: JSON.stringify(resolution),
+    type: "function_call_output",
+  };
+}
+
+function userInputSummary(resolution: UserInputResolution): string {
+  if (resolution.status === "cancelled") {
+    return "The user cancelled the structured input request.";
+  }
+  return `The user supplied structured answers: ${JSON.stringify(
+    resolution.answers,
+  )}`;
+}
+
+const PLAN_HANDOFF_PREFIX = "[plan:";
+const PLAN_EXPLANATION_PREFIX = "[plan explanation]";
+
+function planHandoff(
+  current: HandoffSummary,
+  value: Readonly<Record<string, JsonValue>>,
+): HandoffSummary {
+  const update: PlanUpdate = parseSchema(PlanUpdateSchema, value);
+  const planLines = update.plan.map(
+    ({ status, step }) => `${PLAN_HANDOFF_PREFIX}${status}] ${step}`,
+  );
+  return {
+    constraints: current.constraints,
+    currentProgress: [
+      ...current.currentProgress.filter(
+        (line) => !line.startsWith(PLAN_HANDOFF_PREFIX),
+      ),
+      ...planLines.filter((line) => line.startsWith("[plan:completed]")),
+    ],
+    decisions: [
+      ...current.decisions.filter(
+        (line) => !line.startsWith(PLAN_EXPLANATION_PREFIX),
+      ),
+      ...(update.explanation
+        ? [`${PLAN_EXPLANATION_PREFIX} ${update.explanation}`]
+        : []),
+    ],
+    nextSteps: planLines.filter((line) => !line.startsWith("[plan:completed]")),
+  };
+}
+
+function isUserInputCall(call: ModelFunctionCall): boolean {
+  return (
+    (call.name === USER_INPUT_TOOL_NAME &&
+      (call.namespace === undefined ||
+        call.namespace === USER_INPUT_NAMESPACE)) ||
+    call.name === `${USER_INPUT_NAMESPACE}.${USER_INPUT_TOOL_NAME}`
+  );
+}
+
+function isImageInspectCall(call: ModelFunctionCall): boolean {
+  return (
+    (call.name === "inspect" && call.namespace === IMAGE_INSPECT_NAMESPACE) ||
+    call.name === IMAGE_INSPECT_TOOL_NAME
+  );
+}
+
+function imagePath(value: Readonly<Record<string, JsonValue>>): string {
+  if (Object.keys(value).some((name) => name !== "path")) {
+    throw new TypeError("image.inspect accepts only path");
+  }
+  const path = value["path"];
+  if (typeof path !== "string" || path.trim().length === 0) {
+    throw new TypeError("image.inspect path must be a non-empty string");
+  }
+  return path;
+}
+
+function containsImageInput(value: JsonValue): boolean {
+  if (Array.isArray(value)) return value.some(containsImageInput);
+  if (typeof value !== "object" || value === null) return false;
+  if (value["type"] === "input_image" || value["type"] === IMAGE_REFERENCE_TYPE)
+    return true;
+  return Object.values(value).some(containsImageInput);
+}
+
+function parseUserInputArguments(
+  value: Readonly<Record<string, JsonValue>>,
+): RequestUserInputArguments {
+  const input = parseSchema(RequestUserInputArgumentsSchema, value);
+  const questionIds = new Set<string>();
+  for (const question of input.questions) {
+    if (questionIds.has(question.id)) {
+      throw new TypeError(`Duplicate input question id: ${question.id}`);
+    }
+    questionIds.add(question.id);
+    const optionLabels = new Set<string>();
+    for (const option of question.options) {
+      if (optionLabels.has(option.label)) {
+        throw new TypeError(
+          `Duplicate option label for ${question.id}: ${option.label}`,
+        );
+      }
+      optionLabels.add(option.label);
+    }
+  }
+  return input;
+}
+
+function validateUserInputResolution(
+  questions: readonly RequestUserInputArguments["questions"][number][],
+  resolution: UserInputResolution,
+): UserInputResolution {
+  const parsed = parseSchema(UserInputResolutionSchema, resolution);
+  if (parsed.status === "cancelled") return parsed;
+  if (parsed.answers.length !== questions.length) {
+    throw new TypeError("Every input question must be answered exactly once");
+  }
+  const questionById = new Map(
+    questions.map((question) => [question.id, question] as const),
+  );
+  const answered = new Set<string>();
+  for (const answer of parsed.answers) {
+    const question = questionById.get(answer.questionId);
+    if (!question || answered.has(answer.questionId)) {
+      throw new TypeError(`Invalid input answer id: ${answer.questionId}`);
+    }
+    answered.add(answer.questionId);
+    if (answer.value.kind === "option") {
+      const selectedLabel = answer.value.label;
+      if (!question.options.some(({ label }) => label === selectedLabel)) {
+        throw new TypeError(
+          `Unknown option for ${answer.questionId}: ${selectedLabel}`,
+        );
+      }
+    }
+  }
+  return parsed;
 }
 
 function hasToolOutput(input: readonly JsonValue[], callId: string): boolean {
@@ -241,6 +497,47 @@ function chatModeToolResult(): ToolResult {
   };
 }
 
+function imageInspectionResult(image: PreparedImageInput): ToolResult {
+  const modelContent = {
+    byteLength: image.byteLength,
+    height: image.height,
+    loaded: true,
+    mediaType: image.mediaType,
+    width: image.width,
+  } satisfies JsonValue;
+  return {
+    artifacts: [],
+    evidenceHash: toolEvidenceHash(modelContent),
+    modelContent,
+    retryable: false,
+    status: "success",
+    summary: "已读取图片真实像素",
+  };
+}
+
+function imageInspectionError(error: unknown): ToolResult {
+  const message = redactText(
+    error instanceof Error ? error.message : "图片读取失败。",
+  );
+  const modelContent = {
+    code: "IMAGE.INPUT_UNAVAILABLE",
+    message,
+  } satisfies JsonValue;
+  return {
+    artifacts: [],
+    error: {
+      code: "IMAGE.INPUT_UNAVAILABLE",
+      message,
+      retryable: false,
+    },
+    evidenceHash: toolEvidenceHash(modelContent),
+    modelContent,
+    retryable: false,
+    status: "error",
+    summary: "图片读取失败",
+  };
+}
+
 function cancelledToolResult(): ToolResult {
   return {
     artifacts: [],
@@ -298,6 +595,50 @@ function groupModelTools(
     }));
 }
 
+function withUserInputTool(
+  namespaces: readonly ModelToolNamespace[],
+): ModelToolNamespace[] {
+  const existing = namespaces.find(({ name }) => name === USER_INPUT_NAMESPACE);
+  if (!existing) {
+    return [
+      {
+        description: "Structured interaction with the user",
+        name: USER_INPUT_NAMESPACE,
+        tools: [USER_INPUT_TOOL],
+      },
+      ...namespaces,
+    ];
+  }
+  return namespaces.map((namespace) =>
+    namespace === existing
+      ? { ...namespace, tools: [USER_INPUT_TOOL, ...namespace.tools] }
+      : namespace,
+  );
+}
+
+function withImageInspectTool(
+  namespaces: readonly ModelToolNamespace[],
+): ModelToolNamespace[] {
+  const existing = namespaces.find(
+    ({ name }) => name === IMAGE_INSPECT_NAMESPACE,
+  );
+  if (!existing) {
+    return [
+      ...namespaces,
+      {
+        description: "Semantic inspection of local images",
+        name: IMAGE_INSPECT_NAMESPACE,
+        tools: [IMAGE_INSPECT_TOOL],
+      },
+    ];
+  }
+  return namespaces.map((namespace) =>
+    namespace === existing
+      ? { ...namespace, tools: [IMAGE_INSPECT_TOOL, ...namespace.tools] }
+      : namespace,
+  );
+}
+
 function searchOutputTools(
   definitions: readonly ToolDefinition[],
 ): JsonValue[] {
@@ -317,11 +658,14 @@ function searchOutputTools(
 }
 
 function initialCheckpoint(
-  content: string,
+  currentInput: JsonValue,
+  memoryContext: JsonValue | undefined,
+  recentUser: string,
   priorMessages: readonly Message[],
 ): RuntimeCheckpointState {
   return {
     boundaries: [],
+    currentUserInput: currentInput,
     forcedCompactionAttempted: false,
     handoff: {
       constraints: [],
@@ -340,9 +684,11 @@ function initialCheckpoint(
           role: message.role,
           type: "message",
         })),
-      messageInput(content),
+      ...(memoryContext ? [memoryContext] : []),
+      currentInput,
     ],
-    recentUsers: [content],
+    latestUserInput: currentInput,
+    recentUsers: [recentUser],
     recoveryAttemptedKeys: [],
     version: 1,
   };
@@ -364,6 +710,8 @@ export class AgentRuntime {
     private readonly contextCompiler = new ContextCompiler(),
     private readonly additionalInstructions: () => string = () => "",
     private readonly chatTitles?: ChatTitleGenerator,
+    private readonly images?: ImageInputProvider,
+    private readonly memory?: MemoryService,
   ) {}
 
   async initialize(): Promise<void> {
@@ -371,34 +719,36 @@ export class AgentRuntime {
       "queued",
       "running",
       "waiting_approval",
+      "needs_input",
     ])) {
-      if (run.status === "waiting_approval") {
-        const checkpoint = this.checkpoints.get(run.id);
-        if (checkpoint) {
-          try {
-            const modelRuntime = await this.providers.createChatModelRuntime(
-              run.provider.profileId,
-            );
-            const data = decodeRuntimeCheckpoint(checkpoint.context);
-            const limits =
-              data.contextLimits ??
-              (await modelRuntime.provider.resolveContextLimits(
-                run.provider.modelId,
-              ));
-            this.#launch(
-              this.#createActiveRun(
-                run.id,
-                modelRuntime.provider,
-                limits,
-                data,
-                checkpoint.generation,
-              ),
-              checkpoint.phase,
-            );
-            continue;
-          } catch {
-            // Fall through to an explicit interrupted boundary below.
-          }
+      const checkpoint = this.checkpoints.get(run.id);
+      if (
+        checkpoint &&
+        (run.status === "waiting_approval" || checkpoint.phase === "input")
+      ) {
+        try {
+          const modelRuntime = await this.providers.createChatModelRuntime(
+            run.provider.profileId,
+          );
+          const data = decodeRuntimeCheckpoint(checkpoint.context);
+          const limits =
+            data.contextLimits ??
+            (await modelRuntime.provider.resolveContextLimits(
+              run.provider.modelId,
+            ));
+          this.#launch(
+            this.#createActiveRun(
+              run.id,
+              modelRuntime.provider,
+              limits,
+              data,
+              checkpoint.generation,
+            ),
+            checkpoint.phase,
+          );
+          continue;
+        } catch {
+          // Fall through to an explicit interrupted boundary below.
         }
       }
       for (const item of this.runs.listRunItems(run.id)) {
@@ -439,6 +789,39 @@ export class AgentRuntime {
       const limits = await modelRuntime.provider.resolveContextLimits(
         modelRuntime.snapshot.modelId,
       );
+      const imageAttachments = request.attachments.filter(
+        ({ kind }) => kind === "image",
+      );
+      const preparedImages: PreparedImageInput[] = [];
+      if (imageAttachments.length > 0) {
+        if (limits.supportsVision === false) {
+          throw new AgentError(
+            "AGENT.IMAGE_INPUT_UNAVAILABLE",
+            "当前模型明确不支持图片输入，请选择支持视觉输入的模型。",
+            false,
+          );
+        }
+        if (!this.images) {
+          throw new AgentError(
+            "AGENT.IMAGE_INPUT_INVALID",
+            "当前环境无法读取图片输入。",
+            false,
+          );
+        }
+        try {
+          for (const { storageKey } of imageAttachments) {
+            preparedImages.push(await this.images.prepare(storageKey));
+          }
+        } catch (error) {
+          throw new AgentError(
+            "AGENT.IMAGE_INPUT_INVALID",
+            error instanceof ImageInputError
+              ? error.message
+              : "图片读取失败，请检查文件后重试。",
+            false,
+          );
+        }
+      }
       const now = this.clock.now();
       const runId = this.ids.generate();
       this.writer.startRun({
@@ -489,22 +872,50 @@ export class AgentRuntime {
         status: "completed",
       });
 
-      const content =
+      const modelText =
         request.attachments.length === 0
           ? request.content
           : `${request.content}\n\nAttached local artifacts:\n${request.attachments
-              .map(
-                ({ displayName, storageKey }) =>
-                  `- ${displayName}: ${storageKey}`,
+              .map(({ displayName, kind, storageKey }) =>
+                kind === "image"
+                  ? `- ${displayName}: image pixels included in this message`
+                  : `- ${displayName}: ${storageKey}`,
               )
               .join("\n")}`;
+      const currentInput =
+        preparedImages.length > 0
+          ? imageMessageReference(
+              modelText,
+              imageAttachments.map(({ storageKey }) => storageKey),
+            )
+          : messageInput(modelText);
+      const memoryContext = this.memory
+        ? createMemoryContextInput(
+            this.memory.search(
+              {
+                ...(request.content.trim() ? { query: request.content } : {}),
+              },
+              "context",
+              8,
+            ),
+          )
+        : undefined;
       const state = this.#createActiveRun(
         runId,
         modelRuntime.provider,
         limits,
-        initialCheckpoint(content, priorMessages),
+        initialCheckpoint(
+          currentInput,
+          memoryContext,
+          request.content,
+          priorMessages,
+        ),
         0,
       );
+      imageAttachments.forEach((attachment, index) => {
+        const prepared = preparedImages[index];
+        if (prepared) state.imageCache.set(attachment.storageKey, prepared);
+      });
       this.#saveCheckpoint(state, "model");
       this.#launch(state);
       return this.#requireRun(runId);
@@ -610,12 +1021,17 @@ export class AgentRuntime {
         runId: run.id,
         status: run.status as Extract<
           Run["status"],
-          "needs_input" | "interrupted" | "completed" | "failed" | "cancelled"
+          "interrupted" | "completed" | "failed" | "cancelled"
         >,
       };
     }
     const active = this.#active.get(run.id);
     if (!active) {
+      for (const item of this.runs.listRunItems(run.id)) {
+        if (item.status === "waiting_input") {
+          this.writer.completeItem(item.id, { status: "cancelled" });
+        }
+      }
       this.writer.transition(run.id, "cancelled");
       return { outcome: "accepted", runId: run.id };
     }
@@ -677,9 +1093,80 @@ export class AgentRuntime {
     return resolved;
   }
 
+  async resolveUserInput(request: ResolveUserInputRequest): Promise<Run> {
+    const run = this.#requireRun(request.runId);
+    const item = this.runs.getRunItem(request.itemId);
+    if (!item || item.runId !== run.id || item.kind !== "input_request") {
+      throw new AgentError(
+        "AGENT.INPUT_NOT_PENDING",
+        "补充问题不存在或不属于该 Run。",
+        false,
+      );
+    }
+    const input = parseUserInputArguments(
+      item.input as Readonly<Record<string, JsonValue>>,
+    );
+    const resolution = validateUserInputResolution(
+      input.questions,
+      request.resolution,
+    );
+    if (item.status === "completed") return run;
+    if (item.status !== "waiting_input" || run.status !== "needs_input") {
+      throw new AgentError(
+        "AGENT.INPUT_NOT_PENDING",
+        "该补充问题当前不能回答。",
+        false,
+      );
+    }
+
+    const checkpoint = this.checkpoints.get(run.id);
+    if (!checkpoint) {
+      throw new AgentError(
+        "AGENT.CHECKPOINT_UNAVAILABLE",
+        "没有找到补充问题对应的 Agent checkpoint。",
+        false,
+      );
+    }
+    let active = this.#active.get(run.id);
+    let launchAfterResolution = false;
+    if (!active) {
+      const modelRuntime = await this.providers.createChatModelRuntime(
+        run.provider.profileId,
+      );
+      const data = decodeRuntimeCheckpoint(checkpoint.context);
+      const limits =
+        data.contextLimits ??
+        (await modelRuntime.provider.resolveContextLimits(
+          run.provider.modelId,
+        ));
+      active = this.#createActiveRun(
+        run.id,
+        modelRuntime.provider,
+        limits,
+        data,
+        checkpoint.generation,
+      );
+      launchAfterResolution = true;
+    }
+    if (active.data.pendingInput?.itemId !== item.id) {
+      throw new AgentError(
+        "AGENT.INPUT_NOT_PENDING",
+        "补充问题与当前 checkpoint 不一致。",
+        false,
+      );
+    }
+
+    this.writer.resolveInput(item.id, resolution);
+    active.inputWaiters.get(item.id)?.(resolution);
+    active.inputWaiters.delete(item.id);
+    if (launchAfterResolution) this.#launch(active, "input");
+    return this.#requireRun(run.id);
+  }
+
   async interruptAll(): Promise<void> {
     const tasks = [...this.#active.values()].flatMap((active) => {
-      if (this.runs.getRun(active.runId)?.status === "waiting_approval") {
+      const status = this.runs.getRun(active.runId)?.status;
+      if (status === "waiting_approval" || status === "needs_input") {
         return [];
       }
       return [
@@ -708,6 +1195,8 @@ export class AgentRuntime {
       data:
         data.contextLimits === undefined ? { ...data, contextLimits } : data,
       generation,
+      imageCache: new Map(),
+      inputWaiters: new Map(),
       limits: contextLimits,
       provider,
       runId,
@@ -730,6 +1219,9 @@ export class AgentRuntime {
   }
 
   async #drive(active: ActiveRun, phase: CheckpointPhase): Promise<void> {
+    if (phase === "input" || active.data.pendingInput) {
+      await this.#resumeInputBoundary(active);
+    }
     if (phase === "tool" || phase === "approval") {
       const canContinue = await this.#resumePendingBoundary(active, phase);
       if (!canContinue) return;
@@ -752,6 +1244,9 @@ export class AgentRuntime {
       active.abort.signal.throwIfAborted();
       this.#mergeSteering(active);
       this.#compactIfNeeded(active);
+      // Keep the byte baseline in the same persisted-reference representation
+      // that ContextCompiler measures. Provider-only image pixels are
+      // materialized below and must never inflate the checkpoint.
       const requestBytes = Buffer.byteLength(
         JSON.stringify(active.data.input),
         "utf8",
@@ -872,10 +1367,22 @@ export class AgentRuntime {
     const deltaBatcher = new RunDeltaBatcher(flushDelta);
 
     try {
-      const toolNamespaces =
+      const modelInput = (await materializeModelInput(
+        active.data.input as JsonValue,
+        this.images,
+        active.imageCache,
+      )) as JsonValue[];
+      const baseToolNamespaces = withUserInputTool(
         run.execution.mode === "agent"
           ? groupModelTools(this.tools.list())
-          : [];
+          : [],
+      );
+      const toolNamespaces =
+        run.execution.mode === "agent" &&
+        this.images &&
+        active.limits.supportsVision !== false
+          ? withImageInspectTool(baseToolNamespaces)
+          : baseToolNamespaces;
       const extra = this.additionalInstructions().trim();
       const instructions = [
         BASE_INSTRUCTIONS,
@@ -887,11 +1394,21 @@ export class AgentRuntime {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const allowedTools = active.data.allowedTools;
+      const allowedTools = active.data.allowedTools
+        ? [
+            USER_INPUT_ALLOWED_TOOL,
+            ...(run.execution.mode === "agent" &&
+            this.images &&
+            active.limits.supportsVision !== false
+              ? [IMAGE_INSPECT_ALLOWED_TOOL]
+              : []),
+            ...active.data.allowedTools,
+          ]
+        : undefined;
       const events = active.provider.stream(
         {
           ...(allowedTools === undefined ? {} : { allowedTools }),
-          input: active.data.input,
+          input: modelInput,
           instructions,
           ...(active.limits.maxOutputTokens === undefined
             ? {}
@@ -928,6 +1445,23 @@ export class AgentRuntime {
     } catch (error) {
       deltaBatcher.flush();
       const cancelled = active.abort.signal.aborted;
+      const reportedError = active.data.input.some(containsImageInput)
+        ? error instanceof ProviderError &&
+          error.code === "PROVIDER.REQUEST_FAILED" &&
+          !error.retryable
+          ? new ProviderError(
+              "PROVIDER.IMAGE_INPUT_UNAVAILABLE",
+              "当前模型或 Provider 拒绝了图片输入，请选择支持视觉输入的模型。",
+              false,
+            )
+          : error instanceof ImageInputError
+            ? new ProviderError(
+                "PROVIDER.IMAGE_INPUT_UNAVAILABLE",
+                error.message,
+                false,
+              )
+            : error
+        : error;
       if (message?.status === "streaming") {
         this.chats.updateMessage({
           ...message,
@@ -941,8 +1475,8 @@ export class AgentRuntime {
       }
       this.writer.completeItem(item.id, {
         error:
-          error instanceof ProviderError
-            ? toProviderAppError(error)
+          reportedError instanceof ProviderError
+            ? toProviderAppError(reportedError)
             : {
                 code: cancelled ? "AGENT.CANCELLED" : "AGENT.MODEL_FAILED",
                 message: cancelled ? "模型请求已取消。" : "模型请求没有完成。",
@@ -955,15 +1489,15 @@ export class AgentRuntime {
           : "failed",
       });
       if (
-        error instanceof ProviderError &&
-        error.code === "PROVIDER.CONTEXT_LIMIT_EXCEEDED" &&
+        reportedError instanceof ProviderError &&
+        reportedError.code === "PROVIDER.CONTEXT_LIMIT_EXCEEDED" &&
         !active.data.forcedCompactionAttempted
       ) {
         active.data = { ...active.data, forcedCompactionAttempted: true };
         this.#compact(active, true);
         return this.#modelTurn(active);
       }
-      throw error;
+      throw reportedError;
     }
   }
 
@@ -971,6 +1505,14 @@ export class AgentRuntime {
     active: ActiveRun,
     call: ModelFunctionCall,
   ): Promise<void> {
+    if (isUserInputCall(call)) {
+      await this.#handleUserInputCall(active, call);
+      return;
+    }
+    if (isImageInspectCall(call)) {
+      await this.#handleImageInspectCall(active, call);
+      return;
+    }
     const resolvedName = this.#resolveToolName(call);
     const pending: PendingToolCall = {
       arguments: call.arguments,
@@ -1037,6 +1579,192 @@ export class AgentRuntime {
       return;
     }
     await this.#executeTool(active, pending, definition);
+  }
+
+  async #handleImageInspectCall(
+    active: ActiveRun,
+    call: ModelFunctionCall,
+  ): Promise<void> {
+    const pending: PendingToolCall = {
+      arguments: call.arguments,
+      callId: call.callId,
+      name: IMAGE_INSPECT_TOOL_NAME,
+      rawItem: call.rawItem,
+    };
+    const run = this.#requireRun(active.runId);
+    if (run.execution.mode === "chat") {
+      this.#recordToolResult(active, pending, undefined, chatModeToolResult());
+      return;
+    }
+    if (!this.images || active.limits.supportsVision === false) {
+      this.#recordToolResult(
+        active,
+        pending,
+        undefined,
+        imageInspectionError(
+          new Error(
+            active.limits.supportsVision === false
+              ? "当前模型明确不支持图片输入。"
+              : "当前环境无法读取图片输入。",
+          ),
+        ),
+      );
+      return;
+    }
+
+    const item = this.writer.startItem(active.runId, "tool_call", {
+      arguments: call.arguments,
+      callId: call.callId,
+      toolName: IMAGE_INSPECT_TOOL_NAME,
+    });
+    let source: string;
+    let prepared: PreparedImageInput;
+    try {
+      source = imagePath(call.arguments);
+      prepared = await this.images.prepare(source);
+    } catch (error) {
+      const result = imageInspectionError(error);
+      this.writer.completeItem(item.id, {
+        displayOutput: toolDisplayOutput(result),
+        error: result.error,
+        output: asJsonValue(result),
+        status: "failed",
+      });
+      this.#recordToolResult(
+        active,
+        { ...pending, toolItemId: item.id },
+        undefined,
+        result,
+      );
+      return;
+    }
+
+    const result = imageInspectionResult(prepared);
+    const inspectedImageInput = imageMessageReference(
+      `Inspect the image loaded from ${source}. Base conclusions on its pixels, not its filename.`,
+      [source],
+    );
+    active.imageCache.set(source, prepared);
+    this.writer.completeItem(item.id, {
+      displayOutput: `${prepared.width} × ${prepared.height} · ${prepared.mediaType}`,
+      output: asJsonValue(result),
+      status: "completed",
+    });
+    const withoutAllowedTools = { ...active.data };
+    delete withoutAllowedTools.allowedTools;
+    active.data = {
+      ...withoutAllowedTools,
+      boundaries: [],
+      handoff: {
+        ...active.data.handoff,
+        currentProgress: [
+          ...active.data.handoff.currentProgress,
+          `${IMAGE_INSPECT_TOOL_NAME}: ${result.summary}`,
+        ],
+        nextSteps: [],
+      },
+      input: [
+        ...active.data.input,
+        toolOutput(call.callId, result),
+        inspectedImageInput,
+      ],
+      latestUserInput: inspectedImageInput,
+      recoveryAttemptedKeys: [],
+    };
+    this.#saveCheckpoint(active, "model");
+  }
+
+  async #handleUserInputCall(
+    active: ActiveRun,
+    call: ModelFunctionCall,
+  ): Promise<void> {
+    const input = parseUserInputArguments(call.arguments);
+    const item = this.writer.startItem(
+      active.runId,
+      "input_request",
+      asJsonValue(input),
+    );
+    const pending: PendingInputRequest = {
+      callId: call.callId,
+      itemId: item.id,
+      questions: input.questions,
+    };
+    const withoutAllowedTools = { ...active.data };
+    delete withoutAllowedTools.allowedTools;
+    active.data = {
+      ...withoutAllowedTools,
+      boundaries: [],
+      handoff: {
+        ...active.data.handoff,
+        nextSteps: ["等待用户补充信息"],
+      },
+      pendingInput: pending,
+      recoveryAttemptedKeys: [],
+    };
+    this.#saveCheckpoint(active, "input");
+    this.writer.requestInput(item.id);
+    const resolution = await this.#awaitUserInput(active, item.id);
+    this.#continueAfterUserInput(active, pending, resolution);
+  }
+
+  #continueAfterUserInput(
+    active: ActiveRun,
+    pending: PendingInputRequest,
+    resolution: UserInputResolution,
+  ): void {
+    const checkpointBoundary = { ...active.data };
+    delete checkpointBoundary.pendingInput;
+    const input = hasToolOutput(active.data.input, pending.callId)
+      ? active.data.input
+      : [...active.data.input, userInputOutput(pending.callId, resolution)];
+    const latestUser = userInputSummary(resolution);
+    active.data = {
+      ...checkpointBoundary,
+      boundaries: [],
+      handoff: {
+        ...checkpointBoundary.handoff,
+        currentProgress: [
+          ...checkpointBoundary.handoff.currentProgress,
+          resolution.status === "answered"
+            ? "已收到用户补充信息"
+            : "用户取消了补充问题",
+        ],
+        nextSteps: [],
+      },
+      input,
+      latestUserInput: messageInput(latestUser),
+      recentUsers: [...checkpointBoundary.recentUsers, latestUser],
+      recoveryAttemptedKeys: [],
+    };
+    this.#saveCheckpoint(active, "model");
+  }
+
+  #awaitUserInput(
+    active: ActiveRun,
+    itemId: string,
+  ): Promise<UserInputResolution> {
+    active.abort.signal.throwIfAborted();
+    const current = this.runs.getRunItem(itemId);
+    if (current?.status === "completed" && current.output !== undefined) {
+      return Promise.resolve(
+        parseSchema(UserInputResolutionSchema, current.output),
+      );
+    }
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        active.inputWaiters.delete(itemId);
+        reject(
+          active.abort.signal.reason instanceof Error
+            ? active.abort.signal.reason
+            : new DOMException("Operation was aborted", "AbortError"),
+        );
+      };
+      active.abort.signal.addEventListener("abort", abort, { once: true });
+      active.inputWaiters.set(itemId, (resolution) => {
+        active.abort.signal.removeEventListener("abort", abort);
+        resolve(resolution);
+      });
+    });
   }
 
   async #continueAfterApproval(
@@ -1264,18 +1992,22 @@ export class AgentRuntime {
         }
       }
     }
+    const handoff =
+      descriptor?.itemKind === "plan" && result.status === "success"
+        ? planHandoff(checkpointWithoutPending.handoff, pending.arguments)
+        : {
+            ...checkpointWithoutPending.handoff,
+            currentProgress: [
+              ...checkpointWithoutPending.handoff.currentProgress,
+              `${pending.name}: ${result.summary}`,
+            ],
+            nextSteps: [],
+          };
     active.data = {
       ...checkpointWithoutPending,
       ...(allowedTools === undefined ? {} : { allowedTools }),
       boundaries,
-      handoff: {
-        ...checkpointWithoutPending.handoff,
-        currentProgress: [
-          ...checkpointWithoutPending.handoff.currentProgress,
-          `${pending.name}: ${result.summary}`,
-        ],
-        nextSteps: [],
-      },
+      handoff,
       input,
       recoveryAttemptedKeys,
     };
@@ -1348,6 +2080,39 @@ export class AgentRuntime {
     return true;
   }
 
+  async #resumeInputBoundary(active: ActiveRun): Promise<void> {
+    const pending = active.data.pendingInput;
+    if (!pending) {
+      throw new GuardTerminalError({
+        code: "AGENT.INPUT_LOST",
+        message: "恢复时找不到原补充问题边界。",
+        retryable: false,
+      });
+    }
+    const item = this.runs.getRunItem(pending.itemId);
+    if (!item || item.kind !== "input_request") {
+      throw new GuardTerminalError({
+        code: "AGENT.INPUT_LOST",
+        message: "恢复时找不到原补充问题。",
+        retryable: false,
+      });
+    }
+    if (item.status === "running") this.writer.requestInput(item.id);
+    if (
+      item.status !== "running" &&
+      item.status !== "waiting_input" &&
+      item.status !== "completed"
+    ) {
+      throw new GuardTerminalError({
+        code: "AGENT.INPUT_LOST",
+        message: "原补充问题已无法继续。",
+        retryable: false,
+      });
+    }
+    const resolution = await this.#awaitUserInput(active, item.id);
+    this.#continueAfterUserInput(active, pending, resolution);
+  }
+
   #awaitApproval(
     active: ActiveRun,
     approvalId: string,
@@ -1386,7 +2151,13 @@ export class AgentRuntime {
   #compactIfNeeded(active: ActiveRun): void {
     const compiled = this.contextCompiler.compile(
       {
+        ...(active.data.currentUserInput === undefined
+          ? {}
+          : { currentUserInput: active.data.currentUserInput }),
         items: active.data.input,
+        ...(active.data.latestUserInput === undefined
+          ? {}
+          : { latestUserInput: active.data.latestUserInput }),
         ...(active.data.lastRequestBytes === undefined
           ? {}
           : { lastRequestBytes: active.data.lastRequestBytes }),
@@ -1404,7 +2175,13 @@ export class AgentRuntime {
   #compact(active: ActiveRun, force: boolean): void {
     const compiled = this.contextCompiler.compile(
       {
+        ...(active.data.currentUserInput === undefined
+          ? {}
+          : { currentUserInput: active.data.currentUserInput }),
         items: active.data.input,
+        ...(active.data.latestUserInput === undefined
+          ? {}
+          : { latestUserInput: active.data.latestUserInput }),
         ...(active.data.lastRequestBytes === undefined
           ? {}
           : { lastRequestBytes: active.data.lastRequestBytes }),
@@ -1462,6 +2239,7 @@ export class AgentRuntime {
         ...active.data.input,
         ...contents.map((content) => messageInput(content)),
       ],
+      latestUserInput: messageInput(contents.at(-1) ?? ""),
       recentUsers: [...active.data.recentUsers, ...contents],
     };
   }
@@ -1492,6 +2270,18 @@ export class AgentRuntime {
     const run = this.runs.getRun(active.runId);
     if (!run || TERMINAL_STATUSES.has(run.status)) return;
     if (active.abort.signal.aborted) {
+      const pendingInput = active.data.pendingInput;
+      if (pendingInput) {
+        const inputItem = this.runs.getRunItem(pendingInput.itemId);
+        if (
+          inputItem?.status === "running" ||
+          inputItem?.status === "waiting_input"
+        ) {
+          this.writer.completeItem(inputItem.id, {
+            status: active.interruptRequested ? "interrupted" : "cancelled",
+          });
+        }
+      }
       const pending = active.data.pendingTool;
       if (pending?.approvalItemId) {
         const approvalItem = this.runs.getRunItem(pending.approvalItemId);
@@ -1513,6 +2303,7 @@ export class AgentRuntime {
         });
       } else {
         this.writer.transition(active.runId, "cancelled");
+        this.checkpoints.delete(active.runId);
       }
       return;
     }
@@ -1520,11 +2311,11 @@ export class AgentRuntime {
       this.writer.transition(active.runId, "failed", error.appError);
       return;
     }
-    if (error instanceof ProviderError && error.retryable) {
-      this.#saveCheckpoint(active, "interrupted");
+    if (error instanceof ProviderError) {
+      if (error.retryable) this.#saveCheckpoint(active, "interrupted");
       this.writer.transition(
         active.runId,
-        "interrupted",
+        error.retryable ? "interrupted" : "failed",
         toProviderAppError(error),
       );
       return;

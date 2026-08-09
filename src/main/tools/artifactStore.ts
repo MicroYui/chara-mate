@@ -19,6 +19,24 @@ export class ArtifactStore {
     private readonly idGenerator: IdGenerator,
   ) {}
 
+  resolvePath(storageKey: string): string {
+    if (!storageKey || path.isAbsolute(storageKey)) {
+      throw new TypeError("Artifact storage key must be relative");
+    }
+    const resolvedRoot = path.resolve(this.rootDirectory);
+    const resolved = path.resolve(resolvedRoot, storageKey);
+    const relative = path.relative(resolvedRoot, resolved);
+    if (
+      relative === "" ||
+      relative.startsWith(`..${path.sep}`) ||
+      relative === ".." ||
+      path.isAbsolute(relative)
+    ) {
+      throw new TypeError("Artifact storage key is outside the artifact store");
+    }
+    return resolved;
+  }
+
   async storeText(
     runId: string,
     displayName: string,

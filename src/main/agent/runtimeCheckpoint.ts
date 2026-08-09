@@ -1,4 +1,5 @@
 import type { JsonValue } from "../../shared/contracts/primitives";
+import type { UserInputQuestion } from "../../shared/contracts/run";
 import type {
   ModelAllowedTool,
   ModelContextLimits,
@@ -17,16 +18,25 @@ export interface PendingToolCall {
   readonly toolItemId?: string;
 }
 
+export interface PendingInputRequest {
+  readonly callId: string;
+  readonly itemId: string;
+  readonly questions: readonly UserInputQuestion[];
+}
+
 export interface RuntimeCheckpointState {
   readonly allowedTools?: readonly ModelAllowedTool[];
   readonly boundaries: readonly LoopBoundary[];
   readonly contextLimits?: ModelContextLimits;
+  readonly currentUserInput?: JsonValue;
   readonly forcedCompactionAttempted: boolean;
   readonly handoff: HandoffSummary;
   readonly input: readonly JsonValue[];
+  readonly latestUserInput?: JsonValue;
   readonly lastRequestBytes?: number;
   readonly lastUsage?: ModelUsage;
   readonly pendingTool?: PendingToolCall;
+  readonly pendingInput?: PendingInputRequest;
   readonly recentUsers: readonly string[];
   readonly recoveryAttemptedKeys: readonly string[];
   readonly version: 1;
@@ -41,7 +51,7 @@ function validContextLimits(value: JsonValue | undefined): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  return [
+  const validNumbers = [
     "effectiveInputTokens",
     "maxContextTokens",
     "maxOutputTokens",
@@ -53,6 +63,11 @@ function validContextLimits(value: JsonValue | undefined): boolean {
       (typeof limit === "number" && Number.isInteger(limit) && limit > 0)
     );
   });
+  return (
+    validNumbers &&
+    (value["supportsVision"] === undefined ||
+      typeof value["supportsVision"] === "boolean")
+  );
 }
 
 export function decodeRuntimeCheckpoint(

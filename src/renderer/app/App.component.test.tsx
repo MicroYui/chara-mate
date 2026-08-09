@@ -152,10 +152,19 @@ function renderApp({
     }),
   );
   const desktopApi: CharaMateApi = {
+    activity: {
+      cleanup: vi.fn(),
+      deleteEpisode: vi.fn(),
+      getEpisode: vi.fn(),
+      getSnapshot: vi.fn(),
+      setPaused: vi.fn(),
+      updateEpisode: vi.fn(),
+    },
     agent: {
       cancel: vi.fn<AgentApi["cancel"]>(),
       getPendingApproval: vi.fn<AgentApi["getPendingApproval"]>(),
       resolveApproval: vi.fn<AgentApi["resolveApproval"]>(),
+      resolveUserInput: vi.fn<AgentApi["resolveUserInput"]>(),
       resume: vi.fn<AgentApi["resume"]>(),
       start,
       steer: vi.fn<AgentApi["steer"]>(),
@@ -251,6 +260,19 @@ function renderApp({
         platform: "darwin",
       }),
       markRendererReady,
+    },
+    memory: {
+      acceptCandidate: vi.fn(),
+      archive: vi.fn(),
+      create: vi.fn(),
+      delete: vi.fn(),
+      get: vi.fn(),
+      list: vi.fn(),
+      purge: vi.fn(),
+      rejectCandidate: vi.fn(),
+      restore: vi.fn(),
+      revise: vi.fn(),
+      setPinned: vi.fn(),
     },
     pet: {
       getLibrary: vi.fn(() =>

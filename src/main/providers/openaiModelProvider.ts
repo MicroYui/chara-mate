@@ -171,23 +171,27 @@ function requestTools(
   if (namespaces.length === 0) {
     return supportsNativeWebSearch ? [webSearch] : [];
   }
+  const hasDeferredTools = namespaces.some(({ tools }) =>
+    tools.some(({ deferLoading }) => deferLoading !== false),
+  );
+  const toolSearch = {
+    description:
+      "Search CharaMate's current capability registry and load only the tools needed for the next action.",
+    execution: "client" as const,
+    parameters: {
+      additionalProperties: false,
+      properties: {
+        limit: { maximum: 8, minimum: 1, type: "integer" },
+        query: { minLength: 1, type: "string" },
+      },
+      required: ["query"],
+      type: "object" as const,
+    },
+    type: "tool_search" as const,
+  };
   return [
     ...namespaces.map(namespaceTool),
-    {
-      description:
-        "Search CharaMate's current capability registry and load only the tools needed for the next action.",
-      execution: "client",
-      parameters: {
-        additionalProperties: false,
-        properties: {
-          limit: { maximum: 8, minimum: 1, type: "integer" },
-          query: { minLength: 1, type: "string" },
-        },
-        required: ["query"],
-        type: "object",
-      },
-      type: "tool_search",
-    },
+    ...(hasDeferredTools ? [toolSearch] : []),
     ...(supportsNativeWebSearch ? [webSearch] : []),
   ];
 }
@@ -240,6 +244,14 @@ function contextLimitsFromModel(value: unknown): ModelContextLimits {
   if (!record) return {};
   const capabilities = metadataRecord(record["capabilities"]);
   const nestedLimits = metadataRecord(capabilities?.["limits"]);
+  const supportedCapabilities = metadataRecord(capabilities?.["supports"]);
+  const declaredVisionSupport = supportedCapabilities?.["vision"];
+  const supportsVision =
+    typeof declaredVisionSupport === "boolean"
+      ? declaredVisionSupport
+      : metadataRecord(nestedLimits?.["vision"])
+        ? true
+        : undefined;
   const records = [record, nestedLimits] as const;
   const maxContextTokens = readPositiveIntegerFrom(
     records,
@@ -281,6 +293,7 @@ function contextLimitsFromModel(value: unknown): ModelContextLimits {
     ...(maxContextTokens ? { maxContextTokens } : {}),
     ...(maxOutputTokens ? { maxOutputTokens } : {}),
     ...(maxPromptTokens ? { maxPromptTokens } : {}),
+    ...(supportsVision === undefined ? {} : { supportsVision }),
   };
 }
 

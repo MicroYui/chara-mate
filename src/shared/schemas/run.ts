@@ -70,7 +70,6 @@ export const RunStatusSchema = Type.Union([
 ]);
 
 export const TerminalRunStatusSchema = Type.Union([
-  Type.Literal("needs_input"),
   Type.Literal("interrupted"),
   Type.Literal("completed"),
   Type.Literal("failed"),
@@ -97,6 +96,7 @@ export const RunItemKindSchema = Type.Union([
   Type.Literal("user_message"),
   Type.Literal("assistant_message"),
   Type.Literal("plan"),
+  Type.Literal("input_request"),
   Type.Literal("tool_call"),
   Type.Literal("command"),
   Type.Literal("file_change"),
@@ -109,6 +109,7 @@ export const RunItemStatusSchema = Type.Union([
   Type.Literal("queued"),
   Type.Literal("running"),
   Type.Literal("waiting_approval"),
+  Type.Literal("waiting_input"),
   Type.Literal("completed"),
   Type.Literal("failed"),
   Type.Literal("cancelled"),
@@ -136,6 +137,72 @@ export const PlanUpdateSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const UserInputOptionSchema = Type.Object(
+  {
+    description: Type.String({ maxLength: 160 }),
+    label: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const UserInputQuestionSchema = Type.Object(
+  {
+    header: Type.String({ maxLength: 12, minLength: 1 }),
+    id: Type.String({ maxLength: 64, minLength: 1 }),
+    options: Type.Array(UserInputOptionSchema, {
+      maxItems: 3,
+      minItems: 2,
+    }),
+    question: Type.String({ maxLength: 300, minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const RequestUserInputArgumentsSchema = Type.Object(
+  {
+    questions: Type.Array(UserInputQuestionSchema, {
+      maxItems: 3,
+      minItems: 1,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+export const UserInputAnswerSchema = Type.Object(
+  {
+    questionId: Type.String({ maxLength: 64, minLength: 1 }),
+    value: Type.Union([
+      Type.Object(
+        { kind: Type.Literal("option"), label: NonBlankStringSchema },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        { kind: Type.Literal("text"), text: NonBlankStringSchema },
+        { additionalProperties: false },
+      ),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const UserInputResolutionSchema = Type.Union([
+  Type.Object(
+    {
+      answers: Type.Array(UserInputAnswerSchema, { maxItems: 3, minItems: 1 }),
+      resolvedAt: TimestampSchema,
+      status: Type.Literal("answered"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      resolvedAt: TimestampSchema,
+      status: Type.Literal("cancelled"),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 export const RunItemSchema = Type.Object(
   {

@@ -4,6 +4,7 @@ import type { JsonValue } from "../../shared/contracts/primitives";
 import type { ToolResult } from "../../shared/contracts/tool";
 import { requiresApproval } from "./approvalPolicy";
 import { ContextCompiler } from "./contextCompiler";
+import { createMemoryContextInput } from "./memoryContext";
 import { detectToolCycle, semanticToolSignature } from "./loopGuard";
 import {
   collectModelTurn,
@@ -139,7 +140,7 @@ describe("Phase 2 Runtime mechanics", () => {
 
     expect(compiled.compacted).toBe(true);
     expect(compiled.input).toHaveLength(2);
-    expect(compiled.input[0]).toMatchObject({
+    expect(compiled.input[1]).toMatchObject({
       content: "latest user",
       role: "user",
     });
@@ -148,6 +149,137 @@ describe("Phase 2 Runtime mechanics", () => {
     expect(JSON.stringify(compiled.input)).toContain("constraints");
     expect(JSON.stringify(compiled.input)).toContain("nextSteps");
     expect(JSON.stringify(compiled.input)).not.toContain("call-old");
+  });
+
+  it("preserves the structured latest user input across compaction", () => {
+    const compiler = new ContextCompiler();
+    const currentUserInput = {
+      content: "请分析截图并按我的选择继续",
+      role: "user",
+      type: "message",
+    } satisfies JsonValue;
+    const latestUserInput = {
+      content: [
+        { text: "请继续看这张图", type: "input_text" },
+        {
+          source: "/workspace/layout.png",
+          type: "charamate_image_reference",
+        },
+      ],
+      role: "user",
+      type: "message",
+    } satisfies JsonValue;
+    const compiled = compiler.compile(
+      {
+        items: [currentUserInput, latestUserInput],
+        currentUserInput,
+        latestUserInput,
+        recentUsers: ["old", "请继续看这张图"],
+      },
+      { maxPromptTokens: 100_000 },
+      {
+        constraints: [],
+        currentProgress: [],
+        decisions: [],
+        nextSteps: [],
+      },
+      true,
+    );
+
+    expect(compiled.compacted).toBe(true);
+    expect(compiled.input[1]).toEqual(currentUserInput);
+    expect(compiled.input[2]).toEqual(latestUserInput);
+  });
+
+  it("keeps the selected long-term memory evidence before the current goal", () => {
+    const compiler = new ContextCompiler();
+    const memoryContext = createMemoryContextInput([]);
+    const current = {
+      content: "继续完成当前目标",
+      role: "user",
+      type: "message",
+    } satisfies JsonValue;
+    const compiled = compiler.compile(
+      {
+        currentUserInput: current,
+        items: [
+          { content: "较早内容", role: "user", type: "message" },
+          memoryContext,
+          current,
+        ],
+        recentUsers: ["继续完成当前目标"],
+      },
+      { maxPromptTokens: 100_000 },
+      {
+        constraints: [],
+        currentProgress: [],
+        decisions: [],
+        nextSteps: [],
+      },
+      true,
+    );
+
+    expect(compiled.input).toEqual([
+      expect.objectContaining({ role: "developer" }),
+      memoryContext,
+      current,
+    ]);
+  });
+
+  it("keeps the latest action Tool boundary next to the current goal", () => {
+    const compiler = new ContextCompiler();
+    const oldCall = {
+      arguments: "{}",
+      call_id: "old-call",
+      name: "read",
+      namespace: "file",
+      type: "function_call",
+    } satisfies JsonValue;
+    const oldOutput = {
+      call_id: "old-call",
+      output: "old result",
+      type: "function_call_output",
+    } satisfies JsonValue;
+    const latestCall = {
+      arguments: "{}",
+      call_id: "latest-call",
+      name: "search",
+      namespace: "memory",
+      type: "function_call",
+    } satisfies JsonValue;
+    const latestOutput = {
+      call_id: "latest-call",
+      output: "latest evidence",
+      type: "function_call_output",
+    } satisfies JsonValue;
+    const current = {
+      content: "继续完成当前目标",
+      role: "user",
+      type: "message",
+    } satisfies JsonValue;
+    const compiled = compiler.compile(
+      {
+        currentUserInput: current,
+        items: [oldCall, oldOutput, latestCall, latestOutput, current],
+        recentUsers: ["继续完成当前目标"],
+      },
+      { maxPromptTokens: 100_000 },
+      {
+        constraints: [],
+        currentProgress: [],
+        decisions: [],
+        nextSteps: [],
+      },
+      true,
+    );
+
+    expect(compiled.input).toEqual([
+      expect.objectContaining({ role: "developer" }),
+      latestCall,
+      latestOutput,
+      current,
+    ]);
+    expect(JSON.stringify(compiled.input)).not.toContain("old result");
   });
 
   it("keeps the 90% trigger proportional to the Provider-resolved model window", () => {

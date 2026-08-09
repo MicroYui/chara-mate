@@ -94,11 +94,13 @@ test("launches through the typed preload boundary", async () => {
     );
 
     const bridgeShape = await page.evaluate(() => ({
+      activityKeys: Object.keys(window.charaMate.activity).sort(),
       agentKeys: Object.keys(window.charaMate.agent).sort(),
       chatKeys: Object.keys(window.charaMate.chat).sort(),
       extensionKeys: Object.keys(window.charaMate.extensions).sort(),
       fileKeys: Object.keys(window.charaMate.files).sort(),
       foundationKeys: Object.keys(window.charaMate.foundation).sort(),
+      memoryKeys: Object.keys(window.charaMate.memory).sort(),
       petKeys: Object.keys(window.charaMate.pet).sort(),
       providerKeys: Object.keys(window.charaMate.provider).sort(),
       rootKeys: Object.keys(window.charaMate).sort(),
@@ -109,10 +111,19 @@ test("launches through the typed preload boundary", async () => {
       exposesSecretReader: "getApiKey" in window.charaMate.provider,
     }));
     expect(bridgeShape).toEqual({
+      activityKeys: [
+        "cleanup",
+        "deleteEpisode",
+        "getEpisode",
+        "getSnapshot",
+        "setPaused",
+        "updateEpisode",
+      ],
       agentKeys: [
         "cancel",
         "getPendingApproval",
         "resolveApproval",
+        "resolveUserInput",
         "resume",
         "start",
         "steer",
@@ -143,6 +154,19 @@ test("launches through the typed preload boundary", async () => {
         "skillSetEnabled",
       ],
       fileKeys: ["getPathForFile"],
+      memoryKeys: [
+        "acceptCandidate",
+        "archive",
+        "create",
+        "delete",
+        "get",
+        "list",
+        "purge",
+        "rejectCandidate",
+        "restore",
+        "revise",
+        "setPinned",
+      ],
       providerKeys: [
         "deleteProfile",
         "discoverModels",
@@ -160,11 +184,13 @@ test("launches through the typed preload boundary", async () => {
         "subscribeOpenMain",
       ],
       rootKeys: [
+        "activity",
         "agent",
         "chat",
         "extensions",
         "files",
         "foundation",
+        "memory",
         "pet",
         "provider",
         "runEvents",

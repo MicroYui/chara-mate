@@ -5,7 +5,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { verifyDatabaseRoundTrip } from "../../src/main/db/database";
+import {
+  openApplicationDatabase,
+  verifyDatabaseRoundTrip,
+} from "../../src/main/db/database";
 import { serializeForPersistence } from "../../src/main/db/persistenceBoundary";
 import { CURRENT_SCHEMA_VERSION } from "../../src/main/db/schema/current";
 
@@ -70,5 +73,98 @@ describe("foundation database", () => {
     expect((await readFile(databasePath)).includes(Buffer.from(secret))).toBe(
       false,
     );
+  });
+
+  it("migrates v4 Run data before enabling input boundaries and Phase 3 tables", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-v4-migration-"),
+    );
+    temporaryDirectories.push(directory);
+    const databasePath = path.join(directory, "charamate.sqlite");
+    let database = openApplicationDatabase(databasePath);
+    database
+      .prepare(
+        `INSERT INTO chats (id, title, status, created_at, updated_at)
+         VALUES ('chat-v4', '保留的会话', 'active', ?, ?)`,
+      )
+      .run("2026-08-08T00:00:00.000Z", "2026-08-08T00:00:00.000Z");
+    database
+      .prepare(
+        `INSERT INTO runs (
+           id, chat_id, execution_json, provider_json, status,
+           latest_sequence, created_at
+         ) VALUES ('run-v4', 'chat-v4', ?, ?, 'interrupted', 1, ?)`,
+      )
+      .run(
+        JSON.stringify({ mode: "chat" }),
+        JSON.stringify({ modelId: "model", profileId: "profile" }),
+        "2026-08-08T00:00:00.000Z",
+      );
+    database
+      .prepare(
+        `INSERT INTO run_items (
+           id, run_id, sequence, kind, status, input_json
+         ) VALUES ('item-v4', 'run-v4', 1, 'plan', 'completed', '{}')`,
+      )
+      .run();
+    database
+      .prepare(
+        `INSERT INTO checkpoints (
+           run_id, generation, phase, context_json,
+           last_completed_sequence, updated_at
+         ) VALUES ('run-v4', 1, 'interrupted', '{}', 1, ?)`,
+      )
+      .run("2026-08-08T00:00:00.000Z");
+    database
+      .prepare(
+        `INSERT INTO tool_artifacts (
+           artifact_id, run_item_id, run_id, position, kind,
+           display_name, storage_key
+         ) VALUES ('artifact-v4', 'item-v4', 'run-v4', 0, 'data',
+                   '保留的工件', 'artifact-v4.json')`,
+      )
+      .run();
+    database
+      .prepare(
+        "UPDATE app_metadata SET value = '4' WHERE key = 'schema_version'",
+      )
+      .run();
+    database.close();
+
+    database = openApplicationDatabase(databasePath);
+    expect(
+      database
+        .prepare("SELECT kind, status FROM run_items WHERE id = 'item-v4'")
+        .get(),
+    ).toEqual({ kind: "plan", status: "completed" });
+    expect(
+      database
+        .prepare(
+          "SELECT run_item_id FROM tool_artifacts WHERE artifact_id = 'artifact-v4'",
+        )
+        .get(),
+    ).toEqual({ run_item_id: "item-v4" });
+    database
+      .prepare(
+        `INSERT INTO run_items (
+           id, run_id, sequence, kind, status, input_json
+         ) VALUES ('item-v5', 'run-v4', 2, 'input_request', 'waiting_input', '{}')`,
+      )
+      .run();
+    database
+      .prepare("UPDATE checkpoints SET phase = 'input' WHERE run_id = 'run-v4'")
+      .run();
+    expect(
+      database
+        .prepare("SELECT value FROM app_metadata WHERE key = 'schema_version'")
+        .get(),
+    ).toEqual({ value: "5" });
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE name = 'memories'")
+        .get(),
+    ).toEqual({ name: "memories" });
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
   });
 });

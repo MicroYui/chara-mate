@@ -1,5 +1,10 @@
 import type { JsonValue, Timestamp } from "../../shared/contracts/primitives";
-import type { Approval, Run, RunItem } from "../../shared/contracts/run";
+import type {
+  Approval,
+  Run,
+  RunItem,
+  UserInputResolution,
+} from "../../shared/contracts/run";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
 import type { RunEvent } from "../../shared/contracts/ipc";
@@ -50,6 +55,87 @@ export class RunEventWriter {
       status: patch.status,
     };
     this.#append(current.runId, { item, type: "item.completed" }, endedAt);
+    return item;
+  }
+
+  requestInput(itemId: string): RunItem {
+    const current = this.runs.getRunItem(itemId);
+    if (
+      !current ||
+      current.kind !== "input_request" ||
+      current.status !== "running"
+    ) {
+      throw new Error(`Input request item ${itemId} does not exist`);
+    }
+    const run = this.#requireRun(current.runId);
+    if (run.status !== "running") {
+      throw new Error(`Run ${run.id} cannot request input from ${run.status}`);
+    }
+    const nextSequence = run.latestSequence + 1;
+    const item: RunItem = { ...current, status: "waiting_input" };
+    const paused: Run = {
+      ...run,
+      latestSequence: nextSequence,
+      status: "needs_input",
+    };
+    this.events.append({
+      event: { item, run: paused, type: "input.requested" },
+      occurredAt: this.clock.now(),
+      sequence: nextSequence,
+      streamId: run.id,
+    });
+    return item;
+  }
+
+  resolveInput(itemId: string, resolution: UserInputResolution): RunItem {
+    const current = this.runs.getRunItem(itemId);
+    if (
+      !current ||
+      current.kind !== "input_request" ||
+      current.status !== "waiting_input"
+    ) {
+      throw new Error(`Input request item ${itemId} is not pending`);
+    }
+    const run = this.#requireRun(current.runId);
+    if (run.status !== "needs_input") {
+      throw new Error(`Run ${run.id} is not waiting for input`);
+    }
+    const nextSequence = run.latestSequence + 1;
+    const started = current.startedAt
+      ? Date.parse(current.startedAt)
+      : Date.parse(resolution.resolvedAt);
+    const ended = Date.parse(resolution.resolvedAt);
+    const item: RunItem = {
+      ...current,
+      displayOutput:
+        resolution.status === "answered"
+          ? resolution.answers
+              .map(({ questionId, value }) =>
+                value.kind === "option"
+                  ? `${questionId}: ${value.label}`
+                  : `${questionId}: ${value.text}`,
+              )
+              .join("\n")
+          : "用户取消了本次补充问题。",
+      durationMs: Math.max(0, ended - started),
+      endedAt: resolution.resolvedAt,
+      output: resolution,
+      status: "completed",
+    };
+    const identity = { ...run };
+    delete identity.endedAt;
+    delete identity.error;
+    const resumed: Run = {
+      ...identity,
+      latestSequence: nextSequence,
+      status: "running",
+    };
+    this.events.append({
+      event: { item, run: resumed, type: "input.resolved" },
+      occurredAt: resolution.resolvedAt,
+      sequence: nextSequence,
+      streamId: run.id,
+    });
     return item;
   }
 

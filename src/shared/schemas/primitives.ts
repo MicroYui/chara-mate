@@ -5,6 +5,7 @@ const UUID_PATTERN =
 const UTC_TIMESTAMP_PATTERN =
   "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$";
 export const UTC_TIMESTAMP_FORMAT = "charamate-utc-timestamp";
+export const CALENDAR_DATE_FORMAT = "date";
 
 const utcTimestampPattern = new RegExp(UTC_TIMESTAMP_PATTERN, "u");
 
@@ -24,8 +25,22 @@ export function isUtcTimestamp(value: string): boolean {
   return new Date(milliseconds).toISOString() === canonicalValue;
 }
 
+export function isCalendarDate(value: string): boolean {
+  if (value.length !== 10 || value[4] !== "-" || value[7] !== "-") {
+    return false;
+  }
+  const milliseconds = Date.parse(`${value}T00:00:00.000Z`);
+  return (
+    Number.isFinite(milliseconds) &&
+    new Date(milliseconds).toISOString().slice(0, 10) === value
+  );
+}
+
 if (!FormatRegistry.Has(UTC_TIMESTAMP_FORMAT)) {
   FormatRegistry.Set(UTC_TIMESTAMP_FORMAT, isUtcTimestamp);
+}
+if (!FormatRegistry.Has(CALENDAR_DATE_FORMAT)) {
+  FormatRegistry.Set(CALENDAR_DATE_FORMAT, isCalendarDate);
 }
 
 export const EntityIdSchema = Type.String({ pattern: UUID_PATTERN });
@@ -33,6 +48,10 @@ export const EntityIdSchema = Type.String({ pattern: UUID_PATTERN });
 export const TimestampSchema = Type.String({
   format: UTC_TIMESTAMP_FORMAT,
   pattern: UTC_TIMESTAMP_PATTERN,
+});
+
+export const CalendarDateSchema = Type.String({
+  format: CALENDAR_DATE_FORMAT,
 });
 
 export const SequenceSchema = Type.Integer({ minimum: 1 });

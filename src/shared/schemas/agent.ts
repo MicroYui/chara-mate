@@ -12,6 +12,7 @@ import {
   RunCancelResultSchema,
   RunExecutionSchema,
   RunSchema,
+  UserInputResolutionSchema,
 } from "./run";
 
 export const StartRunRequestSchema = Type.Object(
@@ -54,6 +55,15 @@ export const ResolveApprovalRequestSchema = Type.Object(
     decidedAt: TimestampSchema,
     decision: ApprovalDecisionSchema,
     reason: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+export const ResolveUserInputRequestSchema = Type.Object(
+  {
+    itemId: EntityIdSchema,
+    resolution: UserInputResolutionSchema,
+    runId: EntityIdSchema,
   },
   { additionalProperties: false },
 );
@@ -102,6 +112,7 @@ export const RunMutationResponseSchema = operationResponse(
 );
 export const RunCancelResponseSchema = operationResponse(RunCancelResultSchema);
 export const ResolveApprovalResponseSchema = operationResponse(ApprovalSchema);
+export const ResolveUserInputResponseSchema = operationResponse(RunSchema);
 export const PendingApprovalResponseSchema = operationResponse(
   Type.Union([ApprovalSchema, Type.Null()]),
 );
