@@ -131,6 +131,9 @@ async function startFakeProvider(browserUrl?: string) {
       const browserTask = body.includes("浏览器");
       const imageInputTask = body.includes("图片输入测试");
       const imageToolTask = body.includes("图片工具测试");
+      const memoryFormationTask = body.includes("记忆形成测试");
+      const memoryRecallTask = body.includes("记忆复用测试");
+      const memoryUpdateTask = body.includes("记忆更新测试");
       const planTask = body.includes("计划测试");
       const structuredInputTask = body.includes("结构化输入测试");
       if (titleTask) {
@@ -151,6 +154,46 @@ async function startFakeProvider(browserUrl?: string) {
             completed(responseId),
           ]);
         }
+      } else if (memoryUpdateTask) {
+        if (
+          body.includes('"call_id":"memory-replace"') &&
+          body.includes("function_call_output")
+        ) {
+          writeSse(response, finalAnswer(responseId, "已把爱好更新为游泳。"));
+        } else {
+          const memoryId = body.match(
+            /\[memory:([0-9a-f]{8}-[0-9a-f-]{27})\s/iu,
+          )?.[1];
+          writeSse(response, [
+            functionCall("memory-replace", "record", "memory", {
+              basis: "explicit_user_statement",
+              claimSlot: "preference.hobbies",
+              content: "用户现在的爱好是游泳。",
+              ...(memoryId ? { memoryId } : {}),
+              operation: "replace",
+            }),
+            completed(responseId),
+          ]);
+        }
+      } else if (memoryFormationTask) {
+        if (
+          body.includes('"call_id":"memory-record"') &&
+          body.includes("function_call_output")
+        ) {
+          writeSse(response, finalAnswer(responseId, "我会记住你喜欢徒步。"));
+        } else {
+          writeSse(response, [
+            functionCall("memory-record", "record", "memory", {
+              basis: "explicit_user_statement",
+              claimSlot: "preference.hobbies",
+              content: "用户的爱好是徒步。",
+              operation: "create",
+            }),
+            completed(responseId),
+          ]);
+        }
+      } else if (memoryRecallTask) {
+        writeSse(response, finalAnswer(responseId, "你现在的爱好是游泳。"));
       } else if (structuredInputTask) {
         if (
           body.includes('"call_id":"input-request"') &&
@@ -528,6 +571,112 @@ test("answers a direct structured question and continues the same Chat Run", asy
     await application.close();
     application = undefined;
     expectCleanApplicationShutdown(launched.stderr);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("updates one stable Memory across Chats without leaving conflicting active facts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "chara-mate-memory-e2e-"));
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    const sendMessage = async (content: string) => {
+      await launched.main.getByRole("textbox", { name: "消息" }).fill(content);
+      await launched.main.getByRole("button", { name: "发送" }).click();
+    };
+
+    await sendMessage("记忆形成测试：我的爱好是徒步。");
+    await expect(launched.main.getByText("我会记住你喜欢徒步。")).toBeVisible();
+    await launched.main.getByRole("button", { name: "新建对话" }).click();
+    await sendMessage("记忆更新测试：我现在不再喜欢徒步，爱好改成游泳。");
+    await expect(launched.main.getByText("已把爱好更新为游泳。")).toBeVisible();
+    await launched.main.getByRole("button", { name: "新建对话" }).click();
+    await sendMessage("记忆复用测试：我的爱好是什么？");
+    await expect(launched.main.getByText("你现在的爱好是游泳。")).toBeVisible();
+
+    const taskBodies = provider.bodies.filter(
+      (body) => !body.includes("Generate one concise chat title"),
+    );
+    expect(taskBodies).toHaveLength(5);
+    expect(taskBodies[0]).toContain('"name":"memory"');
+    expect(taskBodies[0]).toContain('"name":"record"');
+    expect(taskBodies[0]).toContain('"defer_loading":false');
+    expect(taskBodies[0]).not.toContain('"type":"tool_search"');
+    expect(taskBodies[2]).toContain("Relevant long-term memories");
+    expect(taskBodies[2]).toContain("stableClaimSlot: preference.hobbies");
+    expect(taskBodies[2]).toContain("用户的爱好是徒步。");
+    expect(taskBodies[4]).toContain("用户现在的爱好是游泳。");
+    expect(taskBodies[4]).not.toContain("用户的爱好是徒步。");
+
+    const snapshot = await launched.main.evaluate(async () =>
+      window.charaMate.memory.list({ query: "爱好" }),
+    );
+    if (!snapshot.ok) throw new Error("Missing automatic Memory snapshot");
+    expect(snapshot.value.memories).toHaveLength(1);
+    expect(snapshot.value.memories[0]?.revision.content).toBe(
+      "用户现在的爱好是游泳。",
+    );
+    expect(snapshot.value.memories[0]?.memory.claimSlot).toBe(
+      "preference.hobbies",
+    );
+    expect(snapshot.value.memories[0]?.sources).toEqual([
+      expect.objectContaining({ type: "chat" }),
+    ]);
+
+    await launched.main.getByRole("button", { name: "Memory" }).click();
+    const memoryRow = launched.main.getByRole("button", {
+      name: /用户现在的爱好是游泳/u,
+    });
+    await expect(memoryRow).toBeVisible();
+    await memoryRow.click();
+    await expect(
+      launched.main.getByRole("heading", { name: "当前 Revision 来源" }),
+    ).toBeVisible();
+    await expect(
+      launched.main.getByRole("button", { name: /^Chat 用户消息/u }),
+    ).toBeVisible();
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
+
+    const database = new Database(path.join(userData, "charamate.sqlite"), {
+      readonly: true,
+    });
+    const counts = database
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM memories) AS memories,
+           (SELECT COUNT(*) FROM memory_revisions) AS revisions,
+           (SELECT COUNT(*) FROM memory_claims) AS claims,
+           (SELECT COUNT(*) FROM memory_candidates) AS candidates,
+           (SELECT COUNT(*) FROM run_items WHERE kind = 'tool_call') AS toolCalls`,
+      )
+      .get() as {
+      candidates: number;
+      claims: number;
+      memories: number;
+      revisions: number;
+      toolCalls: number;
+    };
+    database.close();
+    expect(counts).toEqual({
+      candidates: 0,
+      claims: 1,
+      memories: 1,
+      revisions: 2,
+      toolCalls: 2,
+    });
   } finally {
     await application?.close();
     await provider.close();

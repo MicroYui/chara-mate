@@ -540,7 +540,7 @@ Agent 可在以下情况下创建或修改 Skill：
 
 ### 5.7 自我进化
 
-`SELF-EVOLUTION` 是功能 Gate：只有实验能证明后续同类任务收益足以覆盖错误迁移、候选膨胀和维护成本时，产品才加入本节能力；否则不提交 Review Job、候选表或管理入口。
+`SELF-EVOLUTION` 是高级成长功能 Gate：只有实验能证明后续同类任务收益足以覆盖错误迁移、候选膨胀和维护成本时，产品才加入本节能力；否则不提交异步 Review Job、Skill/成长候选 Schema 或对应管理入口。Phase 3 已拥有普通 Memory 候选表和用户明确陈述的基础形成闭环，它们不由本 Gate 回滚。
 
 若晋级，有学习价值的 Run 完成后可按唯一获胜触发规则启动异步 `ExperienceReview`。它是候选生成器，不是第二套 Agent Runtime，只输出四类结构化候选：
 
@@ -627,6 +627,25 @@ interface MemoryRevision {
 - 用户手动纠正具有最高事实优先级。
 - Memory 页面可查看时间线、来源消息/Activity/Run、相关实体与被使用记录。
 - 删除进入可恢复状态；用户明确永久删除时清除 Revision、索引引用和相关展示投影。
+
+### 6.3.1 使用期自动形成
+
+`MEMORY-FORMATION` 已选择同 Run 的 `F2-IN-RUN-TOOL`：`memory.record` 是 Chat 与 Agent 都始终加载的宿主能力。当前回答模型在最终回答前提交结构化记忆意图，宿主把它写入既有 `MemoryService`；不增加 post-Run reviewer、第二套 Agent、轮询任务、规则解析器、运行时开关或用户设置。
+
+唯一生效规则是：
+
+- 用户在当前输入中明确陈述、且预计在本轮之后仍有用的画像、偏好、项目、事件、方法或承诺，直接创建 active Memory；
+- profile/preference 必须使用产品闭集 `claimSlot` 作为稳定字段身份，Tool 不接受裸 profile/preference type；模型按语义选择字段并提交 `create/replace/append/remove`，宿主派生 Memory type 与单值/集合基数，字段名不随“喜欢 A → 喜欢 B”变化；
+- 任意更新携带的 `memoryId` 只能来自当前 Run 预注入 Memory allowlist；宿主交叉校验 ID、type、slot、active 状态和 operation，合法时在同一 Memory 上创建 Revision 并保留旧内容与来源；
+- 更新未取得本轮合法目标、同 slot create 冲突、已预载同类型字段时另一个 slot 的 create 歧义、单值字段误用 append/remove、推断更新或旧 unkeyed 数据首次绑定时，只创建带 operation/slot/target 的待确认候选；错 ID 直接失败，不创建第二条 active Memory；
+- 只从语境推断出的结论和 Agent 执行观察只能创建待确认候选，不直接进入 Profile 或默认 Context；
+- 临时请求、助手自己的主张、复制资料、否定内容、凭据和未受支持结论不形成记忆；
+- 来源类型、Chat/Run reference、证据 Item 和时间由 Main 绑定，模型不能提交来源 ID；相同规范化内容、重复 Tool Call 和 checkpoint 恢复幂等，不制造第二条 Memory 或候选；
+- active Memory 在后续新 Run 通过既有 `C2-PRE8` 进入 Context，Context 同时携带宿主私有 allowlist 和模型可见的 `memoryId`/`stableClaimSlot`；候选在 Memory 页面显示 operation、字段、目标、形成原因与来源，由用户接受或忽略。接受定向更新候选时修订原 Memory，不新建 superseding Memory。
+
+`memory.record` 是产品内部持久化，不是 Agent 对外执行动作，因此不走三档执行审批；它仍作为可恢复 Run Item 记录成功或失败。稳定字段身份存入 `memory_claims`，形成候选的 operation/slot 存入 `memory_candidate_formation`；v5→v6 不猜测旧内容的字段。手动新建、编辑和纠正继续保留，但不再是形成普通 Memory 的唯一入口。Phase 4 Voice 复用同一能力并把宿主来源改为 Voice；Phase 5 仅负责异步 Experience Review、Skill/replay 与高级任务方法成长。
+
+2026-08-09 的实现前来源刷新复核了 OpenAI 官方 [Function calling](https://developers.openai.com/api/docs/guides/function-calling) 与仓库锁定 `openai@6.49.0` commit [`04671d2`](https://github.com/openai/openai-node/blob/04671d278ef1531692ae31a870251eec90f3c2d2/src/resources/responses/responses.ts)：应用提供 JSON Schema Function Tool，模型返回结构化 call，应用以匹配 `call_id` 的 output 继续同一响应流程。它只定义协议构件；direct/candidate、来源绑定、去重和 Phase 边界是 CharaMate 产品策略。
 
 ### 6.4 衰减
 
@@ -1556,6 +1575,7 @@ interface ContextCompiler {
 
 interface MemoryService {
   search(query: MemoryQuery): Promise<MemoryHit[]>
+  form(input: MemoryFormationInput): Promise<MemoryFormationResult>
   propose(input: MemoryProposalInput): Promise<MemoryCandidate[]>
   revise(input: ReviseMemoryInput): Promise<MemoryRevision>
 }
@@ -1766,15 +1786,16 @@ Playwright 官方当前把 Electron automation 标为 experimental，因此 Phas
 3. 命令、文件、Browser、MCP、Computer Use 的 Item 实时展开，完成后折叠且重启可见。
 4. 气泡审批与 Chat Approval 指向同一决定，过期按钮不能执行。
 5. 多会话并发不串消息、记忆、Model、权限和 Browser Profile。
-6. Memory 编辑产生 Revision，旧来源仍可追溯；改口后旧事实不进入默认 Context。
-7. 发布版只加载实验选出的一个检索实现；未获胜候选的模型、依赖和配置不存在。
-8. 大量 Activity 被压缩成少量 Episode/Digest，不逐条生成长期记忆；过期原始事件、截图、OCR、索引和孤儿文件会被完整清理。
-9. Realtime 可在说话时被打断，Tool 能审批、返回并继续说话，用户实际听到的转写写回 Chat；若并行 Join 晋级，还必须验证独立 Tool 的依赖/资源冲突检查与单次 continuation。
-10. 用户填写 URL/Key 后模型列表加载，Key 不出现在数据库、日志和错误。
-11. Codex v1/v2 pet 文件夹导入 CharaMate 自有目录后动画正确；角色拖到任意位置并跨重启恢复。
-12. 领地初始可见，记忆物件可生成、放置、追溯、收回；失败不破坏场景。
-13. 超过领地上限时最老未 pin 物件回收藏库，不删除 Memory。
-14. Skill 教学产生版本化候选，replay 失败时不自动激活。
+6. Chat/Agent 中明确且耐久的用户陈述会自动形成有来源 Memory；推断和执行观察只形成候选，重复调用或重启不重复写入。
+7. Memory 编辑和明确改口产生同一 Memory ID 的 Revision；错 ID、未命中与同字段冲突只失败或进入候选，不产生 A/B 双活；旧来源仍可追溯，改口后旧事实不进入默认 Context。
+8. 发布版只加载实验选出的一个检索实现；未获胜候选的模型、依赖和配置不存在。
+9. 大量 Activity 被压缩成少量 Episode/Digest，不逐条生成长期记忆；过期原始事件、截图、OCR、索引和孤儿文件会被完整清理。
+10. Realtime 可在说话时被打断，Tool 能审批、返回并继续说话，用户实际听到的转写写回 Chat；若并行 Join 晋级，还必须验证独立 Tool 的依赖/资源冲突检查与单次 continuation。
+11. 用户填写 URL/Key 后模型列表加载，Key 不出现在数据库、日志和错误。
+12. Codex v1/v2 pet 文件夹导入 CharaMate 自有目录后动画正确；角色拖到任意位置并跨重启恢复。
+13. 领地初始可见，记忆物件可生成、放置、追溯、收回；失败不破坏场景。
+14. 超过领地上限时最老未 pin 物件回收藏库，不删除 Memory。
+15. Skill 教学产生版本化候选，replay 失败时不自动激活。
 
 ### 18.3 Benchmark 决策门槛
 
@@ -1914,13 +1935,14 @@ flowchart TD
 - `P3-MULTIMODAL-INPUT`：用户图片附件与条件直载 `image.inspect` 共用一条 Main 图片解码/校验和 Provider 多模态输入路径；不支持视觉的模型诚实停止，不保留第二识别 fallback；
 - 在一次性 worktree 完成 `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE` 与 `MEMORY-GRAPH`；存储的向量/worker 阶段只有 dense lane 达到触发门槛才实现；
 - 用 `better-sqlite3` prepared SQL 实现 Memory/Revision/Source、validity、supersede、pin、archive/delete 与 Profile 投影；
+- 完成 `MEMORY-FORMATION`，在 Chat/Agent 同一 Run 通过唯一 `memory.record` 路径自动创建/修订明确陈述，把推断与执行观察送入候选，并验证来源绑定、稳定字段身份、当前 Run 目标 allowlist、跨 Chat Revision、去重和 checkpoint/数据库恢复；
 - 只实现获胜的 Retrieval Pipeline、Context Recipe、索引生命周期和 `memory.search`；Graph 未晋级时没有表、文件或 UI；
 - Memory 页面完成搜索、筛选、来源、Revision、画像、候选与领地入口；
 - 完成 `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 后，实现 Active App/Browser/Screenshot/OCR metadata/Idle 采集、确定性 Episode 与获胜 Digest/候选流程；
 - 实现文件、缩略图、OCR、索引引用、数据库行和 orphan asset 的一致清理；
 - 运行 LongMemEval、LoCoMo 与冻结中文集，分别报告 retrieval、answer、storage、Activity 和资源指标。
 
-退出条件：结构化补充信息可恢复并继续原 Run；支持视觉的目标 Provider 能读取用户附件和 Agent 已知本地图片的真实内容；改口/Revision/来源语义正确；发布物只含一个 Retrieval/Context/Graph 结果；Activity 不污染长期检索，原始层磁盘有界且清理完整。
+退出条件：结构化补充信息可恢复并继续原 Run；支持视觉的目标 Provider 能读取用户附件和 Agent 已知本地图片的真实内容；Chat/Agent 使用期会形成有来源、可去重、可修订或待确认的 Memory；改口/Revision/来源语义正确；发布物只含一个 Formation/Retrieval/Context/Graph 结果；Activity 不污染长期检索，原始层磁盘有界且清理完整。
 
 ### Phase 4：Realtime Voice
 
@@ -1940,7 +1962,7 @@ Phase 4 的实验与实现可在 Phase 2 稳定后和 Phase 3 后半段并行，
 
 - Reminder/Agent Task 使用普通 Chat Run，支持一次/每天/每周/Cron、暂停、编辑、试跑、历史与待审批；
 - 主动聊天在 Memory/Activity 稳定后接入时间、Automation、Digest、专注、领地候选和跟进触发，并遵守安静时段；
-- 完成 `SELF-EVOLUTION`；只在晋级时实现唯一异步 Experience Review、四类候选、Skill replay、版本/归档/恢复；
+- 完成 `SELF-EVOLUTION`；只在晋级时实现唯一异步 Experience Review、高级成长候选、Skill replay、版本/归档/恢复；不重复实现 Phase 3 的普通 Memory 形成；
 - 完成 `MULTI-AGENT`；只在晋级时实现获胜 Dispatch、资源隔离、父 Join、Subtask Item 与 Composer 按轮授权。
 
 退出条件：Automation 与手动 Run 同构；后台 Approval 不伪装成功；未晋级能力的协议、表、组件、设置、依赖和空入口完全不存在。

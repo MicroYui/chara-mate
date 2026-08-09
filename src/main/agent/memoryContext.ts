@@ -28,6 +28,9 @@ function memoryBlock(hits: readonly MemoryHit[]): string {
     ...hits.map((hit) =>
       [
         `[memory:${hit.memory.id} revision:${hit.revision.id} rank:${String(hit.rank)} type:${hit.memory.type} status:${hit.memory.status}]`,
+        ...(hit.memory.claimSlot
+          ? [`stableClaimSlot: ${hit.memory.claimSlot}`]
+          : []),
         `memoryCreatedAt: ${hit.memory.createdAt}; memoryUpdatedAt: ${hit.memory.updatedAt}; revisionCreatedAt: ${hit.revision.createdAt}`,
         sourceLine(hit),
         hit.revision.content,
@@ -41,8 +44,20 @@ export function createMemoryContextInput(
 ): JsonValue {
   return {
     content: memoryBlock(hits),
+    memoryIds: hits.map(({ memory }) => memory.id),
     type: MEMORY_CONTEXT_TYPE,
   };
+}
+
+export function memoryContextTargetIds(value: JsonValue): string[] {
+  if (!isMemoryContextInput(value) || Array.isArray(value) || value === null) {
+    return [];
+  }
+  const context = value as Readonly<Record<string, JsonValue>>;
+  const ids = context["memoryIds"];
+  return Array.isArray(ids)
+    ? ids.filter((id): id is string => typeof id === "string")
+    : [];
 }
 
 export function isMemoryContextInput(value: JsonValue): boolean {

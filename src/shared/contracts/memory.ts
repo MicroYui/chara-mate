@@ -5,6 +5,8 @@ import type {
   MemoryCandidateMutationResponseSchema,
   MemoryCandidateSchema,
   MemoryCandidateStatusSchema,
+  MemoryClaimOperationSchema,
+  MemoryClaimSlotSchema,
   MemoryCreateRequestSchema,
   MemoryDetailResponseSchema,
   MemoryDetailSchema,
@@ -53,6 +55,8 @@ export type MemoryRevision = Static<typeof MemoryRevisionSchema>;
 export type MemoryHit = Static<typeof MemoryHitSchema>;
 export type MemoryDetail = Static<typeof MemoryDetailSchema>;
 export type MemoryCandidateStatus = Static<typeof MemoryCandidateStatusSchema>;
+export type MemoryClaimOperation = Static<typeof MemoryClaimOperationSchema>;
+export type MemoryClaimSlot = Static<typeof MemoryClaimSlotSchema>;
 export type MemoryCandidate = Static<typeof MemoryCandidateSchema>;
 export type MemorySnapshot = Static<typeof MemorySnapshotSchema>;
 export type MemoryListRequest = Static<typeof MemoryListRequestSchema>;

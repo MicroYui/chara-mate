@@ -2,6 +2,8 @@ import type Database from "better-sqlite3";
 
 import type {
   MemoryCandidate,
+  MemoryClaimOperation,
+  MemoryClaimSlot,
   MemoryCreateRequest,
   MemoryDetail,
   MemoryHit,
@@ -20,6 +22,7 @@ import { MemoryError } from "./memoryError";
 import { memorySearchDocument } from "./memorySearchText";
 
 interface MemoryRow {
+  claim_slot: MemoryClaimSlot | null;
   confidence: number;
   created_at: string;
   current_revision_id: string;
@@ -55,6 +58,8 @@ interface SourceRow {
 }
 
 interface CandidateRow {
+  claim_operation: MemoryClaimOperation | null;
+  claim_slot: MemoryClaimSlot | null;
   confidence: number;
   content: string;
   created_at: string;
@@ -82,6 +87,7 @@ interface UsageRow {
 }
 
 export interface CreateMemoryInput extends MemoryCreateRequest {
+  readonly claimSlot?: MemoryClaimSlot;
   readonly memoryId: string;
   readonly now: Timestamp;
   readonly revisionId: string;
@@ -94,6 +100,10 @@ export interface ReviseMemoryInput extends MemoryReviseRequest {
 
 export interface ProposeMemoryInput extends MemoryProposalInput {
   readonly candidateId: string;
+  readonly formation?: {
+    readonly operation: MemoryClaimOperation;
+    readonly slot?: MemoryClaimSlot;
+  };
   readonly now: Timestamp;
 }
 
@@ -103,16 +113,29 @@ export interface MemoryHitSelection {
 }
 
 const memorySelect = `
-  SELECT m.id, m.type, m.status, m.current_revision_id, m.importance,
+  SELECT m.id, mc.claim_slot, m.type, m.status,
+         m.current_revision_id, m.importance,
          m.confidence, m.valid_from, m.valid_to, m.pinned_at,
          m.superseded_by_id, m.deleted_at, m.created_at, m.updated_at,
          (SELECT MAX(u.used_at) FROM memory_usage u WHERE u.memory_id = m.id)
            AS last_accessed_at
   FROM memories m
+  LEFT JOIN memory_claims mc ON mc.memory_id = m.id
+`;
+
+const candidateSelect = `
+  SELECT c.id, c.type, c.status, c.content, c.reason, c.source_ids_json,
+         c.source_labels_json, c.source_type, c.confidence, c.importance,
+         c.novelty, c.valid_from, c.valid_to, c.supersedes_memory_id,
+         c.created_at, c.updated_at, mcf.operation AS claim_operation,
+         mcf.claim_slot
+  FROM memory_candidates c
+  LEFT JOIN memory_candidate_formation mcf ON mcf.candidate_id = c.id
 `;
 
 function mapMemory(row: MemoryRow): MemoryRecord {
   return {
+    ...(row.claim_slot ? { claimSlot: row.claim_slot } : {}),
     confidence: row.confidence,
     createdAt: row.created_at,
     currentRevisionId: row.current_revision_id,
@@ -142,6 +165,8 @@ function mapSource(row: SourceRow): MemorySource {
 
 function candidateFromRow(row: CandidateRow): MemoryCandidate {
   return {
+    ...(row.claim_operation ? { claimOperation: row.claim_operation } : {}),
+    ...(row.claim_slot ? { claimSlot: row.claim_slot } : {}),
     confidence: row.confidence,
     content: row.content,
     createdAt: row.created_at,
@@ -264,6 +289,33 @@ export class MemoryRepository {
       throw new MemoryError("MEMORY.NOT_FOUND", "找不到这条记忆。", false);
     }
     return detail;
+  }
+
+  findDetailByClaimSlot(slot: MemoryClaimSlot): MemoryDetail | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT memory_id AS id
+         FROM memory_claims
+         WHERE claim_slot = ?`,
+      )
+      .get(slot) as { id: string } | undefined;
+    return row ? this.requireDetail(row.id) : undefined;
+  }
+
+  findActiveDetailByContent(content: string): MemoryDetail | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT m.id
+         FROM memories m
+         JOIN memory_revisions r ON r.id = m.current_revision_id
+         WHERE m.status = 'active'
+           AND m.deleted_at IS NULL
+           AND r.content = ? COLLATE NOCASE
+         ORDER BY m.updated_at DESC, m.id
+         LIMIT 1`,
+      )
+      .get(content) as { id: string } | undefined;
+    return row ? this.requireDetail(row.id) : undefined;
   }
 
   listRecords(options: {
@@ -420,56 +472,7 @@ export class MemoryRepository {
   }
 
   revise(input: ReviseMemoryInput): MemoryDetail {
-    return this.database.transaction(() => {
-      const current = this.requireDetail(input.memoryId);
-      if (current.memory.deletedAt || current.memory.status !== "active") {
-        throw new MemoryError(
-          "MEMORY.INVALID_STATE",
-          "只有当前有效的记忆可以编辑。",
-          false,
-        );
-      }
-      const sourceType = revisionSourceType(input.sources);
-      this.database
-        .prepare(
-          `INSERT INTO memory_revisions (
-             id, memory_id, content, source_type, reason, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          input.revisionId,
-          input.memoryId,
-          input.content,
-          sourceType,
-          input.reason,
-          input.now,
-        );
-      this.#indexRevision(input.memoryId, input.revisionId, input.content);
-      this.#attachSources(input.revisionId, input.sources);
-      this.database
-        .prepare(
-          `UPDATE memories
-           SET current_revision_id = ?, importance = COALESCE(?, importance),
-               confidence = COALESCE(?, confidence),
-               valid_from = COALESCE(?, valid_from),
-               valid_to = COALESCE(?, valid_to),
-               updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(
-          input.revisionId,
-          input.importance ?? null,
-          input.confidence ?? null,
-          input.validFrom ?? null,
-          input.validTo ?? null,
-          input.now,
-          input.memoryId,
-        );
-      if (current.memory.type === "profile") {
-        this.#projectProfile(input.memoryId, input.revisionId, input.now);
-      }
-      return this.requireDetail(input.memoryId);
-    })();
+    return this.database.transaction(() => this.#reviseMemory(input))();
   }
 
   setPinned(memoryId: string, pinned: boolean, now: Timestamp): MemoryDetail {
@@ -575,32 +578,47 @@ export class MemoryRepository {
   }
 
   propose(input: ProposeMemoryInput): MemoryCandidate {
-    this.database
-      .prepare(
-        `INSERT INTO memory_candidates (
-           id, type, status, content, reason, source_ids_json,
-           source_labels_json, source_type,
-           confidence, importance, novelty, valid_from, valid_to,
-           supersedes_memory_id, accepted_memory_id, created_at, updated_at
-         ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-      )
-      .run(
-        input.candidateId,
-        input.type,
-        input.content,
-        input.reason,
-        JSON.stringify(input.sourceIds),
-        JSON.stringify(input.sourceLabels),
-        input.sourceType,
-        input.confidence,
-        input.importance,
-        input.novelty,
-        input.validFrom ?? null,
-        input.validTo ?? null,
-        input.supersedesMemoryId ?? null,
-        input.now,
-        input.now,
-      );
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO memory_candidates (
+             id, type, status, content, reason, source_ids_json,
+             source_labels_json, source_type,
+             confidence, importance, novelty, valid_from, valid_to,
+             supersedes_memory_id, accepted_memory_id, created_at, updated_at
+           ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+        )
+        .run(
+          input.candidateId,
+          input.type,
+          input.content,
+          input.reason,
+          JSON.stringify(input.sourceIds),
+          JSON.stringify(input.sourceLabels),
+          input.sourceType,
+          input.confidence,
+          input.importance,
+          input.novelty,
+          input.validFrom ?? null,
+          input.validTo ?? null,
+          input.supersedesMemoryId ?? null,
+          input.now,
+          input.now,
+        );
+      if (input.formation) {
+        this.database
+          .prepare(
+            `INSERT INTO memory_candidate_formation (
+               candidate_id, operation, claim_slot
+             ) VALUES (?, ?, ?)`,
+          )
+          .run(
+            input.candidateId,
+            input.formation.operation,
+            input.formation.slot ?? null,
+          );
+      }
+    })();
     return this.requireCandidate(input.candidateId);
   }
 
@@ -608,16 +626,52 @@ export class MemoryRepository {
     return (
       this.database
         .prepare(
-          `SELECT id, type, status, content, reason, source_ids_json,
-                  source_labels_json,
-                  source_type, confidence, importance, novelty, valid_from,
-                  valid_to, supersedes_memory_id, created_at, updated_at
-           FROM memory_candidates
-           WHERE status = 'pending'
-           ORDER BY created_at DESC, id`,
+          `${candidateSelect}
+           WHERE c.status = 'pending'
+           ORDER BY c.created_at DESC, c.id`,
         )
         .all() as CandidateRow[]
     ).map(candidateFromRow);
+  }
+
+  findPendingCandidateByContent(
+    content: string,
+    options: {
+      readonly operation?: MemoryClaimOperation;
+      readonly slot?: MemoryClaimSlot;
+      readonly supersedesMemoryId?: string;
+    } = {},
+  ): MemoryCandidate | undefined {
+    const row = this.database
+      .prepare(
+        `${candidateSelect}
+         WHERE c.status = 'pending'
+           AND c.content = ? COLLATE NOCASE
+           AND (
+             (? IS NULL AND c.supersedes_memory_id IS NULL)
+             OR c.supersedes_memory_id = ?
+           )
+           AND (
+             (? IS NULL AND mcf.claim_slot IS NULL)
+             OR mcf.claim_slot = ?
+           )
+           AND (
+             (? IS NULL AND mcf.operation IS NULL)
+             OR mcf.operation = ?
+           )
+         ORDER BY c.created_at, c.id
+         LIMIT 1`,
+      )
+      .get(
+        content,
+        options.supersedesMemoryId ?? null,
+        options.supersedesMemoryId ?? null,
+        options.slot ?? null,
+        options.slot ?? null,
+        options.operation ?? null,
+        options.operation ?? null,
+      ) as CandidateRow | undefined;
+    return row ? candidateFromRow(row) : undefined;
   }
 
   hasCandidateReason(reason: string): boolean {
@@ -631,11 +685,8 @@ export class MemoryRepository {
   requireCandidate(candidateId: string): MemoryCandidate {
     const row = this.database
       .prepare(
-        `SELECT id, type, status, content, reason, source_ids_json,
-                source_labels_json,
-                source_type, confidence, importance, novelty, valid_from,
-                valid_to, supersedes_memory_id, created_at, updated_at
-         FROM memory_candidates WHERE id = ?`,
+        `${candidateSelect}
+         WHERE c.id = ?`,
       )
       .get(candidateId) as CandidateRow | undefined;
     if (!row) {
@@ -675,6 +726,13 @@ export class MemoryRepository {
       const candidate = this.requireCandidate(candidateId);
       if (candidate.status !== "pending")
         this.#throwCandidateState(candidateId);
+      if (candidate.claimSlot !== input.claimSlot) {
+        throw new MemoryError(
+          "MEMORY.CONFLICT",
+          "候选的稳定字段与目标记忆不一致。",
+          false,
+        );
+      }
       const detail = this.#insertMemory(input);
       this.database
         .prepare(
@@ -683,6 +741,34 @@ export class MemoryRepository {
            WHERE id = ? AND status = 'pending'`,
         )
         .run(detail.memory.id, input.now, candidateId);
+      return detail;
+    })();
+  }
+
+  acceptCandidateAsRevision(
+    candidateId: string,
+    input: ReviseMemoryInput,
+    claimSlot?: MemoryClaimSlot,
+  ): MemoryDetail {
+    return this.database.transaction(() => {
+      const candidate = this.requireCandidate(candidateId);
+      if (
+        candidate.status !== "pending" ||
+        !candidate.claimOperation ||
+        candidate.supersedesMemoryId !== input.memoryId ||
+        candidate.claimSlot !== claimSlot
+      ) {
+        this.#throwCandidateState(candidateId);
+      }
+      if (claimSlot) this.#bindClaim(input.memoryId, claimSlot, input.now);
+      const detail = this.#reviseMemory(input);
+      this.database
+        .prepare(
+          `UPDATE memory_candidates
+           SET status = 'accepted', accepted_memory_id = ?, updated_at = ?
+           WHERE id = ? AND status = 'pending'`,
+        )
+        .run(input.memoryId, input.now, candidateId);
       return detail;
     })();
   }
@@ -755,6 +841,9 @@ export class MemoryRepository {
       );
     this.#indexRevision(input.memoryId, input.revisionId, input.content);
     this.#attachSources(input.revisionId, input.sources);
+    if (input.claimSlot) {
+      this.#bindClaim(input.memoryId, input.claimSlot, input.now);
+    }
     if (input.type === "profile") {
       this.#projectProfile(input.memoryId, input.revisionId, input.now);
     }
@@ -776,6 +865,101 @@ export class MemoryRepository {
       this.#removeProfile(input.supersedesMemoryId);
     }
     return this.requireDetail(input.memoryId);
+  }
+
+  #reviseMemory(input: ReviseMemoryInput): MemoryDetail {
+    const current = this.requireDetail(input.memoryId);
+    if (current.memory.deletedAt || current.memory.status !== "active") {
+      throw new MemoryError(
+        "MEMORY.INVALID_STATE",
+        "只有当前有效的记忆可以编辑。",
+        false,
+      );
+    }
+    const sourceType = revisionSourceType(input.sources);
+    this.database
+      .prepare(
+        `INSERT INTO memory_revisions (
+           id, memory_id, content, source_type, reason, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.revisionId,
+        input.memoryId,
+        input.content,
+        sourceType,
+        input.reason,
+        input.now,
+      );
+    this.#indexRevision(input.memoryId, input.revisionId, input.content);
+    this.#attachSources(input.revisionId, input.sources);
+    this.database
+      .prepare(
+        `UPDATE memories
+         SET current_revision_id = ?, importance = COALESCE(?, importance),
+             confidence = COALESCE(?, confidence),
+             valid_from = COALESCE(?, valid_from),
+             valid_to = COALESCE(?, valid_to),
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        input.revisionId,
+        input.importance ?? null,
+        input.confidence ?? null,
+        input.validFrom ?? null,
+        input.validTo ?? null,
+        input.now,
+        input.memoryId,
+      );
+    if (current.memory.type === "profile") {
+      this.#projectProfile(input.memoryId, input.revisionId, input.now);
+    }
+    return this.requireDetail(input.memoryId);
+  }
+
+  #bindClaim(
+    memoryId: string,
+    claimSlot: MemoryClaimSlot,
+    now: Timestamp,
+  ): void {
+    const memoryClaim = this.database
+      .prepare(
+        `SELECT claim_slot
+         FROM memory_claims
+         WHERE memory_id = ?`,
+      )
+      .get(memoryId) as { claim_slot: MemoryClaimSlot } | undefined;
+    if (memoryClaim && memoryClaim.claim_slot !== claimSlot) {
+      throw new MemoryError(
+        "MEMORY.CONFLICT",
+        "这条记忆已经绑定到另一个稳定字段。",
+        false,
+      );
+    }
+    const slotOwner = this.database
+      .prepare(
+        `SELECT memory_id
+         FROM memory_claims
+         WHERE claim_slot = ?`,
+      )
+      .get(claimSlot) as { memory_id: string } | undefined;
+    if (slotOwner && slotOwner.memory_id !== memoryId) {
+      throw new MemoryError(
+        "MEMORY.CONFLICT",
+        "这个稳定字段已经绑定到另一条记忆。",
+        false,
+      );
+    }
+    if (!memoryClaim) {
+      this.database
+        .prepare(
+          `INSERT INTO memory_claims (
+             memory_id, claim_slot, created_at, updated_at
+           ) VALUES (?, ?, ?, ?)`,
+        )
+        .run(memoryId, claimSlot, now, now);
+    }
   }
 
   #attachSources(revisionId: string, sources: readonly MemorySource[]): void {

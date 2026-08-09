@@ -16,6 +16,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   MemoryApi,
+  MemoryClaimOperation,
+  MemoryClaimSlot,
   MemoryDetail,
   MemoryHit,
   MemoryListRequest,
@@ -56,6 +58,32 @@ const typeLabel = new Map(
 const sourceLabel = new Map(
   sourceTypes.map(({ label, value }) => [value, label]),
 );
+const claimOperationLabel = new Map<MemoryClaimOperation, string>([
+  ["create", "新建"],
+  ["replace", "替换"],
+  ["append", "追加"],
+  ["remove", "移除"],
+]);
+const claimSlotLabel = new Map<MemoryClaimSlot, string>([
+  ["profile.name", "姓名"],
+  ["profile.pronouns", "称谓"],
+  ["profile.home_location", "居住地"],
+  ["profile.timezone", "时区"],
+  ["profile.occupation", "职业"],
+  ["profile.languages", "语言"],
+  ["profile.birth_date", "生日"],
+  ["preference.hobbies", "爱好"],
+  ["preference.likes", "喜欢"],
+  ["preference.dislikes", "不喜欢"],
+  ["preference.response_style", "回答风格"],
+  ["preference.communication_style", "沟通风格"],
+  ["preference.food", "饮食"],
+  ["preference.music", "音乐"],
+  ["preference.media", "内容"],
+  ["preference.travel", "出行"],
+  ["preference.schedule", "时间安排"],
+  ["preference.tools", "工具"],
+]);
 
 function currentContent(hit: MemoryHit): string {
   return hit.revision.content;
@@ -444,6 +472,19 @@ export function MemoryPage({
                 <article key={candidate.id}>
                   <p>{candidate.content}</p>
                   <small>{candidate.reason}</small>
+                  {candidate.claimOperation ? (
+                    <small>
+                      处理：{claimOperationLabel.get(candidate.claimOperation)}
+                      {candidate.claimSlot
+                        ? ` · 字段：${claimSlotLabel.get(candidate.claimSlot)}`
+                        : ""}
+                      {candidate.supersedesMemoryId ? " · 更新现有记忆" : ""}
+                    </small>
+                  ) : null}
+                  <small>
+                    来源：{sourceLabel.get(candidate.sourceType)} ·{" "}
+                    {candidate.sourceLabels.join(" · ")}
+                  </small>
                   <div>
                     <button
                       disabled={busy}

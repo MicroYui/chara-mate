@@ -35,6 +35,7 @@ import type { ChatRepository } from "../chat/chatRepository";
 import type { ChatService } from "../chat/chatService";
 import type { ChatTitleGenerator } from "../chat/chatTitleService";
 import type { MemoryService } from "../memory/memoryService";
+import { MEMORY_FORMATION_TOOL_NAME } from "../memory/memoryTool";
 import type { ChatModelRuntime } from "../providers/providerService";
 import { ProviderError, toProviderAppError } from "../providers/providerError";
 import { toolEvidenceHash } from "../tools/toolRegistry";
@@ -82,6 +83,7 @@ Treat every structured Tool Result as an observation: a rejected or failed actio
 For genuinely multi-step Agent work, call the always-loaded plan.update tool directly before other work, keep at most one step in_progress, and send the complete current plan again after meaningful progress. Do not search for plan.update, substitute a prose checklist, create a plan for simple work, or repeat the plan in prose because the product displays it.
 When a material choice or missing detail truly requires the user, call the always-loaded request_user_input tool directly. Do not search for it or replace its structured questions with a prose questionnaire.
 Relevant active long-term memories for the current request are preloaded as an evidence block. Do not repeat that retrieval or treat an empty result as proof. In Agent mode, only when the user explicitly asks to inspect or search memory records beyond the supplied context, load memory.search through native tool search.
+When the current user input directly states durable personal facts, preferences, ongoing projects, procedures, events, or commitments that will be useful beyond this turn, call the always-loaded memory.record tool before the final answer with basis explicit_user_statement. This internal product capability is available in both Chat and Agent mode and needs no execution approval. For a supported profile/preference field, choose the closed stable claimSlot by meaning, never by its current value: for example preference.hobbies stays unchanged when hiking becomes swimming. Use create only when establishing a genuinely new field; use replace when the user says a prior value is no longer current; use append/remove only when changing part of a set. Every update content must state the complete resulting memory after the operation, not only the added or removed fragment. For any update, include memoryId only if that exact ID appears in the preloaded memory evidence. If no exact target was supplied, the host will create a review candidate instead of risking a second active fact. Use basis inference for a plausible conclusion the user did not directly state, and basis run_observation only for a reusable conclusion supported by successful Agent execution; both create review candidates rather than active facts. Never record a transient request, assistant-authored claim, copied reference material, credential, secret, unchanged memory, or unsupported conclusion. Do not search for memory.record.
 Only give a final answer when the user goal is complete or when the remaining limitation is explicit. Never claim that an external action happened without a successful Tool Result.
 Visible progress may be concise, but do not expose hidden reasoning.`;
 
@@ -100,7 +102,14 @@ const USER_ATTACHMENT_KINDS = new Set<ArtifactKind>([
   "video",
 ]);
 
-const ALWAYS_LOADED_CLIENT_TOOLS = new Set(["plan.update"]);
+const ALWAYS_LOADED_CLIENT_TOOLS = new Set([
+  "plan.update",
+  MEMORY_FORMATION_TOOL_NAME,
+]);
+const MEMORY_FORMATION_ALLOWED_TOOL = {
+  name: MEMORY_FORMATION_TOOL_NAME,
+  namespace: "memory",
+} as const;
 const USER_INPUT_NAMESPACE = "interaction";
 const USER_INPUT_TOOL_NAME = "request_user_input";
 const USER_INPUT_ALLOWED_TOOL = {
@@ -1372,10 +1381,16 @@ export class AgentRuntime {
         this.images,
         active.imageCache,
       )) as JsonValue[];
+      const registeredTools = this.tools.list();
       const baseToolNamespaces = withUserInputTool(
-        run.execution.mode === "agent"
-          ? groupModelTools(this.tools.list())
-          : [],
+        groupModelTools(
+          run.execution.mode === "agent"
+            ? registeredTools
+            : registeredTools.filter(
+                ({ descriptor }) =>
+                  descriptor.name === MEMORY_FORMATION_TOOL_NAME,
+              ),
+        ),
       );
       const toolNamespaces =
         run.execution.mode === "agent" &&
@@ -1388,7 +1403,7 @@ export class AgentRuntime {
         BASE_INSTRUCTIONS,
         `Current timestamp: ${this.clock.now()}. User system time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}. Interpret relative dates such as today in that time zone.`,
         run.execution.mode === "chat"
-          ? "This Run is Chat mode. Do not call external-effect tools; explain what the user can do or ask them to switch explicitly to Agent mode."
+          ? "This Run is Chat mode. Do not call external-effect tools; memory.record is the sole internal persistence exception. Explain other capability limits or ask the user to switch explicitly to Agent mode."
           : "This Run is Agent mode. Follow its approval decisions and continue after structured rejection when a legitimate alternative exists.",
         extra,
       ]
@@ -1397,6 +1412,9 @@ export class AgentRuntime {
       const allowedTools = active.data.allowedTools
         ? [
             USER_INPUT_ALLOWED_TOOL,
+            ...(this.tools.get(MEMORY_FORMATION_TOOL_NAME)
+              ? [MEMORY_FORMATION_ALLOWED_TOOL]
+              : []),
             ...(run.execution.mode === "agent" &&
             this.images &&
             active.limits.supportsVision !== false
@@ -1529,7 +1547,8 @@ export class AgentRuntime {
       return;
     }
     const run = this.#requireRun(active.runId);
-    if (run.execution.mode === "chat") {
+    const memoryFormation = resolvedName === MEMORY_FORMATION_TOOL_NAME;
+    if (run.execution.mode === "chat" && !memoryFormation) {
       this.#recordToolResult(active, pending, undefined, chatModeToolResult());
       return;
     }
@@ -1542,6 +1561,11 @@ export class AgentRuntime {
         definition.descriptor,
         unexpectedToolResult(error),
       );
+      return;
+    }
+
+    if (memoryFormation) {
+      await this.#executeTool(active, pending, definition);
       return;
     }
 

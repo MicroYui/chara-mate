@@ -33,7 +33,10 @@ import { openApplicationDatabase } from "../../src/main/db/database";
 import { LexicalRetrievalPipeline } from "../../src/main/memory/lexicalRetrievalPipeline";
 import { MemoryRepository } from "../../src/main/memory/memoryRepository";
 import { MemoryService } from "../../src/main/memory/memoryService";
-import { registerMemoryTool } from "../../src/main/memory/memoryTool";
+import {
+  registerMemoryFormationTool,
+  registerMemoryTool,
+} from "../../src/main/memory/memoryTool";
 import { ProviderError } from "../../src/main/providers/providerError";
 import {
   ToolRegistry,
@@ -451,6 +454,159 @@ describe("Agent Runtime production path", () => {
     expect(
       fixture.database.prepare("SELECT consumer FROM memory_usage").all(),
     ).toEqual([{ consumer: "context" }]);
+    fixture.database.close();
+  });
+
+  it("forms a sourced memory inside Chat mode without execution approval", async () => {
+    const fixture = await createFixture([]);
+    const clock = new SystemClock();
+    const ids = new CryptoIdGenerator();
+    const repository = new MemoryRepository(fixture.database);
+    const memory = new MemoryService(
+      repository,
+      new LexicalRetrievalPipeline(fixture.database, repository, clock),
+      ids,
+      clock,
+    );
+    registerMemoryFormationTool(fixture.tools, memory, (runId, basis) => ({
+      allowedMemoryIds: [],
+      label:
+        basis === "run_observation"
+          ? `Agent Run ${runId}`
+          : "用户消息 20000000-0000-4000-8000-000000000001",
+      referenceId: basis === "run_observation" ? runId : fixture.chatId,
+      sourceType: basis === "run_observation" ? "tool" : "chat",
+    }));
+    const provider = new ScriptedProvider([
+      namespacedFunctionTurn("memory-call", "record", "memory", {
+        basis: "explicit_user_statement",
+        claimSlot: "preference.response_style",
+        content: "用户偏好技术回答先给结论。",
+        operation: "create",
+      }),
+      finalTurn("记住了，我会先给结论。"),
+    ]);
+    const runtime = createRuntimeFor(fixture, provider, memory);
+
+    const run = await runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "以后技术回答先给结论。",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(
+      provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "memory")
+        ?.tools.find(({ name }) => name === "memory.record"),
+    ).toMatchObject({ deferLoading: false });
+    expect(provider.requests[0]?.instructions).toContain(
+      "always-loaded memory.record tool",
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "sole internal persistence exception",
+    );
+    expect(provider.requests[1]?.input).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          call_id: "memory-call",
+          type: "function_call_output",
+        }),
+      ]),
+    );
+    expect(
+      fixture.runs
+        .listRunItems(run.id)
+        .filter(({ kind }) => kind === "approval"),
+    ).toEqual([]);
+    const formed = memory.list({ query: "技术回答" }).memories[0];
+    if (!formed) throw new Error("Expected formed Memory");
+    expect(formed.revision.content).toBe("用户偏好技术回答先给结论。");
+    expect(formed.sources).toEqual([
+      expect.objectContaining({
+        referenceId: fixture.chatId,
+        type: "chat",
+      }),
+    ]);
+
+    const followupProvider = new ScriptedProvider([
+      finalTurn("我会继续先给结论。"),
+    ]);
+    const followupRuntime = createRuntimeFor(fixture, followupProvider, memory);
+    const followup = await followupRuntime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "技术回答应该怎么组织？",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, followup.id, "completed");
+    expect(JSON.stringify(followupProvider.requests[0]?.input)).toContain(
+      formed.memory.id,
+    );
+    expect(JSON.stringify(followupProvider.requests[0]?.input)).toContain(
+      "用户偏好技术回答先给结论。",
+    );
+    fixture.database.close();
+  });
+
+  it("routes an Agent execution observation to a sourced review candidate", async () => {
+    const fixture = await createFixture([]);
+    const clock = new SystemClock();
+    const ids = new CryptoIdGenerator();
+    const repository = new MemoryRepository(fixture.database);
+    const memory = new MemoryService(
+      repository,
+      new LexicalRetrievalPipeline(fixture.database, repository, clock),
+      ids,
+      clock,
+    );
+    registerMemoryFormationTool(fixture.tools, memory, (runId, basis) => ({
+      allowedMemoryIds: [],
+      label: `Agent Run ${runId}`,
+      referenceId: basis === "run_observation" ? runId : fixture.chatId,
+      sourceType: basis === "run_observation" ? "tool" : "chat",
+    }));
+    const provider = new ScriptedProvider([
+      namespacedFunctionTurn("memory-observation", "record", "memory", {
+        basis: "run_observation",
+        content: "Lantern 的发布检查需要先运行离线验收。",
+        operation: "create",
+        type: "procedure",
+      }),
+      finalTurn("任务完成，已把可复用观察留作候选。"),
+    ]);
+    const runtime = createRuntimeFor(fixture, provider, memory);
+
+    const run = await runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "完成发布检查",
+      execution: { approvalMode: "request_approval", mode: "agent" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(
+      fixture.runs
+        .listRunItems(run.id)
+        .filter(({ kind }) => kind === "approval"),
+    ).toEqual([]);
+    expect(memory.list({ query: "发布检查" }).memories).toEqual([]);
+    expect(memory.list({}).candidates).toEqual([
+      expect.objectContaining({
+        content: "Lantern 的发布检查需要先运行离线验收。",
+        sourceIds: [run.id],
+        sourceType: "tool",
+        status: "pending",
+        type: "procedure",
+      }),
+    ]);
     fixture.database.close();
   });
 

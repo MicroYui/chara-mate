@@ -29,6 +29,7 @@ function projectHistoricalMemory(
   lastAccessedAt: Timestamp | null,
 ): MemoryRecord {
   return {
+    ...(memory.claimSlot ? { claimSlot: memory.claimSlot } : {}),
     confidence: memory.confidence,
     createdAt: memory.createdAt,
     currentRevisionId: revisionId,

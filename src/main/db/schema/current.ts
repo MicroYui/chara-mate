@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "5";
+export const CURRENT_SCHEMA_VERSION = "6";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -329,6 +329,65 @@ export const CURRENT_SCHEMA_SQL = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     CHECK (valid_from IS NULL OR valid_to IS NULL OR valid_from < valid_to)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS memory_claims (
+    memory_id TEXT PRIMARY KEY NOT NULL
+      REFERENCES memories(id) ON DELETE CASCADE,
+    claim_slot TEXT NOT NULL UNIQUE CHECK (
+      claim_slot IN (
+        'profile.name',
+        'profile.pronouns',
+        'profile.home_location',
+        'profile.timezone',
+        'profile.occupation',
+        'profile.languages',
+        'profile.birth_date',
+        'preference.hobbies',
+        'preference.likes',
+        'preference.dislikes',
+        'preference.response_style',
+        'preference.communication_style',
+        'preference.food',
+        'preference.music',
+        'preference.media',
+        'preference.travel',
+        'preference.schedule',
+        'preference.tools'
+      )
+    ),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS memory_candidate_formation (
+    candidate_id TEXT PRIMARY KEY NOT NULL
+      REFERENCES memory_candidates(id) ON DELETE CASCADE,
+    operation TEXT NOT NULL CHECK (
+      operation IN ('create', 'replace', 'append', 'remove')
+    ),
+    claim_slot TEXT CHECK (
+      claim_slot IS NULL OR claim_slot IN (
+        'profile.name',
+        'profile.pronouns',
+        'profile.home_location',
+        'profile.timezone',
+        'profile.occupation',
+        'profile.languages',
+        'profile.birth_date',
+        'preference.hobbies',
+        'preference.likes',
+        'preference.dislikes',
+        'preference.response_style',
+        'preference.communication_style',
+        'preference.food',
+        'preference.music',
+        'preference.media',
+        'preference.travel',
+        'preference.schedule',
+        'preference.tools'
+      )
+    )
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS profile_fields (

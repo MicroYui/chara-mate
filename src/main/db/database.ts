@@ -10,6 +10,7 @@ import {
   METADATA_SCHEMA_SQL,
 } from "./schema/current";
 import { migrateV4ToV5 } from "./schema/migrateV4ToV5";
+import { migrateV5ToV6 } from "./schema/migrateV5ToV6";
 
 interface MetadataRow {
   value: string;
@@ -21,15 +22,20 @@ function initializeCurrentSchema(database: Database.Database): void {
     .prepare("SELECT value FROM app_metadata WHERE key = ?")
     .get("schema_version") as MetadataRow | undefined;
 
-  if (schemaVersion?.value === "4") {
+  let installedVersion = schemaVersion?.value;
+  if (installedVersion === "4") {
     migrateV4ToV5(database);
-  } else if (
-    schemaVersion !== undefined &&
-    schemaVersion.value !== CURRENT_SCHEMA_VERSION
+    installedVersion = "5";
+  }
+  if (installedVersion === "5") {
+    migrateV5ToV6(database);
+    installedVersion = "6";
+  }
+  if (
+    installedVersion !== undefined &&
+    installedVersion !== CURRENT_SCHEMA_VERSION
   ) {
-    throw new Error(
-      `Unsupported database schema version: ${schemaVersion.value}`,
-    );
+    throw new Error(`Unsupported database schema version: ${installedVersion}`);
   }
 
   const installSchema = database.transaction(() => {

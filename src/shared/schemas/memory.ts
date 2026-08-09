@@ -24,6 +24,34 @@ export const MemoryStatusSchema = Type.Union([
   Type.Literal("archived"),
 ]);
 
+export const MemoryClaimSlotSchema = Type.Union([
+  Type.Literal("profile.name"),
+  Type.Literal("profile.pronouns"),
+  Type.Literal("profile.home_location"),
+  Type.Literal("profile.timezone"),
+  Type.Literal("profile.occupation"),
+  Type.Literal("profile.languages"),
+  Type.Literal("profile.birth_date"),
+  Type.Literal("preference.hobbies"),
+  Type.Literal("preference.likes"),
+  Type.Literal("preference.dislikes"),
+  Type.Literal("preference.response_style"),
+  Type.Literal("preference.communication_style"),
+  Type.Literal("preference.food"),
+  Type.Literal("preference.music"),
+  Type.Literal("preference.media"),
+  Type.Literal("preference.travel"),
+  Type.Literal("preference.schedule"),
+  Type.Literal("preference.tools"),
+]);
+
+export const MemoryClaimOperationSchema = Type.Union([
+  Type.Literal("create"),
+  Type.Literal("replace"),
+  Type.Literal("append"),
+  Type.Literal("remove"),
+]);
+
 export const MemorySourceTypeSchema = Type.Union([
   Type.Literal("chat"),
   Type.Literal("voice"),
@@ -62,6 +90,7 @@ export const MemoryUsageSchema = Type.Object(
 
 export const MemoryRecordSchema = Type.Object(
   {
+    claimSlot: Type.Optional(MemoryClaimSlotSchema),
     confidence: Type.Number({ maximum: 1, minimum: 0 }),
     createdAt: TimestampSchema,
     currentRevisionId: EntityIdSchema,
@@ -121,6 +150,8 @@ export const MemoryCandidateStatusSchema = Type.Union([
 
 export const MemoryCandidateSchema = Type.Object(
   {
+    claimOperation: Type.Optional(MemoryClaimOperationSchema),
+    claimSlot: Type.Optional(MemoryClaimSlotSchema),
     confidence: Type.Number({ maximum: 1, minimum: 0 }),
     content: NonBlankStringSchema,
     createdAt: TimestampSchema,

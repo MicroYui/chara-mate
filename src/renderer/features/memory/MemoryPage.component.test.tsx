@@ -141,6 +141,13 @@ describe("MemoryPage", () => {
     expect(
       await screen.findByText("用户多日使用 Visual Studio Code。"),
     ).toBeVisible();
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.tagName === "SMALL" &&
+          element.textContent === "来源：Activity · Visual Studio Code Episode",
+      ),
+    ).toBeVisible();
     fireEvent.click(
       screen.getByRole("button", { name: /用户偏爱安静且有插座/ }),
     );
@@ -166,6 +173,37 @@ describe("MemoryPage", () => {
         candidateId: CANDIDATE_ID,
       }),
     );
+  });
+
+  it("explains a guarded cross-Chat update candidate", async () => {
+    const { api, list } = makeApi();
+    list.mockResolvedValue({
+      ok: true,
+      value: {
+        ...snapshot,
+        candidates: [
+          {
+            ...snapshot.candidates[0]!,
+            claimOperation: "replace",
+            claimSlot: "preference.hobbies",
+            content: "用户现在的爱好是游泳。",
+            reason: "跨 Chat 更新未取得本轮合法目标，等待用户确认",
+            sourceLabels: ["用户消息"],
+            sourceType: "chat",
+            supersedesMemoryId: MEMORY_ID,
+            type: "preference",
+          },
+        ],
+      },
+    });
+    render(<MemoryPage api={api} onOpenTerritory={() => undefined} />);
+
+    expect(
+      await screen.findByText("处理：替换 · 字段：爱好 · 更新现有记忆"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("跨 Chat 更新未取得本轮合法目标，等待用户确认"),
+    ).toBeVisible();
   });
 
   it("lets an archived memory return to the active list", async () => {

@@ -18,6 +18,7 @@ import { registerAgentIpc } from "./agent/agentIpc";
 import { AgentRuntime } from "./agent/agentRuntime";
 import { ElectronImageInputProvider } from "./agent/imageInput";
 import { CheckpointRepository } from "./agent/checkpointRepository";
+import { decodeRuntimeCheckpoint } from "./agent/runtimeCheckpoint";
 import { RunEventService } from "./agent/runEventService";
 import { RunEventWriter } from "./agent/runEventWriter";
 import { RunRepository } from "./agent/runRepository";
@@ -70,7 +71,11 @@ import { LexicalRetrievalPipeline } from "./memory/lexicalRetrievalPipeline";
 import { registerMemoryIpc } from "./memory/memoryIpc";
 import { MemoryRepository } from "./memory/memoryRepository";
 import { MemoryService } from "./memory/memoryService";
-import { registerMemoryTool } from "./memory/memoryTool";
+import { memoryContextTargetIds } from "./agent/memoryContext";
+import {
+  registerMemoryFormationTool,
+  registerMemoryTool,
+} from "./memory/memoryTool";
 import { CharacterWindowController } from "./pet/characterWindowController";
 import { bundledPetsDirectory, installBundledPets } from "./pet/bundledPets";
 import { registerPetIpc } from "./pet/petIpc";
@@ -253,6 +258,7 @@ async function startApplication(): Promise<void> {
   );
   unregisterMemoryIpc = registerMemoryIpc(memoryServiceInstance);
   const runRepository = new RunRepository(applicationDatabase);
+  const checkpointRepository = new CheckpointRepository(applicationDatabase);
   const runtimeObservability = new RuntimeObservability(runRepository, logger);
   const windowPlacementRepository = new WindowPlacementRepository(
     applicationDatabase,
@@ -334,6 +340,59 @@ async function startApplication(): Promise<void> {
   );
   const toolRegistry = new ToolRegistry();
   registerMemoryTool(toolRegistry, memoryServiceInstance);
+  registerMemoryFormationTool(
+    toolRegistry,
+    memoryServiceInstance,
+    (runId, basis) => {
+      const run = runRepository.getRun(runId);
+      if (!run) throw new TypeError("Memory evidence Run is unavailable");
+      const checkpoint = checkpointRepository.get(runId);
+      const allowedMemoryIds = checkpoint
+        ? [
+            ...new Set(
+              decodeRuntimeCheckpoint(checkpoint.context).input.flatMap(
+                memoryContextTargetIds,
+              ),
+            ),
+          ]
+        : [];
+      if (basis === "run_observation") {
+        return {
+          allowedMemoryIds,
+          label: `Agent Run ${run.id}`,
+          referenceId: run.id,
+          sourceType: "tool",
+        };
+      }
+      const evidenceItem = runRepository
+        .listRunItems(run.id)
+        .filter(
+          (item) =>
+            item.status === "completed" &&
+            (item.kind === "user_message" || item.kind === "input_request"),
+        )
+        .at(-1);
+      if (!evidenceItem) {
+        throw new TypeError("Memory evidence user input is unavailable");
+      }
+      const input = evidenceItem.input;
+      const messageId =
+        input && typeof input === "object" && !Array.isArray(input)
+          ? input["messageId"]
+          : undefined;
+      const evidenceId =
+        typeof messageId === "string" ? messageId : evidenceItem.id;
+      return {
+        allowedMemoryIds,
+        label:
+          evidenceItem.kind === "user_message"
+            ? `用户消息 ${evidenceId}`
+            : `结构化回答 ${evidenceId}`,
+        referenceId: run.chatId,
+        sourceType: "chat",
+      };
+    },
+  );
   const artifactStore = new ArtifactStore(
     path.join(userDataPath, "artifacts"),
     idGenerator,
@@ -474,7 +533,7 @@ async function startApplication(): Promise<void> {
     chatRepository,
     chatService,
     runRepository,
-    new CheckpointRepository(applicationDatabase),
+    checkpointRepository,
     writer,
     toolRegistry,
     providerService,

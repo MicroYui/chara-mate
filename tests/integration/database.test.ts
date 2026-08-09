@@ -75,7 +75,7 @@ describe("foundation database", () => {
     );
   });
 
-  it("migrates v4 Run data before enabling input boundaries and Phase 3 tables", async () => {
+  it("migrates v4 Run data through the current Phase 3 schema", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "chara-mate-v4-migration-"),
     );
@@ -158,12 +158,72 @@ describe("foundation database", () => {
       database
         .prepare("SELECT value FROM app_metadata WHERE key = 'schema_version'")
         .get(),
-    ).toEqual({ value: "5" });
+    ).toEqual({ value: CURRENT_SCHEMA_VERSION });
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE name = 'memories'")
         .get(),
     ).toEqual({ name: "memories" });
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE name = 'memory_claims'")
+        .get(),
+    ).toEqual({ name: "memory_claims" });
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
+  });
+
+  it("migrates v5 Memory data without inventing claim identities", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-v5-migration-"),
+    );
+    temporaryDirectories.push(directory);
+    const databasePath = path.join(directory, "charamate.sqlite");
+    let database = openApplicationDatabase(databasePath);
+    database.transaction(() => {
+      database
+        .prepare(
+          `INSERT INTO memories (
+             id, type, status, current_revision_id, importance, confidence,
+             created_at, updated_at
+           ) VALUES ('memory-v5', 'preference', 'active', 'revision-v5',
+                     0.5, 1, ?, ?)`,
+        )
+        .run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+      database
+        .prepare(
+          `INSERT INTO memory_revisions (
+             id, memory_id, content, source_type, reason, created_at
+           ) VALUES ('revision-v5', 'memory-v5', '用户喜欢徒步。',
+                     'user_edit', 'v5 数据', ?)`,
+        )
+        .run("2026-08-09T00:00:00.000Z");
+      database.exec("DROP TABLE memory_candidate_formation");
+      database.exec("DROP TABLE memory_claims");
+      database
+        .prepare(
+          "UPDATE app_metadata SET value = '5' WHERE key = 'schema_version'",
+        )
+        .run();
+    })();
+    database.close();
+
+    database = openApplicationDatabase(databasePath);
+    expect(
+      database
+        .prepare(
+          "SELECT content FROM memory_revisions WHERE id = 'revision-v5'",
+        )
+        .get(),
+    ).toEqual({ content: "用户喜欢徒步。" });
+    expect(
+      database.prepare("SELECT COUNT(*) AS count FROM memory_claims").get(),
+    ).toEqual({ count: 0 });
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE name = ?")
+        .get("memory_candidate_formation"),
+    ).toEqual({ name: "memory_candidate_formation" });
     expect(database.pragma("foreign_key_check")).toEqual([]);
     database.close();
   });

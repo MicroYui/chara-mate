@@ -263,6 +263,7 @@ Manifest 在运行前冻结并计算 hash。结果只引用该 hash，防止实�
 | `MEMORY-STORAGE` | §6 | journal、向量位置、计算位置与维护策略 |
 | `MEMORY-RETRIEVAL` | §7 | 唯一模型/召回/排序/索引配方 |
 | `CONTEXT-RECIPE` | §8 | 唯一内容组合、顺序、预算与裁剪规则 |
+| `MEMORY-FORMATION` | §8.6 | Chat/Agent 使用期形成、修订或候选化 Memory 的唯一流程 |
 | `ACTIVITY-DISTILLATION` | §9 | 唯一 Episode/Digest/候选生成流程 |
 | `ACTIVITY-RETENTION` | §9 | 唯一保留、容量与清理策略 |
 | `SELF-EVOLUTION` | §10 | 唯一触发、候选与 Skill 生效流程 |
@@ -288,7 +289,8 @@ flowchart TD
     SV["MEMORY-STORAGE<br/>vector/compute 阶段<br/>仅 dense 触发"]
     C["CONTEXT-RECIPE"]
     G["MEMORY-GRAPH"]
-    M["Phase 3 Memory"]
+    M["Phase 3 Memory<br/>semantics / retrieval / UI"]
+    MF["MEMORY-FORMATION"]
     AD["ACTIVITY-DISTILLATION"]
     AR["ACTIVITY-RETENTION"]
     ACT["Phase 3 Activity"]
@@ -321,8 +323,10 @@ flowchart TD
     SV -.->|若触发则必须完成| M
     C --> M
     G --> M
-    M --> AD
-    M --> AR
+    A --> MF
+    M --> MF
+    MF --> AD
+    MF --> AR
     AD --> ACT
     AR --> ACT
 
@@ -336,7 +340,7 @@ flowchart TD
     VJ --> V
 
     A --> SE
-    M --> SE
+    MF --> SE
 ```
 
 `MEMORY-STORAGE` 是一个分阶段 Decision：journal 阶段可在 Retrieval 质量实验前运行；向量/compute 阶段只有 dense lane 证明有晋级价值后才触发。最终仍只产生一份完整 Decision Record 和一套生产存储配置。若 dense 未晋级，`SV` 节点视为“不触发”，不是缺失实验，也不会创建向量 worker/segment/service。
@@ -1446,6 +1450,30 @@ Persona、最近原文、会话摘要、长期 Memory evidence、Activity Digest
 - 能力相当时选择更短、更确定、对模型主动性依赖更小的方案。
 - 同一套 finalist 必须在预注册的代表性 Chat Model Profiles 上验证；若某方案只有靠模型专用分支才能成立，优先选择更稳的单一 Recipe，或收窄受支持契约，而不是保留多套 Context 装配器。
 
+### 8.6 `MEMORY-FORMATION` 基础记忆形成
+
+本 Decision 只研究 Phase 3 的基础闭环：当前 Chat/Agent Run 怎样把用户明确表达的长期事实、偏好、项目、事件、方法和承诺形成 Memory。它不研究异步 Run 复盘、Skill 生成、replay 或任务方法自我进化；后者仍由 Phase 5 的 `SELF-EVOLUTION` 决定。
+
+稳定产品约束：
+
+- 用户明确陈述的耐久信息可以直接创建或修订 active Memory；推断与 Agent 执行观察只能进入待确认候选；
+- 来源 ID、Chat/Run 归属与时间由宿主绑定，模型不能提交伪造来源；
+- 改口优先形成同一 Memory 的 Revision；重复调用、checkpoint 恢复和相同内容不得制造重复事实；
+- 身份解析必须单独比较：至少包含仅依赖 Context ID、模型自由 claim key、闭集 claim slot + 当前 Run target allowlist；冻结集覆盖未命中、错 ID、同字段冲突、集合/单值 operation、旧无身份数据、候选接受和数据库重开；
+- 生产允许 `create/replace/append/remove`，但宿主必须校验字段基数、active 状态、type、slot 与本轮合法目标；不能确定时进入候选，不能用自由 key 猜中后静默修订；
+- 临时请求、助手自己的主张、复制进来的资料、否定内容和凭据不得形成 Memory；
+- 获胜方案必须复用 Phase 2 的同一 Run 与 Phase 3 的同一 Memory/Revision/Source 真源，不创建第二个后台 Agent 或运行时模式。
+
+| Arm | 形成方式 | 主要代价 |
+| --- | --- | --- |
+| `F0-MANUAL` | 只有用户在 Memory 页面手动创建 | 自动形成召回为零 |
+| `F1-RULE` | 宿主关键词/句式规则直接分类 | 多语言、改写和否定规则持续膨胀 |
+| `F2-IN-RUN-TOOL` | 当前回答模型调用始终加载的宿主记忆工具；宿主决定 direct/candidate 生效语义 | 依赖目标 Chat Model 的 Function Calling 质量 |
+
+异步 post-Run reviewer 不属于本 Decision Arm：它会引入额外模型调用、后台生命周期和任务方法学习，必须留在 `SELF-EVOLUTION` 内单独验证，不能作为 Phase 3 的隐藏 fallback。
+
+冻结集至少包含明确画像/偏好/项目/承诺、自然改写、明确纠正、低置信自我推断、一次性请求、复制文本、否定句和假凭据；身份后继集至少包含合法/缺失/错 target、同 slot create、exact replay、集合 append、单值误 append、重启、旧数据首次绑定与定向候选接受。分别报告 disposition/type/修订目标正确率、错误写入、重复率、来源完整率、模型调用与 Token；协议 shape、事务、恢复、去重与候选生效由确定性集成测试验证。没有可用 Chat deployment 时，Live 结果必须记为 protocol invalid，不能用 mock 宣称模型形成质量通过；可在产品边界已由用户明确选择时记录透明 owner amendment，但必须保留该限制。
+
 ---
 
 ## 9. Activity 蒸馏与用户画像实验
@@ -1546,16 +1574,16 @@ Hermes Agent 的后台复盘、Memory/Skill 区分、Skill 使用统计和可恢
 - [Hermes background review](https://github.com/NousResearch/hermes-agent/blob/126ff7071b6b755055879648f4e859b3187d0fac/agent/background_review.py)
 - [Hermes curator](https://github.com/NousResearch/hermes-agent/blob/126ff7071b6b755055879648f4e859b3187d0fac/agent/curator.py)
 
-研究重点不是复现 Hermes，而是验证“异步复盘 + 候选 + replay + 版本恢复”是否比直接写入更可靠。
+研究重点不是复现 Hermes，而是验证“异步复盘 + 候选 + replay + 版本恢复”能否在 Phase 3 基础记忆形成之外带来可复用任务能力；它不重新决定用户明确陈述是否能形成普通 Memory。
 
 ### 10.3 Evolution Arms
 
 | Arm | 复盘 | 生效方式 |
 | --- | --- | --- |
-| E0 | 无后台复盘 | 只有用户手动创建 |
-| E1 | Run 后复盘 | 直接写 Memory/Skill |
-| E2 | Run 后复盘 | 生成候选，用户确认 |
-| E3 | Run 后复盘 | Memory 规则确认；Skill replay 后激活 |
+| E0 | 无后台复盘 | 仅保留 Phase 3 基础 Memory 形成；Skill 由用户手动创建 |
+| E1 | Run 后复盘 | 直接写高级 Memory/Skill |
+| E2 | Run 后复盘 | 生成成长候选，用户确认 |
+| E3 | Run 后复盘 | 高级 Memory 规则确认；Skill replay 后激活 |
 | E4 | 触发式复盘 | 用户纠正/教学/可验证成功时才生成候选 |
 
 ### 10.4 触发实验
