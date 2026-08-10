@@ -704,6 +704,8 @@ interface RetrievalPipeline {
 
 `CONTEXT-RECIPE` 已选择 `C2 PRE8 + goal-last`：每个新 Run 只执行一次当前请求的 R0 top8 检索，把带 Memory/Revision ID、时间、状态和来源的 evidence 存入 checkpoint；有界活跃上下文与结构化 handoff 在前，当前用户输入靠近末尾。模型续步、Tool continuation、恢复和 run 内 steering 不重复初始检索；压缩仍保留该 evidence 与当前/最新结构化用户输入、未完成宿主状态和最新必要 action Tool Result。
 
+Plan 的持久化和模型上下文分工固定如下：完整 Plan 更新仍以 `kind=plan` 的 Run Item 作为历史与 UI 投影真源；活动 checkpoint 保存从最新已完成 Plan Item 恢复出的 `currentPlan` 编译快照。普通 Tool、审批与 steering 可以更新 handoff，但不得覆盖该快照。每次压缩都在当前用户输入之前重新注入最新完整 Plan（说明、全部步骤与三态）；新 Plan 更新会替换快照并移除较早的压缩 Plan 消息，避免长上下文同时出现两个“当前计划”。这不是第二份可编辑计划状态，也不增加 Plan 表或 Renderer 状态机。
+
 `memory.search` 是 deferred Agent 能力，只在用户明确要求检查或搜索预注入范围之外的 Memory 记录时经 Tool Search 加载；它不常驻普通 Chat/Agent 上下文，也不作为自动 Recipe 的第二检索阶段。发布版不按模型、设备或用户设置维护其他顺序、动态 topK 或装配模式。
 
 ### 6.9 Activity 蒸馏为记忆

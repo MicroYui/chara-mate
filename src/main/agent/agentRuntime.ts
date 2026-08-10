@@ -42,7 +42,7 @@ import { ProviderError, toProviderAppError } from "../providers/providerError";
 import { toolEvidenceHash } from "../tools/toolRegistry";
 import type { CheckpointPhase } from "./checkpointRepository";
 import type { CheckpointRepository } from "./checkpointRepository";
-import { ContextCompiler, type HandoffSummary } from "./contextCompiler";
+import { ContextCompiler, isCurrentPlanContextInput } from "./contextCompiler";
 import {
   collectModelTurn,
   supportsStrictToolSchema,
@@ -306,35 +306,12 @@ function userInputSummary(resolution: UserInputResolution): string {
   )}`;
 }
 
-const PLAN_HANDOFF_PREFIX = "[plan:";
-const PLAN_EXPLANATION_PREFIX = "[plan explanation]";
-
-function planHandoff(
-  current: HandoffSummary,
-  value: Readonly<Record<string, JsonValue>>,
-): HandoffSummary {
-  const update: PlanUpdate = parseSchema(PlanUpdateSchema, value);
-  const planLines = update.plan.map(
-    ({ status, step }) => `${PLAN_HANDOFF_PREFIX}${status}] ${step}`,
-  );
-  return {
-    constraints: current.constraints,
-    currentProgress: [
-      ...current.currentProgress.filter(
-        (line) => !line.startsWith(PLAN_HANDOFF_PREFIX),
-      ),
-      ...planLines.filter((line) => line.startsWith("[plan:completed]")),
-    ],
-    decisions: [
-      ...current.decisions.filter(
-        (line) => !line.startsWith(PLAN_EXPLANATION_PREFIX),
-      ),
-      ...(update.explanation
-        ? [`${PLAN_EXPLANATION_PREFIX} ${update.explanation}`]
-        : []),
-    ],
-    nextSteps: planLines.filter((line) => !line.startsWith("[plan:completed]")),
-  };
+function parseCurrentPlan(value: JsonValue): PlanUpdate {
+  const update = parseSchema(PlanUpdateSchema, value);
+  if (update.plan.filter(({ status }) => status === "in_progress").length > 1) {
+    throw new TypeError("A plan may contain at most one in_progress step");
+  }
+  return update;
 }
 
 function isUserInputCall(call: ModelFunctionCall): boolean {
@@ -1196,11 +1173,22 @@ export class AgentRuntime {
     data: RuntimeCheckpointState,
     generation: number,
   ): ActiveRun {
-    const contextLimits = data.contextLimits ?? limits;
+    const latestPlanItem = this.runs
+      .listRunItems(runId)
+      .findLast(
+        ({ kind, status }) => kind === "plan" && status === "completed",
+      );
+    const restoredData =
+      latestPlanItem?.input === undefined
+        ? data
+        : { ...data, currentPlan: parseCurrentPlan(latestPlanItem.input) };
+    const contextLimits = restoredData.contextLimits ?? limits;
     return {
       abort: new AbortController(),
       data:
-        data.contextLimits === undefined ? { ...data, contextLimits } : data,
+        restoredData.contextLimits === undefined
+          ? { ...restoredData, contextLimits }
+          : restoredData,
       generation,
       imageCache: new Map(),
       inputWaiters: new Map(),
@@ -2043,19 +2031,29 @@ export class AgentRuntime {
         }
       }
     }
-    const handoff =
-      descriptor?.itemKind === "plan" && result.status === "success"
-        ? planHandoff(checkpointWithoutPending.handoff, pending.arguments)
-        : {
-            ...checkpointWithoutPending.handoff,
-            currentProgress: [
-              ...checkpointWithoutPending.handoff.currentProgress,
-              `${pending.name}: ${result.summary}`,
-            ],
-            nextSteps: [],
-          };
+    const planUpdated =
+      descriptor?.itemKind === "plan" && result.status === "success";
+    if (planUpdated) {
+      input = input.filter((item) => !isCurrentPlanContextInput(item));
+    }
+    const handoff = planUpdated
+      ? {
+          ...checkpointWithoutPending.handoff,
+          nextSteps: [],
+        }
+      : {
+          ...checkpointWithoutPending.handoff,
+          currentProgress: [
+            ...checkpointWithoutPending.handoff.currentProgress,
+            `${pending.name}: ${result.summary}`,
+          ],
+          nextSteps: [],
+        };
     active.data = {
       ...checkpointWithoutPending,
+      ...(planUpdated
+        ? { currentPlan: parseCurrentPlan(pending.arguments) }
+        : {}),
       ...(allowedTools === undefined ? {} : { allowedTools }),
       boundaries,
       handoff,
@@ -2202,6 +2200,9 @@ export class AgentRuntime {
   #compactIfNeeded(active: ActiveRun): void {
     const compiled = this.contextCompiler.compile(
       {
+        ...(active.data.currentPlan === undefined
+          ? {}
+          : { currentPlan: active.data.currentPlan }),
         ...(active.data.currentUserInput === undefined
           ? {}
           : { currentUserInput: active.data.currentUserInput }),
@@ -2226,6 +2227,9 @@ export class AgentRuntime {
   #compact(active: ActiveRun, force: boolean): void {
     const compiled = this.contextCompiler.compile(
       {
+        ...(active.data.currentPlan === undefined
+          ? {}
+          : { currentPlan: active.data.currentPlan }),
         ...(active.data.currentUserInput === undefined
           ? {}
           : { currentUserInput: active.data.currentUserInput }),
@@ -2266,7 +2270,8 @@ export class AgentRuntime {
       recentUsers: active.data.recentUsers.slice(-1),
     };
     this.writer.completeItem(item.id, {
-      displayOutput: "已整理较早上下文，并保留当前进度、决定、约束与下一步。",
+      displayOutput:
+        "已整理较早上下文，并保留当前计划、进度、决定、约束与下一步。",
       output: { afterBytes, beforeBytes },
       status: "completed",
     });

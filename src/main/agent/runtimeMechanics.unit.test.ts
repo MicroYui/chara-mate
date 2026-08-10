@@ -11,6 +11,7 @@ import {
   supportsStrictToolSchema,
   type ModelEvent,
 } from "./modelProvider";
+import { decodeRuntimeCheckpoint } from "./runtimeCheckpoint";
 
 function failedResult(): ToolResult {
   return {
@@ -280,6 +281,110 @@ describe("Phase 2 Runtime mechanics", () => {
       current,
     ]);
     expect(JSON.stringify(compiled.input)).not.toContain("old result");
+  });
+
+  it("reinjects the latest full Plan independently of the mutable handoff", () => {
+    const compiler = new ContextCompiler();
+    const currentPlan = {
+      explanation: "检查完成，继续实现并验证。",
+      plan: [
+        { status: "completed" as const, step: "检查现有实现" },
+        { status: "in_progress" as const, step: "修复 checkpoint" },
+        { status: "pending" as const, step: "运行回归测试" },
+      ],
+    };
+    const latestCall = {
+      arguments: "{}",
+      call_id: "latest-call",
+      name: "read",
+      namespace: "file",
+      type: "function_call",
+    } satisfies JsonValue;
+    const latestOutput = {
+      call_id: "latest-call",
+      output: "ordinary Tool result",
+      type: "function_call_output",
+    } satisfies JsonValue;
+    const current = {
+      content: "继续完成当前目标",
+      role: "user",
+      type: "message",
+    } satisfies JsonValue;
+    const compiled = compiler.compile(
+      {
+        currentPlan,
+        currentUserInput: current,
+        items: [latestCall, latestOutput, current],
+        recentUsers: ["继续完成当前目标"],
+      },
+      { maxPromptTokens: 100_000 },
+      {
+        constraints: [],
+        currentProgress: ["file.read: ordinary Tool result"],
+        decisions: [],
+        nextSteps: [],
+      },
+      true,
+    );
+
+    expect(compiled.input).toHaveLength(5);
+    expect(compiled.input[0]).toMatchObject({ role: "developer" });
+    expect(compiled.input[1]).toEqual(latestCall);
+    expect(compiled.input[2]).toEqual(latestOutput);
+    expect(compiled.input[3]).toMatchObject({ role: "developer" });
+    expect(
+      (compiled.input[3] as Readonly<Record<string, JsonValue>>)["content"],
+    ).toContain(
+      "Current execution plan (authoritative latest complete snapshot)",
+    );
+    expect(compiled.input[4]).toEqual(current);
+    const serialized = JSON.stringify(compiled.input);
+    expect(serialized).toContain("检查完成，继续实现并验证");
+    expect(serialized).toContain("检查现有实现");
+    expect(serialized).toContain("修复 checkpoint");
+    expect(serialized).toContain("运行回归测试");
+    expect(serialized).toContain("in_progress");
+  });
+
+  it("validates a persisted current Plan at the checkpoint boundary", () => {
+    const checkpoint = {
+      boundaries: [],
+      currentPlan: {
+        plan: [
+          { status: "in_progress", step: "修复 checkpoint" },
+          { status: "pending", step: "运行回归测试" },
+        ],
+      },
+      forcedCompactionAttempted: false,
+      handoff: {
+        constraints: [],
+        currentProgress: [],
+        decisions: [],
+        nextSteps: [],
+      },
+      input: [],
+      recentUsers: [],
+      recoveryAttemptedKeys: [],
+      version: 1,
+    } as JsonValue;
+
+    expect(decodeRuntimeCheckpoint(checkpoint).currentPlan).toMatchObject({
+      plan: [
+        { status: "in_progress", step: "修复 checkpoint" },
+        { status: "pending", step: "运行回归测试" },
+      ],
+    });
+    expect(() =>
+      decodeRuntimeCheckpoint({
+        ...(checkpoint as Readonly<Record<string, JsonValue>>),
+        currentPlan: {
+          plan: [
+            { status: "in_progress", step: "第一步" },
+            { status: "in_progress", step: "第二步" },
+          ],
+        },
+      }),
+    ).toThrow("Unsupported or corrupt Agent checkpoint");
   });
 
   it("keeps the 90% trigger proportional to the Provider-resolved model window", () => {

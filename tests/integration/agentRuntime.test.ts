@@ -730,11 +730,122 @@ describe("Agent Runtime production path", () => {
       ),
     ).toEqual(["request_user_input", "plan.update"]);
     expect(JSON.stringify(fixture.provider.requests[1]?.input)).toContain(
-      "[plan:in_progress] 检查现有实现",
+      "Current execution plan (authoritative latest complete snapshot)",
     );
     expect(JSON.stringify(fixture.provider.requests[1]?.input)).toContain(
-      "[plan:pending] 运行验收",
+      "检查现有实现",
     );
+    expect(JSON.stringify(fixture.provider.requests[1]?.input)).toContain(
+      "运行验收",
+    );
+    expect(JSON.stringify(fixture.provider.requests[2]?.input)).toContain(
+      "检查完成，开始实现",
+    );
+    expect(JSON.stringify(fixture.provider.requests[2]?.input)).not.toContain(
+      "先检查，再实现",
+    );
+    expect(
+      fixture.runs
+        .listRunItems(run.id)
+        .some(({ kind }) => kind === "context_compaction"),
+    ).toBe(true);
+    fixture.database.close();
+  });
+
+  it("keeps the latest Plan through an ordinary Tool, compaction, and restart", async () => {
+    const plan = {
+      explanation: "先检查，再实现并验证。",
+      plan: [
+        { status: "completed" as const, step: "检查现有实现" },
+        { status: "in_progress" as const, step: "修复 checkpoint" },
+        { status: "pending" as const, step: "运行回归测试" },
+      ],
+    };
+    const questions = [
+      {
+        header: "继续",
+        id: "continue",
+        options: [
+          { description: "继续执行剩余步骤。", label: "继续" },
+          { description: "停止当前执行。", label: "停止" },
+        ],
+        question: "是否继续完成剩余计划？",
+      },
+    ];
+    const fixture = await createFixture(
+      [
+        namespacedFunctionTurn("plan-current", "update", "plan", plan, 10),
+        namespacedFunctionTurn(
+          "ordinary-read",
+          "read",
+          "test",
+          { value: "state" },
+          10,
+        ),
+        namespacedFunctionTurn(
+          "input-continue",
+          "request_user_input",
+          "interaction",
+          { questions },
+          100,
+        ),
+      ],
+      undefined,
+      undefined,
+      undefined,
+      { effectiveInputTokens: 100 },
+    );
+    registerPlanTool(fixture.tools);
+    registerTool(fixture, {
+      execute: () => Promise.resolve(successfulResult("ordinary read")),
+      name: "test.read",
+    });
+
+    const run = await startAgent(fixture);
+    await waitForStatus(fixture, run.id, "needs_input");
+    expect(fixture.checkpoints.get(run.id)).toMatchObject({
+      context: { currentPlan: plan },
+      phase: "input",
+    });
+    const checkpoint = fixture.checkpoints.get(run.id)!;
+    const legacyContext = {
+      ...(checkpoint.context as Readonly<Record<string, JsonValue>>),
+    };
+    delete legacyContext["currentPlan"];
+    fixture.checkpoints.save({ ...checkpoint, context: legacyContext });
+
+    const item = fixture.runs
+      .listRunItems(run.id)
+      .find(({ kind }) => kind === "input_request");
+    const restartedProvider = new ScriptedProvider([
+      finalTurn("已完成剩余计划"),
+    ]);
+    const restartedRuntime = createRuntimeFor(fixture, restartedProvider);
+    await restartedRuntime.initialize();
+    await restartedRuntime.resolveUserInput({
+      itemId: item!.id,
+      resolution: {
+        answers: [
+          {
+            questionId: "continue",
+            value: { kind: "option", label: "继续" },
+          },
+        ],
+        resolvedAt: REQUESTED_AT,
+        status: "answered",
+      },
+      runId: run.id,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    const continuedInput = JSON.stringify(restartedProvider.requests[0]?.input);
+    expect(continuedInput).toContain(
+      "Current execution plan (authoritative latest complete snapshot)",
+    );
+    expect(continuedInput).toContain("检查现有实现");
+    expect(continuedInput).toContain("修复 checkpoint");
+    expect(continuedInput).toContain("运行回归测试");
+    expect(continuedInput).toContain("ordinary read");
     expect(
       fixture.runs
         .listRunItems(run.id)

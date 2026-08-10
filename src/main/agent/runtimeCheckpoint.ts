@@ -1,5 +1,7 @@
 import type { JsonValue } from "../../shared/contracts/primitives";
-import type { UserInputQuestion } from "../../shared/contracts/run";
+import type { PlanUpdate, UserInputQuestion } from "../../shared/contracts/run";
+import { PlanUpdateSchema } from "../../shared/schemas/run";
+import { parseSchema } from "../../shared/schemas/validation";
 import type {
   ModelAllowedTool,
   ModelContextLimits,
@@ -28,6 +30,7 @@ export interface RuntimeCheckpointState {
   readonly allowedTools?: readonly ModelAllowedTool[];
   readonly boundaries: readonly LoopBoundary[];
   readonly contextLimits?: ModelContextLimits;
+  readonly currentPlan?: PlanUpdate;
   readonly currentUserInput?: JsonValue;
   readonly forcedCompactionAttempted: boolean;
   readonly handoff: HandoffSummary;
@@ -70,6 +73,18 @@ function validContextLimits(value: JsonValue | undefined): boolean {
   );
 }
 
+function validCurrentPlan(value: JsonValue | undefined): boolean {
+  if (value === undefined) return true;
+  try {
+    const update = parseSchema(PlanUpdateSchema, value);
+    return (
+      update.plan.filter(({ status }) => status === "in_progress").length <= 1
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function decodeRuntimeCheckpoint(
   value: JsonValue,
 ): RuntimeCheckpointState {
@@ -81,7 +96,8 @@ export function decodeRuntimeCheckpoint(
     !Array.isArray(value["input"]) ||
     !Array.isArray(value["recentUsers"]) ||
     !Array.isArray(value["boundaries"]) ||
-    !validContextLimits(value["contextLimits"])
+    !validContextLimits(value["contextLimits"]) ||
+    !validCurrentPlan(value["currentPlan"])
   ) {
     throw new TypeError("Unsupported or corrupt Agent checkpoint");
   }

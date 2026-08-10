@@ -12,6 +12,8 @@
 
 - 执行日：2026-08-08；基线 commit `d539dff367a5e8af544d6dcf28e1112e8311d63b`；Apple M4 Pro、24 GiB、macOS/Darwin `25.6.0`、Node `24.18.0`。
 - OpenAI 官方 Responses Compaction 文档与 OpenAPI `2.3.0`；Codex 公开源码 commit `3aae5d885bac39c1262491aa3fd100dfd8b3919f` 的 compaction/turn context 行为，均已在研究设计与 `HARNESS-LOOP` 记录。它们不定义产品 Recipe。
+- 2026-08-10 修复 Plan 压缩保留前再次复核 OpenAI 官方 [Responses Compaction](https://developers.openai.com/api/docs/guides/compaction)；页面未显示独立版本，故只记录查阅日。协议只定义压缩输入/输出，不会替应用保留未显式携带的宿主 Plan。
+- 同日复核 Codex `main` commit [`c9c6c0daa994109cec50fddcb57d076fdf9e738c`](https://github.com/openai/codex/tree/c9c6c0daa994109cec50fddcb57d076fdf9e738c)：`update_plan` handler 解析完整步骤并发出 `PlanUpdate` 事件；remote v2 compaction 当前只从历史中保留有界的 system/developer/user/非 final agent message，再追加 opaque compaction item。两者是公开源码当前行为，不是 CharaMate 的协议硬限制或 Plan 存储方案。
 - 目标 live profile：本机 `copilot_api 1.15.2`、`gpt-5.6-sol`；离线 screen 不依赖 Provider。若 live endpoint 漂移，保留 protocol invalid，不把它算成 Arm 失败。
 - Memory 组合的离线/live 比较使用产品中文 Memory 68 问及 LongMemEval/LoCoMo 确认子集，查询与 evidence hash 复用 `MEMORY-RETRIEVAL`。当前目标、结构化回答、图片引用、steering、审批决定、最新 action Tool Result 和未完成 Plan 属于宿主正确性约束，不混进模型 Arm 得分；它们由 `runtimeMechanics.unit.test.ts` 与 `agentRuntime.test.ts` 的强制压缩/重启回归逐项验证。这样不会用一项可权衡平均分掩盖必要边界丢失，也不虚构一个实际未运行的长会话模型数据集。
 
@@ -83,6 +85,20 @@ C2 在正确数、supported、稳定完成、输入量和尾延迟上整体最�
 顺序选择是综合取舍：goal-first 的本次 p95 确实更低，记录不删除；两者质量相同，而 goal-last 提供实际 cache 命中和更清楚的“当前目标最后”结构。没有把 p95 当自动否决线，也没有按模型或用户设置保留第二种顺序。
 
 候选 runner 已移入可恢复废纸篓；生产只有一个 checkpoint item 形状和一个 formatter，没有 C0–C6 分支、动态 topK、Recipe 设置或第二装配器。当前目标、图片引用、steering、结构化回答、审批、Plan 和 action evidence 的强制压缩/重启回归独立通过，避免用 17 题平均分掩盖正确性红线。
+
+## 2026-08-10 Plan checkpoint 正确性修复
+
+生产复核发现，旧实现只把 Plan 投影到 `handoff.currentProgress/decisions/nextSteps`。普通 Tool 完成后会清空 `nextSteps`，因此 `Plan → 普通 Tool → 后续压缩` 可能让模型丢失未完成步骤；SQLite 中的 Plan Run Item 和 Renderer 计划表仍在，形成“界面有计划、模型不知道”的不一致。原回归只覆盖 Plan 更新后立即压缩，没有覆盖这条真实时序。
+
+修复不重新选择 Context Arm，而是落实本 Decision 已声明的正确性红线：
+
+- `run_items(kind=plan)` 的完整输入继续作为历史与 UI 的唯一事实记录；没有新增 Plan 表、前端副本或运行时模式。
+- Runtime checkpoint 新增可选 `currentPlan`，保存最新完整 `PlanUpdate` 编译快照并在解码时按同一 Schema 与单一 `in_progress` 约束校验。
+- Active Run 创建时从最新已完成 Plan Item 回填该快照，覆盖旧 checkpoint 尚无此字段以及 Plan Item 已提交、checkpoint 尚未提交的崩溃窗口。
+- 压缩后的唯一顺序为 `handoff → Memory evidence → 最新必要 action Tool 边界 → 最新完整 Plan → 当前/最新结构化用户输入`，继续保持 goal-last；普通 Tool 只改变 handoff，不改变 Plan。
+- 新 Plan 更新会替换 `currentPlan` 并移除输入中较早的压缩 Plan 消息；下一次压缩只生成一个最新快照，避免新旧计划冲突。
+
+确定性回归覆盖 Plan 快照校验、强制压缩、连续 Plan 替换，以及 `Plan → 普通 Tool → 等待输入 → 旧 checkpoint 形状 → 重启 → 压缩 → continuation`。这是已接受 Recipe 的缺陷修复，不产生新 Arm、参数、依赖或产品设置。
 
 ## 限制
 

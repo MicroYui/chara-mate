@@ -1,10 +1,14 @@
 import type { JsonValue } from "../../shared/contracts/primitives";
+import type { PlanUpdate } from "../../shared/contracts/run";
 import type { ModelContextLimits, ModelUsage } from "./modelProvider";
 import { isMemoryContextInput } from "./memoryContext";
 
 const COMPACTION_RATIO = 0.9;
+const CURRENT_PLAN_INPUT_PREFIX =
+  "Current execution plan (authoritative latest complete snapshot):";
 
 export interface ContextCheckpoint {
+  readonly currentPlan?: PlanUpdate;
   readonly currentUserInput?: JsonValue;
   readonly items: readonly JsonValue[];
   readonly latestUserInput?: JsonValue;
@@ -81,6 +85,24 @@ function latestToolBoundary(items: readonly JsonValue[]): JsonValue[] {
   return [];
 }
 
+function currentPlanInput(plan: PlanUpdate): JsonValue {
+  return {
+    content: [CURRENT_PLAN_INPUT_PREFIX, JSON.stringify(plan)].join("\n"),
+    role: "developer",
+    type: "message",
+  };
+}
+
+export function isCurrentPlanContextInput(value: JsonValue): boolean {
+  const item = record(value);
+  return (
+    item?.["type"] === "message" &&
+    item["role"] === "developer" &&
+    typeof item["content"] === "string" &&
+    item["content"].startsWith(CURRENT_PLAN_INPUT_PREFIX)
+  );
+}
+
 export class ContextCompiler {
   shouldCompact(
     checkpoint: ContextCheckpoint,
@@ -138,6 +160,9 @@ export class ContextCompiler {
       },
       ...(memoryContext ? [memoryContext] : []),
       ...latestToolBoundary(checkpoint.items),
+      ...(checkpoint.currentPlan
+        ? [currentPlanInput(checkpoint.currentPlan)]
+        : []),
       ...(preservedInputs.length > 0
         ? preservedInputs
         : latestUser
