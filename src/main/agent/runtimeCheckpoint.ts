@@ -42,6 +42,7 @@ export interface RuntimeCheckpointState {
   readonly pendingInput?: PendingInputRequest;
   readonly recentUsers: readonly string[];
   readonly recoveryAttemptedKeys: readonly string[];
+  readonly toolNames?: readonly string[];
   readonly version: 1;
 }
 
@@ -85,6 +86,15 @@ function validCurrentPlan(value: JsonValue | undefined): boolean {
   }
 }
 
+function validToolNames(value: JsonValue | undefined): boolean {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.every((name) => typeof name === "string" && name.length > 0) &&
+      new Set(value).size === value.length)
+  );
+}
+
 export function decodeRuntimeCheckpoint(
   value: JsonValue,
 ): RuntimeCheckpointState {
@@ -97,7 +107,8 @@ export function decodeRuntimeCheckpoint(
     !Array.isArray(value["recentUsers"]) ||
     !Array.isArray(value["boundaries"]) ||
     !validContextLimits(value["contextLimits"]) ||
-    !validCurrentPlan(value["currentPlan"])
+    !validCurrentPlan(value["currentPlan"]) ||
+    !validToolNames(value["toolNames"])
   ) {
     throw new TypeError("Unsupported or corrupt Agent checkpoint");
   }
