@@ -3,8 +3,9 @@ import { ProviderError, toProviderAppError } from "../providers/providerError";
 
 export type VoiceErrorCode =
   | "VOICE.ALREADY_ACTIVE"
+  | "VOICE.END_NOT_AVAILABLE"
   | "VOICE.NOT_ACTIVE"
-  | "VOICE.PROVIDER_CHANGED"
+  | "VOICE.NOT_READY"
   | "VOICE.RUN_ACTIVE"
   | "VOICE.SESSION_MISMATCH"
   | "VOICE.TOOL_ALIAS_COLLISION"

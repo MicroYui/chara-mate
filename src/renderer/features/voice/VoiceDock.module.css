@@ -2,7 +2,7 @@
   display: grid;
   width: min(var(--composer-max), 100%);
   min-height: 76px;
-  grid-template-columns: 38px minmax(0, 1fr) 38px;
+  grid-template-columns: auto minmax(0, 1fr) 38px;
   align-items: center;
   gap: 12px;
   margin: 0 auto;
@@ -28,6 +28,16 @@
 .roundButton:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
+}
+
+.roundButton:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.controls {
+  display: flex;
+  gap: 6px;
 }
 
 .endButton {

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { ToolResult } from "../../shared/contracts/tool";
-import { requiresApproval } from "./approvalPolicy";
+import { VOICE_END_TOOL_NAME } from "../../shared/contracts/voice";
+import { requiresApproval, toolAllowedInExecution } from "./approvalPolicy";
 import { ContextCompiler } from "./contextCompiler";
 import { createMemoryContextInput } from "./memoryContext";
 import { detectToolCycle, semanticToolSignature } from "./loopGuard";
@@ -481,6 +482,19 @@ describe("Phase 2 Runtime mechanics", () => {
       requiresApproval(
         { approvalMode: "request_approval", mode: "agent" },
         read,
+      ),
+    ).toBe(false);
+    const voiceEnd = { ...write, name: VOICE_END_TOOL_NAME };
+    expect(
+      toolAllowedInExecution(
+        { approvalMode: "full_access", mode: "agent" },
+        voiceEnd,
+      ),
+    ).toBe(false);
+    expect(
+      requiresApproval(
+        { approvalMode: "request_approval", mode: "agent" },
+        voiceEnd,
       ),
     ).toBe(false);
   });

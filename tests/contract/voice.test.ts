@@ -5,6 +5,8 @@ import { IpcChannelSchema } from "../../src/shared/schemas/ipc";
 import {
   VoiceClientCommandSchema,
   VoiceDriverEventRequestSchema,
+  VoicePausedRequestSchema,
+  VoicePauseResponseSchema,
   VoiceQuickStartRequestSchema,
   VoiceSessionRecordSchema,
   VoiceStartRequestSchema,
@@ -114,9 +116,64 @@ describe("Phase 4 Voice boundary contracts", () => {
         }),
       ).toMatchObject({ callId: "call-1", type: "tool.result" });
       expect(
+        parse(VoicePausedRequestSchema, {
+          paused: true,
+          requestedAt: FIXTURE_TIMESTAMPS.updated,
+          sessionId,
+        }),
+      ).toMatchObject({ paused: true, sessionId });
+      expect(
+        parse(VoiceClientCommandSchema, {
+          instructions: "恢复后的指令。",
+          requestId: FIXTURE_IDS.request,
+          sessionId,
+          tools: [
+            {
+              description: "查询天气。",
+              name: "weather_lookup",
+              parameters: { properties: {}, type: "object" },
+              type: "function",
+            },
+          ],
+          type: "session.refresh",
+        }),
+      ).toMatchObject({ type: "session.refresh" });
+      expect(
+        parse(VoiceDriverEventRequestSchema, {
+          event: {
+            durationMs: 320,
+            stage: "microphone",
+            type: "connection.stage",
+          },
+          occurredAt: FIXTURE_TIMESTAMPS.updated,
+          sessionId,
+        }),
+      ).toMatchObject({ event: { stage: "microphone" } });
+      expect(
+        parse(VoicePauseResponseSchema, {
+          ok: true,
+          value: {
+            snapshot: {
+              assistantTranscript: "",
+              chatId: FIXTURE_IDS.chat,
+              connectedAt: FIXTURE_TIMESTAMPS.updated,
+              createdAt: FIXTURE_TIMESTAMPS.created,
+              generation: 0,
+              inputMode: "hands_free",
+              muted: false,
+              phase: "paused",
+              sessionId,
+              userTranscript: "",
+              voice: "verse",
+            },
+          },
+        }),
+      ).toMatchObject({ ok: true, value: { snapshot: { phase: "paused" } } });
+      expect(
         parse(VoiceDriverEventRequestSchema, {
           event: {
             generation: 1,
+            hasAudio: true,
             responseId: "response-1",
             status: "completed",
             type: "response.done",

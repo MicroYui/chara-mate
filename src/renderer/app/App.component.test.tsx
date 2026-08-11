@@ -391,6 +391,7 @@ function renderApp({
       quickStart: vi.fn(),
       report: vi.fn(),
       setMuted: vi.fn(),
+      setPaused: vi.fn(),
       start: voiceStart,
       subscribeChanged: vi.fn<VoiceApi["subscribeChanged"]>((listener) => {
         voiceChangedListener = listener;
@@ -556,6 +557,69 @@ describe("application shell", () => {
     });
     expect(
       await screen.findByRole("heading", { name: "今天想从哪里开始？" }),
+    ).toBeVisible();
+  });
+
+  it("keeps Voice bound to its original Chat while another Chat is browsed", async () => {
+    const voiceChat: Chat = {
+      ...chatFixture,
+      id: ACTIVE_CHAT_ID,
+      title: "桌宠语音 Chat",
+    };
+    const otherChat: Chat = {
+      ...chatFixture,
+      id: "20000000-0000-4000-8000-000000000099",
+      title: "其他 Chat",
+    };
+    const { emitVoiceChanged } = renderApp({
+      initialChats: [voiceChat, otherChat],
+    });
+    await screen.findByRole("heading", { name: voiceChat.title });
+    act(() =>
+      emitVoiceChanged({
+        assistantTranscript: "",
+        chatId: voiceChat.id,
+        connectedAt: FIXTURE_TIMESTAMPS.updated,
+        createdAt: FIXTURE_TIMESTAMPS.created,
+        generation: 0,
+        inputMode: "hands_free",
+        muted: false,
+        phase: "listening",
+        sessionId: "20000000-0000-4000-8000-000000000001",
+        userTranscript: "",
+        voice: "verse",
+      }),
+    );
+    await screen.findByRole("button", { name: "暂停语音" });
+
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "会话列表" })).getByRole(
+        "button",
+        { name: otherChat.title },
+      ),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: otherChat.title }),
+    ).toBeVisible();
+    expect(screen.getByText("原 Voice Chat")).toBeVisible();
+    act(() =>
+      emitVoiceChanged({
+        assistantTranscript: "",
+        chatId: voiceChat.id,
+        connectedAt: FIXTURE_TIMESTAMPS.updated,
+        createdAt: FIXTURE_TIMESTAMPS.created,
+        generation: 0,
+        inputMode: "hands_free",
+        muted: false,
+        phase: "paused",
+        sessionId: "20000000-0000-4000-8000-000000000001",
+        userTranscript: "",
+        voice: "verse",
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: otherChat.title }),
     ).toBeVisible();
   });
 

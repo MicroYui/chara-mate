@@ -6,6 +6,8 @@ import {
   VoiceEmptyRequestSchema,
   VoiceMutedRequestSchema,
   VoiceMutationResponseSchema,
+  VoicePausedRequestSchema,
+  VoicePauseResponseSchema,
   VoicePreviewRequestSchema,
   VoicePreviewResponseSchema,
   VoiceQuickStartRequestSchema,
@@ -148,6 +150,22 @@ export function registerVoiceIpc(
     }
   });
 
+  ipcMain.handle(VOICE_CHANNELS.setPaused, async (event, input) => {
+    try {
+      requireVoiceWindow(event.sender);
+      const request = parseSchema(VoicePausedRequestSchema, input);
+      return parseSchema(VoicePauseResponseSchema, {
+        ok: true,
+        value: await service.setPaused(request),
+      });
+    } catch (error) {
+      return parseSchema(VoicePauseResponseSchema, {
+        error: toVoiceAppError(error),
+        ok: false,
+      });
+    }
+  });
+
   ipcMain.handle(VOICE_CHANNELS.end, (event, input) => {
     try {
       requireVoiceWindow(event.sender);
@@ -172,6 +190,7 @@ export function registerVoiceIpc(
       VOICE_CHANNELS.preview,
       VOICE_CHANNELS.quickStart,
       VOICE_CHANNELS.setMuted,
+      VOICE_CHANNELS.setPaused,
       VOICE_CHANNELS.start,
     ]) {
       ipcMain.removeHandler(channel);

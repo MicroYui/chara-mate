@@ -111,6 +111,7 @@ import { AzureWebRtcSessionIssuer } from "./voice/azureWebRtcSession";
 import { registerVoiceIpc } from "./voice/voiceIpc";
 import { VoiceRepository } from "./voice/voiceRepository";
 import { VoiceService } from "./voice/voiceService";
+import { registerVoiceTools } from "./voice/voiceTool";
 import { VoiceMetrics } from "./voice/voiceMetrics";
 
 const logger = createAppLogger();
@@ -686,6 +687,13 @@ async function startApplication(): Promise<void> {
     },
     voiceMetrics,
   );
+  registerVoiceTools(toolRegistry, {
+    requestEndAfterResponse: (runId) => {
+      const runtime = voiceService;
+      if (!runtime) throw new Error("Voice runtime is unavailable");
+      runtime.requestEndAfterResponse(runId);
+    },
+  });
   voiceService.initialize();
   const voiceRuntime = voiceService;
   unregisterAgentIpc = registerAgentIpc({
@@ -722,7 +730,13 @@ async function startApplication(): Promise<void> {
         parseSchema(PetMainNavigationSchema, { target }),
       );
     },
-    { reveal: !backgroundTest },
+    {
+      reveal: !backgroundTest,
+      shouldKeepAliveOnClose: () => {
+        const phase = voiceService?.getActive()?.phase;
+        return Boolean(phase && phase !== "failed" && phase !== "interrupted");
+      },
+    },
   );
   mainWindowController = mainWindows;
   unregisterSettingsIpc = registerSettingsIpc(settingsService, () =>

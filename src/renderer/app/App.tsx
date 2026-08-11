@@ -50,6 +50,7 @@ export function App() {
   const [approvalNavigation, setApprovalNavigation] =
     useState<ApprovalNavigationTarget | null>(null);
   const focusedApprovalId = useRef<string | undefined>(undefined);
+  const openedVoiceChatId = useRef<string | null>(null);
   const sendPending = useRef(false);
   const chatStore = useMemo(
     () =>
@@ -242,7 +243,13 @@ export function App() {
 
   useEffect(() => {
     const chatId = voice.snapshot?.chatId;
-    if (chatId && chatId !== uiState.activeChatId) {
+    if (!chatId) {
+      openedVoiceChatId.current = null;
+      return;
+    }
+    if (openedVoiceChatId.current === chatId) return;
+    openedVoiceChatId.current = chatId;
+    if (chatId !== uiState.activeChatId) {
       dispatch({ chatId, type: "chat.selected" });
     }
   }, [uiState.activeChatId, voice.snapshot?.chatId]);
@@ -432,6 +439,7 @@ export function App() {
       }}
       onVoiceEnd={() => void voiceStore.end()}
       onVoiceMutedChange={(muted) => void voiceStore.setMuted(muted)}
+      onVoicePausedChange={(paused) => void voiceStore.setPaused(paused)}
       onVoiceRetry={() => void startVoice(true)}
       onVoiceStart={() => void startVoice()}
       openCharacterSettingsToken={openCharacterSettingsToken}

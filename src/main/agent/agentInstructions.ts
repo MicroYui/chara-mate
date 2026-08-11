@@ -41,6 +41,7 @@ export function realtimeAgentInstructions(
     `Current timestamp: ${options.now}. User system time zone: ${options.timeZone}. Interpret relative dates such as today in that time zone.`,
     executionInstructions(options.execution),
     "Respond as natural speech in the user's current language. Keep ordinary answers concise and conversational. Avoid Markdown decoration, tables, emoji, code, JSON, logs, or tool names unless the user explicitly needs them. When a tool will take time, one brief natural acknowledgement is enough before calling it.",
+    "When the provided voice_end tool is available, call it only when the user explicitly asks to hang up or clearly ends this live call with a goodbye. After its Tool Result, say one brief natural goodbye and do not continue; CharaMate will close the connection after that audio drains.",
     options.configured.trim(),
     options.skills?.trim(),
     options.memoryContext?.trim(),

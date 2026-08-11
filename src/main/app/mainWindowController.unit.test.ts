@@ -5,6 +5,7 @@ import type { BrowserWindow } from "electron";
 import { MainWindowController } from "./mainWindowController";
 
 class FakeMainWindow {
+  readonly hide = vi.fn();
   readonly focus = vi.fn();
   readonly destroy = vi.fn(() => {
     this.destroyed = true;
@@ -19,6 +20,9 @@ class FakeMainWindow {
   };
   private destroyed = false;
   private minimized = false;
+  private readonly closeListeners: Array<
+    (event: { preventDefault(): void }) => void
+  > = [];
   private readonly closedListeners: Array<() => void> = [];
 
   constructor(id: number) {
@@ -31,6 +35,14 @@ class FakeMainWindow {
   }
 
   close(): void {
+    let prevented = false;
+    const event = {
+      preventDefault: () => {
+        prevented = true;
+      },
+    };
+    for (const listener of this.closeListeners) listener(event);
+    if (prevented) return;
     this.destroyed = true;
     for (const listener of this.closedListeners) listener();
   }
@@ -47,8 +59,14 @@ class FakeMainWindow {
     this.minimized = true;
   }
 
-  on(event: string, listener: () => void): this {
-    if (event === "closed") this.closedListeners.push(listener);
+  on(
+    event: string,
+    listener: (event?: { preventDefault(): void }) => void,
+  ): this {
+    if (event === "close") {
+      this.closeListeners.push((closeEvent) => listener(closeEvent));
+    }
+    if (event === "closed") this.closedListeners.push(() => listener());
     return this;
   }
 }
@@ -137,6 +155,30 @@ describe("MainWindowController", () => {
 
     expect(window.isDestroyed()).toBe(true);
     expect(window.destroy).not.toHaveBeenCalled();
+    expect(controller.getWindow()).toBeNull();
+  });
+
+  it("hides instead of destroying the Voice connection owner while Voice is active", async () => {
+    const window = new FakeMainWindow(62);
+    let keepAlive = true;
+    const controller = new MainWindowController(
+      vi.fn().mockResolvedValue(asBrowserWindow(window)),
+      vi.fn(),
+      vi.fn(),
+      { shouldKeepAliveOnClose: () => keepAlive },
+    );
+
+    controller.markRendererReady({ id: 62 });
+    await controller.open();
+    window.close();
+
+    expect(window.hide).toHaveBeenCalledOnce();
+    expect(window.isDestroyed()).toBe(false);
+    expect(controller.getWindow()).toBe(asBrowserWindow(window));
+
+    keepAlive = false;
+    window.close();
+    expect(window.isDestroyed()).toBe(true);
     expect(controller.getWindow()).toBeNull();
   });
 

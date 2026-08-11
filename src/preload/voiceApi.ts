@@ -6,6 +6,7 @@ import {
   type VoiceClientCommand,
   type VoiceDriverEventRequest,
   type VoiceMutedRequest,
+  type VoicePausedRequest,
   type VoicePreviewRequest,
   type VoiceQuickStartRequest,
   type VoiceSessionRequest,
@@ -17,6 +18,8 @@ import {
   VoiceDriverEventRequestSchema,
   VoiceMutedRequestSchema,
   VoiceMutationResponseSchema,
+  VoicePausedRequestSchema,
+  VoicePauseResponseSchema,
   VoicePreviewRequestSchema,
   VoicePreviewResponseSchema,
   VoiceQuickStartRequestSchema,
@@ -77,6 +80,14 @@ export function createVoiceApi(): VoiceApi {
         await ipcRenderer.invoke(
           VOICE_CHANNELS.setMuted,
           parseSchemaWithoutCodeGeneration(VoiceMutedRequestSchema, input),
+        ),
+      ),
+    setPaused: async (input: VoicePausedRequest) =>
+      parseSchemaWithoutCodeGeneration(
+        VoicePauseResponseSchema,
+        await ipcRenderer.invoke(
+          VOICE_CHANNELS.setPaused,
+          parseSchemaWithoutCodeGeneration(VoicePausedRequestSchema, input),
         ),
       ),
     start: async (input: VoiceStartRequest) =>

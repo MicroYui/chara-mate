@@ -85,6 +85,7 @@ describe("Phase 1 typed preload data boundary", () => {
       api.voice.report({
         event: {
           generation: 1,
+          hasAudio: false,
           responseId: "response-1",
           status: "completed",
           type: "response.done",
@@ -125,6 +126,54 @@ describe("Phase 1 typed preload data boundary", () => {
       VOICE_CHANNELS.command,
       commandListener,
     );
+  });
+
+  it("validates Voice pause and resume requests and snapshots", async () => {
+    const sessionId = "20000000-0000-4000-8000-000000000001";
+    const snapshot = {
+      assistantTranscript: "",
+      chatId: FIXTURE_IDS.chat,
+      connectedAt: "2026-08-08T12:00:01.000Z",
+      createdAt: "2026-08-08T12:00:00.000Z",
+      generation: 0,
+      inputMode: "hands_free" as const,
+      muted: false,
+      phase: "paused" as const,
+      sessionId,
+      userTranscript: "",
+      voice: "verse" as const,
+    };
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(VOICE_CHANNELS.setPaused);
+        expect(input).toEqual({
+          paused: true,
+          requestedAt: "2026-08-08T12:00:02.000Z",
+          sessionId,
+        });
+        return Promise.resolve({
+          ok: true,
+          value: { snapshot },
+        });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.voice.setPaused({
+        paused: true,
+        requestedAt: "2026-08-08T12:00:02.000Z",
+        sessionId,
+      }),
+    ).resolves.toEqual({ ok: true, value: { snapshot } });
+    await expect(
+      api.voice.setPaused({
+        paused: false,
+        requestedAt: "not-a-timestamp",
+        sessionId,
+      }),
+    ).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });
 
   it("validates Chat snapshot requests and Main responses", async () => {

@@ -17,6 +17,13 @@ import { approvalFixture } from "../../../tests/fixtures/foundationContracts";
 import { CharacterApp } from "./CharacterApp";
 
 vi.mock("../features/voice/WebRtcVoiceDriver", () => ({
+  prepareMicrophone: vi.fn().mockResolvedValue({
+    durationMs: 0,
+    stream: {
+      getAudioTracks: () => [],
+      getTracks: () => [],
+    },
+  }),
   previewVoice: vi.fn(),
   WebRtcVoiceDriver: class {
     close(): void {}
@@ -89,6 +96,19 @@ function renderCharacter() {
     voiceListener?.(null);
     return Promise.resolve({ ok: true, value: null });
   });
+  const setPaused = vi
+    .fn<VoiceApi["setPaused"]>()
+    .mockImplementation((request) => {
+      const snapshot = {
+        ...ACTIVE_VOICE,
+        phase: request.paused ? ("paused" as const) : ("listening" as const),
+      };
+      voiceListener?.(snapshot);
+      return Promise.resolve({
+        ok: true,
+        value: { snapshot },
+      });
+    });
   const resolveApproval = vi
     .fn<CharacterWindowApi["resolveApproval"]>()
     .mockResolvedValue({
@@ -106,6 +126,7 @@ function renderCharacter() {
     quickStart,
     report: vi.fn().mockResolvedValue({ ok: true, value: null }),
     setMuted: vi.fn(),
+    setPaused,
     start: vi.fn(),
     subscribeChanged: (listener) => {
       voiceListener = listener;
@@ -153,6 +174,7 @@ function renderCharacter() {
     end,
     quickStart,
     resolveApproval,
+    setPaused,
   };
 }
 
@@ -164,8 +186,8 @@ afterEach(() => {
 });
 
 describe("Character chat control", () => {
-  it("starts a new Voice Agent Chat on first click and ends it on second click", async () => {
-    const { end, quickStart } = renderCharacter();
+  it("starts, pauses, and resumes the same Voice Agent Chat", async () => {
+    const { end, quickStart, setPaused } = renderCharacter();
     const startButton = await screen.findByRole("button", {
       name: "开始语音聊天",
     });
@@ -175,16 +197,33 @@ describe("Character chat control", () => {
     fireEvent.click(startButton);
     await waitFor(() => expect(quickStart).toHaveBeenCalledOnce());
     expect(typeof quickStart.mock.calls[0]?.[0].requestedAt).toBe("string");
-    const endButton = await screen.findByRole("button", {
-      name: "结束语音聊天",
+    const pauseButton = await screen.findByRole("button", {
+      name: "暂停语音聊天",
     });
 
-    fireEvent.click(endButton);
-    await waitFor(() =>
-      expect(end).toHaveBeenCalledWith({ sessionId: ACTIVE_VOICE.sessionId }),
-    );
+    fireEvent.click(pauseButton);
+    await waitFor(() => expect(setPaused).toHaveBeenCalledTimes(1));
+    const pauseRequest = setPaused.mock.calls[0]?.[0];
+    expect(pauseRequest).toMatchObject({
+      paused: true,
+      sessionId: ACTIVE_VOICE.sessionId,
+    });
+    expect(typeof pauseRequest?.requestedAt).toBe("string");
+    const resumeButton = await screen.findByRole("button", {
+      name: "恢复语音聊天",
+    });
+
+    fireEvent.click(resumeButton);
+    await waitFor(() => expect(setPaused).toHaveBeenCalledTimes(2));
+    const resumeRequest = setPaused.mock.calls[1]?.[0];
+    expect(resumeRequest).toMatchObject({
+      paused: false,
+      sessionId: ACTIVE_VOICE.sessionId,
+    });
+    expect(typeof resumeRequest?.requestedAt).toBe("string");
+    expect(end).not.toHaveBeenCalled();
     expect(
-      await screen.findByRole("button", { name: "开始语音聊天" }),
+      await screen.findByRole("button", { name: "暂停语音聊天" }),
     ).toBeInTheDocument();
   });
 

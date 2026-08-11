@@ -7,11 +7,16 @@ import type {
   VoiceDriverEventSchema,
   VoiceEmptyRequestSchema,
   VoiceInputModeSchema,
+  VoiceConnectionStageSchema,
+  VoiceFunctionToolSchema,
   VoiceHistoryMessageSchema,
   VoiceMutedRequestSchema,
   VoiceMutationResponseSchema,
   VoiceNameSchema,
   VoicePhaseSchema,
+  VoicePausedRequestSchema,
+  VoicePauseResponseSchema,
+  VoicePauseResultSchema,
   VoicePreviewConnectionSchema,
   VoicePreviewRequestSchema,
   VoicePreviewResponseSchema,
@@ -37,13 +42,17 @@ export const VOICE_CHANNELS = {
   preview: "voice.preview",
   quickStart: "voice.quickStart",
   setMuted: "voice.setMuted",
+  setPaused: "voice.setPaused",
   start: "voice.start",
 } as const;
 
 export const VOICE_CHAT_FALLBACK_TITLE = "语音对话";
+export const VOICE_END_TOOL_NAME = "voice.end";
 
 export type VoiceName = Static<typeof VoiceNameSchema>;
 export type VoiceInputMode = Static<typeof VoiceInputModeSchema>;
+export type VoiceConnectionStage = Static<typeof VoiceConnectionStageSchema>;
+export type VoiceFunctionTool = Static<typeof VoiceFunctionToolSchema>;
 export type VoiceHistoryMessage = Static<typeof VoiceHistoryMessageSchema>;
 export type VoicePhase = Static<typeof VoicePhaseSchema>;
 export type VoiceSessionSnapshot = Static<typeof VoiceSessionSnapshotSchema>;
@@ -58,6 +67,7 @@ export type VoiceQuickStartRequest = Static<
 >;
 export type VoiceSessionRequest = Static<typeof VoiceSessionRequestSchema>;
 export type VoiceMutedRequest = Static<typeof VoiceMutedRequestSchema>;
+export type VoicePausedRequest = Static<typeof VoicePausedRequestSchema>;
 export type VoiceConnection = Static<typeof VoiceConnectionSchema>;
 export type VoicePreviewConnection = Static<
   typeof VoicePreviewConnectionSchema
@@ -74,6 +84,8 @@ export type VoiceQuickStartResponse = Static<
   typeof VoiceQuickStartResponseSchema
 >;
 export type VoiceMutationResponse = Static<typeof VoiceMutationResponseSchema>;
+export type VoicePauseResult = Static<typeof VoicePauseResultSchema>;
+export type VoicePauseResponse = Static<typeof VoicePauseResponseSchema>;
 export type VoiceSnapshotResponse = Static<typeof VoiceSnapshotResponseSchema>;
 
 export interface VoiceApi {
@@ -83,6 +95,7 @@ export interface VoiceApi {
   quickStart(request: VoiceQuickStartRequest): Promise<VoiceQuickStartResponse>;
   report(request: VoiceDriverEventRequest): Promise<VoiceMutationResponse>;
   setMuted(request: VoiceMutedRequest): Promise<VoiceMutationResponse>;
+  setPaused(request: VoicePausedRequest): Promise<VoicePauseResponse>;
   start(request: VoiceStartRequest): Promise<VoiceStartResponse>;
   subscribeChanged(
     listener: (snapshot: VoiceSessionSnapshot | null) => void,

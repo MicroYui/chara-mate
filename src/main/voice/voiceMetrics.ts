@@ -1,4 +1,5 @@
 import type { ModelUsage } from "../agent/modelProvider";
+import type { VoiceConnectionStage } from "../../shared/contracts/voice";
 
 interface SessionTiming {
   connectionStartedAt: number;
@@ -17,6 +18,9 @@ export interface DurationMetric {
 
 export interface VoiceMetricsSnapshot {
   readonly connection: DurationMetric;
+  readonly connectionStages: Readonly<
+    Record<VoiceConnectionStage, DurationMetric>
+  >;
   readonly disconnects: number;
   readonly firstAudio: DurationMetric;
   readonly firstTranscript: DurationMetric;
@@ -49,6 +53,13 @@ function duration(values: readonly number[]): DurationMetric {
 
 export class VoiceMetrics {
   readonly #connection: number[] = [];
+  readonly #connectionStages: Record<VoiceConnectionStage, number[]> = {
+    credential: [],
+    data_channel: [],
+    ice: [],
+    microphone: [],
+    sdp: [],
+  };
   #disconnects = 0;
   readonly #firstAudio: number[] = [];
   readonly #firstTranscript: number[] = [];
@@ -88,6 +99,10 @@ export class VoiceMetrics {
     this.#connection.push(
       Math.max(0, milliseconds(at) - timing.connectionStartedAt),
     );
+  }
+
+  connectionStage(stage: VoiceConnectionStage, durationMs: number): void {
+    this.#connectionStages[stage].push(Math.max(0, durationMs));
   }
 
   speechStarted(
@@ -173,6 +188,13 @@ export class VoiceMetrics {
   snapshot(): VoiceMetricsSnapshot {
     return {
       connection: duration(this.#connection),
+      connectionStages: {
+        credential: duration(this.#connectionStages.credential),
+        data_channel: duration(this.#connectionStages.data_channel),
+        ice: duration(this.#connectionStages.ice),
+        microphone: duration(this.#connectionStages.microphone),
+        sdp: duration(this.#connectionStages.sdp),
+      },
       disconnects: this.#disconnects,
       firstAudio: duration(this.#firstAudio),
       firstTranscript: duration(this.#firstTranscript),

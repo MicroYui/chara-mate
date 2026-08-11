@@ -11,6 +11,11 @@ export interface VoiceEnvelope {
   readonly output: number;
 }
 
+export interface PreparedMicrophone {
+  readonly durationMs: number;
+  readonly stream: MediaStream;
+}
+
 interface RealtimeEvent {
   readonly [key: string]: unknown;
   readonly type?: unknown;
@@ -79,11 +84,15 @@ async function negotiate(
   peer: RTCPeerConnection,
   callsUrl: string,
   clientSecret: string,
-): Promise<void> {
+  now: () => number,
+): Promise<{ readonly iceDurationMs: number; readonly sdpDurationMs: number }> {
   await peer.setLocalDescription(await peer.createOffer());
+  const iceStartedAt = now();
   await gatherIce(peer);
+  const iceDurationMs = Math.max(0, Math.round(now() - iceStartedAt));
   const sdp = peer.localDescription?.sdp;
   if (!sdp) throw new Error("WebRTC 无法创建本地 SDP。");
+  const sdpStartedAt = now();
   let response: Response;
   try {
     response = await fetch(callsUrl, {
@@ -105,6 +114,27 @@ async function negotiate(
     sdp: await response.text(),
     type: "answer",
   });
+  return {
+    iceDurationMs,
+    sdpDurationMs: Math.max(0, Math.round(now() - sdpStartedAt)),
+  };
+}
+
+export async function prepareMicrophone(
+  now: () => number = () => performance.now(),
+): Promise<PreparedMicrophone> {
+  const startedAt = now();
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      autoGainControl: true,
+      echoCancellation: true,
+      noiseSuppression: true,
+    },
+  });
+  return {
+    durationMs: Math.max(0, Math.round(now() - startedAt)),
+    stream,
+  };
 }
 
 function waitForOpen(channel: RTCDataChannel): Promise<void> {
@@ -152,7 +182,9 @@ export class WebRtcVoiceDriver {
   #latestGeneration = 0;
   #microphone: MediaStream | undefined;
   #outputEnabled = false;
+  #playbackAllowed = true;
   #outputSource: MediaStreamAudioSourceNode | undefined;
+  #pendingRefreshRequestId: string | undefined;
   #reportTail: Promise<void> = Promise.resolve();
   readonly #responseGenerations = new Map<string, number>();
   readonly #responseItems = new Map<string, string>();
@@ -168,6 +200,7 @@ export class WebRtcVoiceDriver {
     private readonly onEnvelope: (envelope: VoiceEnvelope) => void,
     audioContext = new AudioContext(),
     private readonly onError: (message: string) => void = () => undefined,
+    private readonly monotonicNow: () => number = () => performance.now(),
   ) {
     this.#audioContext = audioContext;
     this.#inputAnalyser = audioContext.createAnalyser();
@@ -212,15 +245,12 @@ export class WebRtcVoiceDriver {
     });
   }
 
-  async connect(): Promise<void> {
+  async connect(preparedMicrophone?: PreparedMicrophone): Promise<void> {
     void this.#audioContext.resume().catch(() => undefined);
-    this.#microphone = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: true,
-      },
-    });
+    const prepared =
+      preparedMicrophone ?? (await prepareMicrophone(this.monotonicNow));
+    this.#microphone = prepared.stream;
+    this.#reportStage("microphone", prepared.durationMs);
     for (const track of this.#microphone.getAudioTracks()) {
       track.enabled = false;
       this.#peer.addTrack(track, this.#microphone);
@@ -228,12 +258,20 @@ export class WebRtcVoiceDriver {
     this.#audioContext
       .createMediaStreamSource(this.#microphone)
       .connect(this.#inputAnalyser);
-    await negotiate(
+    const negotiation = await negotiate(
       this.#peer,
       this.connection.callsUrl,
       this.connection.clientSecret,
+      this.monotonicNow,
     );
+    this.#reportStage("ice", negotiation.iceDurationMs);
+    this.#reportStage("sdp", negotiation.sdpDurationMs);
+    const dataChannelStartedAt = this.monotonicNow();
     await waitForOpen(this.#channel);
+    this.#reportStage(
+      "data_channel",
+      Math.max(0, Math.round(this.monotonicNow() - dataChannelStartedAt)),
+    );
     void this.#startOutputPlayback().catch(() => undefined);
     this.#sampleEnvelope();
   }
@@ -248,6 +286,31 @@ export class WebRtcVoiceDriver {
     if (command.sessionId !== this.connection.sessionId) return;
     if (command.type === "capture.set") {
       this.setCapture(command.enabled);
+      return;
+    }
+    if (command.type === "playback.set") {
+      this.#playbackAllowed = command.enabled;
+      if (!command.enabled) this.#setOutputEnabled(false);
+      return;
+    }
+    if (command.type === "session.refresh") {
+      this.#pendingRefreshRequestId = command.requestId;
+      try {
+        this.#send({
+          event_id: command.requestId,
+          session: {
+            instructions: command.instructions,
+            parallel_tool_calls: false,
+            tool_choice: "auto",
+            tools: command.tools,
+            type: "realtime",
+          },
+          type: "session.update",
+        });
+      } catch (error) {
+        this.#pendingRefreshRequestId = undefined;
+        throw error;
+      }
       return;
     }
     if (command.type === "session.close") {
@@ -318,6 +381,7 @@ export class WebRtcVoiceDriver {
     this.#reportedAudioStarts.clear();
     this.#startedResponses.clear();
     this.#stoppedResponses.clear();
+    this.#pendingRefreshRequestId = undefined;
     void this.#audioContext.close();
     this.onEnvelope({ input: 0, output: 0 });
   }
@@ -384,6 +448,14 @@ export class WebRtcVoiceDriver {
           });
         }
         this.#report({ protocolSessionId: id, type: "session.ready" });
+      }
+      return;
+    }
+    if (type === "session.updated") {
+      const requestId = this.#pendingRefreshRequestId;
+      if (requestId) {
+        this.#pendingRefreshRequestId = undefined;
+        this.#report({ requestId, type: "session.refreshed" });
       }
       return;
     }
@@ -619,6 +691,7 @@ export class WebRtcVoiceDriver {
         const responseUsage = usage(event);
         this.#report({
           generation,
+          hasAudio: this.#startedResponses.has(id),
           responseId: id,
           status,
           ...(statusReason ? { statusReason } : {}),
@@ -742,6 +815,7 @@ export class WebRtcVoiceDriver {
       void this.#audioContext.resume().catch(() => undefined);
       if (
         this.#closed ||
+        !this.#playbackAllowed ||
         this.#suppressAudio ||
         this.#stoppedResponses.has(responseId)
       ) {
@@ -751,6 +825,7 @@ export class WebRtcVoiceDriver {
       await this.#startOutputPlayback();
       if (
         this.#closed ||
+        !this.#playbackAllowed ||
         this.#suppressAudio ||
         this.#stoppedResponses.has(responseId)
       ) {
@@ -782,8 +857,15 @@ export class WebRtcVoiceDriver {
   }
 
   #setOutputEnabled(enabled: boolean): void {
-    this.#outputEnabled = enabled;
-    this.#outputAudio.muted = !enabled;
+    this.#outputEnabled = enabled && this.#playbackAllowed;
+    this.#outputAudio.muted = !this.#outputEnabled;
+  }
+
+  #reportStage(
+    stage: "microphone" | "ice" | "sdp" | "data_channel",
+    durationMs: number,
+  ): void {
+    this.#report({ durationMs, stage, type: "connection.stage" });
   }
 
   #sampleEnvelope(): void {
@@ -866,7 +948,9 @@ export async function previewVoice(
     }
   });
   try {
-    await negotiate(peer, connection.callsUrl, connection.clientSecret);
+    await negotiate(peer, connection.callsUrl, connection.clientSecret, () =>
+      performance.now(),
+    );
     await waitForOpen(channel);
     await done;
   } finally {

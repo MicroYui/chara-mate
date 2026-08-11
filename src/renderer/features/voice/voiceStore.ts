@@ -1,5 +1,6 @@
 import type {
   VoiceApi,
+  VoiceConnection,
   VoicePreviewRequest,
   VoiceSessionSnapshot,
   VoiceStartRequest,
@@ -7,7 +8,9 @@ import type {
 } from "../../../shared/contracts/voice";
 import {
   previewVoice,
+  prepareMicrophone,
   WebRtcVoiceDriver,
+  type PreparedMicrophone,
   type VoiceEnvelope,
 } from "./WebRtcVoiceDriver";
 
@@ -21,6 +24,30 @@ export interface VoiceUiState {
 }
 
 const SILENT_ENVELOPE = { input: 0, output: 0 } as const;
+
+type PreparedMicrophoneResult =
+  | { readonly ok: true; readonly value: PreparedMicrophone }
+  | { readonly error: unknown; readonly ok: false };
+
+function beginMicrophonePreparation(): Promise<PreparedMicrophoneResult> {
+  return prepareMicrophone().then(
+    (value) => ({ ok: true, value }),
+    (error: unknown) => ({ error, ok: false }),
+  );
+}
+
+function stopPreparedMicrophone(result: PreparedMicrophoneResult): void {
+  if (!result.ok) return;
+  for (const track of result.value.stream.getTracks()) track.stop();
+}
+
+function connectionErrorMessage(error: unknown): string {
+  return error instanceof DOMException && error.name === "NotAllowedError"
+    ? "请允许 CharaMate 使用麦克风。"
+    : error instanceof Error
+      ? error.message
+      : "语音连接失败。";
+}
 
 export class VoiceStore {
   readonly #listeners = new Set<() => void>();
@@ -127,14 +154,38 @@ export class VoiceStore {
   async #startConnection(
     connect: () => Promise<VoiceStartResponse>,
   ): Promise<void> {
-    if (this.#state.starting || this.#driver || this.#state.snapshot) return;
+    const reconnecting = this.#state.snapshot?.phase === "interrupted";
+    if (
+      this.#state.starting ||
+      this.#driver ||
+      (this.#state.snapshot && !reconnecting)
+    ) {
+      return;
+    }
     this.#setState({
       error: null,
       snapshot: this.#state.snapshot,
       starting: true,
     });
-    const response = await connect();
+    const microphone = beginMicrophonePreparation();
+    let response: VoiceStartResponse;
+    try {
+      response = await connect();
+    } catch (error) {
+      void microphone.then(stopPreparedMicrophone);
+      this.#discardPreparedPlayback();
+      this.#setState({
+        error: {
+          message: connectionErrorMessage(error),
+          retryable: true,
+        },
+        snapshot: this.#state.snapshot,
+        starting: false,
+      });
+      return;
+    }
     if (!response.ok) {
+      void microphone.then(stopPreparedMicrophone);
       this.#discardPreparedPlayback();
       this.#setState({
         error: response.error,
@@ -143,37 +194,50 @@ export class VoiceStore {
       });
       return;
     }
-    const playbackContext = this.#playbackContext ?? new AudioContext();
-    this.#playbackContext = undefined;
-    const driver = new WebRtcVoiceDriver(
-      this.api,
-      response.value,
-      (envelope) => this.#setEnvelope(envelope),
-      playbackContext,
-      (message) =>
-        this.#setState({
-          ...this.#state,
-          error: { message, retryable: true },
-        }),
-    );
-    this.#driver = driver;
+    await this.#connectDriver(response.value, microphone);
+  }
+
+  async #connectDriver(
+    connection: VoiceConnection,
+    microphone: Promise<PreparedMicrophoneResult>,
+  ): Promise<void> {
+    let prepared: PreparedMicrophoneResult | undefined;
+    let driver: WebRtcVoiceDriver | undefined;
     try {
-      await driver.connect();
+      prepared = await microphone;
+      if (!prepared.ok) throw prepared.error;
+      const playbackContext = this.#playbackContext ?? new AudioContext();
+      this.#playbackContext = undefined;
+      driver = new WebRtcVoiceDriver(
+        this.api,
+        connection,
+        (envelope) => this.#setEnvelope(envelope),
+        playbackContext,
+        (message) =>
+          this.#setState({
+            ...this.#state,
+            error: { message, retryable: true },
+          }),
+      );
+      this.#driver = driver;
+      await driver.connect(prepared.value);
       this.#setState({ ...this.#state, error: null, starting: false });
+      return;
     } catch (error) {
-      driver.close();
+      if (driver) driver.close();
+      else if (prepared) stopPreparedMicrophone(prepared);
       if (this.#driver === driver) this.#driver = undefined;
-      const message =
-        error instanceof DOMException && error.name === "NotAllowedError"
-          ? "请允许 CharaMate 使用麦克风。"
-          : error instanceof Error
-            ? error.message
-            : "语音连接失败。";
-      await this.api.report({
-        event: { reason: message, type: "connection.closed" },
-        occurredAt: new Date().toISOString(),
-        sessionId: response.value.sessionId,
-      });
+      this.#discardPreparedPlayback();
+      const message = connectionErrorMessage(error);
+      try {
+        await this.api.report({
+          event: { reason: message, type: "connection.closed" },
+          occurredAt: new Date().toISOString(),
+          sessionId: connection.sessionId,
+        });
+      } catch {
+        // The local error remains actionable if Main is already unavailable.
+      }
       this.#setState({
         ...this.#state,
         error: {
@@ -211,9 +275,46 @@ export class VoiceStore {
     }
   }
 
+  async setPaused(paused: boolean): Promise<void> {
+    const sessionId = this.#state.snapshot?.sessionId;
+    if (!sessionId) return;
+    const response = await this.api.setPaused({
+      paused,
+      requestedAt: new Date().toISOString(),
+      sessionId,
+    });
+    if (!response.ok) {
+      this.#setState({ ...this.#state, error: response.error });
+      return;
+    }
+    this.#setState({
+      ...this.#state,
+      error: null,
+      snapshot: response.value.snapshot,
+    });
+    if (!response.value.connection) return;
+    this.#driver?.close();
+    this.#driver = undefined;
+    this.#setState({ ...this.#state, starting: true });
+    await this.#connectDriver(
+      response.value.connection,
+      beginMicrophonePreparation(),
+    );
+  }
+
   setPushToTalk(enabled: boolean): void {
     const snapshot = this.#state.snapshot;
-    if (!snapshot || snapshot.inputMode !== "push_to_talk") return;
+    if (
+      !snapshot ||
+      snapshot.inputMode !== "push_to_talk" ||
+      snapshot.phase === "paused" ||
+      snapshot.phase === "resuming" ||
+      snapshot.phase === "connecting" ||
+      snapshot.phase === "interrupted" ||
+      snapshot.phase === "failed"
+    ) {
+      return;
+    }
     this.#driver?.setCapture(enabled && !snapshot.muted);
   }
 

@@ -3,6 +3,7 @@ import { Type, type TSchema } from "@sinclair/typebox";
 import { AppErrorSchema } from "./error";
 import {
   EntityIdSchema,
+  JsonValueReferenceSchema,
   NonBlankStringSchema,
   TimestampSchema,
 } from "./primitives";
@@ -27,6 +28,8 @@ export const VoiceInputModeSchema = Type.Union([
 
 export const VoicePhaseSchema = Type.Union([
   Type.Literal("connecting"),
+  Type.Literal("resuming"),
+  Type.Literal("paused"),
   Type.Literal("listening"),
   Type.Literal("thinking"),
   Type.Literal("using_tool"),
@@ -154,6 +157,15 @@ export const VoiceMutedRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const VoicePausedRequestSchema = Type.Object(
+  {
+    paused: Type.Boolean(),
+    requestedAt: TimestampSchema,
+    sessionId: EntityIdSchema,
+  },
+  { additionalProperties: false },
+);
+
 export const VoiceHistoryMessageSchema = Type.Object(
   {
     content: NonBlankStringSchema,
@@ -184,6 +196,24 @@ export const VoicePreviewConnectionSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const VoiceFunctionToolSchema = Type.Object(
+  {
+    description: NonBlankStringSchema,
+    name: NonBlankStringSchema,
+    parameters: JsonValueReferenceSchema,
+    type: Type.Literal("function"),
+  },
+  { additionalProperties: false },
+);
+
+export const VoiceConnectionStageSchema = Type.Union([
+  Type.Literal("credential"),
+  Type.Literal("microphone"),
+  Type.Literal("ice"),
+  Type.Literal("sdp"),
+  Type.Literal("data_channel"),
+]);
+
 const voiceUsageProperties = {
   cachedInputTokens: Type.Integer({ minimum: 0 }),
   inputTokens: Type.Integer({ minimum: 0 }),
@@ -195,6 +225,21 @@ export const VoiceDriverEventSchema = Type.Union([
     {
       protocolSessionId: NonBlankStringSchema,
       type: Type.Literal("session.ready"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      requestId: EntityIdSchema,
+      type: Type.Literal("session.refreshed"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      durationMs: Type.Number({ minimum: 0 }),
+      stage: VoiceConnectionStageSchema,
+      type: Type.Literal("connection.stage"),
     },
     { additionalProperties: false },
   ),
@@ -309,6 +354,7 @@ export const VoiceDriverEventSchema = Type.Union([
   Type.Object(
     {
       generation: Type.Integer({ minimum: 1 }),
+      hasAudio: Type.Boolean(),
       responseId: NonBlankStringSchema,
       status: Type.Union([
         Type.Literal("completed"),
@@ -357,6 +403,24 @@ export const VoiceClientCommandSchema = Type.Union([
       enabled: Type.Boolean(),
       sessionId: EntityIdSchema,
       type: Type.Literal("capture.set"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      enabled: Type.Boolean(),
+      sessionId: EntityIdSchema,
+      type: Type.Literal("playback.set"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      instructions: NonBlankStringSchema,
+      requestId: EntityIdSchema,
+      sessionId: EntityIdSchema,
+      tools: Type.Array(VoiceFunctionToolSchema),
+      type: Type.Literal("session.refresh"),
     },
     { additionalProperties: false },
   ),
@@ -424,6 +488,16 @@ export const VoiceStartResponseSchema = operationResponse(
 export const VoiceQuickStartResponseSchema = VoiceStartResponseSchema;
 export const VoicePreviewResponseSchema = operationResponse(
   VoicePreviewConnectionSchema,
+);
+export const VoicePauseResultSchema = Type.Object(
+  {
+    connection: Type.Optional(VoiceConnectionSchema),
+    snapshot: VoiceSessionSnapshotSchema,
+  },
+  { additionalProperties: false },
+);
+export const VoicePauseResponseSchema = operationResponse(
+  VoicePauseResultSchema,
 );
 export const VoiceMutationResponseSchema = operationResponse(
   Type.Union([VoiceSessionSnapshotSchema, Type.Null()]),

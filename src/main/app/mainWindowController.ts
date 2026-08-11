@@ -6,6 +6,7 @@ export type MainWindowTarget = PetMainTarget;
 
 interface MainWindowControllerOptions {
   readonly reveal?: boolean;
+  readonly shouldKeepAliveOnClose?: () => boolean;
 }
 
 interface RendererReadyState {
@@ -117,6 +118,11 @@ export class MainWindowController {
     };
     this.readyState = readyState;
 
+    window.on("close", (event) => {
+      if (!this.options.shouldKeepAliveOnClose?.()) return;
+      event.preventDefault();
+      window.hide();
+    });
     window.on("closed", () => {
       if (this.window === window) this.window = null;
       if (this.readyState === readyState) this.readyState = undefined;

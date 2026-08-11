@@ -156,6 +156,23 @@ export function CharacterApp() {
       ? (snapshot?.animation ?? "idle")
       : "look";
   const voiceActive = Boolean(voice.snapshot || voice.starting);
+  const voicePaused = voice.snapshot?.phase === "paused";
+  const voiceTransitioning =
+    voice.starting ||
+    voice.snapshot?.phase === "connecting" ||
+    voice.snapshot?.phase === "resuming";
+  const voiceFailed =
+    voice.snapshot?.phase === "failed" ||
+    voice.snapshot?.phase === "interrupted";
+  const voiceActionLabel = !voiceActive
+    ? "开始语音聊天"
+    : voicePaused
+      ? "恢复语音聊天"
+      : voiceFailed
+        ? "结束异常语音聊天"
+        : voiceTransitioning
+          ? "语音连接处理中"
+          : "暂停语音聊天";
 
   const stopPetInteraction = (event: ReactPointerEvent<HTMLElement>) => {
     event.stopPropagation();
@@ -254,20 +271,22 @@ export function CharacterApp() {
         ) : null}
       </div>
       <button
-        aria-label={voiceActive ? "结束语音聊天" : "开始语音聊天"}
+        aria-label={voiceActionLabel}
         aria-pressed={voiceActive}
         className={styles["voiceButton"]}
         data-active={voiceActive || undefined}
-        disabled={voice.starting && !voice.snapshot}
+        disabled={voiceTransitioning}
         onClick={() => {
-          if (voiceActive) void voiceStore.end();
-          else void voiceStore.startQuick();
+          if (!voice.snapshot) void voiceStore.startQuick();
+          else if (voicePaused) void voiceStore.setPaused(false);
+          else if (voiceFailed) void voiceStore.end();
+          else void voiceStore.setPaused(true);
         }}
         onDoubleClick={(event) => event.stopPropagation()}
         onPointerCancel={stopPetInteraction}
         onPointerDown={stopPetInteraction}
         onPointerUp={stopPetInteraction}
-        title={voiceActive ? "结束语音聊天" : "开始语音聊天"}
+        title={voiceActionLabel}
         type="button"
       >
         <AudioLines aria-hidden="true" size={20} strokeWidth={2.6} />

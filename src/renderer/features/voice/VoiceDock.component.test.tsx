@@ -40,10 +40,13 @@ describe("Voice Dock", () => {
     const value = store();
     const onEnd = vi.fn();
     const onMutedChange = vi.fn();
+    const onPausedChange = vi.fn();
     render(
       <VoiceDock
+        belongsToActiveChat
         onEnd={onEnd}
         onMutedChange={onMutedChange}
+        onPausedChange={onPausedChange}
         onRetry={vi.fn()}
         snapshot={snapshot}
         store={value.store}
@@ -58,8 +61,33 @@ describe("Voice Dock", () => {
     fireEvent.pointerDown(push);
     fireEvent.pointerUp(push);
     expect(value.setPushToTalk.mock.calls).toEqual([[true], [false]]);
+    fireEvent.click(screen.getByRole("button", { name: "暂停语音" }));
+    expect(onPausedChange).toHaveBeenCalledWith(true);
+    expect(onEnd).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "结束语音" }));
     expect(onEnd).toHaveBeenCalledOnce();
+  });
+
+  it("keeps End separate while offering a clear resume action", () => {
+    const value = store();
+    const onEnd = vi.fn();
+    const onPausedChange = vi.fn();
+    render(
+      <VoiceDock
+        belongsToActiveChat
+        onEnd={onEnd}
+        onMutedChange={vi.fn()}
+        onPausedChange={onPausedChange}
+        onRetry={vi.fn()}
+        snapshot={{ ...snapshot, phase: "paused" }}
+        store={value.store}
+      />,
+    );
+
+    expect(screen.getByText("媒体连接已保留，点击恢复即可继续")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "恢复语音" }));
+    expect(onPausedChange).toHaveBeenCalledWith(false);
+    expect(onEnd).not.toHaveBeenCalled();
   });
 
   it("offers an inline retry only for a retryable interrupted connection", () => {
@@ -67,8 +95,10 @@ describe("Voice Dock", () => {
     const onRetry = vi.fn();
     render(
       <VoiceDock
+        belongsToActiveChat
         onEnd={vi.fn()}
         onMutedChange={vi.fn()}
+        onPausedChange={vi.fn()}
         onRetry={onRetry}
         snapshot={{
           ...snapshot,
@@ -92,8 +122,10 @@ describe("Voice Dock", () => {
     const value = store();
     render(
       <VoiceDock
+        belongsToActiveChat
         onEnd={vi.fn()}
         onMutedChange={vi.fn()}
+        onPausedChange={vi.fn()}
         onRetry={vi.fn()}
         snapshot={{
           ...snapshot,
@@ -111,5 +143,25 @@ describe("Voice Dock", () => {
     expect(
       screen.queryByRole("button", { name: "按住说话" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps the Voice Chat identity explicit while another Chat is open", () => {
+    const value = store();
+    render(
+      <VoiceDock
+        belongsToActiveChat={false}
+        onEnd={vi.fn()}
+        onMutedChange={vi.fn()}
+        onPausedChange={vi.fn()}
+        onRetry={vi.fn()}
+        snapshot={snapshot}
+        store={value.store}
+      />,
+    );
+
+    expect(screen.getByText("原 Voice Chat")).toBeVisible();
+    expect(
+      screen.getByText("语音仍属于原 Chat；浏览其他 Chat 不会迁移连接"),
+    ).toBeVisible();
   });
 });

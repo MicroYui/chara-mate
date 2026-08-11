@@ -1,11 +1,13 @@
 import type { RunExecution } from "../../shared/contracts/run";
 import type { ToolDescriptor } from "../../shared/contracts/tool";
+import { VOICE_END_TOOL_NAME } from "../../shared/contracts/voice";
 import { MEMORY_FORMATION_TOOL_NAME } from "../memory/memoryTool";
 
 export function toolAllowedInExecution(
   execution: RunExecution,
   descriptor: ToolDescriptor,
 ): boolean {
+  if (descriptor.name === VOICE_END_TOOL_NAME) return false;
   return (
     descriptor.name === MEMORY_FORMATION_TOOL_NAME ||
     execution.mode === "agent" ||
@@ -17,6 +19,7 @@ export function requiresApproval(
   execution: RunExecution,
   descriptor: ToolDescriptor,
 ): boolean {
+  if (descriptor.name === VOICE_END_TOOL_NAME) return false;
   if (execution.mode === "chat" || descriptor.effect === "read") return false;
   if (execution.approvalMode === "full_access") return false;
   if (execution.approvalMode === "auto_approve") {

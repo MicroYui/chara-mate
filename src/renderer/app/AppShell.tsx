@@ -125,6 +125,7 @@ interface AppShellProps {
   readonly onRunStop: () => void;
   readonly onVoiceEnd: () => void;
   readonly onVoiceMutedChange: (muted: boolean) => void;
+  readonly onVoicePausedChange: (paused: boolean) => void;
   readonly onVoiceRetry: () => void;
   readonly onVoiceStart: () => void;
   readonly openCharacterSettingsToken: number;
@@ -859,6 +860,7 @@ export function AppShell({
   onRunStop,
   onVoiceEnd,
   onVoiceMutedChange,
+  onVoicePausedChange,
   onVoiceRetry,
   onVoiceStart,
   openCharacterSettingsToken,
@@ -967,6 +969,7 @@ export function AppShell({
               onStop={onRunStop}
               onVoiceEnd={onVoiceEnd}
               onVoiceMutedChange={onVoiceMutedChange}
+              onVoicePausedChange={onVoicePausedChange}
               onVoiceRetry={onVoiceRetry}
               onVoiceStart={onVoiceStart}
               runtimeEnabled={state.modelId !== undefined}

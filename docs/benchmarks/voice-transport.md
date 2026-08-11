@@ -28,6 +28,34 @@
 
 端点、鉴权和事件名是协议事实；任何连接/首音频毫秒数只是本次目标环境观测，不是协议保证或产品常量。
 
+### 2026-08-11 连接生命周期补充
+
+本次按用户体验反馈补充暂停/恢复，不重新比较媒体 Transport。查阅的一手来源如下：
+
+- [Azure GA WebRTC 指南](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/realtime-audio-webrtc)，source commit `ce66cc3b4f2a6be478aaa7ddedf9e2567fa638a5`（文档日期 `2026-07-29`，页面 updated `2026-07-31`）：浏览器流程仍由短期凭据、麦克风、PeerConnection、SDP/ICE、远端音轨和 DataChannel 组成。
+- [Azure GA Realtime client events](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/realtime-audio-reference-ga)，source commit `777f84fbedeb0995f4fdea6c65bee2f2a4af1657`（文档日期 `2026-01-26`，updated `2026-06-05`）：客户端可发送 `session.update`，服务端以完整 `session.updated` 确认；未包含的字段保持不变，`model` 不能在会话内修改，`voice` 在已经生成音频后不能修改。
+- [Azure Voice Live how-to](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live-how-to)，source commit `0186eb438fa9be7a8e6d6988f74d90b3e9cdb21f`（文档日期 `2026-07-17`，updated `2026-08-05`）：Voice Live 是另一条外部协议，但同样把会话配置更新表达为 `session.update`。它只用于验证 Provider 适配边界，不是当前生产 Provider 或 fallback。
+
+由此分开记录三类结论：
+
+1. 协议事实：当前 Azure Realtime 会话支持 `session.update/session.updated`，其中 model 不可热改，voice 有上述时机限制；WebRTC 建连包含凭据、媒体、ICE/SDP 与 DataChannel 阶段。
+2. 当前实现事实：CharaMate 只有一个 Azure GA WebRTC Driver；Main 拥有 VoiceSession/Run/Tool 生命周期，Renderer 拥有浏览器媒体资源。
+3. CharaMate 产品策略：暂停立即关闭采集和播放但保留健康连接；恢复只在同一 Chat、Provider、model、voice 和 execution 权限下复用，并刷新 instructions/tools；配置不兼容或连接断开时冷重连；“结束”始终彻底释放连接。这里不设置拍脑袋 TTL，凭据与麦克风初始化并行，并分别观察凭据、麦克风、ICE、SDP 和 DataChannel 耗时。
+
+共享 Voice 生命周期只表达“暂停、恢复、刷新或需要冷重连”，当前 Azure Driver 把刷新翻译为 `session.update`。未来 OpenAI 原生或 Azure 上新的 GPT Live/Voice Live 接入仍通过同一个 Provider Adapter 边界：协议支持热刷新就复用，不支持则返回冷重连，不分叉 Chat、Run、Tool、Approval 或 UI 状态机。
+
+### 2026-08-11 入口归属与主动挂断补充
+
+本次继续沿用已经选定的 WebRTC Transport，只补充一个 Session 的入口归属与 Agent 主动结束边界。2026-08-11 查阅 [OpenAI GPT-Realtime 模型页](https://developers.openai.com/api/docs/models/gpt-realtime)（页面未标独立版本）确认当前模型支持 Function Calling；同日查阅 [OpenAI Realtime server events](https://platform.openai.com/docs/api-reference/realtime-server-events/output_audio_buffer/stopped) 确认 WebRTC/SIP 的 `output_audio_buffer.stopped` 在 `response.done` 之后、输出音频缓冲已经完全排空时发出。
+
+由此分开记录三类结论：
+
+1. 协议事实：Realtime 支持客户端 Function Tool；对 WebRTC/SIP，`response.done` 不等于用户已经听完音频，`output_audio_buffer.stopped` 才表示对应输出缓冲排空。这里没有需要引入固定秒数的协议硬限制。
+2. 当前实现事实：一个 CharaMate VoiceSession 记录唯一 `chatId`，Main 管理 Session/Turn/Run，拥有 WebRTC 的 Renderer 报告带 `responseId` 的播放边界；当前 Driver 在 `response.done` 同时归一化该 response 是否产生过音频。
+3. CharaMate 产品策略：桌宠和 Voice Dock 只是同一 Session 的控制入口，浏览 Chat B 或隐藏主窗口不把 Chat A 的 Realtime conversation 迁移过去；桌宠按钮在活动/暂停间切换，显式 End 才释放健康连接。`voice.end` 的描述让模型只在明确挂断意图下调用，应用不硬编码关键词；Tool Result 后允许一句告别，有音频时等匹配的 `output_audio_buffer.stopped`，没有音频则在最终 `response.done` 收口。新用户语音会取消待挂断请求。
+
+`voice.end` 注册在同一 Tool Registry，但仅被 Voice Session 工具快照纳入，普通文字 Chat/Agent 不发现它；它不建立 Voice 专用 Registry 或第二套 executor。未来 GPT Live/Voice Live Adapter 只需把等价的 Function Call 与输出排空事件映射到共享合同；如果目标协议没有等价排空事件，必须在该 Adapter 的来源记录中定义保守收口，不能让共享 Chat/Run/UI 状态机分叉。
+
 ## Contract Test 与复现标识
 
 - 基线和环境同 `VOICE-ARCHITECTURE`。

@@ -1,7 +1,7 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 正在实现 Realtime 原生语音 Agent
-> 日期：2026-08-09
+> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 Done
+> 日期：2026-08-11
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
 本文件记录里程碑依赖、工作包边界和验收，不记录逐命令历史。Phase 编号表示产品集成与验收顺序，不要求所有开发工作全局串行；只有共享契约、Schema、IPC 和同一可变资源的写入必须串行。
@@ -245,7 +245,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## Phase 4 — Realtime Voice
 
-> 里程碑状态：Implementing（2026-08-09）。按真人体验反馈切换为单一 Orchestrated Native Realtime 路径，正在重跑离线、Live、E2E、package 与人工验收。
+> 里程碑状态：Done（2026-08-11）。按真人体验反馈切换为单一 Orchestrated Native Realtime 路径；离线、Live、E2E、package 与目标硬件人工验收均已完成，生产只保留本节描述的一条 Voice 路径。
 
 ### 依赖与 Gate
 
@@ -264,6 +264,8 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P4-VOICE-HARNESS`：文字 Chat/Agent 使用 CharaMate Harness，Voice 使用 Realtime Agent；两者共用核心 instructions、Skill/Memory/Chat Context、Tool Registry、入口权限、Approval、Run/Item 与标题链路。Azure Realtime 没有 Responses 托管 `web_search`，不伪造本地 Tool。
 - `P4-VOICE-LANGUAGE`：多语言转写不固定语言，普通话落为简体，英文与混合语言保持原语言，输出音频跟随当前语言。
 - `P4-VOICE-SETTINGS`：音色试听、Persona 默认音色和 Realtime instructions。
+- `P4-VOICE-CONNECTION-LIFECYCLE`：Voice Dock 暂停/恢复与结束分离；健康连接按稳定身份复用并刷新 instructions/tools，不兼容或断线时冷重连；麦克风与临时凭据并行初始化，开发看板记录五段建连耗时。
+- `P4-VOICE-ENTRY-HANGUP`：一个活动 Session 固定归属一个 Voice Chat；桌宠共享暂停/恢复控制，主窗口浏览或隐藏不迁移连接；Realtime Agent 以 Session 专属 `voice.end` Tool 在简短告别音频排空后主动挂断。
 
 ### 验收
 
@@ -275,6 +277,10 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - Composer 与桌宠入口权限明确，新建 Chat 能结束活动 Voice；桌宠 hover 后显示深色圆形声波图标，移开自动隐藏且点击不唤起主窗口；Chat 与 Agent 都有计划和幂等查询能力，简单查询不被强制计划化；
 - Voice 获得与入口相同的客户端 Tools 和权限；仓库不存在本地 `web.search`、Voice Tool 副本、TTS 或第二条回答 fallback；
 - 普通话、英文和混合语言的真实 Azure 输入转写与原生发声通过，且生产无翻译/繁简正则修补；
+- 暂停立即停止采集和播放但保留健康 PeerConnection/DataChannel，恢复同身份会话不重新申请凭据或协商 SDP；配置不兼容与断线走冷重连，End 始终释放全部媒体资源；
+- 冷启动并行申请麦克风和临时凭据，开发看板分别报告 credential、microphone、ICE、SDP 与 DataChannel 的真实观测耗时；
+- 选择 Chat B、关闭主窗口和桌宠声波点击都不改变 Chat A 的 Voice 归属：活动时桌宠点击暂停、暂停时恢复原连接；显式 End 后下一次桌宠入口创建新 Voice Chat；
+- `voice.end` 仅在 Voice Session 中可见，无审批且只接受当前 Voice Run；模型明确告别后继续一次简短 response，WebRTC 输出缓冲排空才关闭，普通文字 Agent 不发现该 Tool；
 - mock 测试只证明状态机，不代替 Live 体验结论；离线与 Live 结果分开报告。
 
 ## Phase 5 — Automations、主动聊天与可选成长能力

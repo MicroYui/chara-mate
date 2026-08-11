@@ -18,7 +18,10 @@ import type {
   VoiceConnection,
   VoiceDriverEvent,
   VoiceDriverEventRequest,
+  VoiceFunctionTool,
   VoiceHistoryMessage,
+  VoicePausedRequest,
+  VoicePauseResult,
   VoicePreviewConnection,
   VoicePreviewRequest,
   VoiceQuickStartRequest,
@@ -28,7 +31,10 @@ import type {
   VoiceStartRequest,
   VoiceTurnRecord,
 } from "../../shared/contracts/voice";
-import { VOICE_CHAT_FALLBACK_TITLE } from "../../shared/contracts/voice";
+import {
+  VOICE_CHAT_FALLBACK_TITLE,
+  VOICE_END_TOOL_NAME,
+} from "../../shared/contracts/voice";
 import type { VoiceSettingsConfig } from "../../shared/contracts/settings";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
@@ -52,10 +58,7 @@ import type {
 } from "../providers/providerService";
 import { toolEvidenceHash } from "../tools/toolRegistry";
 import type { ToolDefinition, ToolRegistry } from "../tools/toolRegistry";
-import type {
-  AzureRealtimeFunctionTool,
-  AzureWebRtcSessionIssuer,
-} from "./azureWebRtcSession";
+import type { RealtimeSessionIssuer } from "./azureWebRtcSession";
 import { VoiceError } from "./voiceError";
 import type { VoiceMetrics } from "./voiceMetrics";
 import type { VoiceRepository } from "./voiceRepository";
@@ -70,15 +73,19 @@ const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
 
 interface PreparedRealtimeTools {
   readonly aliases: Map<string, ToolDefinition>;
-  readonly configs: AzureRealtimeFunctionTool[];
+  readonly configs: VoiceFunctionTool[];
 }
 
-interface PreparedVoiceStart {
+interface PreparedVoiceConfiguration {
   readonly configured: VoiceSettingsConfig;
   readonly defaultInstructions: string;
-  readonly issued: VoicePreviewConnection;
   readonly providerRuntime: RealtimeProviderRuntime;
   readonly realtimeTools: PreparedRealtimeTools;
+}
+
+interface PreparedVoiceStart extends PreparedVoiceConfiguration {
+  readonly credentialDurationMs: number;
+  readonly issued: VoicePreviewConnection;
 }
 
 interface AssistantOutput {
@@ -117,17 +124,25 @@ interface PendingVoiceTool {
   toolItemId?: string;
 }
 
+interface AgentEndRequest {
+  readonly turnId: string;
+  responseId?: string;
+}
+
 interface ActiveVoice {
+  agentEndRequest?: AgentEndRequest;
   readonly assistantOutputs: Map<string, AssistantOutput>;
   audioPlaying: boolean;
   readonly chatProviderProfileId: string;
-  readonly configuredInstructions: string;
-  readonly defaultInstructions: string;
+  configuredInstructions: string;
+  defaultInstructions: string;
   readonly execution: RunExecution;
   readonly functionResponses: Set<string>;
   readonly inputTurns: Map<string, string>;
   nextResponseOrder: number;
+  paused: boolean;
   pendingTool?: PendingVoiceTool;
+  refreshRequestId?: string;
   record: VoiceSessionRecord;
   readonly responseOrders: Map<string, number>;
   readonly responseTurns: Map<string, string>;
@@ -257,9 +272,14 @@ function prepareRealtimeTools(
   execution: RunExecution,
 ): PreparedRealtimeTools {
   const aliases = new Map<string, ToolDefinition>();
-  const configs: AzureRealtimeFunctionTool[] = [];
+  const configs: VoiceFunctionTool[] = [];
   for (const definition of registry.list()) {
-    if (!toolAllowedInExecution(execution, definition.descriptor)) continue;
+    if (
+      definition.descriptor.name !== VOICE_END_TOOL_NAME &&
+      !toolAllowedInExecution(execution, definition.descriptor)
+    ) {
+      continue;
+    }
     const alias = realtimeAlias(definition.descriptor.name);
     const existing = aliases.get(alias);
     if (existing) {
@@ -376,7 +396,7 @@ export class VoiceService {
     private readonly repository: VoiceRepository,
     private readonly settings: SettingsRepository,
     private readonly providers: ProviderService,
-    private readonly issuer: AzureWebRtcSessionIssuer,
+    private readonly issuer: RealtimeSessionIssuer,
     private readonly tools: ToolRegistry,
     private readonly runs: RunRepository,
     private readonly writer: RunEventWriter,
@@ -392,6 +412,7 @@ export class VoiceService {
       phase: VoiceSessionSnapshot["phase"] | "idle",
     ) => void = () => undefined,
     private readonly metrics?: VoiceMetrics,
+    private readonly monotonicNow: () => number = () => performance.now(),
   ) {}
 
   initialize(): void {
@@ -420,6 +441,29 @@ export class VoiceService {
 
   getMemoryContextIds(runId: string): readonly string[] {
     return this.#active?.runMemoryIds.get(runId) ?? [];
+  }
+
+  requestEndAfterResponse(runId: string): void {
+    const active = this.#active;
+    const pending = active?.pendingTool;
+    const turn = active ? this.#turnForRun(active, runId) : undefined;
+    if (
+      !active ||
+      active.record.status !== "active" ||
+      active.paused ||
+      !pending ||
+      pending.runId !== runId ||
+      pending.definition.descriptor.name !== VOICE_END_TOOL_NAME ||
+      !turn ||
+      turn.interrupted
+    ) {
+      throw new VoiceError(
+        "VOICE.END_NOT_AVAILABLE",
+        "只有当前活动的语音回答可以安排主动挂断。",
+        false,
+      );
+    }
+    active.agentEndRequest = { turnId: turn.id };
   }
 
   shutdown(): void {
@@ -494,6 +538,32 @@ export class VoiceService {
   }
 
   async #prepareStart(execution: RunExecution): Promise<PreparedVoiceStart> {
+    const prepared = await this.#prepareConfiguration(execution);
+    return this.#issueConfiguration(prepared);
+  }
+
+  async #issueConfiguration(
+    prepared: PreparedVoiceConfiguration,
+  ): Promise<PreparedVoiceStart> {
+    const credentialStartedAt = this.monotonicNow();
+    const issued = await this.issuer.issue(prepared.providerRuntime, {
+      instructions: prepared.defaultInstructions,
+      tools: prepared.realtimeTools.configs,
+      voice: prepared.configured.voice,
+    });
+    return {
+      ...prepared,
+      credentialDurationMs: Math.max(
+        0,
+        Math.round(this.monotonicNow() - credentialStartedAt),
+      ),
+      issued,
+    };
+  }
+
+  async #prepareConfiguration(
+    execution: RunExecution,
+  ): Promise<PreparedVoiceConfiguration> {
     const configured = this.settings.getVoice();
     const providerRuntime = await this.providers.createRealtimeProviderRuntime(
       configured.providerProfileId,
@@ -503,15 +573,9 @@ export class VoiceService {
       configured.instructions,
       execution,
     );
-    const issued = await this.issuer.issue(providerRuntime, {
-      instructions: defaultInstructions,
-      tools: realtimeTools.configs,
-      voice: configured.voice,
-    });
     return {
       configured,
       defaultInstructions,
-      issued,
       providerRuntime,
       realtimeTools,
     };
@@ -557,6 +621,7 @@ export class VoiceService {
       functionResponses: new Set(),
       inputTurns: new Map(),
       nextResponseOrder: 0,
+      paused: false,
       record: recordValue,
       responseOrders: new Map(),
       responseTurns: new Map(),
@@ -568,6 +633,7 @@ export class VoiceService {
       turns: new Map(),
     };
     this.metrics?.startSession(id, createdAt);
+    this.metrics?.connectionStage("credential", prepared.credentialDurationMs);
     this.#publishSnapshot();
     return {
       ...prepared.issued,
@@ -706,12 +772,191 @@ export class VoiceService {
     return active.snapshot;
   }
 
+  async setPaused(request: VoicePausedRequest): Promise<VoicePauseResult> {
+    const active = this.#requireActive(request.sessionId);
+    if (active.record.status !== "active") {
+      throw new VoiceError(
+        "VOICE.NOT_READY",
+        "语音连接尚未就绪，请稍后再试。",
+        true,
+      );
+    }
+    if (request.paused) {
+      if (active.paused) return { snapshot: active.snapshot };
+      this.#setCapture(active, false);
+      this.#publishCommand({
+        enabled: false,
+        sessionId: active.record.id,
+        type: "playback.set",
+      });
+      const turn = this.#currentTurn(active);
+      if (turn) {
+        this.#publishCommand({
+          generation: turn.generation,
+          ...(turn.responseId ? { responseId: turn.responseId } : {}),
+          sessionId: active.record.id,
+          type: "response.cancel",
+        });
+      }
+      active.audioPlaying = false;
+      active.paused = true;
+      delete active.refreshRequestId;
+      this.#interruptCurrentTurn(
+        active,
+        request.requestedAt,
+        undefined,
+        "interrupted",
+      );
+      this.#setPhase(active, "paused");
+      return { snapshot: active.snapshot };
+    }
+    if (!active.paused || active.snapshot.phase === "resuming") {
+      return { snapshot: active.snapshot };
+    }
+
+    this.#setPhase(active, "resuming");
+    try {
+      const prepared = await this.#prepareConfiguration(active.execution);
+      this.#assertResumeTarget(active);
+      if (this.#canReuseConnection(active, prepared)) {
+        active.configuredInstructions = prepared.configured.instructions;
+        active.defaultInstructions = prepared.defaultInstructions;
+        active.realtimeTools = prepared.realtimeTools;
+        const requestId = this.ids.generate();
+        active.refreshRequestId = requestId;
+        this.#publishCommand({
+          instructions: prepared.defaultInstructions,
+          requestId,
+          sessionId: active.record.id,
+          tools: prepared.realtimeTools.configs,
+          type: "session.refresh",
+        });
+        return { snapshot: active.snapshot };
+      }
+
+      const issued = await this.#issueConfiguration(prepared);
+      this.#assertResumeTarget(active);
+      const replacedSessionId = active.record.id;
+      active.record = this.repository.updateSession({
+        ...active.record,
+        endedAt: request.requestedAt,
+        status: "completed",
+      });
+      const connection = this.#activate(
+        {
+          chatId: active.record.chatId,
+          chatProviderProfileId: active.chatProviderProfileId,
+          execution: active.execution,
+          requestedAt: request.requestedAt,
+        },
+        issued,
+      );
+      this.#publishCommand({
+        sessionId: replacedSessionId,
+        type: "session.close",
+      });
+      return { connection, snapshot: this.#active!.snapshot };
+    } catch (error) {
+      if (
+        this.#active === active &&
+        active.record.status === "completed" &&
+        active.paused
+      ) {
+        const restored = { ...active.record, status: "active" as const };
+        delete restored.endedAt;
+        active.record = this.repository.updateSession(restored);
+      }
+      if (
+        this.#active === active &&
+        active.record.status === "active" &&
+        active.paused
+      ) {
+        this.#setPhase(active, "paused");
+      }
+      throw error;
+    }
+  }
+
+  #assertResumeTarget(active: ActiveVoice): void {
+    if (
+      this.#active !== active ||
+      active.record.status !== "active" ||
+      !active.paused
+    ) {
+      throw new VoiceError(
+        "VOICE.NOT_READY",
+        "语音连接状态已经改变，请重新操作。",
+        true,
+      );
+    }
+  }
+
+  #canReuseConnection(
+    active: ActiveVoice,
+    prepared: PreparedVoiceConfiguration,
+  ): boolean {
+    return (
+      this.issuer.supportsSessionRefresh &&
+      this.#sameConnectionIdentity(active, prepared)
+    );
+  }
+
+  #sameConnectionIdentity(
+    active: ActiveVoice,
+    prepared: PreparedVoiceConfiguration,
+  ): boolean {
+    const current = active.record.provider;
+    const next = prepared.providerRuntime.snapshot;
+    return (
+      current.apiStyle === next.apiStyle &&
+      current.modelId === next.modelId &&
+      current.profileId === next.profileId &&
+      current.profileName === next.profileName &&
+      active.record.voice === prepared.configured.voice &&
+      active.record.inputMode === prepared.configured.inputMode
+    );
+  }
+
   async report(
     request: VoiceDriverEventRequest,
   ): Promise<VoiceSessionSnapshot> {
     const active = this.#requireActive(request.sessionId);
     const event = request.event;
+    if (event.type === "connection.stage") {
+      this.metrics?.connectionStage(event.stage, event.durationMs);
+      return active.snapshot;
+    }
+    if (event.type === "session.refreshed") {
+      if (
+        !active.paused ||
+        !active.refreshRequestId ||
+        active.refreshRequestId !== event.requestId
+      ) {
+        this.metrics?.discardedLateEvent();
+        return active.snapshot;
+      }
+      delete active.refreshRequestId;
+      active.paused = false;
+      this.#publishCommand({
+        enabled: true,
+        sessionId: active.record.id,
+        type: "playback.set",
+      });
+      this.#setPhase(active, "listening");
+      this.#setCapture(active, true);
+      return active.snapshot;
+    }
+    if (
+      active.paused &&
+      event.type !== "connection.closed" &&
+      event.type !== "server.error"
+    ) {
+      this.metrics?.discardedLateEvent();
+      return active.snapshot;
+    }
     if (event.type === "session.ready") {
+      active.paused = false;
+      delete active.refreshRequestId;
       active.record = this.repository.updateSession({
         ...active.record,
         connectedAt: request.occurredAt,
@@ -729,6 +974,9 @@ export class VoiceService {
         event.assistantItemId,
       );
       const interrupted = this.#currentTurn(active);
+      if (interrupted?.id === active.agentEndRequest?.turnId) {
+        delete active.agentEndRequest;
+      }
       if (interrupted) {
         this.#publishCommand({
           generation: interrupted.generation,
@@ -811,9 +1059,27 @@ export class VoiceService {
       if (turn?.id === active.snapshot.turnId && run?.status === "completed") {
         this.#setPhase(active, "listening");
       }
+      if (
+        event.responseId &&
+        active.agentEndRequest?.responseId === event.responseId
+      ) {
+        this.#completeAgentEnd(active);
+      }
     } else if (event.type === "response.done") {
       this.metrics?.responseUsage(event.usage);
+      const turn = this.#turnForResponse(active, event.responseId);
+      const functionResponse = active.functionResponses.has(event.responseId);
+      const agentEndRequest = active.agentEndRequest;
       this.#responseDone(active, event, request.occurredAt);
+      if (
+        agentEndRequest &&
+        !functionResponse &&
+        event.status === "completed" &&
+        turn?.id === agentEndRequest?.turnId
+      ) {
+        agentEndRequest.responseId = event.responseId;
+        if (!event.hasAudio) this.#completeAgentEnd(active);
+      }
     } else if (event.type === "item.truncated") {
       this.metrics?.truncated(
         active.record.id,
@@ -842,6 +1108,15 @@ export class VoiceService {
         retryable: true,
       });
     } else if (event.type === "server.error") {
+      if (active.refreshRequestId) {
+        delete active.refreshRequestId;
+        this.#setPhase(active, "paused", {
+          code: event.code,
+          message: event.message,
+          retryable: true,
+        });
+        return active.snapshot;
+      }
       const turn = this.#currentTurn(active);
       if (turn) this.#failTurn(active, turn, request.occurredAt, false);
       this.#setPhase(active, "failed", {
@@ -857,26 +1132,22 @@ export class VoiceService {
     active: ActiveVoice,
     requestedAt: string,
   ): Promise<VoiceConnection> {
-    const runtime = await this.providers.createRealtimeProviderRuntime(
-      active.record.provider.profileId,
-    );
-    if (
-      runtime.snapshot.apiStyle !== active.record.provider.apiStyle ||
-      runtime.snapshot.modelId !== active.record.provider.modelId ||
-      runtime.snapshot.profileName !== active.record.provider.profileName
-    ) {
-      throw new VoiceError(
-        "VOICE.PROVIDER_CHANGED",
-        "Realtime Provider 已改变，请结束当前语音后重新开始。",
-        false,
+    const prepared = await this.#prepareConfiguration(active.execution);
+    const issued = await this.#issueConfiguration(prepared);
+    if (!this.#sameConnectionIdentity(active, prepared)) {
+      return this.#activate(
+        {
+          chatId: active.record.chatId,
+          chatProviderProfileId: active.chatProviderProfileId,
+          execution: active.execution,
+          requestedAt,
+        },
+        issued,
       );
     }
-    active.realtimeTools = prepareRealtimeTools(this.tools, active.execution);
-    const issued = await this.issuer.issue(runtime, {
-      instructions: active.defaultInstructions,
-      tools: active.realtimeTools.configs,
-      voice: active.record.voice,
-    });
+    active.configuredInstructions = prepared.configured.instructions;
+    active.defaultInstructions = prepared.defaultInstructions;
+    active.realtimeTools = prepared.realtimeTools;
     const reconnecting: VoiceSessionRecord = {
       ...active.record,
       status: "connecting",
@@ -887,6 +1158,8 @@ export class VoiceService {
     delete reconnecting.protocolSessionId;
     active.record = this.repository.updateSession(reconnecting);
     active.audioPlaying = false;
+    active.paused = false;
+    delete active.refreshRequestId;
     active.functionResponses.clear();
     active.nextResponseOrder = 0;
     active.responseOrders.clear();
@@ -896,9 +1169,10 @@ export class VoiceService {
     delete snapshot.error;
     active.snapshot = { ...snapshot, phase: "connecting" };
     this.metrics?.startReconnect(active.record.id, requestedAt);
+    this.metrics?.connectionStage("credential", issued.credentialDurationMs);
     this.#publishSnapshot();
     return {
-      ...issued,
+      ...issued.issued,
       history: history(this.chats.listMessages(active.record.chatId)),
       inputMode: active.record.inputMode,
       sessionId: active.record.id,
@@ -1564,6 +1838,9 @@ export class VoiceService {
     status: "interrupted" | "cancelled",
   ) {
     if (turn.status === "completed" || turn.status === "interrupted") return;
+    if (active.agentEndRequest?.turnId === turn.id) {
+      delete active.agentEndRequest;
+    }
     active.turnAborts.get(turn.id)?.abort();
     active.turnAborts.delete(turn.id);
     this.#cancelPendingTool(active, turn, endedAt);
@@ -1702,6 +1979,7 @@ export class VoiceService {
     this.#publishCommand({
       enabled:
         enabled &&
+        !active.paused &&
         !active.record.muted &&
         active.record.inputMode === "hands_free" &&
         active.record.status === "active",
@@ -1747,6 +2025,24 @@ export class VoiceService {
       this.#active = undefined;
       this.#publishSnapshot();
     }
+  }
+
+  #completeAgentEnd(active: ActiveVoice): void {
+    const request = active.agentEndRequest;
+    if (!request?.responseId || this.#active !== active) return;
+    const turn = this.#turnForResponse(active, request.responseId);
+    if (!turn || turn.status !== "completed") return;
+    delete active.agentEndRequest;
+    this.#publishCommand({
+      enabled: false,
+      sessionId: active.record.id,
+      type: "capture.set",
+    });
+    this.#publishCommand({
+      sessionId: active.record.id,
+      type: "session.close",
+    });
+    this.#finish(active, "completed");
   }
 
   #publishCommand(command: VoiceClientCommand): void {

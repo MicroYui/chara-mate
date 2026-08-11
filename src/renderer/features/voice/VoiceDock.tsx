@@ -1,4 +1,4 @@
-import { Mic, MicOff, PhoneOff, RotateCcw } from "lucide-react";
+import { Mic, MicOff, Pause, PhoneOff, Play, RotateCcw } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
 import type { VoiceSessionSnapshot } from "../../../shared/contracts/voice";
@@ -10,6 +10,8 @@ const phaseLabel: Record<VoiceSessionSnapshot["phase"], string> = {
   failed: "语音遇到问题",
   interrupted: "连接已中断",
   listening: "正在聆听…",
+  paused: "已暂停",
+  resuming: "正在恢复…",
   speaking: "正在说话",
   thinking: "正在思考…",
   using_tool: "正在使用工具…",
@@ -17,16 +19,20 @@ const phaseLabel: Record<VoiceSessionSnapshot["phase"], string> = {
 };
 
 interface VoiceDockProps {
+  readonly belongsToActiveChat: boolean;
   readonly onEnd: () => void;
   readonly onMutedChange: (muted: boolean) => void;
+  readonly onPausedChange: (paused: boolean) => void;
   readonly onRetry: () => void;
   readonly snapshot: VoiceSessionSnapshot;
   readonly store: VoiceStore;
 }
 
 export function VoiceDock({
+  belongsToActiveChat,
   onEnd,
   onMutedChange,
+  onPausedChange,
   onRetry,
   snapshot,
   store,
@@ -36,7 +42,11 @@ export function VoiceDock({
     store.getEnvelope,
   );
   const level =
-    snapshot.phase === "speaking" ? envelope.output : envelope.input;
+    snapshot.phase === "paused" || snapshot.phase === "resuming"
+      ? 0
+      : snapshot.phase === "speaking"
+        ? envelope.output
+        : envelope.input;
   const transcript =
     snapshot.phase === "speaking" && snapshot.assistantTranscript
       ? snapshot.assistantTranscript
@@ -44,22 +54,45 @@ export function VoiceDock({
   const pushToTalk = snapshot.inputMode === "push_to_talk";
   const retryable =
     snapshot.phase === "interrupted" && snapshot.error?.retryable === true;
+  const paused = snapshot.phase === "paused";
+  const controlsDisabled =
+    snapshot.phase === "connecting" ||
+    snapshot.phase === "resuming" ||
+    snapshot.phase === "interrupted" ||
+    snapshot.phase === "failed";
 
   return (
     <section className={styles["dock"]} aria-label="Realtime 语音">
-      <button
-        className={styles["roundButton"]}
-        type="button"
-        aria-label={snapshot.muted ? "取消静音" : "麦克风静音"}
-        aria-pressed={snapshot.muted}
-        onClick={() => onMutedChange(!snapshot.muted)}
-      >
-        {snapshot.muted ? (
-          <MicOff aria-hidden="true" size={16} />
-        ) : (
-          <Mic aria-hidden="true" size={16} />
-        )}
-      </button>
+      <div className={styles["controls"]}>
+        <button
+          className={styles["roundButton"]}
+          type="button"
+          aria-label={snapshot.muted ? "取消静音" : "麦克风静音"}
+          aria-pressed={snapshot.muted}
+          disabled={controlsDisabled || paused}
+          onClick={() => onMutedChange(!snapshot.muted)}
+        >
+          {snapshot.muted ? (
+            <MicOff aria-hidden="true" size={16} />
+          ) : (
+            <Mic aria-hidden="true" size={16} />
+          )}
+        </button>
+        <button
+          className={styles["roundButton"]}
+          type="button"
+          aria-label={paused ? "恢复语音" : "暂停语音"}
+          aria-pressed={paused}
+          disabled={controlsDisabled}
+          onClick={() => onPausedChange(!paused)}
+        >
+          {paused ? (
+            <Play aria-hidden="true" size={15} />
+          ) : (
+            <Pause aria-hidden="true" size={15} />
+          )}
+        </button>
+      </div>
       <div className={styles["body"]}>
         <div className={styles["statusRow"]}>
           <span className={styles["wave"]} aria-hidden="true">
@@ -75,6 +108,9 @@ export function VoiceDock({
           <strong>{phaseLabel[snapshot.phase]}</strong>
           {!pushToTalk ? (
             <span className={styles["inputMode"]}>免手持</span>
+          ) : null}
+          {!belongsToActiveChat ? (
+            <span className={styles["inputMode"]}>原 Voice Chat</span>
           ) : null}
           {retryable ? (
             <button
@@ -98,7 +134,13 @@ export function VoiceDock({
             </button>
           ) : null}
         </div>
-        <p>{transcript || "你可以直接开始说话"}</p>
+        <p>
+          {!belongsToActiveChat
+            ? "语音仍属于原 Chat；浏览其他 Chat 不会迁移连接"
+            : paused
+              ? "媒体连接已保留，点击恢复即可继续"
+              : transcript || "你可以直接开始说话"}
+        </p>
       </div>
       <button
         className={`${styles["roundButton"]} ${styles["endButton"]}`}

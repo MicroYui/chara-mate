@@ -9,6 +9,7 @@ import { RunEventService } from "../../src/main/agent/runEventService";
 import { RunEventWriter } from "../../src/main/agent/runEventWriter";
 import { RunRepository } from "../../src/main/agent/runRepository";
 import type { SettingsRepository } from "../../src/main/app/settingsRepository";
+import type { VoiceSettingsConfig } from "../../src/shared/contracts/settings";
 import { ChatRepository } from "../../src/main/chat/chatRepository";
 import { ChatService } from "../../src/main/chat/chatService";
 import { registerBrowserTools } from "../../src/main/browser/managedBrowser";
@@ -16,9 +17,10 @@ import { openApplicationDatabase } from "../../src/main/db/database";
 import type { ProviderService } from "../../src/main/providers/providerService";
 import { registerLocalTools } from "../../src/main/tools/localTools";
 import { ToolRegistry } from "../../src/main/tools/toolRegistry";
-import type { AzureWebRtcSessionIssuer } from "../../src/main/voice/azureWebRtcSession";
+import type { RealtimeSessionIssuer } from "../../src/main/voice/azureWebRtcSession";
 import { VoiceRepository } from "../../src/main/voice/voiceRepository";
 import { VoiceService } from "../../src/main/voice/voiceService";
+import { registerVoiceTools } from "../../src/main/voice/voiceTool";
 import type {
   VoiceClientCommand,
   VoiceDriverEvent,
@@ -51,7 +53,10 @@ afterEach(async () => {
   );
 });
 
-async function fixture(options?: { title?: ChatTitleGenerator }) {
+async function fixture(options?: {
+  supportsSessionRefresh?: boolean;
+  title?: ChatTitleGenerator;
+}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "chara-mate-voice-"));
   temporaryDirectories.push(directory);
   const database = openApplicationDatabase(path.join(directory, "app.sqlite"));
@@ -135,13 +140,14 @@ async function fixture(options?: { title?: ChatTitleGenerator }) {
     summarize: (input) =>
       `保存便签：${typeof input["text"] === "string" ? input["text"] : ""}`,
   });
+  let voiceSettings: VoiceSettingsConfig = {
+    inputMode: "hands_free",
+    instructions: "使用自然、简洁的中文口语。",
+    providerProfileId: PROFILE_ID,
+    voice: "verse",
+  };
   const settings = {
-    getVoice: () => ({
-      inputMode: "hands_free",
-      instructions: "使用自然、简洁的中文口语。",
-      providerProfileId: PROFILE_ID,
-      voice: "verse",
-    }),
+    getVoice: () => voiceSettings,
   } as unknown as SettingsRepository;
   const chatProvider = {
     resolveContextLimits: vi.fn().mockResolvedValue({}),
@@ -179,7 +185,7 @@ async function fixture(options?: { title?: ChatTitleGenerator }) {
     }),
     getDefaultChatProfileId: vi.fn().mockReturnValue(PROFILE_ID),
   } as unknown as ProviderService;
-  const issue = vi.fn<AzureWebRtcSessionIssuer["issue"]>().mockResolvedValue({
+  const issue = vi.fn<RealtimeSessionIssuer["issue"]>().mockResolvedValue({
     callsUrl: "https://unit.openai.azure.com/openai/v1/realtime/calls",
     clientSecret: "ephemeral",
     expiresAt: "2026-08-09T12:01:00.000Z",
@@ -188,7 +194,7 @@ async function fixture(options?: { title?: ChatTitleGenerator }) {
     repository,
     settings,
     providers,
-    { issue } as unknown as AzureWebRtcSessionIssuer,
+    { issue, supportsSessionRefresh: options?.supportsSessionRefresh ?? true },
     tools,
     runs,
     writer,
@@ -203,6 +209,9 @@ async function fixture(options?: { title?: ChatTitleGenerator }) {
     () => "Workspace skill instructions.",
     options?.title,
   );
+  registerVoiceTools(tools, {
+    requestEndAfterResponse: (runId) => service.requestEndAfterResponse(runId),
+  });
   return {
     chatProvider,
     chatRuntime,
@@ -217,6 +226,9 @@ async function fixture(options?: { title?: ChatTitleGenerator }) {
     repository,
     runs,
     service,
+    setVoiceSettings: (value: Partial<VoiceSettingsConfig>) => {
+      voiceSettings = { ...voiceSettings, ...value };
+    },
     snapshots,
     tools,
     write,
@@ -295,6 +307,7 @@ async function finalResponse(
   });
   await report(value.service, sessionId, {
     generation,
+    hasAudio: false,
     responseId,
     status: "completed",
     type: "response.done",
@@ -302,6 +315,191 @@ async function finalResponse(
 }
 
 describe("Realtime native Voice runtime", () => {
+  it("pauses media without closing WebRTC and refreshes instructions and tools on resume", async () => {
+    const value = await fixture();
+    const connection = await value.service.start({
+      chatId: CHAT_ID,
+      chatProviderProfileId: PROFILE_ID,
+      execution: { mode: "chat" },
+      requestedAt: NOW,
+    });
+    await report(value.service, connection.sessionId, {
+      protocolSessionId: "protocol-session-pause",
+      type: "session.ready",
+    });
+
+    const paused = await value.service.setPaused({
+      paused: true,
+      requestedAt: NOW,
+      sessionId: connection.sessionId,
+    });
+    expect(paused).not.toHaveProperty("connection");
+    expect(paused.snapshot.phase).toBe("paused");
+    expect(value.commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ enabled: false, type: "capture.set" }),
+        expect.objectContaining({ enabled: false, type: "playback.set" }),
+      ]),
+    );
+    expect(value.commands.some(({ type }) => type === "session.close")).toBe(
+      false,
+    );
+
+    value.setVoiceSettings({ instructions: "恢复后优先给出简短结论。" });
+    const resumed = await value.service.setPaused({
+      paused: false,
+      requestedAt: NOW,
+      sessionId: connection.sessionId,
+    });
+    expect(resumed).not.toHaveProperty("connection");
+    expect(resumed.snapshot.phase).toBe("resuming");
+    expect(value.issue).toHaveBeenCalledOnce();
+    const refresh = value.commands.findLast(
+      (command) => command.type === "session.refresh",
+    );
+    if (refresh?.type !== "session.refresh") {
+      throw new Error("Session refresh command was not emitted");
+    }
+    expect(refresh).toMatchObject({
+      sessionId: connection.sessionId,
+      type: "session.refresh",
+    });
+    expect(refresh.instructions).toContain("恢复后优先给出简短结论。");
+    expect(refresh.tools.length).toBeGreaterThan(0);
+    await report(value.service, connection.sessionId, {
+      requestId: refresh.requestId,
+      type: "session.refreshed",
+    });
+
+    expect(value.service.getActive()).toMatchObject({
+      phase: "listening",
+      sessionId: connection.sessionId,
+    });
+    expect(value.repository.getSession(connection.sessionId)?.status).toBe(
+      "active",
+    );
+    expect(value.commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ enabled: true, type: "playback.set" }),
+        expect.objectContaining({ enabled: true, type: "capture.set" }),
+      ]),
+    );
+    value.database.close();
+  });
+
+  it("cold reconnects into a new Voice session when the configured voice changes", async () => {
+    const value = await fixture();
+    const connection = await value.service.start({
+      chatId: CHAT_ID,
+      chatProviderProfileId: PROFILE_ID,
+      execution: { mode: "chat" },
+      requestedAt: NOW,
+    });
+    await report(value.service, connection.sessionId, {
+      protocolSessionId: "protocol-session-before-config-change",
+      type: "session.ready",
+    });
+    await value.service.setPaused({
+      paused: true,
+      requestedAt: NOW,
+      sessionId: connection.sessionId,
+    });
+    value.setVoiceSettings({ voice: "coral" });
+
+    const resumed = await value.service.setPaused({
+      paused: false,
+      requestedAt: NOW,
+      sessionId: connection.sessionId,
+    });
+    expect(resumed.connection).toMatchObject({ voice: "coral" });
+    expect(resumed.snapshot).toMatchObject({
+      chatId: CHAT_ID,
+      phase: "connecting",
+      voice: "coral",
+    });
+    expect(resumed.snapshot.sessionId).not.toBe(connection.sessionId);
+    expect(value.issue).toHaveBeenCalledTimes(2);
+    expect(value.repository.getSession(connection.sessionId)?.status).toBe(
+      "completed",
+    );
+    expect(
+      value.commands.some(
+        (command) =>
+          command.type === "session.close" &&
+          command.sessionId === connection.sessionId,
+      ),
+    ).toBe(true);
+    value.database.close();
+  });
+
+  it("uses the same cold-reconnect contract when a future adapter cannot refresh in place", async () => {
+    const value = await fixture({ supportsSessionRefresh: false });
+    const connection = await value.service.start({
+      chatId: CHAT_ID,
+      chatProviderProfileId: PROFILE_ID,
+      execution: { mode: "chat" },
+      requestedAt: NOW,
+    });
+    await report(value.service, connection.sessionId, {
+      protocolSessionId: "protocol-session-without-refresh",
+      type: "session.ready",
+    });
+    await value.service.setPaused({
+      paused: true,
+      requestedAt: NOW,
+      sessionId: connection.sessionId,
+    });
+
+    const resumed = await value.service.setPaused({
+      paused: false,
+      requestedAt: NOW,
+      sessionId: connection.sessionId,
+    });
+
+    expect(resumed.connection?.sessionId).not.toBe(connection.sessionId);
+    expect(resumed.snapshot).toMatchObject({
+      chatId: CHAT_ID,
+      phase: "connecting",
+    });
+    expect(value.issue).toHaveBeenCalledTimes(2);
+    expect(value.repository.getSession(connection.sessionId)?.status).toBe(
+      "completed",
+    );
+    value.database.close();
+  });
+
+  it("interrupts an active Voice Run before entering the paused state", async () => {
+    const value = await fixture();
+    const { connection, run } = await startTurn(
+      value,
+      { mode: "chat" },
+      "先开始回答，再暂停",
+    );
+    await report(value.service, connection.sessionId, {
+      generation: 1,
+      responseId: "response-before-pause",
+      type: "response.started",
+    });
+
+    await value.service.setPaused({
+      paused: true,
+      requestedAt: NOW,
+      sessionId: connection.sessionId,
+    });
+
+    expect(value.runs.getRun(run.id)?.status).toBe("interrupted");
+    expect(value.service.getActive()?.phase).toBe("paused");
+    expect(value.commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          responseId: "response-before-pause",
+          type: "response.cancel",
+        }),
+      ]),
+    );
+    value.database.close();
+  });
+
   it("freezes the final turn instructions after time advances during speech", async () => {
     const value = await fixture();
     const connection = await value.service.start({
@@ -427,6 +625,7 @@ describe("Realtime native Voice runtime", () => {
     });
     await report(value.service, connection.sessionId, {
       generation: 1,
+      hasAudio: false,
       responseId: "response-multiple-audio-items",
       status: "completed",
       type: "response.done",
@@ -565,6 +764,7 @@ describe("Realtime native Voice runtime", () => {
         expect.objectContaining({ name: "browser_navigate", type: "function" }),
         expect.objectContaining({ name: "browser_snapshot", type: "function" }),
         expect.objectContaining({ name: "file_read", type: "function" }),
+        expect.objectContaining({ name: "voice_end", type: "function" }),
         expect.objectContaining({ name: "weather_lookup", type: "function" }),
       ]),
     );
@@ -591,6 +791,7 @@ describe("Realtime native Voice runtime", () => {
     });
     await report(value.service, connection.sessionId, {
       generation: 1,
+      hasAudio: false,
       responseId: "response-tool",
       status: "completed",
       type: "response.done",
@@ -621,6 +822,103 @@ describe("Realtime native Voice runtime", () => {
         expect.objectContaining({ kind: "tool_call", status: "completed" }),
       ]),
     );
+    value.database.close();
+  });
+
+  it("lets the Voice Agent say goodbye and hang up only after audio drains", async () => {
+    const value = await fixture();
+    const { connection, run } = await startTurn(
+      value,
+      { mode: "chat" },
+      "拜拜，你挂了吧",
+    );
+
+    await report(value.service, connection.sessionId, {
+      generation: 1,
+      responseId: "response-end-tool",
+      type: "response.started",
+    });
+    await report(value.service, connection.sessionId, {
+      arguments: "{}",
+      callId: "call-end",
+      generation: 1,
+      itemId: "function-end-item",
+      name: "voice_end",
+      responseId: "response-end-tool",
+      type: "tool.call",
+    });
+    await vi.waitFor(() =>
+      expect(
+        value.commands.find(
+          (command) =>
+            command.type === "tool.result" && command.callId === "call-end",
+        ),
+      ).toBeDefined(),
+    );
+    await report(value.service, connection.sessionId, {
+      generation: 1,
+      hasAudio: false,
+      responseId: "response-end-tool",
+      status: "completed",
+      type: "response.done",
+    });
+
+    await report(value.service, connection.sessionId, {
+      generation: 1,
+      responseId: "response-goodbye",
+      type: "response.started",
+    });
+    await report(value.service, connection.sessionId, {
+      delta: "拜拜，回头见。",
+      generation: 1,
+      itemId: "assistant-goodbye",
+      outputIndex: 0,
+      responseId: "response-goodbye",
+      type: "transcript.assistant.delta",
+    });
+    await report(value.service, connection.sessionId, {
+      generation: 1,
+      itemId: "assistant-goodbye",
+      responseId: "response-goodbye",
+      type: "audio.started",
+    });
+    await report(value.service, connection.sessionId, {
+      generation: 1,
+      itemId: "assistant-goodbye",
+      outputIndex: 0,
+      responseId: "response-goodbye",
+      transcript: "拜拜，回头见。",
+      type: "transcript.assistant.done",
+    });
+    await report(value.service, connection.sessionId, {
+      generation: 1,
+      hasAudio: true,
+      responseId: "response-goodbye",
+      status: "completed",
+      type: "response.done",
+    });
+
+    expect(value.service.getActive()?.sessionId).toBe(connection.sessionId);
+    expect(value.runs.getRun(run.id)?.status).toBe("completed");
+    expect(
+      value.commands.filter((command) => command.type === "session.close"),
+    ).toHaveLength(0);
+    expect(
+      value.runs.listRunItems(run.id).filter(({ kind }) => kind === "approval"),
+    ).toHaveLength(0);
+
+    await report(value.service, connection.sessionId, {
+      generation: 1,
+      itemId: "assistant-goodbye",
+      responseId: "response-goodbye",
+      type: "audio.stopped",
+    });
+
+    expect(value.service.getActive()).toBeNull();
+    expect(value.repository.getSession(connection.sessionId)?.status).toBe(
+      "completed",
+    );
+    expect(value.commands.at(-1)).toMatchObject({ type: "session.close" });
     value.database.close();
   });
 

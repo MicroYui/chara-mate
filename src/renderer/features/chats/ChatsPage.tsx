@@ -33,6 +33,7 @@ interface ChatsPageProps {
   readonly onStop: () => void;
   readonly onVoiceEnd: () => void;
   readonly onVoiceMutedChange: (muted: boolean) => void;
+  readonly onVoicePausedChange: (paused: boolean) => void;
   readonly onVoiceRetry: () => void;
   readonly onVoiceStart: () => void;
   readonly runtimeEnabled: boolean;
@@ -92,6 +93,7 @@ export function ChatsPage({
   onStop,
   onVoiceEnd,
   onVoiceMutedChange,
+  onVoicePausedChange,
   onVoiceRetry,
   onVoiceStart,
   runtimeEnabled,
@@ -127,8 +129,12 @@ export function ChatsPage({
           ) : null}
           {voiceSnapshot ? (
             <VoiceDock
+              belongsToActiveChat={
+                activeChat?.record.id === voiceSnapshot.chatId
+              }
               onEnd={onVoiceEnd}
               onMutedChange={onVoiceMutedChange}
+              onPausedChange={onVoicePausedChange}
               onRetry={onVoiceRetry}
               snapshot={voiceSnapshot}
               store={voiceStore}

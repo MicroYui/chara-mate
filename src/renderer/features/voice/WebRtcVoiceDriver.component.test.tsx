@@ -129,6 +129,7 @@ function api() {
       quickStart: vi.fn(),
       report,
       setMuted: vi.fn(),
+      setPaused: vi.fn(),
       start: vi.fn(),
       subscribeChanged: vi.fn(),
       subscribeCommand: vi.fn(),
@@ -182,7 +183,19 @@ describe("WebRTC Voice driver", () => {
     if (!channel) throw new Error("Missing fake data channel");
 
     channel.emit({ session: { id: "session-1" }, type: "session.created" });
-    await vi.waitFor(() => expect(fixture.report).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(
+        fixture.report.mock.calls
+          .map(([request]) => request.event)
+          .some(({ type }) => type === "session.ready"),
+      ).toBe(true),
+    );
+    expect(
+      fixture.report.mock.calls
+        .map(([request]) => request.event)
+        .filter(({ type }) => type === "connection.stage")
+        .map((event) => (event.type === "connection.stage" ? event.stage : "")),
+    ).toEqual(["microphone", "ice", "sdp", "data_channel"]);
     expect(sent(channel).slice(0, 2)).toEqual([
       {
         item: {
@@ -219,6 +232,66 @@ describe("WebRTC Voice driver", () => {
       type: "response.create",
     });
     expect(JSON.stringify(sent(channel).at(-1))).not.toContain("input_text");
+    driver.close();
+  });
+
+  it("keeps the data channel open while refreshing a paused session", async () => {
+    const fixture = api();
+    const driver = new WebRtcVoiceDriver(fixture.value, connection, vi.fn());
+    await driver.connect();
+    const channel = FakePeerConnection.latest?.channel;
+    if (!channel) throw new Error("Missing fake data channel");
+
+    driver.handle({
+      enabled: false,
+      sessionId: connection.sessionId,
+      type: "playback.set",
+    });
+    driver.handle({
+      instructions: "恢复后的新指令。",
+      requestId: "10000000-0000-4000-8000-000000000009",
+      sessionId: connection.sessionId,
+      tools: [
+        {
+          description: "读取天气。",
+          name: "weather_lookup",
+          parameters: { properties: {}, type: "object" },
+          type: "function",
+        },
+      ],
+      type: "session.refresh",
+    });
+    expect(sent(channel).at(-1)).toEqual({
+      event_id: "10000000-0000-4000-8000-000000000009",
+      session: {
+        instructions: "恢复后的新指令。",
+        parallel_tool_calls: false,
+        tool_choice: "auto",
+        tools: [
+          {
+            description: "读取天气。",
+            name: "weather_lookup",
+            parameters: { properties: {}, type: "object" },
+            type: "function",
+          },
+        ],
+        type: "realtime",
+      },
+      type: "session.update",
+    });
+    expect(channel.readyState).toBe("open");
+
+    channel.emit({ type: "session.updated" });
+    await vi.waitFor(() =>
+      expect(
+        fixture.report.mock.calls
+          .map(([request]) => request.event)
+          .find(({ type }) => type === "session.refreshed"),
+      ).toMatchObject({
+        requestId: "10000000-0000-4000-8000-000000000009",
+        type: "session.refreshed",
+      }),
+    );
     driver.close();
   });
 
@@ -409,6 +482,24 @@ describe("WebRTC Voice driver", () => {
       type: "output_audio_buffer.started",
     });
     await vi.waitFor(() => expect(audio?.muted).toBe(false));
+    channel.emit({
+      response: { id: "response-after-tool", status: "completed" },
+      type: "response.done",
+    });
+    let responseDone = fixture.report.mock.calls
+      .map(([request]) => request.event)
+      .find(({ type }) => type === "response.done");
+    await vi.waitFor(() => {
+      responseDone = fixture.report.mock.calls
+        .map(([request]) => request.event)
+        .find(({ type }) => type === "response.done");
+      expect(responseDone).toBeDefined();
+    });
+    expect(responseDone).toMatchObject({
+      hasAudio: true,
+      responseId: "response-after-tool",
+      type: "response.done",
+    });
 
     channel.emit({
       response_id: "response-before-tool",

@@ -1,5 +1,5 @@
-import type { JsonValue } from "../../shared/contracts/primitives";
 import type {
+  VoiceFunctionTool,
   VoiceName,
   VoicePreviewConnection,
 } from "../../shared/contracts/voice";
@@ -13,15 +13,16 @@ interface ClientSecretResponse {
 
 export interface AzureRealtimeSessionOptions {
   readonly instructions: string;
-  readonly tools?: readonly AzureRealtimeFunctionTool[];
+  readonly tools?: readonly VoiceFunctionTool[];
   readonly voice: VoiceName;
 }
 
-export interface AzureRealtimeFunctionTool {
-  readonly description: string;
-  readonly name: string;
-  readonly parameters: JsonValue;
-  readonly type: "function";
+export interface RealtimeSessionIssuer {
+  readonly supportsSessionRefresh: boolean;
+  issue(
+    runtime: RealtimeProviderRuntime,
+    options: AzureRealtimeSessionOptions,
+  ): Promise<VoicePreviewConnection>;
 }
 
 type Fetch = typeof fetch;
@@ -109,7 +110,9 @@ function expiresAt(value: unknown): string {
   return new Date(value * 1_000).toISOString();
 }
 
-export class AzureWebRtcSessionIssuer {
+export class AzureWebRtcSessionIssuer implements RealtimeSessionIssuer {
+  readonly supportsSessionRefresh = true;
+
   constructor(private readonly fetchImplementation: Fetch = fetch) {}
 
   async issue(
