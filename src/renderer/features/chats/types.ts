@@ -125,6 +125,11 @@ export type ChatsUiAction =
   | { readonly type: "run.toggled"; readonly runId: EntityId }
   | { readonly type: "item.toggled"; readonly itemId: EntityId }
   | {
+      readonly chatId: EntityId;
+      readonly runId?: EntityId;
+      readonly type: "automation-run.focused";
+    }
+  | {
       readonly approvalMode: ApprovalMode;
       readonly mode: "chat" | "agent";
       readonly type: "settings.defaults-loaded";

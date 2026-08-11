@@ -10,6 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentApi } from "../../shared/contracts/agent";
+import type { AutomationApi } from "../../shared/contracts/automation";
 import type {
   Chat,
   ChatApi,
@@ -170,6 +171,10 @@ function renderApp({
     voiceChangedListener?.(null);
     return Promise.resolve({ ok: true, value: null });
   });
+  const automationList = vi.fn<AutomationApi["list"]>().mockResolvedValue({
+    ok: true,
+    value: { items: [] },
+  });
   const desktopApi: CharaMateApi = {
     activity: {
       cleanup: vi.fn(),
@@ -182,7 +187,7 @@ function renderApp({
     automations: {
       create: vi.fn(),
       get: vi.fn(),
-      list: vi.fn(),
+      list: automationList,
       runNow: vi.fn(),
       setPaused: vi.fn(),
       subscribe: vi.fn(() => () => undefined),
@@ -419,6 +424,7 @@ function renderApp({
 
   render(<App />);
   return {
+    automationList,
     create,
     emitChatChanged: (chat: Chat) => {
       update(chat);
@@ -479,6 +485,26 @@ describe("application shell", () => {
     expect(
       screen.queryByRole("img", { name: "Columbinya 桌宠缩略图" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens Automations and starts its one-page form from the header", async () => {
+    const { automationList } = renderApp({ modelAvailable: true });
+    await screen.findByRole("heading", { name: "新对话" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Automations" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "按时提醒，也按时完成" }),
+    ).toBeVisible();
+    expect(automationList).toHaveBeenCalledOnce();
+    const createButtons = screen.getAllByRole("button", { name: "新建任务" });
+    fireEvent.click(createButtons[0]!);
+
+    const form = screen.getByRole("region", { name: "新建定时任务" });
+    expect(within(form).getByLabelText("模型")).toHaveTextContent(
+      "gpt-chat · Test Provider",
+    );
+    expect(within(form).getByLabelText("角色")).toHaveTextContent("Mika");
   });
 
   it("routes Character menu requests to Chat or Character settings", async () => {

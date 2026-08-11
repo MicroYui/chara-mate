@@ -43,6 +43,17 @@ export function chatsUiReducer(
         expandedRunIds: [action.target.runId],
         isDraftChat: false,
       };
+    case "automation-run.focused":
+      return {
+        ...state,
+        activeChatId: action.chatId,
+        activePage: "chats",
+        chatListStatus: "active",
+        expandedItemIds: [],
+        expandedRunIds: action.runId ? [action.runId] : [],
+        isDraftChat: false,
+        searchQuery: "",
+      };
     case "settings.defaults-loaded":
       return {
         ...state,

@@ -78,4 +78,29 @@ describe("Chats fixture UI state", () => {
     expect(state.chatListStatus).toBe("archived");
     expect(state.activeChatId).toBeNull();
   });
+
+  it("opens the Chat Run linked from an Automation history item", () => {
+    const state = chatsFixtureUiReducer(
+      {
+        ...initialChatsFixtureUiState,
+        activePage: "automations",
+        chatListStatus: "archived",
+        searchQuery: "old filter",
+      },
+      {
+        chatId: "00000000-0000-4000-8000-000000000101",
+        runId: "00000000-0000-4000-8000-000000000301",
+        type: "automation-run.focused",
+      },
+    );
+
+    expect(state).toMatchObject({
+      activeChatId: "00000000-0000-4000-8000-000000000101",
+      activePage: "chats",
+      chatListStatus: "active",
+      expandedRunIds: ["00000000-0000-4000-8000-000000000301"],
+      isDraftChat: false,
+      searchQuery: "",
+    });
+  });
 });

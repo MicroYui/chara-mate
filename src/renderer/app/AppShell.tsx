@@ -14,6 +14,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Plus,
   Search,
   Settings,
   SquarePen,
@@ -47,6 +48,7 @@ import { VoiceSettingsPanel } from "../features/settings/VoiceSettingsPanel";
 import { TerritoryPage } from "../features/territory/TerritoryPage";
 import { MemoryPage } from "../features/memory/MemoryPage";
 import { ActivityPage } from "../features/activity/ActivityPage";
+import { AutomationsPage } from "../features/automations/AutomationsPage";
 import type { VoiceStore, VoiceUiState } from "../features/voice/voiceStore";
 import type {
   ChatView,
@@ -69,6 +71,11 @@ const pageItems = [
   readonly id: Exclude<PrimaryPageId, "settings">;
   readonly label: string;
 }[];
+
+const currentPersona = {
+  id: "00000000-0000-4000-8000-000000000701",
+  label: "Mika",
+} as const;
 
 const placeholderCopy = {
   activity: {
@@ -544,6 +551,7 @@ function PageHeader({
   onChatRenameRequest,
   onChatRestore,
   onChatSetPinned,
+  onCreateAutomation,
   renameRequest,
   state,
 }: Pick<
@@ -559,6 +567,7 @@ function PageHeader({
   | "state"
 > & {
   readonly onChatRenameRequest: (chat: Chat) => void;
+  readonly onCreateAutomation: () => void;
   readonly renameRequest: ChatRenameRequest | null;
 }) {
   const [editingChatId, setEditingChatId] = useState<string | null>(
@@ -657,6 +666,18 @@ function PageHeader({
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
+        </div>
+      ) : null}
+      {state.activePage === "automations" ? (
+        <div className={styles["headerActions"]}>
+          <button
+            className={styles["automationCreateButton"]}
+            type="button"
+            onClick={onCreateAutomation}
+          >
+            <Plus aria-hidden="true" size={14} />
+            新建任务
+          </button>
         </div>
       ) : null}
     </header>
@@ -876,6 +897,7 @@ export function AppShell({
   const [activityTarget, setActivityTarget] = useState<{
     readonly episodeId: string;
   } | null>(null);
+  const [automationCreateToken, setAutomationCreateToken] = useState(0);
   const renameRequestSequence = useRef(0);
   const requestChatRename = (chat: Chat) => {
     if (state.activeChatId !== chat.id) {
@@ -928,6 +950,9 @@ export function AppShell({
           onChatRenameRequest={requestChatRename}
           onChatRestore={onChatRestore}
           onChatSetPinned={onChatSetPinned}
+          onCreateAutomation={() =>
+            setAutomationCreateToken((token) => token + 1)
+          }
           renameRequest={renameRequest}
           state={state}
         />
@@ -1005,6 +1030,23 @@ export function AppShell({
                 ? { focusEpisodeId: activityTarget.episodeId }
                 : {})}
               onFocusConsumed={consumeActivityTarget}
+            />
+          ) : state.activePage === "automations" ? (
+            <AutomationsPage
+              createRequestToken={automationCreateToken}
+              models={chatDomain.models.map((model) => ({
+                label: `${model.displayName} · ${model.provider.profileName}`,
+                modelId: model.provider.modelId,
+                providerProfileId: model.provider.profileId,
+              }))}
+              personas={[currentPersona]}
+              onOpenChatRun={(chatId, runId) =>
+                dispatch({
+                  chatId,
+                  ...(runId ? { runId } : {}),
+                  type: "automation-run.focused",
+                })
+              }
             />
           ) : (
             <PlaceholderPage page={state.activePage} />

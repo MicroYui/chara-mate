@@ -17,6 +17,7 @@ import type {
   RunItem,
   UserInputResolution,
 } from "../../../../shared/contracts";
+import { runStatusPresentation } from "../../../components/runStatus";
 import type { ChatRunView, ChatsUiAction, ChatsUiState } from "../types";
 import { CopyButton } from "./CopyButton";
 import { ArchivedPlan, planUpdateFromItem } from "./PlanDisplay";
@@ -67,27 +68,6 @@ function runDuration(run: ChatRunView, now: number): number {
     return Math.max(0, endedAt - startedAt);
   }
   return run.items.reduce((total, item) => total + (item.durationMs ?? 0), 0);
-}
-
-function runSummary(status: ChatRunView["record"]["status"]): string {
-  switch (status) {
-    case "queued":
-      return "等待开始";
-    case "running":
-      return "正在处理";
-    case "waiting_approval":
-      return "等待确认";
-    case "completed":
-      return "已处理";
-    case "needs_input":
-      return "需要补充信息";
-    case "interrupted":
-      return "已中断";
-    case "failed":
-      return "处理失败";
-    case "cancelled":
-      return "已停止";
-  }
 }
 
 function itemTitle(item: RunItem): string {
@@ -340,7 +320,7 @@ export function RunProcess({
       kind !== "assistant_message" &&
       (kind !== "plan" || (!live && id === latestPlanId)),
   );
-  const summaryLead = runSummary(run.record.status);
+  const summaryLead = runStatusPresentation[run.record.status].label;
 
   return (
     <section className={styles["run"]} data-status={run.record.status}>
