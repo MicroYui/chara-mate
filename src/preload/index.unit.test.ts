@@ -400,6 +400,67 @@ describe("Phase 1 typed preload data boundary", () => {
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });
 
+  it("keeps Territory source, pin and version mutations on narrow typed channels", async () => {
+    const candidateId = "6b90bf76-893b-47dc-b9ea-913d0c25c5e6";
+    electron.ipcRenderer.invoke.mockImplementation((channel: string) =>
+      Promise.resolve(
+        channel === TERRITORY_CHANNELS.createSourceCandidate
+          ? {
+              ok: true,
+              value: { candidateId, snapshot: activeTerritorySnapshot },
+            }
+          : { ok: true, value: activeTerritorySnapshot },
+      ),
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.territory.createSourceCandidate({
+        source: {
+          kind: "memory",
+          memoryId: "17bd6914-d46b-44ee-9776-c0aa07ae91cd",
+        },
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { candidateId } });
+    await expect(
+      api.territory.setItemPinned({
+        itemId: `memory.${candidateId}`,
+        pinned: true,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      api.territory.selectItemVersion({
+        itemId: `memory.${candidateId}`,
+        revision: 2,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(electron.ipcRenderer.invoke.mock.calls).toEqual([
+      [
+        TERRITORY_CHANNELS.createSourceCandidate,
+        {
+          source: {
+            kind: "memory",
+            memoryId: "17bd6914-d46b-44ee-9776-c0aa07ae91cd",
+          },
+        },
+      ],
+      [
+        TERRITORY_CHANNELS.setItemPinned,
+        { itemId: `memory.${candidateId}`, pinned: true },
+      ],
+      [
+        TERRITORY_CHANNELS.selectItemVersion,
+        { itemId: `memory.${candidateId}`, revision: 2 },
+      ],
+    ]);
+    await expect(
+      api.territory.createSourceCandidate({
+        source: { kind: "memory", memoryId: "invalid" },
+      }),
+    ).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledTimes(3);
+  });
+
   it("validates continuous Character animation speed requests", async () => {
     electron.ipcRenderer.invoke.mockImplementation(
       (channel: string, input: unknown) => {

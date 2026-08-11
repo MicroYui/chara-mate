@@ -27,6 +27,7 @@ import type {
   MemoryStatus,
   MemoryType,
 } from "../../../shared/contracts/memory";
+import type { TerritoryApi } from "../../../shared/contracts/territory";
 import styles from "./MemoryPage.module.css";
 
 const memoryTypes: ReadonlyArray<{ label: string; value: MemoryType }> = [
@@ -114,14 +115,20 @@ function endOfLocalDate(value: string): string {
 
 interface MemoryPageProps {
   readonly api?: MemoryApi;
+  readonly focusMemoryId?: string;
+  readonly onFocusConsumed?: () => void;
   readonly onOpenSource?: (source: MemorySource) => void;
-  readonly onOpenTerritory: () => void;
+  readonly onOpenTerritory: (candidateId: string) => void;
+  readonly territoryApi?: Pick<TerritoryApi, "createSourceCandidate">;
 }
 
 export function MemoryPage({
   api = window.charaMate.memory,
+  focusMemoryId,
+  onFocusConsumed,
   onOpenSource,
   onOpenTerritory,
+  territoryApi,
 }: MemoryPageProps) {
   const [snapshot, setSnapshot] = useState<MemorySnapshot | null>(null);
   const [detail, setDetail] = useState<MemoryDetail | null>(null);
@@ -139,6 +146,7 @@ export function MemoryPage({
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const detailSequence = useRef(0);
+  const focusedMemoryRef = useRef<string | null>(null);
   const loadSequence = useRef(0);
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
@@ -200,52 +208,65 @@ export function MemoryPage({
     overscan: 6,
   });
 
-  const openDetail = async (memoryId: string) => {
-    const sequence = ++detailSequence.current;
-    setSelectedId(memoryId);
-    try {
-      const response = await api.get({ memoryId });
-      if (sequence !== detailSequence.current) return;
-      if (response.ok) {
-        const historicalHit = asOfDate
-          ? snapshot?.memories.find(({ memory }) => memory.id === memoryId)
-          : undefined;
-        const nextDetail = (() => {
-          if (!historicalHit) return response.value;
-          const asOf = endOfLocalDate(asOfDate);
-          const revisions = response.value.revisions.filter(
-            ({ createdAt }) => createdAt <= asOf,
+  const openDetail = useCallback(
+    async (memoryId: string) => {
+      const sequence = ++detailSequence.current;
+      setSelectedId(memoryId);
+      try {
+        const response = await api.get({ memoryId });
+        if (sequence !== detailSequence.current) return;
+        if (response.ok) {
+          const historicalHit = asOfDate
+            ? snapshot?.memories.find(({ memory }) => memory.id === memoryId)
+            : undefined;
+          const nextDetail = (() => {
+            if (!historicalHit) return response.value;
+            const asOf = endOfLocalDate(asOfDate);
+            const revisions = response.value.revisions.filter(
+              ({ createdAt }) => createdAt <= asOf,
+            );
+            const sourceIds = new Set(
+              revisions.flatMap(({ sourceIds: ids }) => ids),
+            );
+            const revisionIds = new Set(revisions.map(({ id }) => id));
+            return {
+              ...response.value,
+              memory: historicalHit.memory,
+              revisions,
+              sources: response.value.sources.filter(({ id }) =>
+                sourceIds.has(id),
+              ),
+              usages: response.value.usages.filter(
+                ({ revisionId, usedAt }) =>
+                  revisionIds.has(revisionId) && usedAt <= asOf,
+              ),
+            };
+          })();
+          setDetail(nextDetail);
+          setDraft(
+            nextDetail.revisions.find(
+              ({ id }) => id === nextDetail.memory.currentRevisionId,
+            )?.content ?? "",
           );
-          const sourceIds = new Set(
-            revisions.flatMap(({ sourceIds: ids }) => ids),
-          );
-          const revisionIds = new Set(revisions.map(({ id }) => id));
-          return {
-            ...response.value,
-            memory: historicalHit.memory,
-            revisions,
-            sources: response.value.sources.filter(({ id }) =>
-              sourceIds.has(id),
-            ),
-            usages: response.value.usages.filter(
-              ({ revisionId, usedAt }) =>
-                revisionIds.has(revisionId) && usedAt <= asOf,
-            ),
-          };
-        })();
-        setDetail(nextDetail);
-        setDraft(
-          nextDetail.revisions.find(
-            ({ id }) => id === nextDetail.memory.currentRevisionId,
-          )?.content ?? "",
-        );
-        setError(null);
-      } else setError(response.error.message);
-    } catch {
-      if (sequence === detailSequence.current)
-        setError("无法读取这条记忆，请重试。");
+          setError(null);
+        } else setError(response.error.message);
+      } catch {
+        if (sequence === detailSequence.current)
+          setError("无法读取这条记忆，请重试。");
+      }
+    },
+    [api, asOfDate, snapshot],
+  );
+
+  useEffect(() => {
+    if (!focusMemoryId) {
+      focusedMemoryRef.current = null;
+      return;
     }
-  };
+    if (focusedMemoryRef.current === focusMemoryId) return;
+    focusedMemoryRef.current = focusMemoryId;
+    void openDetail(focusMemoryId).finally(onFocusConsumed);
+  }, [focusMemoryId, onFocusConsumed, openDetail]);
 
   const mutate = async (
     operation: () => ReturnType<
@@ -336,6 +357,25 @@ export function MemoryPage({
     }
   };
 
+  const addToTerritory = async () => {
+    if (!detail || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await (
+        territoryApi ?? window.charaMate.territory
+      ).createSourceCandidate({
+        source: { kind: "memory", memoryId: detail.memory.id },
+      });
+      if (response.ok) onOpenTerritory(response.value.candidateId);
+      else setError(response.error.message);
+    } catch {
+      setError("无法把这条记忆放入领地，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const activeRevision = detail?.revisions.find(
     ({ id }) => id === detail.memory.currentRevisionId,
   );
@@ -351,6 +391,9 @@ export function MemoryPage({
     detail &&
     !detail.memory.deletedAt &&
     detail.memory.status === "active",
+  );
+  const canAddToTerritory = Boolean(
+    !historical && detail && !detail.memory.deletedAt,
   );
 
   return (
@@ -600,13 +643,13 @@ export function MemoryPage({
                 </div>
                 <div className={styles["actions"]}>
                   <button
-                    disabled={historical}
+                    disabled={busy || !canAddToTerritory}
                     type="button"
-                    title="在领地中查看"
-                    onClick={onOpenTerritory}
+                    title="放入领地"
+                    onClick={() => void addToTerritory()}
                   >
                     <MapIcon aria-hidden="true" size={15} />
-                    领地
+                    放入领地
                   </button>
                   <button
                     disabled={busy || !canEdit}

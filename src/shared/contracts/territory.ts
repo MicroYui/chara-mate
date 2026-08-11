@@ -4,6 +4,7 @@ import type {
   TerritoryActiveSceneSchema,
   TerritoryCollectItemRequestSchema,
   TerritoryCollectionTargetSchema,
+  TerritoryCreateSourceCandidateRequestSchema,
   TerritoryFacingSchema,
   TerritoryGeneratedItemStructureSchema,
   TerritoryEditImageRequestSchema,
@@ -16,8 +17,13 @@ import type {
   TerritoryImageMutationResponseSchema,
   TerritoryImageMutationResultSchema,
   TerritoryInstallGeneratedItemInputSchema,
+  TerritoryItemCandidateSchema,
+  TerritoryItemCandidateStatusSchema,
   TerritoryItemSchema,
+  TerritoryItemSourceKindSchema,
+  TerritoryItemSourceSchema,
   TerritoryItemTargetSchema,
+  TerritoryItemVersionSchema,
   TerritoryMovePetRequestSchema,
   TerritoryMoveResponseSchema,
   TerritoryMoveResultSchema,
@@ -30,6 +36,10 @@ import type {
   TerritorySceneSummarySchema,
   TerritorySceneTargetSchema,
   TerritorySelectSceneRequestSchema,
+  TerritorySelectItemVersionRequestSchema,
+  TerritorySetItemPinnedRequestSchema,
+  TerritorySourceCandidateMutationResponseSchema,
+  TerritorySourceCandidateMutationResultSchema,
   TerritorySnapshotResponseSchema,
   TerritorySnapshotSchema,
   TerritorySurfaceTargetSchema,
@@ -38,6 +48,7 @@ import type {
 export const TERRITORY_CHANNELS = {
   collectItem: "territory.item.collect",
   confirmImageCandidate: "territory.image.confirm",
+  createSourceCandidate: "territory.candidate.create",
   editImageCandidate: "territory.image.edit",
   generateImageCandidate: "territory.image.generate",
   getSnapshot: "territory.snapshot.get",
@@ -45,6 +56,8 @@ export const TERRITORY_CHANNELS = {
   placeItem: "territory.item.place",
   retryImageCandidate: "territory.image.retry",
   selectScene: "territory.scene.select",
+  selectItemVersion: "territory.item.version.select",
+  setItemPinned: "territory.item.pin.set",
 } as const;
 
 export type TerritorySceneId = Static<typeof TerritorySceneIdSchema>;
@@ -65,6 +78,11 @@ export type TerritorySurfaceTarget = Static<
 >;
 export type TerritorySceneTarget = Static<typeof TerritorySceneTargetSchema>;
 export type TerritoryItemTarget = Static<typeof TerritoryItemTargetSchema>;
+export type TerritoryItemSourceKind = Static<
+  typeof TerritoryItemSourceKindSchema
+>;
+export type TerritoryItemSource = Static<typeof TerritoryItemSourceSchema>;
+export type TerritoryItemVersion = Static<typeof TerritoryItemVersionSchema>;
 export type TerritoryItem = Static<typeof TerritoryItemSchema>;
 export type TerritoryActiveScene = Static<typeof TerritoryActiveSceneSchema>;
 export type TerritoryImageCandidateOperation = Static<
@@ -79,6 +97,12 @@ export type TerritoryGeneratedItemStructure = Static<
 export type TerritoryImageCandidate = Static<
   typeof TerritoryImageCandidateSchema
 >;
+export type TerritoryItemCandidateStatus = Static<
+  typeof TerritoryItemCandidateStatusSchema
+>;
+export type TerritoryItemCandidate = Static<
+  typeof TerritoryItemCandidateSchema
+>;
 export type TerritorySnapshot = Static<typeof TerritorySnapshotSchema>;
 export type TerritorySelectSceneRequest = Static<
   typeof TerritorySelectSceneRequestSchema
@@ -91,6 +115,15 @@ export type TerritoryPlaceItemRequest = Static<
 >;
 export type TerritoryCollectItemRequest = Static<
   typeof TerritoryCollectItemRequestSchema
+>;
+export type TerritoryCreateSourceCandidateRequest = Static<
+  typeof TerritoryCreateSourceCandidateRequestSchema
+>;
+export type TerritorySetItemPinnedRequest = Static<
+  typeof TerritorySetItemPinnedRequestSchema
+>;
+export type TerritorySelectItemVersionRequest = Static<
+  typeof TerritorySelectItemVersionRequestSchema
 >;
 export type TerritoryGenerateImageRequest = Static<
   typeof TerritoryGenerateImageRequestSchema
@@ -115,6 +148,12 @@ export type TerritoryImageMutationResult = Static<
 export type TerritoryImageMutationResponse = Static<
   typeof TerritoryImageMutationResponseSchema
 >;
+export type TerritorySourceCandidateMutationResult = Static<
+  typeof TerritorySourceCandidateMutationResultSchema
+>;
+export type TerritorySourceCandidateMutationResponse = Static<
+  typeof TerritorySourceCandidateMutationResponseSchema
+>;
 
 export interface TerritoryApi {
   collectItem(
@@ -123,6 +162,9 @@ export interface TerritoryApi {
   confirmImageCandidate(
     request: TerritoryImageCandidateIdRequest,
   ): Promise<TerritoryImageMutationResponse>;
+  createSourceCandidate(
+    request: TerritoryCreateSourceCandidateRequest,
+  ): Promise<TerritorySourceCandidateMutationResponse>;
   editImageCandidate(
     request: TerritoryEditImageRequest,
   ): Promise<TerritoryImageMutationResponse>;
@@ -139,5 +181,11 @@ export interface TerritoryApi {
   ): Promise<TerritoryImageMutationResponse>;
   selectScene(
     request: TerritorySelectSceneRequest,
+  ): Promise<TerritorySnapshotResponse>;
+  selectItemVersion(
+    request: TerritorySelectItemVersionRequest,
+  ): Promise<TerritorySnapshotResponse>;
+  setItemPinned(
+    request: TerritorySetItemPinnedRequest,
   ): Promise<TerritorySnapshotResponse>;
 }

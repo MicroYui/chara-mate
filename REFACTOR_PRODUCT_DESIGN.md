@@ -1050,12 +1050,21 @@ Automation Run 的 `queued/running/waiting_approval/needs_input/interrupted/comp
 ```ts
 interface TerritoryItemCandidate {
   id: string
-  sourceMemoryIds: string[]
+  sources: Array<{
+    kind: "memory" | "activity_digest"
+    id: string
+    revisionId: string | null
+    label: string
+    occurredAt: string
+  }>
   name: string
   description: string
   visualPrompt: string
-  suggestedZone: string
+  suggestedSceneId: string
+  status: "pending" | "materialized"
+  itemId: string | null
   createdAt: string
+  updatedAt: string
 }
 ```
 
@@ -1065,6 +1074,8 @@ interface TerritoryItemCandidate {
 - 经常听某类音乐 → 会轻轻跳动的旧唱片机；
 - 一次难忘旅行 → 窗边带日期的小海螺；
 - 长期学习主题 → 逐渐增厚的一摞书。
+
+Memory 详情与 Activity Digest 都通过明确的“放入领地”动作创建候选；同一主来源重复操作只更新同一个候选的语义预填和来源快照，不复制候选或已形成的物件。每个图片生成候选在发起时冻结自己使用的来源 revision 与说明，之后 Memory 更新不会改写已经生成的预览证据。候选只在用户确认图片后形成 Territory Item，Memory 与 Activity 不读取 Territory 表。
 
 物件描述保持简短、诗意并带来源日期。点击物件打开：名称、描述、形成时间、相关记忆和“在 Memory 中查看”。物件不是新的事实源。
 
@@ -1227,11 +1238,11 @@ PixiJS `8.19.0` 当前发布包的 `Container.sortableChildren`/`zIndex` 与父�
 
 ### 10.6 容量与记忆库
 
-- 同屏物件上限由目标窗口和视觉密度可用性测试一次选定并冻结，不提供多档容量模式。
+- 每个场景同屏最多 12 个物件，包含场景自带物件；该值已在 `1180×800` 默认窗口与 `900×640` 最小窗口比较 `8 / 12 / 16` 后冻结，证据与限制见 [`docs/benchmarks/territory-capacity.md`](./docs/benchmarks/territory-capacity.md)。不提供多档容量模式。
 - 用户可 pin 特别重要的物件。
-- 新物件超过上限时，最早放入且未 pin 的物件回到 Memory 的“领地收藏库”，不会删除。
+- 新物件超过上限时，最早放入且未 pin 的物件及其未 pin 附件回到“领地收藏库”，不会删除；带有已 pin 附件的承载物件同样受保护。如果没有可安全回收的物件，本次放置失败并提示用户先收回或取消置顶。
 - 用户可以从完整记忆库选择任意合适记忆生成/放回领地。
-- 同一记忆默认只有一个活动物件版本；重新生成会形成版本，可切回旧图。
+- 同一记忆默认只有一个活动物件实例；重新生成会形成图片版本并可切回旧图，后续版本沿用该物件既有的最终尺寸、占地、锚点、变换能力和插槽结构。
 
 ### 10.7 数据模型
 
@@ -1240,13 +1251,14 @@ territory_scenes
 territory_scene_revisions
 territory_item_definitions
 territory_items
+territory_item_candidates
 territory_item_sources
 territory_placements
 territory_image_candidates
 territory_assets
 ```
 
-`territory_image_candidates` 保存 Generation/Edit 请求、来源候选与 `generating / ready / failed / accepted` 状态；候选 PNG 位于独立 preview cache，不写 BLOB。启动时遗留的 `generating` 会转成可重试失败，安装失败则保持 `ready`，不会改动当前场景。`territory_assets` 保存确认后归一化 PNG 的 media type、宽高、字节数、SHA-256 和相对 storage key；图片字节位于 Territory 自有 asset 目录，表中不存 BLOB 或原始外部路径。`territory_item_definitions` 保存不可变 manifest revision 与可空 asset 外键，并用数据库约束保证 asset 外键与 manifest 的 `visual.source` 一致；内置和生成物件都通过同一 manifest 投影进入 Renderer。`territory_items` 是实例并引用确定的 definition revision。
+`territory_item_candidates` 保存 Memory/Activity 主来源唯一键、稳定来源快照、语义预填和 `pending / materialized` 状态；来源以后清理时，已接受物件的追溯说明仍可读，但不会把 Territory 反写成 Memory 事实。`territory_image_candidates` 保存 Generation/Edit 请求、来源候选与 `generating / ready / failed / accepted` 状态；候选 PNG 位于独立 preview cache，不写 BLOB。启动时遗留的 `generating` 会转成可重试失败，安装失败则保持 `ready`，不会改动当前场景。`territory_assets` 保存确认后归一化 PNG 的 media type、宽高、字节数、SHA-256 和相对 storage key；图片字节位于 Territory 自有 asset 目录，表中不存 BLOB 或原始外部路径。`territory_item_definitions` 保存不可变 manifest revision 与可空 asset 外键，并用数据库约束保证 asset 外键与 manifest 的 `visual.source` 一致；内置和生成物件都通过同一 manifest 投影进入 Renderer。`territory_items` 是实例并引用当前 definition revision，历史 revision 仍可选择。
 
 `placement` 保存场景 ID、item ID、朝向和 pin，并使用互斥目标：地面物件保存网格坐标，附件保存 `supportItemId + slotId`。渲染平面和深度由 manifest 推导，不保存任意 `zIndex`；同一插槽最多一个附件。图像在 asset 目录，数据库不存大 BLOB。
 
@@ -1687,7 +1699,7 @@ userData/
 | Automation | `automations`（包含 Reminder、Agent Task 与主动触发规则）, `automation_runs` |
 | Extension | `mcp_servers`, `skill_versions`, `skill_usage` |
 | Provider | `provider_profiles`（无明文 Key） |
-| Territory | `territory_scenes`, `territory_scene_revisions`, `territory_items`, `territory_item_sources`, `territory_placements`, `territory_image_candidates`, `territory_assets` |
+| Territory | `territory_scenes`, `territory_scene_revisions`, `territory_items`, `territory_item_candidates`, `territory_item_sources`, `territory_placements`, `territory_image_candidates`, `territory_assets` |
 | App | `personas`, `pet_installations`, `window_placements`, `settings` |
 
 ### 14.3 数据不变量

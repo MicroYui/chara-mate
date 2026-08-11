@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "9";
+export const CURRENT_SCHEMA_VERSION = "10";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -161,6 +161,49 @@ export const CURRENT_SCHEMA_SQL = `
     )
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS territory_item_candidates (
+    candidate_id TEXT PRIMARY KEY NOT NULL,
+    primary_source_kind TEXT NOT NULL CHECK (
+      primary_source_kind IN ('memory', 'activity_digest')
+    ),
+    primary_source_id TEXT NOT NULL,
+    name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+    description TEXT NOT NULL CHECK (length(trim(description)) > 0),
+    visual_prompt TEXT NOT NULL CHECK (length(trim(visual_prompt)) > 0),
+    suggested_scene_id TEXT NOT NULL CHECK (
+      suggested_scene_id IN (
+        'forest-cabin',
+        'seaside-room',
+        'city-rooftop',
+        'star-workshop'
+      )
+    ),
+    sources_json TEXT NOT NULL CHECK (json_valid(sources_json)),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'materialized')),
+    accepted_item_id TEXT REFERENCES territory_items(item_id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (primary_source_kind, primary_source_id),
+    CHECK (
+      (status = 'pending' AND accepted_item_id IS NULL) OR
+      (status = 'materialized' AND accepted_item_id IS NOT NULL)
+    )
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS territory_item_sources (
+    item_id TEXT NOT NULL
+      REFERENCES territory_items(item_id) ON DELETE CASCADE,
+    source_kind TEXT NOT NULL CHECK (
+      source_kind IN ('memory', 'activity_digest')
+    ),
+    source_id TEXT NOT NULL,
+    revision_id TEXT,
+    label TEXT NOT NULL CHECK (length(trim(label)) > 0),
+    occurred_at TEXT NOT NULL,
+    candidate_id TEXT REFERENCES territory_item_candidates(candidate_id),
+    PRIMARY KEY (item_id, source_kind, source_id)
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS territory_image_candidates (
     candidate_id TEXT PRIMARY KEY NOT NULL,
     provider_profile_id TEXT NOT NULL,
@@ -174,6 +217,7 @@ export const CURRENT_SCHEMA_SQL = `
     ),
     operation TEXT NOT NULL CHECK (operation IN ('generate', 'edit')),
     source_candidate_id TEXT REFERENCES territory_image_candidates(candidate_id),
+    item_candidate_id TEXT REFERENCES territory_item_candidates(candidate_id),
     request_json TEXT NOT NULL CHECK (json_valid(request_json)),
     status TEXT NOT NULL CHECK (
       status IN ('generating', 'ready', 'failed', 'accepted')
@@ -199,6 +243,9 @@ export const CURRENT_SCHEMA_SQL = `
       )
     )
   ) STRICT;
+
+  CREATE INDEX IF NOT EXISTS territory_placements_scene_age_idx
+    ON territory_placements(location, scene_id, pinned, placed_at, item_id);
 
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY NOT NULL,

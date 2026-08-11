@@ -100,6 +100,7 @@ import {
 import {
   type TerritoryApi,
   type TerritoryCollectItemRequest,
+  type TerritoryCreateSourceCandidateRequest,
   type TerritoryEditImageRequest,
   type TerritoryGenerateImageRequest,
   type TerritoryImageCandidateIdRequest,
@@ -107,6 +108,8 @@ import {
   type TerritoryMovePetRequest,
   type TerritoryPlaceItemRequest,
   type TerritorySelectSceneRequest,
+  type TerritorySelectItemVersionRequest,
+  type TerritorySetItemPinnedRequest,
 } from "../shared/contracts/territory";
 import {
   ChatCreateRequestSchema,
@@ -223,6 +226,7 @@ import {
 } from "../shared/schemas/provider";
 import {
   TerritoryCollectItemRequestSchema,
+  TerritoryCreateSourceCandidateRequestSchema,
   TerritoryEditImageRequestSchema,
   TerritoryGenerateImageRequestSchema,
   TerritoryImageCandidateIdRequestSchema,
@@ -231,7 +235,10 @@ import {
   TerritoryMoveResponseSchema,
   TerritoryPlaceItemRequestSchema,
   TerritorySelectSceneRequestSchema,
+  TerritorySelectItemVersionRequestSchema,
+  TerritorySetItemPinnedRequestSchema,
   TerritorySnapshotResponseSchema,
+  TerritorySourceCandidateMutationResponseSchema,
 } from "../shared/schemas/territory";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
 import { createVoiceApi } from "./voiceApi";
@@ -743,6 +750,17 @@ const territoryApi: TerritoryApi = Object.freeze({
         ),
       ),
     ),
+  createSourceCandidate: async (input: TerritoryCreateSourceCandidateRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritorySourceCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.createSourceCandidate,
+        parseSchemaWithoutCodeGeneration(
+          TerritoryCreateSourceCandidateRequestSchema,
+          input,
+        ),
+      ),
+    ),
   editImageCandidate: async (input: TerritoryEditImageRequest) =>
     parseSchemaWithoutCodeGeneration(
       TerritoryImageMutationResponseSchema,
@@ -807,6 +825,28 @@ const territoryApi: TerritoryApi = Object.freeze({
         TERRITORY_CHANNELS.selectScene,
         parseSchemaWithoutCodeGeneration(
           TerritorySelectSceneRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  selectItemVersion: async (input: TerritorySelectItemVersionRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritorySnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.selectItemVersion,
+        parseSchemaWithoutCodeGeneration(
+          TerritorySelectItemVersionRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  setItemPinned: async (input: TerritorySetItemPinnedRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritorySnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_CHANNELS.setItemPinned,
+        parseSchemaWithoutCodeGeneration(
+          TerritorySetItemPinnedRequestSchema,
           input,
         ),
       ),

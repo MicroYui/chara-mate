@@ -12,6 +12,7 @@ const candidate: TerritoryImageCandidate = {
   editInstruction: null,
   error: null,
   id: "5bc2c1bc-3dbe-49cd-964d-e0f60891f501",
+  itemCandidateId: null,
   name: "长夜台灯",
   operation: "generate",
   providerProfileId: "d0197d17-a231-41e0-afe2-664791a531ec",

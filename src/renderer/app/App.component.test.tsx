@@ -352,6 +352,7 @@ function renderApp({
         value: emptyTerritorySnapshot,
       }),
       confirmImageCandidate: vi.fn(),
+      createSourceCandidate: vi.fn(),
       editImageCandidate: vi.fn(),
       generateImageCandidate: vi.fn(),
       getSnapshot: vi.fn().mockResolvedValue({
@@ -368,6 +369,8 @@ function renderApp({
         ok: true,
         value: emptyTerritorySnapshot,
       }),
+      selectItemVersion: vi.fn(),
+      setItemPinned: vi.fn(),
     },
     settings: {
       getSnapshot: vi.fn().mockResolvedValue({

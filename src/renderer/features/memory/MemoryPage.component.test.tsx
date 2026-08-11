@@ -14,6 +14,7 @@ import type {
   MemoryHit,
   MemorySnapshot,
 } from "../../../shared/contracts/memory";
+import { emptyTerritorySnapshot } from "../../../../tests/fixtures/territory";
 import { MemoryPage } from "./MemoryPage";
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -134,6 +135,38 @@ function makeApi() {
 }
 
 describe("MemoryPage", () => {
+  it("creates an idempotent Territory candidate from the selected Memory", async () => {
+    const { api } = makeApi();
+    const territoryCandidateId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const createSourceCandidate = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        candidateId: territoryCandidateId,
+        snapshot: emptyTerritorySnapshot,
+      },
+    });
+    const onOpenTerritory = vi.fn();
+    render(
+      <MemoryPage
+        api={api}
+        onOpenTerritory={onOpenTerritory}
+        territoryApi={{ createSourceCandidate }}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /用户偏爱安静且有插座/u }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "放入领地" }));
+
+    await waitFor(() =>
+      expect(createSourceCandidate).toHaveBeenCalledWith({
+        source: { kind: "memory", memoryId: MEMORY_ID },
+      }),
+    );
+    expect(onOpenTerritory).toHaveBeenCalledWith(territoryCandidateId);
+  });
+
   it("shows candidates, unified results and revision details", async () => {
     const { acceptCandidate, api, revise } = makeApi();
     render(<MemoryPage api={api} onOpenTerritory={() => undefined} />);
@@ -403,7 +436,7 @@ describe("MemoryPage", () => {
       }),
     ).toBeVisible();
     expect(screen.getByLabelText("编辑记忆内容")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "领地" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "放入领地" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "新记忆" })).toBeDisabled();
     expect(screen.queryByText(hit.revision.content)).not.toBeInTheDocument();
     expect(

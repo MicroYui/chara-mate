@@ -9,6 +9,7 @@ import type {
   TerritoryApi,
   TerritoryImageCandidate,
   TerritoryImageMutationResponse,
+  TerritoryItemCandidate,
   TerritorySceneId,
   TerritorySnapshot,
 } from "../../../shared/contracts/territory";
@@ -18,6 +19,7 @@ import styles from "./TerritoryPage.module.css";
 interface TerritoryImagePanelProps {
   readonly api: TerritoryApi;
   readonly candidates: readonly TerritoryImageCandidate[];
+  readonly itemCandidate?: TerritoryItemCandidate;
   readonly onAccepted: () => void;
   readonly onClose: () => void;
   readonly onSnapshot: (snapshot: TerritorySnapshot) => void;
@@ -45,6 +47,7 @@ function usableImageProfiles(profiles: readonly ProviderProfile[]) {
 export function TerritoryImagePanel({
   api,
   candidates,
+  itemCandidate,
   onAccepted,
   onClose,
   onSnapshot,
@@ -53,14 +56,21 @@ export function TerritoryImagePanel({
 }: TerritoryImagePanelProps) {
   const [profiles, setProfiles] = useState<ProviderProfile[]>([]);
   const [profileId, setProfileId] = useState("");
+  const [candidateContext, setCandidateContext] = useState(itemCandidate);
   const [selectedId, setSelectedId] = useState<string | null>(
-    candidates.find(({ status }) => status !== "accepted")?.id ??
-      candidates[0]?.id ??
-      null,
+    candidateContext
+      ? null
+      : (candidates.find(({ status }) => status !== "accepted")?.id ??
+          candidates[0]?.id ??
+          null),
   );
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [visualPrompt, setVisualPrompt] = useState("");
+  const [name, setName] = useState(candidateContext?.name ?? "");
+  const [description, setDescription] = useState(
+    candidateContext?.description ?? "",
+  );
+  const [visualPrompt, setVisualPrompt] = useState(
+    candidateContext?.visualPrompt ?? "",
+  );
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +103,7 @@ export function TerritoryImagePanel({
   );
 
   const startNewCandidate = () => {
+    setCandidateContext(undefined);
     setSelectedId(null);
     setName("");
     setDescription("");
@@ -133,6 +144,7 @@ export function TerritoryImagePanel({
     void applyMutation(() =>
       api.generateImageCandidate({
         description,
+        ...(candidateContext ? { itemCandidateId: candidateContext.id } : {}),
         name,
         providerProfileId: profileId,
         sceneId,
@@ -172,6 +184,18 @@ export function TerritoryImagePanel({
         </button>
       </header>
 
+      {candidateContext ? (
+        <section className={styles["memoryCandidateContext"]}>
+          <span>
+            {candidateContext.status === "materialized"
+              ? "为这段记忆生成新版本"
+              : "来自记忆收藏候选"}
+          </span>
+          <strong>{candidateContext.name}</strong>
+          <p>{candidateContext.sources[0]?.label}</p>
+        </section>
+      ) : null}
+
       {candidates.length ? (
         <div className={styles["candidateHistory"]}>
           <label>
@@ -179,8 +203,10 @@ export function TerritoryImagePanel({
             <select
               value={selectedId ?? ""}
               onChange={(event) => {
-                if (event.target.value) setSelectedId(event.target.value);
-                else startNewCandidate();
+                if (event.target.value) {
+                  setCandidateContext(undefined);
+                  setSelectedId(event.target.value);
+                } else startNewCandidate();
               }}
             >
               <option value="">新物件</option>

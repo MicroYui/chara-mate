@@ -1,10 +1,14 @@
 import {
   Archive,
+  BookOpen,
   FlipHorizontal2,
   Grid3X3,
+  History,
   ImagePlus,
   Map,
   PackageOpen,
+  Pin,
+  PinOff,
   RotateCw,
   Sparkles,
   X,
@@ -25,6 +29,7 @@ import type { ProviderApi } from "../../../shared/contracts/provider";
 import type {
   TerritoryApi,
   TerritoryItem,
+  TerritoryItemCandidate,
   TerritoryPoint,
   TerritoryRotation,
   TerritorySceneTarget,
@@ -50,7 +55,18 @@ interface TerritoryPageProps {
   readonly activePet: PetDescriptor | undefined;
   readonly animationSpeed: number;
   readonly api?: TerritoryApi;
+  readonly focusCandidateId?: string;
+  readonly onFocusConsumed?: () => void;
+  readonly onOpenMemorySource?: (memoryId: string) => void;
   readonly providerApi?: Pick<ProviderApi, "listProfiles">;
+}
+
+function dateLabel(timestamp: string): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(timestamp));
 }
 
 function scenePreviewStyle(scene: TerritorySceneSummary): CSSProperties {
@@ -161,6 +177,14 @@ function itemKindLabel(item: TerritoryItem): string {
   return item.manifest.placement.mode === "surface" ? "桌面小物" : "场景物件";
 }
 
+function itemFormationTimestamp(item: TerritoryItem): string {
+  return item.versions.reduce(
+    (earliest, version) =>
+      version.createdAt < earliest ? version.createdAt : earliest,
+    item.versions[0]?.createdAt ?? item.updatedAt,
+  );
+}
+
 function ItemSwatch({ item }: { readonly item: TerritoryItem }) {
   const source = item.manifest.visual.source;
   return (
@@ -185,6 +209,9 @@ export function TerritoryPage({
   activePet,
   animationSpeed,
   api = window.charaMate.territory,
+  focusCandidateId,
+  onFocusConsumed,
+  onOpenMemorySource,
   providerApi,
 }: TerritoryPageProps) {
   const [snapshot, setSnapshot] = useState<TerritorySnapshot | null>(null);
@@ -193,8 +220,13 @@ export function TerritoryPage({
   const [mode, setMode] = useState<"edit" | "explore">("explore");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [scenePickerOpen, setScenePickerOpen] = useState(false);
-  const [imagePanelOpen, setImagePanelOpen] = useState(false);
+  const [imagePanelOpen, setImagePanelOpen] = useState(
+    Boolean(focusCandidateId),
+  );
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedItemCandidateId, setSelectedItemCandidateId] = useState<
+    string | null
+  >(focusCandidateId ?? null);
   const [selectedTransform, setSelectedTransform] = useState<ItemTransform>({
     flipped: false,
     rotation: 0,
@@ -228,6 +260,16 @@ export function TerritoryPage({
     () => (snapshot ? findItem(snapshot, selectedItemId) : null),
     [selectedItemId, snapshot],
   );
+  const selectedItemCandidate = useMemo<TerritoryItemCandidate | undefined>(
+    () =>
+      snapshot?.itemCandidates.find(({ id }) => id === selectedItemCandidateId),
+    [selectedItemCandidateId, snapshot?.itemCandidates],
+  );
+
+  useEffect(() => {
+    if (!focusCandidateId || !snapshot) return;
+    onFocusConsumed?.();
+  }, [focusCandidateId, onFocusConsumed, snapshot]);
 
   const selectItem = useCallback(
     (itemId: string | null) => {
@@ -397,6 +439,49 @@ export function TerritoryPage({
     }
   };
 
+  const setItemPinned = async (item: TerritoryItem) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await api.setItemPinned({
+        itemId: item.id,
+        pinned: !item.pinned,
+      });
+      if (response.ok) setSnapshot(response.value);
+      else setError(response.error.message);
+    } catch {
+      setError("无法更新物件置顶状态，请重试。");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const selectItemVersion = async (itemId: string, revision: number) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await api.selectItemVersion({ itemId, revision });
+      if (response.ok) setSnapshot(response.value);
+      else setError(response.error.message);
+    } catch {
+      setError("无法切换这个物件版本，请重试。");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const openItemCandidate = (candidate: TerritoryItemCandidate) => {
+    setSelectedItemCandidateId(candidate.id);
+    setDrawerOpen(false);
+    setImagePanelOpen(true);
+  };
+
   const transformSelected = (transform: ItemTransform) => {
     if (!selectedItem) return;
     setSelectedTransform(transform);
@@ -487,6 +572,7 @@ export function TerritoryPage({
             type="button"
             onClick={() => {
               setDrawerOpen(false);
+              setSelectedItemCandidateId(null);
               setImagePanelOpen((open) => !open);
             }}
           >
@@ -563,60 +649,127 @@ export function TerritoryPage({
                     : "脚点碰撞物件"}
                 </small>
               )}
+              <small>
+                形成于 {dateLabel(itemFormationTimestamp(selectedItem))}
+              </small>
             </div>
-            {mode === "edit" ? (
-              <div className={styles["itemActions"]}>
-                {selectedItem.manifest.transforms.rotations.length > 1 ? (
-                  <button
-                    disabled={busy}
-                    type="button"
-                    onClick={() =>
-                      transformSelected({
-                        ...selectedTransform,
-                        rotation: nextRotation(
-                          selectedItem,
-                          selectedTransform.rotation,
-                        ),
-                      })
-                    }
-                  >
-                    <RotateCw aria-hidden="true" size={14} />
-                    旋转
-                  </button>
-                ) : null}
-                {selectedItem.manifest.transforms.flippable ? (
-                  <button
-                    disabled={busy}
-                    type="button"
-                    onClick={() =>
-                      transformSelected({
-                        ...selectedTransform,
-                        flipped: !selectedTransform.flipped,
-                      })
-                    }
-                  >
-                    <FlipHorizontal2 aria-hidden="true" size={14} />
-                    翻转
-                  </button>
-                ) : null}
-                {selectedItem.target.kind !== "collection" ? (
-                  <button
-                    disabled={busy}
-                    type="button"
-                    onClick={() => void collectItem(selectedItem)}
-                  >
-                    <Archive aria-hidden="true" size={14} />
-                    收回
-                  </button>
-                ) : (
-                  <span>
-                    {selectedItem.manifest.placement.mode === "surface"
-                      ? "点击场景中发光的桌面插槽"
-                      : "选择高亮网格即可放入场景"}
-                  </span>
-                )}
-              </div>
+            {selectedItem.sources.length ? (
+              <section className={styles["itemSources"]}>
+                {selectedItem.sources.map((source) => (
+                  <div key={`${source.kind}:${source.id}`}>
+                    <span>
+                      <small>
+                        {source.kind === "memory"
+                          ? "Memory 来源"
+                          : "Activity 趋势"}
+                        {" · "}
+                        {dateLabel(source.occurredAt)}
+                      </small>
+                      <strong>{source.label}</strong>
+                    </span>
+                    {source.kind === "memory" && onOpenMemorySource ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenMemorySource(source.id)}
+                      >
+                        <BookOpen aria-hidden="true" size={12} />在 Memory
+                        中查看
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </section>
             ) : null}
+            <div className={styles["itemActions"]}>
+              <button
+                disabled={busy}
+                type="button"
+                onClick={() => void setItemPinned(selectedItem)}
+              >
+                {selectedItem.pinned ? (
+                  <PinOff aria-hidden="true" size={14} />
+                ) : (
+                  <Pin aria-hidden="true" size={14} />
+                )}
+                {selectedItem.pinned ? "取消置顶" : "置顶"}
+              </button>
+              {selectedItem.versions.length > 1 ? (
+                <label className={styles["itemVersion"]}>
+                  <History aria-hidden="true" size={13} />
+                  <span>版本</span>
+                  <select
+                    aria-label="物件版本"
+                    disabled={busy}
+                    value={selectedItem.manifest.revision}
+                    onChange={(event) =>
+                      void selectItemVersion(
+                        selectedItem.id,
+                        Number(event.currentTarget.value),
+                      )
+                    }
+                  >
+                    {selectedItem.versions.map((version) => (
+                      <option key={version.revision} value={version.revision}>
+                        v{version.revision} · {dateLabel(version.createdAt)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {mode === "edit" ? (
+                <>
+                  {selectedItem.manifest.transforms.rotations.length > 1 ? (
+                    <button
+                      disabled={busy}
+                      type="button"
+                      onClick={() =>
+                        transformSelected({
+                          ...selectedTransform,
+                          rotation: nextRotation(
+                            selectedItem,
+                            selectedTransform.rotation,
+                          ),
+                        })
+                      }
+                    >
+                      <RotateCw aria-hidden="true" size={14} />
+                      旋转
+                    </button>
+                  ) : null}
+                  {selectedItem.manifest.transforms.flippable ? (
+                    <button
+                      disabled={busy}
+                      type="button"
+                      onClick={() =>
+                        transformSelected({
+                          ...selectedTransform,
+                          flipped: !selectedTransform.flipped,
+                        })
+                      }
+                    >
+                      <FlipHorizontal2 aria-hidden="true" size={14} />
+                      翻转
+                    </button>
+                  ) : null}
+                  {selectedItem.target.kind !== "collection" ? (
+                    <button
+                      disabled={busy}
+                      type="button"
+                      onClick={() => void collectItem(selectedItem)}
+                    >
+                      <Archive aria-hidden="true" size={14} />
+                      收回
+                    </button>
+                  ) : (
+                    <span>
+                      {selectedItem.manifest.placement.mode === "surface"
+                        ? "点击场景中发光的桌面插槽"
+                        : "选择高亮网格即可放入场景"}
+                    </span>
+                  )}
+                </>
+              ) : null}
+            </div>
           </article>
         ) : null}
 
@@ -624,12 +777,19 @@ export function TerritoryPage({
           <TerritoryImagePanel
             api={api}
             candidates={snapshot.imageCandidates}
+            {...(selectedItemCandidate
+              ? { itemCandidate: selectedItemCandidate }
+              : {})}
             onAccepted={() => {
               setImagePanelOpen(false);
+              setSelectedItemCandidateId(null);
               setMode("edit");
               setDrawerOpen(true);
             }}
-            onClose={() => setImagePanelOpen(false)}
+            onClose={() => {
+              setImagePanelOpen(false);
+              setSelectedItemCandidateId(null);
+            }}
             onSnapshot={setSnapshot}
             providerApi={providerApi ?? window.charaMate.provider}
             sceneId={activeScene.definition.id}
@@ -641,7 +801,10 @@ export function TerritoryPage({
             <header>
               <span>
                 <strong>收藏库</strong>
-                <small>拖动地面物件，或把小物放到发光的桌面插槽。</small>
+                <small>
+                  场景 {activeScene.placements.length}/{activeScene.capacity} ·
+                  超出后最早且未置顶的物件会自动收回
+                </small>
               </span>
               <button
                 type="button"
@@ -651,6 +814,34 @@ export function TerritoryPage({
                 <X aria-hidden="true" size={16} />
               </button>
             </header>
+            {snapshot.itemCandidates.length ? (
+              <section>
+                <h3>记忆候选</h3>
+                <div className={styles["itemList"]}>
+                  {snapshot.itemCandidates.map((candidate) => (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      onClick={() => openItemCandidate(candidate)}
+                    >
+                      <span className={styles["memoryCandidateSwatch"]}>
+                        <BookOpen aria-hidden="true" size={17} />
+                      </span>
+                      <span>
+                        <strong>{candidate.name}</strong>
+                        <small>
+                          {candidate.status === "materialized"
+                            ? "已有物件 · 生成新版本"
+                            : "等待生成"}
+                          {" · "}
+                          {candidate.sources[0]?.label}
+                        </small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
             <section>
               <h3>场景中</h3>
               <div className={styles["itemList"]}>

@@ -221,13 +221,16 @@ test("launches through the typed preload boundary", async () => {
       territoryKeys: [
         "collectItem",
         "confirmImageCandidate",
+        "createSourceCandidate",
         "editImageCandidate",
         "generateImageCandidate",
         "getSnapshot",
         "movePet",
         "placeItem",
         "retryImageCandidate",
+        "selectItemVersion",
         "selectScene",
+        "setItemPinned",
       ],
       voiceKeys: [
         "end",

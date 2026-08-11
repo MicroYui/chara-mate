@@ -266,6 +266,7 @@ Manifest 在运行前冻结并计算 hash。结果只引用该 hash，防止实�
 | `MEMORY-FORMATION` | §8.6 | Chat/Agent 使用期形成、修订或候选化 Memory 的唯一流程 |
 | `ACTIVITY-DISTILLATION` | §9 | 唯一 Episode/Digest/候选生成流程 |
 | `ACTIVITY-RETENTION` | §9 | 唯一保留、容量与清理策略 |
+| `TERRITORY-CAPACITY` | 产品设计 §10.6 | 唯一同屏物件容量与超限回收规则 |
 | `SELF-EVOLUTION` | §10 | 唯一触发、候选与 Skill 生效流程 |
 | `VOICE-ARCHITECTURE` | §12.3 | 唯一语音/Agent 组织方式 |
 | `VOICE-TRANSPORT` | §12.4 | 唯一媒体 Transport |

@@ -114,6 +114,7 @@ import { TerritoryCandidateStore } from "./territory/territoryCandidateStore";
 import { ElectronTerritoryCandidateProcessor } from "./territory/electronTerritoryCandidateProcessor";
 import { ElectronTerritoryImageNormalizer } from "./territory/electronTerritoryImageNormalizer";
 import { TerritoryImageService } from "./territory/territoryImageService";
+import { TerritoryMemoryService } from "./territory/territoryMemoryService";
 import { registerTerritoryProtocol } from "./territory/territoryProtocol";
 import { TerritoryRepository } from "./territory/territoryRepository";
 import { TerritoryService } from "./territory/territoryService";
@@ -594,6 +595,14 @@ async function startApplication(): Promise<void> {
     idGenerator,
     clock,
   );
+  const territoryMemoryService = new TerritoryMemoryService(
+    territoryRepository,
+    territoryService,
+    memoryServiceInstance,
+    activityService,
+    idGenerator,
+    clock,
+  );
   territoryImageService.recoverInterruptedCandidates();
   registerTerritoryTools(toolRegistry, {
     images: territoryImageService,
@@ -608,6 +617,7 @@ async function startApplication(): Promise<void> {
   unregisterTerritoryIpc = registerTerritoryIpc(
     territoryService,
     territoryImageService,
+    territoryMemoryService,
   );
 
   const writer = new RunEventWriter(

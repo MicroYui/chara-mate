@@ -3,6 +3,7 @@ import { ipcMain } from "electron";
 import { TERRITORY_CHANNELS } from "../../shared/contracts/territory";
 import {
   TerritoryCollectItemRequestSchema,
+  TerritoryCreateSourceCandidateRequestSchema,
   TerritoryEditImageRequestSchema,
   TerritoryEmptyRequestSchema,
   TerritoryGenerateImageRequestSchema,
@@ -12,16 +13,21 @@ import {
   TerritoryMoveResponseSchema,
   TerritoryPlaceItemRequestSchema,
   TerritorySelectSceneRequestSchema,
+  TerritorySelectItemVersionRequestSchema,
+  TerritorySetItemPinnedRequestSchema,
   TerritorySnapshotResponseSchema,
+  TerritorySourceCandidateMutationResponseSchema,
 } from "../../shared/schemas/territory";
 import { parseSchema } from "../../shared/schemas/validation";
 import { toTerritoryAppError } from "./territoryError";
 import type { TerritoryImageService } from "./territoryImageService";
+import type { TerritoryMemoryService } from "./territoryMemoryService";
 import type { TerritoryService } from "./territoryService";
 
 export function registerTerritoryIpc(
   service: TerritoryService,
   images: TerritoryImageService,
+  memory: TerritoryMemoryService,
 ): () => void {
   ipcMain.handle(TERRITORY_CHANNELS.getSnapshot, (_event, input) => {
     try {
@@ -92,6 +98,57 @@ export function registerTerritoryIpc(
       });
     } catch (error) {
       return parseSchema(TerritorySnapshotResponseSchema, {
+        error: toTerritoryAppError(error),
+        ok: false,
+      });
+    }
+  });
+
+  ipcMain.handle(TERRITORY_CHANNELS.setItemPinned, (_event, input) => {
+    try {
+      const request = parseSchema(TerritorySetItemPinnedRequestSchema, input);
+      return parseSchema(TerritorySnapshotResponseSchema, {
+        ok: true,
+        value: service.setItemPinned(request),
+      });
+    } catch (error) {
+      return parseSchema(TerritorySnapshotResponseSchema, {
+        error: toTerritoryAppError(error),
+        ok: false,
+      });
+    }
+  });
+
+  ipcMain.handle(TERRITORY_CHANNELS.selectItemVersion, (_event, input) => {
+    try {
+      const request = parseSchema(
+        TerritorySelectItemVersionRequestSchema,
+        input,
+      );
+      return parseSchema(TerritorySnapshotResponseSchema, {
+        ok: true,
+        value: service.selectItemVersion(request),
+      });
+    } catch (error) {
+      return parseSchema(TerritorySnapshotResponseSchema, {
+        error: toTerritoryAppError(error),
+        ok: false,
+      });
+    }
+  });
+
+  ipcMain.handle(TERRITORY_CHANNELS.createSourceCandidate, (_event, input) => {
+    try {
+      const request = parseSchema(
+        TerritoryCreateSourceCandidateRequestSchema,
+        input,
+      );
+      return parseSchema(TerritorySourceCandidateMutationResponseSchema, {
+        ok: true,
+        value: memory.createSourceCandidate(request),
+      });
+    } catch (error) {
+      return parseSchema(TerritorySourceCandidateMutationResponseSchema, {
         error: toTerritoryAppError(error),
         ok: false,
       });

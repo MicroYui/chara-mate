@@ -11,6 +11,7 @@ import type {
   ActivityApi,
   ActivitySnapshot,
 } from "../../../shared/contracts/activity";
+import { emptyTerritorySnapshot } from "../../../../tests/fixtures/territory";
 import { ActivityPage } from "./ActivityPage";
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -71,6 +72,41 @@ const snapshot: ActivitySnapshot = {
 afterEach(cleanup);
 
 describe("ActivityPage", () => {
+  it("turns a period digest into a Territory candidate", async () => {
+    const api: ActivityApi = {
+      cleanup: vi.fn(),
+      deleteEpisode: vi.fn(),
+      getEpisode: vi.fn(),
+      getSnapshot: vi.fn().mockResolvedValue({ ok: true, value: snapshot }),
+      setPaused: vi.fn(),
+      updateEpisode: vi.fn(),
+    };
+    const territoryCandidateId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const createSourceCandidate = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        candidateId: territoryCandidateId,
+        snapshot: emptyTerritorySnapshot,
+      },
+    });
+    const onOpenTerritory = vi.fn();
+    render(
+      <ActivityPage
+        api={api}
+        onOpenTerritory={onOpenTerritory}
+        territoryApi={{ createSourceCandidate }}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "放入领地" }));
+    await waitFor(() =>
+      expect(createSourceCandidate).toHaveBeenCalledWith({
+        source: { digestId: DIGEST_ID, kind: "activity_digest" },
+      }),
+    );
+    expect(onOpenTerritory).toHaveBeenCalledWith(territoryCandidateId);
+  });
+
   it("shows distilled activity and keeps pause, edit and cleanup explicit", async () => {
     const setPaused = vi.fn<ActivityApi["setPaused"]>().mockResolvedValue({
       ok: true,

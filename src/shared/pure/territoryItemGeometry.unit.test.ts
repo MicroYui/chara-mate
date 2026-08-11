@@ -182,6 +182,7 @@ describe("Territory 2.5D item geometry", () => {
       pinned: false,
       placedAt: timestamp,
       rotation: 0 as const,
+      sources: [],
       target: {
         kind: "ground" as const,
         sceneId: "forest-cabin" as const,
@@ -189,6 +190,14 @@ describe("Territory 2.5D item geometry", () => {
         y: 4,
       },
       updatedAt: timestamp,
+      versions: [
+        {
+          active: true,
+          createdAt: timestamp,
+          manifest: territoryDeskManifest,
+          revision: 1,
+        },
+      ],
     };
     const cup = {
       flipped: false,
@@ -197,8 +206,17 @@ describe("Territory 2.5D item geometry", () => {
       pinned: false,
       placedAt: null,
       rotation: 0 as const,
+      sources: [],
       target: { kind: "collection" as const },
       updatedAt: timestamp,
+      versions: [
+        {
+          active: true,
+          createdAt: timestamp,
+          manifest: territoryCupManifest,
+          revision: 1,
+        },
+      ],
     };
     const target = {
       kind: "surface" as const,
