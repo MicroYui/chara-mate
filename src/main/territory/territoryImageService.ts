@@ -17,7 +17,9 @@ import type { TerritoryImageProvider } from "../providers/azureImageProvider";
 import { ProviderError, toProviderAppError } from "../providers/providerError";
 import {
   createGeneratedTerritoryItemManifest,
+  generatedStructureFromManifest,
   generatedTerritoryItemId,
+  memoryTerritoryItemId,
 } from "./territoryGeneratedItem";
 import { TerritoryError } from "./territoryError";
 import { buildTerritoryImagePrompt } from "./territoryImagePrompt";
@@ -72,6 +74,35 @@ export class TerritoryImageService {
   ): Promise<TerritoryImageMutationResult> {
     const request = parseSchema(TerritoryGenerateImageRequestSchema, input);
     const now = this.clock.now();
+    const itemCandidate = request.itemCandidateId
+      ? this.repository.getItemCandidate(request.itemCandidateId)
+      : undefined;
+    if (request.itemCandidateId && !itemCandidate) {
+      throw new TerritoryError(
+        "TERRITORY.CANDIDATE_NOT_FOUND",
+        "找不到这个记忆物件候选。",
+        false,
+      );
+    }
+    let structure = request.structure ?? null;
+    if (itemCandidate?.itemId) {
+      if (request.structure) {
+        throw new TerritoryError(
+          "TERRITORY.INVALID_CANDIDATE_STATE",
+          "已有记忆物件的新版本会沿用原有尺寸、占地和插槽。",
+          false,
+        );
+      }
+      const item = this.repository.getItem(itemCandidate.itemId);
+      if (!item) {
+        throw new TerritoryError(
+          "TERRITORY.INVALID_CANDIDATE_STATE",
+          "记忆候选对应的领地物件不存在。",
+          false,
+        );
+      }
+      structure = generatedStructureFromManifest(item.manifest);
+    }
     const candidate: TerritoryImageCandidate = {
       acceptedItemId: null,
       createdAt: now,
@@ -79,13 +110,15 @@ export class TerritoryImageService {
       editInstruction: null,
       error: null,
       id: this.ids.generate(),
+      itemCandidateId: request.itemCandidateId ?? null,
       name: request.name.trim(),
       operation: "generate",
       providerProfileId: request.providerProfileId,
       sceneId: request.sceneId,
       sourceCandidateId: null,
+      sourceSnapshots: itemCandidate?.sources ?? [],
       status: "generating",
-      structure: request.structure ?? null,
+      structure,
       updatedAt: now,
       visualPrompt: request.visualPrompt.trim(),
     };
@@ -115,11 +148,13 @@ export class TerritoryImageService {
       editInstruction: request.instruction.trim(),
       error: null,
       id: this.ids.generate(),
+      itemCandidateId: source.itemCandidateId,
       name: source.name,
       operation: "edit",
       providerProfileId: source.providerProfileId,
       sceneId: source.sceneId,
       sourceCandidateId: source.id,
+      sourceSnapshots: source.sourceSnapshots ?? [],
       status: "generating",
       structure: source.structure,
       updatedAt: now,
@@ -144,7 +179,6 @@ export class TerritoryImageService {
   ): Promise<TerritoryImageMutationResult> {
     const request = parseSchema(TerritoryImageCandidateIdRequestSchema, input);
     const candidate = this.requireCandidate(request.candidateId);
-    const itemId = generatedTerritoryItemId(candidate.id);
     if (candidate.status === "accepted") {
       return {
         candidateId: candidate.id,
@@ -159,9 +193,22 @@ export class TerritoryImageService {
       );
     }
 
+    const root = this.rootCandidate(candidate);
+    const itemId = candidate.itemCandidateId
+      ? memoryTerritoryItemId(candidate.itemCandidateId)
+      : generatedTerritoryItemId(root.id);
+    const assetId = generatedTerritoryItemId(candidate.id);
+    const revision =
+      this.repository.findDefinitionRevisionByAsset(itemId, assetId) ??
+      this.repository.nextDefinitionRevision(itemId);
+
     await this.territory.installGeneratedItem({
       itemId,
-      manifest: createGeneratedTerritoryItemManifest(candidate),
+      manifest: createGeneratedTerritoryItemManifest(candidate, {
+        assetId,
+        definitionId: itemId,
+        revision,
+      }),
       sourceImagePath: await this.images.resolve(candidate.id),
     });
     this.repository.acceptImageCandidate(
@@ -231,5 +278,24 @@ export class TerritoryImageService {
       );
     }
     return candidate;
+  }
+
+  private rootCandidate(
+    candidate: TerritoryImageCandidate,
+  ): TerritoryImageCandidate {
+    let root = candidate;
+    const visited = new Set<string>();
+    while (root.sourceCandidateId) {
+      if (visited.has(root.id)) {
+        throw new TerritoryError(
+          "TERRITORY.INVALID_CANDIDATE_STATE",
+          "图片候选版本链存在循环。",
+          false,
+        );
+      }
+      visited.add(root.id);
+      root = this.requireCandidate(root.sourceCandidateId);
+    }
+    return root;
   }
 }

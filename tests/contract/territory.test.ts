@@ -2,14 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   TerritoryEditImageRequestSchema,
+  TerritoryCreateSourceCandidateRequestSchema,
   TerritoryGenerateImageRequestSchema,
   TerritoryImageMutationResponseSchema,
   TerritoryInstallGeneratedItemInputSchema,
   TerritoryMovePetRequestSchema,
   TerritoryMoveResponseSchema,
   TerritoryPlaceItemRequestSchema,
+  TerritorySelectItemVersionRequestSchema,
+  TerritorySetItemPinnedRequestSchema,
   TerritorySnapshotResponseSchema,
   TerritorySnapshotSchema,
+  TerritorySourceCandidateMutationResponseSchema,
 } from "../../src/shared/schemas/territory";
 import { parseSchema } from "../../src/shared/schemas/validation";
 import { parseSchemaWithoutCodeGeneration } from "../../src/shared/schemas/valueValidation";
@@ -77,9 +81,11 @@ describe("Territory IPC contracts", () => {
         manifest: { visual: { source: { kind: "asset" } } },
       });
       const candidateId = "61e0b15d-a46d-4268-9a2c-6c4bd271a627";
+      const itemCandidateId = "6b90bf76-893b-47dc-b9ea-913d0c25c5e6";
       expect(
         parse(TerritoryGenerateImageRequestSchema, {
           description: "留一盏灯，纪念完成项目的夜晚。",
+          itemCandidateId,
           name: "长夜台灯",
           providerProfileId: "d0197d17-a231-41e0-afe2-664791a531ec",
           sceneId: "forest-cabin",
@@ -99,12 +105,33 @@ describe("Territory IPC contracts", () => {
         }),
       ).toMatchObject({
         name: "长夜台灯",
+        itemCandidateId,
         structure: {
           footprintTiles: { height: 2, width: 3 },
           surfaceSlots: [{ id: "center" }],
           visualSizePx: { height: 120, width: 144 },
         },
       });
+      expect(
+        parse(TerritoryCreateSourceCandidateRequestSchema, {
+          source: {
+            kind: "memory",
+            memoryId: "17bd6914-d46b-44ee-9776-c0aa07ae91cd",
+          },
+        }),
+      ).toMatchObject({ source: { kind: "memory" } });
+      expect(
+        parse(TerritorySetItemPinnedRequestSchema, {
+          itemId: `memory.${itemCandidateId}`,
+          pinned: true,
+        }),
+      ).toMatchObject({ pinned: true });
+      expect(
+        parse(TerritorySelectItemVersionRequestSchema, {
+          itemId: `memory.${itemCandidateId}`,
+          revision: 2,
+        }),
+      ).toMatchObject({ revision: 2 });
       expect(
         parse(TerritoryEditImageRequestSchema, {
           candidateId,
@@ -119,6 +146,15 @@ describe("Territory IPC contracts", () => {
           ok: true,
           value: {
             candidateId,
+            snapshot: activeTerritorySnapshot,
+          },
+        }),
+      ).toMatchObject({ ok: true });
+      expect(
+        parse(TerritorySourceCandidateMutationResponseSchema, {
+          ok: true,
+          value: {
+            candidateId: itemCandidateId,
             snapshot: activeTerritorySnapshot,
           },
         }),
@@ -167,6 +203,17 @@ describe("Territory IPC contracts", () => {
             x: 1,
             y: 1,
           },
+        }),
+      ).toThrow();
+      expect(() =>
+        parse(TerritoryCreateSourceCandidateRequestSchema, {
+          source: { kind: "memory", memoryId: "not-a-memory-id" },
+        }),
+      ).toThrow();
+      expect(() =>
+        parse(TerritorySelectItemVersionRequestSchema, {
+          itemId: "memory.valid-id",
+          revision: 0,
         }),
       ).toThrow();
       expect(() =>

@@ -7,6 +7,8 @@ import type {
   TerritoryPlaceItemRequest,
   TerritorySceneId,
   TerritorySelectSceneRequest,
+  TerritorySelectItemVersionRequest,
+  TerritorySetItemPinnedRequest,
   TerritorySnapshot,
 } from "../../shared/contracts/territory";
 import type { TerritoryItemManifestV1 } from "../../shared/contracts/territoryItemManifest";
@@ -22,7 +24,11 @@ import {
 } from "../../shared/pure/territoryGrid";
 import { TerritoryInstallGeneratedItemInputSchema } from "../../shared/schemas/territory";
 import { parseSchema } from "../../shared/schemas/validation";
-import { getTerritoryScene, listTerritorySceneSummaries } from "./catalog";
+import {
+  getTerritoryScene,
+  listTerritorySceneSummaries,
+  TERRITORY_SCENE_ITEM_CAPACITY,
+} from "./catalog";
 import { TerritoryError } from "./territoryError";
 import type { TerritoryAssetStore } from "./territoryAssetStore";
 import type {
@@ -74,6 +80,7 @@ export class TerritoryService {
     return {
       activeScene: active
         ? {
+            capacity: TERRITORY_SCENE_ITEM_CAPACITY,
             definition: getTerritoryScene(active.sceneId).definition,
             pet: {
               facing: active.petFacing,
@@ -86,6 +93,7 @@ export class TerritoryService {
       availableScenes: listTerritorySceneSummaries(),
       collection: this.repository.listCollectionItems(),
       imageCandidates: this.repository.listImageCandidates(),
+      itemCandidates: this.repository.listItemCandidates(),
     };
   }
 
@@ -266,12 +274,45 @@ export class TerritoryService {
     }
 
     this.repository.placeItem({
+      capacity: TERRITORY_SCENE_ITEM_CAPACITY,
       flipped: request.flipped,
       itemId: record.id,
       now: this.clock.now(),
       rotation: request.rotation,
       target: request.target,
     });
+    return this.getSnapshot();
+  }
+
+  selectItemVersion(
+    request: TerritorySelectItemVersionRequest,
+  ): TerritorySnapshot {
+    const item = this.repository.getItem(request.itemId);
+    if (!item) {
+      throw new TerritoryError(
+        "TERRITORY.ITEM_NOT_FOUND",
+        "找不到这个领地物件。",
+        false,
+      );
+    }
+    this.repository.selectItemVersion(request.itemId, request.revision);
+    return this.getSnapshot();
+  }
+
+  setItemPinned(request: TerritorySetItemPinnedRequest): TerritorySnapshot {
+    const item = this.repository.getItem(request.itemId);
+    if (!item) {
+      throw new TerritoryError(
+        "TERRITORY.ITEM_NOT_FOUND",
+        "找不到这个领地物件。",
+        false,
+      );
+    }
+    this.repository.setItemPinned(
+      request.itemId,
+      request.pinned,
+      this.clock.now(),
+    );
     return this.getSnapshot();
   }
 

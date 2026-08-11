@@ -179,9 +179,19 @@ function makeApi() {
   const retryImageCandidate = vi
     .fn<TerritoryApi["retryImageCandidate"]>()
     .mockResolvedValue(imageMutation);
+  const selectItemVersion = vi
+    .fn<TerritoryApi["selectItemVersion"]>()
+    .mockResolvedValue({ ok: true, value: activeTerritorySnapshot });
+  const setItemPinned = vi
+    .fn<TerritoryApi["setItemPinned"]>()
+    .mockResolvedValue({ ok: true, value: activeTerritorySnapshot });
   const api: TerritoryApi = {
     collectItem,
     confirmImageCandidate,
+    createSourceCandidate: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { candidateId, snapshot: activeTerritorySnapshot },
+    }),
     editImageCandidate,
     generateImageCandidate,
     getSnapshot,
@@ -189,6 +199,8 @@ function makeApi() {
     placeItem,
     retryImageCandidate,
     selectScene,
+    selectItemVersion,
+    setItemPinned,
   };
   return {
     api,
@@ -201,10 +213,136 @@ function makeApi() {
     placeItem,
     retryImageCandidate,
     selectScene,
+    selectItemVersion,
+    setItemPinned,
   };
 }
 
 describe("Territory first experience and editor host", () => {
+  it("opens a Memory candidate and keeps source, version and pin controls explicit", async () => {
+    const candidateId = "6b90bf76-893b-47dc-b9ea-913d0c25c5e6";
+    const memoryId = "17bd6914-d46b-44ee-9776-c0aa07ae91cd";
+    const baseItem = activeTerritorySnapshot.activeScene?.placements[0];
+    if (!baseItem || !activeTerritorySnapshot.activeScene) {
+      throw new Error("Missing active Territory fixture");
+    }
+    const versionOne = {
+      ...baseItem.manifest,
+      definitionId: `memory.${candidateId}`,
+      revision: 1,
+    };
+    const versionTwo = {
+      ...versionOne,
+      description: "把共同完成的第一版留成一盏更明亮的灯。",
+      revision: 2,
+    };
+    const sourcedItem: TerritoryItem = {
+      ...baseItem,
+      id: `memory.${candidateId}`,
+      manifest: versionTwo,
+      sources: [
+        {
+          id: memoryId,
+          kind: "memory",
+          label: "一起完成了第一版 CharaMate。",
+          occurredAt: "2026-08-05T08:00:00.000Z",
+          revisionId: "a640015a-bb31-4b8a-bf5e-bc95ba3546e7",
+        },
+      ],
+      versions: [
+        {
+          active: true,
+          createdAt: "2026-08-08T10:01:00.000Z",
+          manifest: versionTwo,
+          revision: 2,
+        },
+        {
+          active: false,
+          createdAt: "2026-08-08T10:00:00.000Z",
+          manifest: versionOne,
+          revision: 1,
+        },
+      ],
+    };
+    const sourcedSnapshot = {
+      ...activeTerritorySnapshot,
+      activeScene: {
+        ...activeTerritorySnapshot.activeScene,
+        placements: [sourcedItem],
+      },
+      itemCandidates: [
+        {
+          createdAt: "2026-08-08T10:00:00.000Z" as const,
+          description: "把共同完成的第一版留成一件安静的小纪念。",
+          id: candidateId,
+          itemId: sourcedItem.id,
+          name: "一起完成的项目",
+          sources: sourcedItem.sources,
+          status: "materialized" as const,
+          suggestedSceneId: "forest-cabin" as const,
+          updatedAt: "2026-08-08T10:01:00.000Z" as const,
+          visualPrompt: "一盏温暖的像素风纪念灯",
+        },
+      ],
+    };
+    const { api, getSnapshot, selectItemVersion, setItemPinned } = makeApi();
+    getSnapshot.mockResolvedValueOnce({ ok: true, value: sourcedSnapshot });
+    selectItemVersion.mockResolvedValue({ ok: true, value: sourcedSnapshot });
+    setItemPinned.mockResolvedValue({ ok: true, value: sourcedSnapshot });
+    const onFocusConsumed = vi.fn();
+    const onOpenMemorySource = vi.fn();
+    render(
+      <TerritoryPage
+        activePet={undefined}
+        animationSpeed={0.75}
+        api={api}
+        focusCandidateId={candidateId}
+        onFocusConsumed={onFocusConsumed}
+        onOpenMemorySource={onOpenMemorySource}
+        providerApi={{
+          listProfiles: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+        }}
+      />,
+    );
+
+    expect(await screen.findByDisplayValue("一起完成的项目")).toBeVisible();
+    expect(screen.getByText("为这段记忆生成新版本")).toBeVisible();
+    await waitFor(() => expect(onFocusConsumed).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "关闭生成面板" }));
+    fireEvent.click(screen.getByRole("button", { name: "收藏库" }));
+    const drawer = screen.getByRole("complementary", { name: "领地收藏库" });
+    expect(
+      within(drawer).getByText(
+        "场景 1/12 · 超出后最早且未置顶的物件会自动收回",
+      ),
+    ).toBeVisible();
+    fireEvent.click(
+      within(drawer).getByRole("button", {
+        name: /把共同完成的第一版留成一盏/u,
+      }),
+    );
+    expect(screen.getByText(/Memory 来源/u)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "在 Memory 中查看" }));
+    expect(onOpenMemorySource).toHaveBeenCalledWith(memoryId);
+
+    fireEvent.click(screen.getByRole("button", { name: "置顶" }));
+    await waitFor(() =>
+      expect(setItemPinned).toHaveBeenCalledWith({
+        itemId: sourcedItem.id,
+        pinned: true,
+      }),
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: "物件版本" }), {
+      target: { value: "1" },
+    });
+    await waitFor(() =>
+      expect(selectItemVersion).toHaveBeenCalledWith({
+        itemId: sourcedItem.id,
+        revision: 1,
+      }),
+    );
+  });
+
   it("selects a local scene and moves the pet through the typed API", async () => {
     const { api, movePet, selectScene } = makeApi();
     render(
@@ -399,6 +537,7 @@ describe("Territory first experience and editor host", () => {
       pinned: false,
       placedAt: "2026-08-06T08:00:00.000Z",
       rotation: 0,
+      sources: [],
       target: {
         kind: "ground",
         sceneId: "forest-cabin",
@@ -406,6 +545,14 @@ describe("Territory first experience and editor host", () => {
         y: 4,
       },
       updatedAt: "2026-08-06T08:00:00.000Z",
+      versions: [
+        {
+          active: true,
+          createdAt: "2026-08-06T08:00:00.000Z",
+          manifest: territoryDeskManifest,
+          revision: 1,
+        },
+      ],
     };
     const cup: TerritoryItem = {
       flipped: false,
@@ -414,8 +561,17 @@ describe("Territory first experience and editor host", () => {
       pinned: false,
       placedAt: null,
       rotation: 0,
+      sources: [],
       target: { kind: "collection" },
       updatedAt: "2026-08-06T08:00:00.000Z",
+      versions: [
+        {
+          active: true,
+          createdAt: "2026-08-06T08:00:00.000Z",
+          manifest: territoryCupManifest,
+          revision: 1,
+        },
+      ],
     };
     const withAccessory = {
       ...activeTerritorySnapshot,
@@ -468,6 +624,7 @@ describe("Territory first experience and editor host", () => {
       editInstruction: null,
       error: null,
       id: firstId,
+      itemCandidateId: null,
       name: "长夜台灯",
       operation: "generate" as const,
       providerProfileId: profileId,
@@ -622,6 +779,7 @@ describe("Territory first experience and editor host", () => {
         retryable: true,
       },
       id: candidateId,
+      itemCandidateId: null,
       name: "微光摆件",
       operation: "generate" as const,
       providerProfileId: "d0197d17-a231-41e0-afe2-664791a531ec",

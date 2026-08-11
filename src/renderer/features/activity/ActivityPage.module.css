@@ -148,6 +148,24 @@
   color: var(--text-tertiary);
   font-size: 9.5px;
 }
+.digests article > button {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  gap: 5px;
+  margin-top: 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 7px;
+  padding: 0 8px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  color: var(--text-primary);
+  font-size: 10px;
+  cursor: pointer;
+}
+.digests article > button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
 .totals {
   display: flex;
   gap: 6px;

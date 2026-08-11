@@ -1,5 +1,6 @@
 import type {
   ActivityCleanupResult,
+  ActivityDigest,
   ActivityEpisode,
   ActivityEvent,
   ActivityEventDetails,
@@ -193,6 +194,18 @@ export class ActivityService {
       );
     }
     return episode;
+  }
+
+  getDigest(digestId: string): ActivityDigest {
+    const digest = this.repository.getDigest(digestId);
+    if (!digest) {
+      throw new ActivityError(
+        "ACTIVITY.DIGEST_NOT_FOUND",
+        "找不到这段周期摘要。",
+        false,
+      );
+    }
+    return digest;
   }
 
   setPaused(paused: boolean): ActivitySnapshot {

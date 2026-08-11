@@ -6,6 +6,10 @@ import type {
   TerritoryFacing,
   TerritoryImageCandidate,
   TerritoryItem,
+  TerritoryItemCandidate,
+  TerritoryItemSource,
+  TerritoryItemSourceKind,
+  TerritoryItemVersion,
   TerritoryItemTarget,
   TerritoryRotation,
   TerritorySceneId,
@@ -19,6 +23,8 @@ import { AppErrorSchema } from "../../shared/schemas/error";
 import {
   TerritoryImageCandidateContentSchema,
   TerritoryImageCandidateSchema,
+  TerritoryItemCandidateSchema,
+  TerritoryItemSourceSchema,
 } from "../../shared/schemas/territory";
 import { TerritoryItemManifestV1Schema } from "../../shared/schemas/territoryItemManifest";
 import { parseSchema } from "../../shared/schemas/validation";
@@ -64,6 +70,22 @@ interface TerritoryDefinitionRow {
   manifest_json: string;
 }
 
+interface TerritoryVersionRow {
+  created_at: string;
+  definition_id: string;
+  manifest_json: string;
+  revision: number;
+}
+
+interface TerritoryItemSourceRow {
+  item_id: string;
+  label: string;
+  occurred_at: string;
+  revision_id: string | null;
+  source_id: string;
+  source_kind: TerritoryItemSourceKind;
+}
+
 interface TerritoryAssetRow {
   asset_id: string;
   byte_length: number;
@@ -85,6 +107,7 @@ interface TerritoryImageCandidateRow {
   candidate_id: string;
   created_at: string;
   error_json: string | null;
+  item_candidate_id: string | null;
   operation: TerritoryImageCandidate["operation"];
   provider_profile_id: string;
   request_json: string;
@@ -92,6 +115,21 @@ interface TerritoryImageCandidateRow {
   source_candidate_id: string | null;
   status: TerritoryImageCandidate["status"];
   updated_at: string;
+}
+
+interface TerritoryItemCandidateRow {
+  accepted_item_id: string | null;
+  candidate_id: string;
+  created_at: string;
+  description: string;
+  name: string;
+  primary_source_id: string;
+  primary_source_kind: TerritoryItemSourceKind;
+  sources_json: string;
+  status: TerritoryItemCandidate["status"];
+  suggested_scene_id: TerritorySceneId;
+  updated_at: string;
+  visual_prompt: string;
 }
 
 export interface TerritorySceneRecord {
@@ -164,7 +202,11 @@ function mapTarget(row: TerritoryItemRow): TerritoryItemTarget {
   throw new Error(`Invalid Territory placement row: ${row.item_id}`);
 }
 
-function mapItem(row: TerritoryItemRow): TerritoryItemRecord {
+function mapItem(
+  row: TerritoryItemRow,
+  sources: TerritoryItemSource[],
+  versions: TerritoryItemVersion[],
+): TerritoryItemRecord {
   const manifest = parseManifest(row.manifest_json);
   const manifestAssetId =
     manifest.visual.source.kind === "asset"
@@ -184,8 +226,10 @@ function mapItem(row: TerritoryItemRow): TerritoryItemRecord {
     pinned: row.pinned === 1,
     placedAt: row.placed_at,
     rotation: row.rotation,
+    sources,
     target: mapTarget(row),
     updatedAt: row.updated_at,
+    versions,
   };
 }
 
@@ -204,6 +248,7 @@ function mapImageCandidate(
       ? parseSchema(AppErrorSchema, JSON.parse(row.error_json))
       : null,
     id: row.candidate_id,
+    itemCandidateId: row.item_candidate_id,
     operation: row.operation,
     providerProfileId: row.provider_profile_id,
     sceneId: row.scene_id,
@@ -213,11 +258,35 @@ function mapImageCandidate(
   });
 }
 
+function mapItemCandidate(
+  row: TerritoryItemCandidateRow,
+): TerritoryItemCandidate {
+  return parseSchema(TerritoryItemCandidateSchema, {
+    createdAt: row.created_at,
+    description: row.description,
+    id: row.candidate_id,
+    itemId: row.accepted_item_id,
+    name: row.name,
+    sources: JSON.parse(row.sources_json) as unknown,
+    status: row.status,
+    suggestedSceneId: row.suggested_scene_id,
+    updatedAt: row.updated_at,
+    visualPrompt: row.visual_prompt,
+  });
+}
+
 const imageCandidateSelect = `
   SELECT candidate_id, provider_profile_id, scene_id, operation,
-         source_candidate_id, request_json, status, error_json,
+         source_candidate_id, item_candidate_id, request_json, status, error_json,
          accepted_item_id, created_at, updated_at
   FROM territory_image_candidates
+`;
+
+const itemCandidateSelect = `
+  SELECT candidate_id, primary_source_kind, primary_source_id, name,
+         description, visual_prompt, suggested_scene_id, sources_json,
+         status, accepted_item_id, created_at, updated_at
+  FROM territory_item_candidates
 `;
 
 const itemSelect = `
@@ -234,6 +303,63 @@ const itemSelect = `
 
 export class TerritoryRepository {
   constructor(private readonly database: Database.Database) {}
+
+  private hydrateItems(rows: TerritoryItemRow[]): TerritoryItemRecord[] {
+    if (rows.length === 0) return [];
+    const itemIds = new Set(rows.map((row) => row.item_id));
+    const definitionIds = new Set(rows.map((row) => row.definition_id));
+    const sourceRows = this.database
+      .prepare(
+        `SELECT item_id, source_kind, source_id, revision_id, label, occurred_at
+         FROM territory_item_sources
+         ORDER BY occurred_at, source_kind, source_id`,
+      )
+      .all() as TerritoryItemSourceRow[];
+    const versionRows = this.database
+      .prepare(
+        `SELECT definition_id, revision, manifest_json, created_at
+         FROM territory_item_definitions
+         ORDER BY definition_id, revision DESC`,
+      )
+      .all() as TerritoryVersionRow[];
+
+    const sourcesByItem = new Map<string, TerritoryItemSource[]>();
+    for (const row of sourceRows) {
+      if (!itemIds.has(row.item_id)) continue;
+      const values = sourcesByItem.get(row.item_id) ?? [];
+      values.push(
+        parseSchema(TerritoryItemSourceSchema, {
+          id: row.source_id,
+          kind: row.source_kind,
+          label: row.label,
+          occurredAt: row.occurred_at,
+          revisionId: row.revision_id,
+        }),
+      );
+      sourcesByItem.set(row.item_id, values);
+    }
+
+    const versionsByDefinition = new Map<string, TerritoryVersionRow[]>();
+    for (const row of versionRows) {
+      if (!definitionIds.has(row.definition_id)) continue;
+      const values = versionsByDefinition.get(row.definition_id) ?? [];
+      values.push(row);
+      versionsByDefinition.set(row.definition_id, values);
+    }
+
+    return rows.map((row) =>
+      mapItem(
+        row,
+        sourcesByItem.get(row.item_id) ?? [],
+        (versionsByDefinition.get(row.definition_id) ?? []).map((version) => ({
+          active: version.revision === row.definition_revision,
+          createdAt: version.created_at,
+          manifest: parseManifest(version.manifest_json),
+          revision: version.revision,
+        })),
+      ),
+    );
+  }
 
   private ensureDefinition(
     manifest: TerritoryItemManifestV1,
@@ -327,7 +453,7 @@ export class TerritoryRepository {
     const row = this.database
       .prepare(`${itemSelect} WHERE i.item_id = ?`)
       .get(itemId) as TerritoryItemRow | undefined;
-    return row ? mapItem(row) : undefined;
+    return row ? this.hydrateItems([row])[0] : undefined;
   }
 
   getAsset(assetId: string): TerritoryAssetRecord | undefined {
@@ -351,6 +477,78 @@ export class TerritoryRepository {
           width: row.width,
         }
       : undefined;
+  }
+
+  getItemCandidate(candidateId: string): TerritoryItemCandidate | undefined {
+    const row = this.database
+      .prepare(`${itemCandidateSelect} WHERE candidate_id = ?`)
+      .get(candidateId) as TerritoryItemCandidateRow | undefined;
+    return row ? mapItemCandidate(row) : undefined;
+  }
+
+  findItemCandidate(
+    kind: TerritoryItemSourceKind,
+    sourceId: string,
+  ): TerritoryItemCandidate | undefined {
+    const row = this.database
+      .prepare(
+        `${itemCandidateSelect}
+         WHERE primary_source_kind = ? AND primary_source_id = ?`,
+      )
+      .get(kind, sourceId) as TerritoryItemCandidateRow | undefined;
+    return row ? mapItemCandidate(row) : undefined;
+  }
+
+  listItemCandidates(): TerritoryItemCandidate[] {
+    return (
+      this.database
+        .prepare(
+          `${itemCandidateSelect}
+           ORDER BY created_at DESC, candidate_id DESC`,
+        )
+        .all() as TerritoryItemCandidateRow[]
+    ).map(mapItemCandidate);
+  }
+
+  saveItemCandidate(candidate: TerritoryItemCandidate): TerritoryItemCandidate {
+    const primarySource = candidate.sources[0];
+    if (!primarySource || candidate.status !== "pending") {
+      throw new TerritoryError(
+        "TERRITORY.INVALID_CANDIDATE_STATE",
+        "新的领地候选必须包含来源并处于待生成状态。",
+        false,
+      );
+    }
+    this.database
+      .prepare(
+        `INSERT INTO territory_item_candidates (
+           candidate_id, primary_source_kind, primary_source_id, name,
+           description, visual_prompt, suggested_scene_id, sources_json,
+           status, accepted_item_id, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+         ON CONFLICT(primary_source_kind, primary_source_id) DO UPDATE SET
+           name = excluded.name,
+           description = excluded.description,
+           visual_prompt = excluded.visual_prompt,
+           suggested_scene_id = excluded.suggested_scene_id,
+           sources_json = excluded.sources_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        candidate.id,
+        primarySource.kind,
+        primarySource.id,
+        candidate.name,
+        candidate.description,
+        candidate.visualPrompt,
+        candidate.suggestedSceneId,
+        serializeForPersistence(candidate.sources),
+        candidate.createdAt,
+        candidate.updatedAt,
+      );
+    const stored = this.findItemCandidate(primarySource.kind, primarySource.id);
+    if (!stored) throw new Error("Territory item candidate was not stored.");
+    return stored;
   }
 
   getImageCandidate(candidateId: string): TerritoryImageCandidate | undefined {
@@ -387,6 +585,7 @@ export class TerritoryRepository {
       description: candidate.description,
       editInstruction: candidate.editInstruction,
       name: candidate.name,
+      sourceSnapshots: candidate.sourceSnapshots ?? [],
       structure: candidate.structure,
       visualPrompt: candidate.visualPrompt,
     };
@@ -394,9 +593,9 @@ export class TerritoryRepository {
       .prepare(
         `INSERT INTO territory_image_candidates (
            candidate_id, provider_profile_id, scene_id, operation,
-           source_candidate_id, request_json, status, error_json,
+           source_candidate_id, item_candidate_id, request_json, status, error_json,
            accepted_item_id, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, 'generating', NULL, NULL, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'generating', NULL, NULL, ?, ?)`,
       )
       .run(
         candidate.id,
@@ -404,6 +603,7 @@ export class TerritoryRepository {
         candidate.sceneId,
         candidate.operation,
         candidate.sourceCandidateId,
+        candidate.itemCandidateId,
         serializeForPersistence(content),
         candidate.createdAt,
         candidate.updatedAt,
@@ -482,20 +682,83 @@ export class TerritoryRepository {
     if (current.status === "accepted" && current.acceptedItemId === itemId) {
       return;
     }
-    const result = this.database
-      .prepare(
-        `UPDATE territory_image_candidates
-         SET status = 'accepted', accepted_item_id = ?, updated_at = ?
-         WHERE candidate_id = ? AND status = 'ready'`,
-      )
-      .run(itemId, now, candidateId);
-    if (result.changes !== 1) {
-      throw new TerritoryError(
-        "TERRITORY.INVALID_CANDIDATE_STATE",
-        "只有生成完成的图片候选可以加入收藏库。",
-        false,
+    this.database.transaction(() => {
+      const result = this.database
+        .prepare(
+          `UPDATE territory_image_candidates
+           SET status = 'accepted', accepted_item_id = ?, updated_at = ?
+           WHERE candidate_id = ? AND status = 'ready'`,
+        )
+        .run(itemId, now, candidateId);
+      if (result.changes !== 1) {
+        const accepted = this.database
+          .prepare(
+            `SELECT status, accepted_item_id
+             FROM territory_image_candidates WHERE candidate_id = ?`,
+          )
+          .get(candidateId) as
+          { accepted_item_id: string | null; status: string } | undefined;
+        if (
+          accepted?.status === "accepted" &&
+          accepted.accepted_item_id === itemId
+        ) {
+          return;
+        }
+        throw new TerritoryError(
+          "TERRITORY.INVALID_CANDIDATE_STATE",
+          "只有生成完成的图片候选可以加入收藏库。",
+          false,
+        );
+      }
+
+      if (!current.itemCandidateId) return;
+      const sourceCandidate = this.getItemCandidate(current.itemCandidateId);
+      if (!sourceCandidate) {
+        throw new TerritoryError(
+          "TERRITORY.CANDIDATE_NOT_FOUND",
+          "找不到这个记忆物件候选。",
+          false,
+        );
+      }
+      const candidateResult = this.database
+        .prepare(
+          `UPDATE territory_item_candidates
+           SET status = 'materialized', accepted_item_id = ?, updated_at = ?
+           WHERE candidate_id = ? AND (
+             status = 'pending' OR accepted_item_id = ?
+           )`,
+        )
+        .run(itemId, now, sourceCandidate.id, itemId);
+      if (candidateResult.changes !== 1) {
+        throw new TerritoryError(
+          "TERRITORY.INVALID_CANDIDATE_STATE",
+          "这个来源已经对应另一个领地物件。",
+          false,
+        );
+      }
+      const insertSource = this.database.prepare(
+        `INSERT INTO territory_item_sources (
+           item_id, source_kind, source_id, revision_id, label,
+           occurred_at, candidate_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(item_id, source_kind, source_id) DO UPDATE SET
+           revision_id = excluded.revision_id,
+           label = excluded.label,
+           occurred_at = excluded.occurred_at,
+           candidate_id = excluded.candidate_id`,
       );
-    }
+      for (const source of current.sourceSnapshots ?? sourceCandidate.sources) {
+        insertSource.run(
+          itemId,
+          source.kind,
+          source.id,
+          source.revisionId,
+          source.label,
+          source.occurredAt,
+          sourceCandidate.id,
+        );
+      }
+    })();
   }
 
   recoverInterruptedImageCandidates(error: AppError, now: Timestamp): number {
@@ -509,28 +772,50 @@ export class TerritoryRepository {
   }
 
   listSceneItems(sceneId: TerritorySceneId): TerritoryItemRecord[] {
-    return (
-      this.database
-        .prepare(
-          `${itemSelect}
+    const rows = this.database
+      .prepare(
+        `${itemSelect}
            WHERE p.location = 'scene' AND p.scene_id = ?
            ORDER BY p.placement_kind, p.grid_y, p.grid_x,
                     p.support_item_id, p.slot_id, i.item_id`,
-        )
-        .all(sceneId) as TerritoryItemRow[]
-    ).map(mapItem);
+      )
+      .all(sceneId) as TerritoryItemRow[];
+    return this.hydrateItems(rows);
   }
 
   listCollectionItems(): TerritoryItemRecord[] {
-    return (
-      this.database
-        .prepare(
-          `${itemSelect}
+    const rows = this.database
+      .prepare(
+        `${itemSelect}
            WHERE p.location = 'collection'
            ORDER BY p.updated_at, i.item_id`,
-        )
-        .all() as TerritoryItemRow[]
-    ).map(mapItem);
+      )
+      .all() as TerritoryItemRow[];
+    return this.hydrateItems(rows);
+  }
+
+  nextDefinitionRevision(definitionId: string): number {
+    const row = this.database
+      .prepare(
+        `SELECT COALESCE(MAX(revision), 0) + 1 AS revision
+         FROM territory_item_definitions
+         WHERE definition_id = ?`,
+      )
+      .get(definitionId) as { revision: number };
+    return row.revision;
+  }
+
+  findDefinitionRevisionByAsset(
+    definitionId: string,
+    assetId: string,
+  ): number | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT revision FROM territory_item_definitions
+         WHERE definition_id = ? AND asset_id = ?`,
+      )
+      .get(definitionId, assetId) as { revision: number } | undefined;
+    return row?.revision;
   }
 
   selectScene(
@@ -647,7 +932,39 @@ export class TerritoryRepository {
         );
       }
 
-      const inserted = this.insertItem(itemId, manifest, null, now);
+      this.ensureDefinition(manifest, now);
+      const identity = this.database
+        .prepare(
+          `SELECT definition_id, definition_revision
+           FROM territory_items
+           WHERE item_id = ?`,
+        )
+        .get(itemId) as TerritoryIdentityRow | undefined;
+      let inserted = false;
+      if (!identity) {
+        this.database
+          .prepare(
+            `INSERT INTO territory_items (
+               item_id, definition_id, definition_revision, initial_scene_id,
+               created_at
+             ) VALUES (?, ?, ?, NULL, ?)`,
+          )
+          .run(itemId, manifest.definitionId, manifest.revision, now);
+        inserted = true;
+      } else if (identity.definition_id !== manifest.definitionId) {
+        throw new TerritoryError(
+          "TERRITORY.INVALID_MANIFEST",
+          "物件实例 ID 已存在且引用了不同 definition。",
+          false,
+        );
+      } else if (manifest.revision > identity.definition_revision) {
+        this.database
+          .prepare(
+            `UPDATE territory_items SET definition_revision = ?
+             WHERE item_id = ?`,
+          )
+          .run(manifest.revision, itemId);
+      }
       if (inserted) {
         this.database
           .prepare(
@@ -662,6 +979,37 @@ export class TerritoryRepository {
       }
     });
     transaction();
+  }
+
+  selectItemVersion(itemId: string, revision: number): void {
+    const result = this.database
+      .prepare(
+        `UPDATE territory_items
+         SET definition_revision = ?
+         WHERE item_id = ? AND EXISTS (
+           SELECT 1 FROM territory_item_definitions d
+           WHERE d.definition_id = territory_items.definition_id
+             AND d.revision = ?
+         )`,
+      )
+      .run(revision, itemId, revision);
+    if (result.changes !== 1) {
+      throw new TerritoryError(
+        "TERRITORY.VERSION_NOT_FOUND",
+        "找不到这个物件版本。",
+        false,
+      );
+    }
+  }
+
+  setItemPinned(itemId: string, pinned: boolean, now: Timestamp): void {
+    const result = this.database
+      .prepare(
+        `UPDATE territory_placements SET pinned = ?, updated_at = ?
+         WHERE item_id = ?`,
+      )
+      .run(pinned ? 1 : 0, now, itemId);
+    if (result.changes !== 1) throw new Error("Territory item missing.");
   }
 
   savePet(
@@ -683,54 +1031,131 @@ export class TerritoryRepository {
   }
 
   placeItem(input: {
+    readonly capacity: number;
     readonly flipped: boolean;
     readonly itemId: string;
     readonly now: Timestamp;
     readonly rotation: TerritoryRotation;
     readonly target: TerritorySceneTarget;
   }): void {
-    const target = input.target;
-    const result =
-      target.kind === "ground"
-        ? this.database
+    this.database.transaction(() => {
+      const target = input.target;
+      const current = this.database
+        .prepare(
+          `SELECT location, scene_id FROM territory_placements
+           WHERE item_id = ?`,
+        )
+        .get(input.itemId) as
+        | { location: "collection" | "scene"; scene_id: string | null }
+        | undefined;
+      if (!current) throw new Error("Territory item missing.");
+
+      if (
+        current.location === "collection" ||
+        current.scene_id !== target.sceneId
+      ) {
+        const count = this.database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM territory_placements
+             WHERE location = 'scene' AND scene_id = ?`,
+          )
+          .get(target.sceneId) as { count: number };
+        if (count.count >= input.capacity) {
+          const protectedSupportId =
+            target.kind === "surface" ? target.supportItemId : input.itemId;
+          const oldest = this.database
             .prepare(
-              `UPDATE territory_placements
-               SET location = 'scene', scene_id = ?, placement_kind = 'ground',
-                   grid_x = ?, grid_y = ?, support_item_id = NULL,
-                   slot_id = NULL, rotation = ?, flipped = ?, placed_at = ?,
-                   updated_at = ?
-               WHERE item_id = ?`,
+              `SELECT item_id FROM territory_placements
+               WHERE location = 'scene' AND scene_id = ? AND pinned = 0
+                 AND item_id <> ? AND item_id <> ?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM territory_placements child
+                   WHERE child.support_item_id = territory_placements.item_id
+                     AND child.pinned = 1
+                 )
+               ORDER BY placed_at, item_id
+               LIMIT 1`,
             )
-            .run(
-              target.sceneId,
-              target.x,
-              target.y,
-              input.rotation,
-              input.flipped ? 1 : 0,
-              input.now,
-              input.now,
-              input.itemId,
-            )
-        : this.database
-            .prepare(
-              `UPDATE territory_placements
-               SET location = 'scene', scene_id = ?, placement_kind = 'surface',
-                   grid_x = NULL, grid_y = NULL, support_item_id = ?,
-                   slot_id = ?, rotation = ?, flipped = ?, placed_at = ?,
-                   updated_at = ?
-               WHERE item_id = ?`,
-            )
-            .run(
-              target.sceneId,
-              target.supportItemId,
-              target.slotId,
-              input.rotation,
-              input.flipped ? 1 : 0,
-              input.now,
-              input.now,
-              input.itemId,
+            .get(target.sceneId, input.itemId, protectedSupportId) as
+            { item_id: string } | undefined;
+          if (!oldest) {
+            throw new TerritoryError(
+              "TERRITORY.CAPACITY_PINNED",
+              "场景已满，且现有物件都已置顶。请先收回或取消置顶一个物件。",
+              false,
             );
-    if (result.changes !== 1) throw new Error("Territory item missing.");
+          }
+          this.database
+            .prepare(
+              `UPDATE territory_placements
+               SET location = 'collection', scene_id = NULL,
+                   placement_kind = NULL, grid_x = NULL, grid_y = NULL,
+                   support_item_id = NULL, slot_id = NULL, placed_at = NULL,
+                   updated_at = ?
+               WHERE support_item_id = ?`,
+            )
+            .run(input.now, oldest.item_id);
+          this.database
+            .prepare(
+              `UPDATE territory_placements
+               SET location = 'collection', scene_id = NULL,
+                   placement_kind = NULL, grid_x = NULL, grid_y = NULL,
+                   support_item_id = NULL, slot_id = NULL, placed_at = NULL,
+                   updated_at = ?
+               WHERE item_id = ?`,
+            )
+            .run(input.now, oldest.item_id);
+        }
+      }
+
+      const result =
+        target.kind === "ground"
+          ? this.database
+              .prepare(
+                `UPDATE territory_placements
+                 SET location = 'scene', scene_id = ?, placement_kind = 'ground',
+                     grid_x = ?, grid_y = ?, support_item_id = NULL,
+                     slot_id = NULL, rotation = ?, flipped = ?,
+                     placed_at = CASE
+                       WHEN location = 'collection' THEN ? ELSE placed_at
+                     END,
+                     updated_at = ?
+                 WHERE item_id = ?`,
+              )
+              .run(
+                target.sceneId,
+                target.x,
+                target.y,
+                input.rotation,
+                input.flipped ? 1 : 0,
+                input.now,
+                input.now,
+                input.itemId,
+              )
+          : this.database
+              .prepare(
+                `UPDATE territory_placements
+                 SET location = 'scene', scene_id = ?, placement_kind = 'surface',
+                     grid_x = NULL, grid_y = NULL, support_item_id = ?,
+                     slot_id = ?, rotation = ?, flipped = ?,
+                     placed_at = CASE
+                       WHEN location = 'collection' THEN ? ELSE placed_at
+                     END,
+                     updated_at = ?
+                 WHERE item_id = ?`,
+              )
+              .run(
+                target.sceneId,
+                target.supportItemId,
+                target.slotId,
+                input.rotation,
+                input.flipped ? 1 : 0,
+                input.now,
+                input.now,
+                input.itemId,
+              );
+      if (result.changes !== 1) throw new Error("Territory item missing.");
+    })();
   }
 
   collectItem(itemId: string, now: Timestamp): void {

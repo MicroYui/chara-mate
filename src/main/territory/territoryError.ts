@@ -3,6 +3,7 @@ import type { AppError } from "../../shared/contracts/run";
 export type TerritoryErrorCode =
   | "TERRITORY.ASSET_CONFLICT"
   | "TERRITORY.CANDIDATE_NOT_FOUND"
+  | "TERRITORY.CAPACITY_PINNED"
   | "TERRITORY.GENERATION_INTERRUPTED"
   | "TERRITORY.IMAGE_PROCESSING_FAILED"
   | "TERRITORY.INVALID_CANDIDATE_STATE"
@@ -12,7 +13,9 @@ export type TerritoryErrorCode =
   | "TERRITORY.ITEM_NOT_FOUND"
   | "TERRITORY.NO_PATH"
   | "TERRITORY.SCENE_NOT_ACTIVE"
-  | "TERRITORY.STORAGE_FAILED";
+  | "TERRITORY.SOURCE_NOT_FOUND"
+  | "TERRITORY.STORAGE_FAILED"
+  | "TERRITORY.VERSION_NOT_FOUND";
 
 export class TerritoryError extends Error {
   constructor(

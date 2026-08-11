@@ -569,6 +569,8 @@ export const TERRITORY_SCENE_ORDER: readonly TerritorySceneId[] = [
   "star-workshop",
 ];
 
+export const TERRITORY_SCENE_ITEM_CAPACITY = 12;
+
 export function getTerritoryItemDefinition(
   definitionId: string,
 ): TerritoryItemManifestV1 {

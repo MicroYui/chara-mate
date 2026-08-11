@@ -47,10 +47,12 @@ export const emptyTerritorySnapshot: TerritorySnapshot = {
   availableScenes: territorySceneSummaries,
   collection: [],
   imageCandidates: [],
+  itemCandidates: [],
 };
 
 export const activeTerritorySnapshot: TerritorySnapshot = {
   activeScene: {
+    capacity: 12,
     definition: {
       ...territorySceneSummaries[0]!,
       entry: { x: 8, y: 6 },
@@ -90,6 +92,7 @@ export const activeTerritorySnapshot: TerritorySnapshot = {
         pinned: false,
         placedAt: "2026-08-06T08:00:00.000Z",
         rotation: 0,
+        sources: [],
         target: {
           kind: "ground",
           sceneId: "forest-cabin",
@@ -97,10 +100,19 @@ export const activeTerritorySnapshot: TerritorySnapshot = {
           y: 4,
         },
         updatedAt: "2026-08-06T08:00:00.000Z",
+        versions: [
+          {
+            active: true,
+            createdAt: "2026-08-06T08:00:00.000Z",
+            manifest: territoryHearthManifest,
+            revision: 1,
+          },
+        ],
       },
     ],
   },
   availableScenes: territorySceneSummaries,
   collection: [],
   imageCandidates: [],
+  itemCandidates: [],
 };

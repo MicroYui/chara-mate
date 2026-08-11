@@ -127,6 +127,32 @@ export const TerritoryItemTargetSchema = Type.Union([
   TerritorySurfaceTargetSchema,
 ]);
 
+export const TerritoryItemSourceKindSchema = Type.Union([
+  Type.Literal("memory"),
+  Type.Literal("activity_digest"),
+]);
+
+export const TerritoryItemSourceSchema = Type.Object(
+  {
+    id: EntityIdSchema,
+    kind: TerritoryItemSourceKindSchema,
+    label: NonBlankStringSchema,
+    occurredAt: TimestampSchema,
+    revisionId: Type.Union([EntityIdSchema, Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryItemVersionSchema = Type.Object(
+  {
+    active: Type.Boolean(),
+    createdAt: TimestampSchema,
+    manifest: TerritoryItemManifestV1Schema,
+    revision: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+
 export const TerritoryItemSchema = Type.Object(
   {
     flipped: Type.Boolean(),
@@ -135,8 +161,10 @@ export const TerritoryItemSchema = Type.Object(
     pinned: Type.Boolean(),
     placedAt: Type.Union([TimestampSchema, Type.Null()]),
     rotation: TerritoryRotationSchema,
+    sources: Type.Array(TerritoryItemSourceSchema),
     target: TerritoryItemTargetSchema,
     updatedAt: TimestampSchema,
+    versions: Type.Array(TerritoryItemVersionSchema, { minItems: 1 }),
   },
   { additionalProperties: false },
 );
@@ -152,6 +180,7 @@ export const TerritoryPetStateSchema = Type.Object(
 
 export const TerritoryActiveSceneSchema = Type.Object(
   {
+    capacity: Type.Integer({ minimum: 1 }),
     definition: TerritorySceneDefinitionSchema,
     pet: TerritoryPetStateSchema,
     placements: Type.Array(TerritoryItemSchema),
@@ -216,6 +245,7 @@ export const TerritoryImageCandidateContentSchema = Type.Object(
     description: NonBlankStringSchema,
     editInstruction: Type.Union([NonBlankStringSchema, Type.Null()]),
     name: NonBlankStringSchema,
+    sourceSnapshots: Type.Optional(Type.Array(TerritoryItemSourceSchema)),
     structure: Type.Union([TerritoryGeneratedItemStructureSchema, Type.Null()]),
     visualPrompt: NonBlankStringSchema,
   },
@@ -229,12 +259,34 @@ export const TerritoryImageCandidateSchema = Type.Object(
     ...TerritoryImageCandidateContentSchema.properties,
     error: Type.Union([AppErrorSchema, Type.Null()]),
     id: EntityIdSchema,
+    itemCandidateId: Type.Union([EntityIdSchema, Type.Null()]),
     operation: TerritoryImageCandidateOperationSchema,
     providerProfileId: EntityIdSchema,
     sceneId: TerritorySceneIdSchema,
     sourceCandidateId: Type.Union([EntityIdSchema, Type.Null()]),
     status: TerritoryImageCandidateStatusSchema,
     updatedAt: TimestampSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryItemCandidateStatusSchema = Type.Union([
+  Type.Literal("pending"),
+  Type.Literal("materialized"),
+]);
+
+export const TerritoryItemCandidateSchema = Type.Object(
+  {
+    createdAt: TimestampSchema,
+    description: NonBlankStringSchema,
+    id: EntityIdSchema,
+    itemId: Type.Union([TerritoryItemIdSchema, Type.Null()]),
+    name: NonBlankStringSchema,
+    sources: Type.Array(TerritoryItemSourceSchema, { minItems: 1 }),
+    status: TerritoryItemCandidateStatusSchema,
+    suggestedSceneId: TerritorySceneIdSchema,
+    updatedAt: TimestampSchema,
+    visualPrompt: NonBlankStringSchema,
   },
   { additionalProperties: false },
 );
@@ -248,6 +300,7 @@ export const TerritorySnapshotSchema = Type.Object(
     }),
     collection: Type.Array(TerritoryItemSchema),
     imageCandidates: Type.Array(TerritoryImageCandidateSchema),
+    itemCandidates: Type.Array(TerritoryItemCandidateSchema),
   },
   { additionalProperties: false },
 );
@@ -290,12 +343,42 @@ export const TerritoryCollectItemRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const TerritoryCreateSourceCandidateRequestSchema = Type.Object(
+  {
+    source: Type.Union([
+      Type.Object(
+        { kind: Type.Literal("memory"), memoryId: EntityIdSchema },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        { digestId: EntityIdSchema, kind: Type.Literal("activity_digest") },
+        { additionalProperties: false },
+      ),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const TerritorySetItemPinnedRequestSchema = Type.Object(
+  { itemId: TerritoryItemIdSchema, pinned: Type.Boolean() },
+  { additionalProperties: false },
+);
+
+export const TerritorySelectItemVersionRequestSchema = Type.Object(
+  {
+    itemId: TerritoryItemIdSchema,
+    revision: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+
 export const TerritoryGenerateImageRequestSchema = Type.Object(
   {
     description: NonBlankStringSchema,
     name: NonBlankStringSchema,
     providerProfileId: EntityIdSchema,
     sceneId: TerritorySceneIdSchema,
+    itemCandidateId: Type.Optional(EntityIdSchema),
     structure: Type.Optional(TerritoryGeneratedItemStructureSchema),
     visualPrompt: NonBlankStringSchema,
   },
@@ -351,6 +434,18 @@ export const TerritoryImageMutationResultSchema = Type.Object(
 
 export const TerritoryImageMutationResponseSchema = operationResponse(
   TerritoryImageMutationResultSchema,
+);
+
+export const TerritorySourceCandidateMutationResultSchema = Type.Object(
+  {
+    candidateId: EntityIdSchema,
+    snapshot: TerritorySnapshotSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritorySourceCandidateMutationResponseSchema = operationResponse(
+  TerritorySourceCandidateMutationResultSchema,
 );
 
 export const TerritoryMoveResultSchema = Type.Object(

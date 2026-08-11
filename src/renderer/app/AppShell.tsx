@@ -876,6 +876,10 @@ export function AppShell({
   const [activityTarget, setActivityTarget] = useState<{
     readonly episodeId: string;
   } | null>(null);
+  const [memoryTargetId, setMemoryTargetId] = useState<string | null>(null);
+  const [territoryTargetId, setTerritoryTargetId] = useState<string | null>(
+    null,
+  );
   const renameRequestSequence = useRef(0);
   const requestChatRename = (chat: Chat) => {
     if (state.activeChatId !== chat.id) {
@@ -901,6 +905,25 @@ export function AppShell({
     }
   };
   const consumeActivityTarget = useCallback(() => setActivityTarget(null), []);
+  const consumeMemoryTarget = useCallback(() => setMemoryTargetId(null), []);
+  const consumeTerritoryTarget = useCallback(
+    () => setTerritoryTargetId(null),
+    [],
+  );
+  const openTerritoryCandidate = useCallback(
+    (candidateId: string) => {
+      setTerritoryTargetId(candidateId);
+      dispatch({ page: "territory", type: "page.selected" });
+    },
+    [dispatch],
+  );
+  const openTerritoryMemorySource = useCallback(
+    (memoryId: string) => {
+      setMemoryTargetId(memoryId);
+      dispatch({ page: "memory", type: "page.selected" });
+    },
+    [dispatch],
+  );
 
   return (
     <div className={styles["shell"]} data-platform={foundation.platform}>
@@ -991,13 +1014,18 @@ export function AppShell({
             <TerritoryPage
               activePet={activePet}
               animationSpeed={petAnimationSpeed}
+              {...(territoryTargetId
+                ? { focusCandidateId: territoryTargetId }
+                : {})}
+              onFocusConsumed={consumeTerritoryTarget}
+              onOpenMemorySource={openTerritoryMemorySource}
             />
           ) : state.activePage === "memory" ? (
             <MemoryPage
+              {...(memoryTargetId ? { focusMemoryId: memoryTargetId } : {})}
+              onFocusConsumed={consumeMemoryTarget}
               onOpenSource={openMemorySource}
-              onOpenTerritory={() =>
-                dispatch({ page: "territory", type: "page.selected" })
-              }
+              onOpenTerritory={openTerritoryCandidate}
             />
           ) : state.activePage === "activity" ? (
             <ActivityPage
@@ -1005,6 +1033,7 @@ export function AppShell({
                 ? { focusEpisodeId: activityTarget.episodeId }
                 : {})}
               onFocusConsumed={consumeActivityTarget}
+              onOpenTerritory={openTerritoryCandidate}
             />
           ) : (
             <PlaceholderPage page={state.activePage} />

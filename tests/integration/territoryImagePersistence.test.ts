@@ -153,7 +153,7 @@ describe("Territory image candidate persistence", () => {
     const confirmed = await fixture.images.confirm({
       candidateId: edited.candidateId,
     });
-    const itemId = `generated.${edited.candidateId}`;
+    const itemId = `generated.${generated.candidateId}`;
     const installedItem = confirmed.snapshot.collection.find(
       ({ id }) => id === itemId,
     );
@@ -169,7 +169,13 @@ describe("Territory image candidate persistence", () => {
       ),
     ).toMatchObject({ acceptedItemId: itemId, status: "accepted" });
     const installed = await readFile(
-      path.join(fixture.root, "territory", "assets", itemId, "sprite.png"),
+      path.join(
+        fixture.root,
+        "territory",
+        "assets",
+        `generated.${edited.candidateId}`,
+        "sprite.png",
+      ),
     );
     expect(installed.readUInt32BE(16)).toBe(144);
     expect(installed.readUInt32BE(20)).toBe(120);
@@ -291,6 +297,7 @@ describe("Territory image candidate persistence", () => {
       editInstruction: null,
       error: null,
       id: "4be214aa-78df-4082-a8d6-451a0588960b",
+      itemCandidateId: null,
       name: "中断候选",
       operation: "generate",
       providerProfileId: "d0197d17-a231-41e0-afe2-664791a531ec",

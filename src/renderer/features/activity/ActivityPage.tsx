@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   CalendarDays,
   HardDrive,
+  Map as MapIcon,
   Pause,
   Play,
   RefreshCw,
@@ -15,6 +16,7 @@ import type {
   ActivityEpisode,
   ActivitySnapshot,
 } from "../../../shared/contracts/activity";
+import type { TerritoryApi } from "../../../shared/contracts/territory";
 import { activityAssetUrl } from "../../../shared/pure/activityAsset";
 import styles from "./ActivityPage.module.css";
 
@@ -59,6 +61,8 @@ interface ActivityPageProps {
   readonly api?: ActivityApi;
   readonly focusEpisodeId?: string;
   readonly onFocusConsumed?: () => void;
+  readonly onOpenTerritory?: (candidateId: string) => void;
+  readonly territoryApi?: Pick<TerritoryApi, "createSourceCandidate">;
 }
 
 const emptyEpisodes: readonly ActivityEpisode[] = [];
@@ -67,6 +71,8 @@ export function ActivityPage({
   api = window.charaMate.activity,
   focusEpisodeId,
   onFocusConsumed,
+  onOpenTerritory,
+  territoryApi,
 }: ActivityPageProps) {
   const [date, setDate] = useState(localDate);
   const [snapshot, setSnapshot] = useState<ActivitySnapshot | null>(null);
@@ -201,6 +207,26 @@ export function ActivityPage({
       } else setError(response.error.message);
     } catch {
       setError("Activity 清理没有完成，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addDigestToTerritory = async (digestId: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await (
+        territoryApi ?? window.charaMate.territory
+      ).createSourceCandidate({
+        source: { digestId, kind: "activity_digest" },
+      });
+      if (response.ok) {
+        onOpenTerritory?.(response.value.candidateId);
+      } else setError(response.error.message);
+    } catch {
+      setError("无法把这段趋势放入领地，请重试。");
     } finally {
       setBusy(false);
     }
@@ -349,6 +375,14 @@ export function ActivityPage({
                         ? ` · ${String(digest.candidateIds.length)} 个待确认记忆`
                         : ""}
                     </small>
+                    <button
+                      disabled={busy}
+                      type="button"
+                      onClick={() => void addDigestToTerritory(digest.id)}
+                    >
+                      <MapIcon aria-hidden="true" size={13} />
+                      放入领地
+                    </button>
                   </article>
                 ))}
               </div>

@@ -1,4 +1,7 @@
-import type { TerritoryImageCandidate } from "../../shared/contracts/territory";
+import type {
+  TerritoryGeneratedItemStructure,
+  TerritoryImageCandidate,
+} from "../../shared/contracts/territory";
 import type { TerritoryItemManifestV1 } from "../../shared/contracts/territoryItemManifest";
 import { validateTerritoryItemManifestSemantics } from "../../shared/pure/territoryItemGeometry";
 import { TerritoryError } from "./territoryError";
@@ -10,10 +13,55 @@ export function generatedTerritoryItemId(candidateId: string): string {
   return `generated.${candidateId}`;
 }
 
+export function memoryTerritoryItemId(candidateId: string): string {
+  return `memory.${candidateId}`;
+}
+
+export function generatedStructureFromManifest(
+  manifest: TerritoryItemManifestV1,
+): TerritoryGeneratedItemStructure {
+  const common = {
+    flippable: manifest.transforms.flippable,
+    rotations: manifest.transforms.rotations,
+    visualSizePx: manifest.visual.sizePx,
+  } as const;
+  if (manifest.placement.mode === "surface") {
+    return {
+      ...common,
+      attachmentAnchorPx: manifest.placement.attachmentAnchorPx,
+      placement: "surface",
+    };
+  }
+  return {
+    ...common,
+    depthAnchorPx: manifest.placement.depthAnchorPx,
+    footprintTiles: manifest.placement.gridSize,
+    placement:
+      manifest.placement.plane === "underlay"
+        ? "ground_underlay"
+        : "ground_object",
+    surfaceSlots: manifest.surfaceSlots.map(
+      ({ anchorPx, id, maxItemSizePx }) => ({
+        anchorPx,
+        id,
+        maxItemSizePx,
+      }),
+    ),
+  };
+}
+
 export function createGeneratedTerritoryItemManifest(
   candidate: TerritoryImageCandidate,
+  identity: {
+    readonly assetId: string;
+    readonly definitionId: string;
+    readonly revision: number;
+  } = {
+    assetId: generatedTerritoryItemId(candidate.id),
+    definitionId: generatedTerritoryItemId(candidate.id),
+    revision: 1,
+  },
 ): TerritoryItemManifestV1 {
-  const id = generatedTerritoryItemId(candidate.id);
   const structure = candidate.structure ?? {};
   const visualSize = structure.visualSizePx ?? DEFAULT_VISUAL_SIZE;
   const placementKind = structure.placement ?? "ground_object";
@@ -36,7 +84,7 @@ export function createGeneratedTerritoryItemManifest(
       );
     }
     manifest = {
-      definitionId: id,
+      definitionId: identity.definitionId,
       description: candidate.description,
       name: candidate.name,
       placement: {
@@ -47,13 +95,13 @@ export function createGeneratedTerritoryItemManifest(
         },
         mode: "surface",
       },
-      revision: 1,
+      revision: identity.revision,
       schemaVersion: 1,
       surfaceSlots: [],
       transforms,
       visual: {
         sizePx: visualSize,
-        source: { assetId: id, kind: "asset" },
+        source: { assetId: identity.assetId, kind: "asset" },
       },
     };
   } else {
@@ -83,7 +131,7 @@ export function createGeneratedTerritoryItemManifest(
       Array.from({ length: gridSize.width }, (_, x) => ({ x, y })),
     );
     manifest = {
-      definitionId: id,
+      definitionId: identity.definitionId,
       description: candidate.description,
       name: candidate.name,
       placement: {
@@ -97,7 +145,7 @@ export function createGeneratedTerritoryItemManifest(
         occupancyCells,
         plane: placementKind === "ground_object" ? "object" : "underlay",
       },
-      revision: 1,
+      revision: identity.revision,
       schemaVersion: 1,
       surfaceSlots: (structure.surfaceSlots ?? []).map((slot) => ({
         ...slot,
@@ -106,7 +154,7 @@ export function createGeneratedTerritoryItemManifest(
       transforms,
       visual: {
         sizePx: visualSize,
-        source: { assetId: id, kind: "asset" },
+        source: { assetId: identity.assetId, kind: "asset" },
       },
     };
   }

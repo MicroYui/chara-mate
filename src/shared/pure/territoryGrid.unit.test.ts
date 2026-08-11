@@ -17,16 +17,21 @@ import { rotatedTerritorySize } from "./territoryItemGeometry";
 const timestamp = "2026-08-06T08:00:00.000Z" as const;
 
 function sceneItems(sceneId: (typeof TERRITORY_SCENE_ORDER)[number]) {
-  return TERRITORY_SCENES[sceneId].defaults.map((item): TerritoryItem => ({
-    flipped: item.flipped ?? false,
-    id: item.id,
-    manifest: getTerritoryItemDefinition(item.definitionId),
-    pinned: false,
-    placedAt: timestamp,
-    rotation: item.rotation ?? 0,
-    target: { kind: "ground", sceneId, x: item.x, y: item.y },
-    updatedAt: timestamp,
-  }));
+  return TERRITORY_SCENES[sceneId].defaults.map((item): TerritoryItem => {
+    const manifest = getTerritoryItemDefinition(item.definitionId);
+    return {
+      flipped: item.flipped ?? false,
+      id: item.id,
+      manifest,
+      pinned: false,
+      placedAt: timestamp,
+      rotation: item.rotation ?? 0,
+      sources: [],
+      target: { kind: "ground", sceneId, x: item.x, y: item.y },
+      updatedAt: timestamp,
+      versions: [{ active: true, createdAt: timestamp, manifest, revision: 1 }],
+    };
+  });
 }
 
 describe("Territory 2.5D nav grid", () => {

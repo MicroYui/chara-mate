@@ -680,6 +680,38 @@ export class ActivityRepository {
       .run(JSON.stringify(candidateIds), digestId);
   }
 
+  getDigest(digestId: string): ActivityDigest | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, kind, title, summary, period_start, period_end,
+                evidence_days, candidate_ids_json, created_at
+         FROM activity_digests
+         WHERE id = ?`,
+      )
+      .get(digestId) as DigestRow | undefined;
+    if (!row) return undefined;
+    const episodeIds = (
+      this.database
+        .prepare(
+          `SELECT episode_id FROM activity_digest_evidence
+           WHERE digest_id = ? ORDER BY episode_id`,
+        )
+        .all(digestId) as Array<{ episode_id: string }>
+    ).map(({ episode_id }) => episode_id);
+    return {
+      candidateIds: stringArray(row.candidate_ids_json),
+      createdAt: row.created_at,
+      evidenceDays: row.evidence_days,
+      episodeIds,
+      id: row.id,
+      kind: row.kind,
+      periodEnd: row.period_end,
+      periodStart: row.period_start,
+      summary: row.summary,
+      title: row.title,
+    };
+  }
+
   listDigests(periodStart: Timestamp, periodEnd: Timestamp): ActivityDigest[] {
     const rows = this.database
       .prepare(
