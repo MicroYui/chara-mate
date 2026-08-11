@@ -4,8 +4,10 @@ import type { Static, TSchema } from "@sinclair/typebox";
 import {
   CALENDAR_DATE_FORMAT,
   isCalendarDate,
+  isTimeZoneId,
   isUtcTimestamp,
   JsonValueSchema,
+  TIME_ZONE_ID_FORMAT,
   UTC_TIMESTAMP_FORMAT,
 } from "./primitives";
 
@@ -15,6 +17,7 @@ const ajv = new Ajv({
 });
 ajv.addFormat(UTC_TIMESTAMP_FORMAT, isUtcTimestamp);
 ajv.addFormat(CALENDAR_DATE_FORMAT, isCalendarDate);
+ajv.addFormat(TIME_ZONE_ID_FORMAT, isTimeZoneId);
 ajv.addSchema(JsonValueSchema);
 const validators = new WeakMap<TSchema, ReturnType<typeof ajv.compile>>();
 const jsonValueValidator = ajv.getSchema(JsonValueSchema.$id ?? "");

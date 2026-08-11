@@ -982,6 +982,12 @@ Settings 提供：
 
 支持一次、每天、每周和 Cron 表达式；可暂停、编辑、立即试跑、查看下次时间与历史结果。
 
+Schedule 契约使用以下唯一表示：一次任务保存 UTC `runAt`；每天和每周保存本地时刻及显式 IANA 时区；Cron 保存显式 IANA 时区和 POSIX 五段调度表达式，不接受第六段 shell command。持久化的 UTC `nextRunAt` 是列表与唤醒检查的投影，`scheduledFor` 是一次计划触发的稳定 occurrence identity；编辑任务会递增 revision，历史运行保留当时的完整定义快照，不能被后续编辑改写。计时器只负责唤醒检查，不是真源。
+
+Automation Run 的 `queued/running/waiting_approval/needs_input/interrupted/completed/failed/cancelled` 投影与普通 Run 状态同构；只有 `completed/failed/cancelled` 发布带唯一 event ID 的 `automation.run.finished` 跨领域事件。事件包含 Automation/运行 ID、revision、当时的定义快照和可用的 Chat/Run 引用，主动聊天与桌宠只消费这一个事实，不另查 Automation 私有表；`waiting_approval` 仍由既有 Approval/Run 事件维持，不伪装为完成。
+
+2026-08-11 的实现前来源刷新检查了 Electron [`powerMonitor`](https://www.electronjs.org/docs/latest/api/power-monitor) 当前文档（项目锁定 Electron `43.2.0`，提供 `suspend`/`resume` 事件）、[Node.js v24 timers](https://nodejs.org/docs/latest-v24.x/api/timers.html) 文档（项目锁定 Node `24.18.x`；`setTimeout` 不保证精确触发时间）、[ECMA-402](https://tc39.es/ecma402/) 当前规范、[IANA TZDB](https://data.iana.org/time-zones/) 索引和 [POSIX.1-2024 `crontab`](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/crontab.html)。本机锁定运行时报告 ICU `78.3`、TZ `2026b`，IANA 当日最新为 `2026c`；因此时区 ID 由打包运行时 `Intl` 校验，不把某份时区名单复制进数据库。Cron 的五段只描述 minute/hour/day-of-month/month/day-of-week，应用不持久化或执行 Cron command。协议来源只约束表示和可观测能力；休眠期间错过任务的补跑策略、DST gap/fold 解析和并发调度仍由 `P5-AUTOMATIONS-CORE` 实现工作包在来源复核与确定性测试后定案，本契约不发明固定补跑次数、TTL 或并发数。
+
 每次 Agent Task 都有持久化 Chat：
 
 - 计划、Tool、命令、审批、结果均可追溯；

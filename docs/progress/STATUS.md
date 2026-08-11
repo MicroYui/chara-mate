@@ -4,18 +4,17 @@
 
 ## 当前里程碑
 
-**Phase 4 — done（Realtime 原生语音 Agent）**
+**Phase 5 — contract-ready（Automations Core/UI 待启动）**
 
-Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Context、Activity 与 Realtime Voice 均为单一生产路径。Phase 6 Pet、Territory、结构化 Item Manifest 与 Azure Image 工作包也已完成。Voice 由 Azure Realtime 原生 speech-to-speech Agent 回答，同时复用客户端 Tool Registry、入口权限、Approval、Skill/Memory/Chat Context、Run/Item、标题和持久化边界；连接复用、跨 Chat 归属、桌宠暂停/恢复与 Agent 主动挂断已于 2026-08-11 经用户验收。
+Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Context、Activity 与 Realtime Voice 均为单一生产路径。Phase 6 Pet、Territory、结构化 Item Manifest 与 Azure Image 工作包也已完成。`P5-AUTOMATIONS-CONTRACT` 已冻结 Schedule、Automation、运行历史、完成事件、typed IPC/Preload 与数据库 Schema；调度器、Repository/Service、Main 注册和 Automations 页面由后续 `P5-AUTOMATIONS-CORE` / `P5-AUTOMATIONS-UI` 分别实现。
 
 退出条件：
 
-- [x] `VOICE-ARCHITECTURE`、`VOICE-TRANSPORT` 与 `VOICE-TOOL-JOIN` 记录最新产品选择、一手来源、实验边界与旧路径删除证明。
-- [x] Azure GA WebRTC 以显式 response 完成原生回答、Function Call continuation 和中英混合输入 Live，文字 Agent 不参与 Voice 回答。
-- [x] Realtime 获得入口允许的同一客户端 Tools，并沿现有 execution/Approval/Run Item 边界执行和回注 `function_call_output`。
-- [x] Voice 输入、输出转写、Tool/Approval 和标题进入现有 Chat/Run/Item；旧 `RealtimeSpeechOutput`、句子队列、TTS 与双回答链已删除。
-- [x] 最新 main 上的 focused、integration、完整 offline、build、Electron E2E、package/smoke 全绿。
-- [x] 目标硬件完成真人麦克风、扬声器、自然插话和审批气泡人工验收，并带 Azure 配置启动供体验。
+- [x] 一次、每天、每周与 POSIX 五段 Cron 使用唯一 Schedule 联合；重复计划显式记录 IANA 时区与 UTC `nextRunAt` 投影。
+- [x] Reminder/Agent Task、revision、定义快照、运行生命周期和 `automation.run.finished` 由 TypeBox/Ajv 单一契约定义。
+- [x] Schema v9 增加 `automations` / `automation_runs`、运行快照、外键和计划发生次序去重约束，并覆盖 v8→v9 迁移。
+- [x] Renderer 仅获得窄 typed Preload API；Main IPC 适配器完成请求/响应/事件校验，待 Core 提供 Service 后注册。
+- [x] contract、focused、integration、完整 offline、build、Electron E2E、package/smoke 全绿。
 
 ## 工作包状态
 
@@ -24,6 +23,9 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 | `P3-RUNTIME-MEMORY-ACTIVITY` | `main` | `done` | Chat/Agent、结构化输入、Memory/Context/Activity 单一路径完成 |
 | `P2-RUNTIME-PLAN-CHECKPOINT` | `main` | `done` | Plan RunItem 保持历史/UI 真源，checkpoint 保存并恢复编译快照；普通 Tool、旧 checkpoint、重启与压缩回归完成 |
 | `P6-PET-TERRITORY-IMAGE` | `main` | `done` | 桌宠、领地、Azure Image、候选确认与内建 Tool 完成 |
+| `P5-AUTOMATIONS-CONTRACT` | `main` | `done` | Automations JSON Schema、Schema v9/迁移、完成事件与 typed IPC/Preload 已冻结；456 项 offline、16/16 E2E 与 package/smoke 通过 |
+| `P5-AUTOMATIONS-CORE` | — | `specified` | 待实现 schedule 计算、休眠恢复、Repository/Service、普通 Run、事件发布与 Main IPC 注册 |
+| `P5-AUTOMATIONS-UI` | — | `specified` | 待基于冻结契约实现表单、卡片、运行历史与 Chat Run 跳转 |
 | `P4-SOURCE-CONTRACT` | `main` | `done` | Realtime conversation、WebRTC interruption、Function Call 与锁定 SDK 类型已复核 |
 | `P4-VOICE-DECISIONS` | `main` | `done` | 透明修订为 Orchestrated Native Realtime；WebRTC + 串行 continuation |
 | `P4-VOICE-RUNTIME` | `main` | `done` | 原生 response、共享 Tool/Approval、Run/Item、打断、历史与非阻塞标题完成 |
@@ -34,12 +36,12 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 ### 最近完成边界
 
-- 结果：一个活动 VoiceSession 始终绑定一个 Voice Chat；Voice Dock 与桌宠共享开始、暂停和恢复控制，主窗口浏览其他 Chat 或关闭窗口不迁移、不误断该连接；Agent 可在用户明确结束通话时调用 `voice.end`，说完简短告别并等远端音频排空后断开。
-- 范围：Voice Tool、Main 会话生命周期、桌宠按钮、主窗口保活与 Chat 导航、产品/UI/Decision/进度文档及对应测试。
-- 非目标：不跨 Chat 热迁移 Realtime conversation，不新增连接池、后台 TTL、关键词硬编码挂断或 GPT Live/Voice Live Provider。
-- 依赖与合同：消费既有 VoiceSession、Tool Registry、Function Call continuation、`response.done` 与 WebRTC `output_audio_buffer.stopped`；不改变普通 Chat/Run 状态机。
-- 验收：桌宠首次点击新建 Voice Chat，活动时点击暂停、暂停时点击原连接恢复；选择 Chat B 后 Voice 仍属于 Chat A，活动语音期间关闭主窗口仅隐藏以保留连接；`voice.end` 无审批且仅接受当前 Voice Run，请求后继续一次简短告别并在音频排空后完成 Session/Run/Item。
-- Decision：无新候选 Arm；沿用 `VOICE-TRANSPORT` 与 `VOICE-TOOL-JOIN`，补充入口归属与事件驱动挂断策略。生产完成后没有候选代码可删除。
+- 结果：Schedule、Automation、运行历史与完成事件现在由一套 JSON Schema-first 契约贯穿 shared、typed Preload/Main IPC 和 SQLite Schema v9；每次运行保留 automation revision 与完整定义快照。
+- 范围：产品契约、shared schemas/types、IPC 适配器、Preload API、数据库当前 Schema 与 v8→v9 迁移、fixtures 及 contract/unit/integration/E2E 边界测试。
+- 非目标：本工作包不实现时间计算、休眠补跑/DST 产品策略、Repository/Service、Main handler 注册、Run 启动或 Automations 页面，也不增加 Multi-agent / Evolution 路径。
+- 依赖与合同：Agent Task 复用既有 `RunExecution`、Provider/Model/Persona 与 Tool Scope；Automation Run 的状态对齐普通 Run，并通过可选 `chatId/runId` 关联现有运行时。
+- 验收：四种 Schedule、IANA 时区、状态/时间约束、scheduled occurrence 去重、定义快照、失败错误约束、所有 IPC 操作与完成事件均有确定性回归；真实 Preload、数据库、桌面启动和 packaged app 均通过。
+- Decision：契约本身没有候选 Arm；休眠补跑次数、DST gap/fold、并发与具体 schedule 算法仍留给 `P5-AUTOMATIONS-CORE` 的来源复核和确定性测试，不在契约层伪造阈值。
 
 ## 依赖与已知边界
 
@@ -48,6 +50,7 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 ## 最近绿色验证
 
+- 2026-08-11 `P5-AUTOMATIONS-CONTRACT`：`npm run verify:offline` 21.1s 通过（contract 83、focused/component 243、integration 130，共 456 项）；`npm run build` 12.3s 通过；`npm run test:e2e` 约 30.0s、16/16 通过；macOS arm64 `npm run package` 15.5s 与 `npm run smoke:package` 4.6s 通过。
 - 2026-08-11 用户完成目标硬件人工验收，确认 Phase 4 Voice 连接复用、跨 Chat 归属、桌宠暂停/恢复和 Agent 主动挂断达到当前产品预期。
 - 2026-08-11 Voice 入口归属与 Agent 挂断：`npm run verify:offline` 通过（contract 69、focused/component 239、integration 128，共 436 项）；`npm run build` 通过；Electron E2E 最终 16/16 通过（首次并发运行仅 Territory 场景附件等待超时，单项与完整套件立即复跑均通过）；macOS arm64 `npm run package` 与 `npm run smoke:package` 通过。
 - 2026-08-11 Voice 连接生命周期优化：`npm run verify:offline` 通过（contract 69、focused/component 236、integration 127，共 432 项）；`npm run build` 通过；`npm run test:e2e` 16/16 通过；macOS arm64 `npm run package` 与 `npm run smoke:package` 通过。
@@ -65,6 +68,7 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 ## 来源快照
 
+- 2026-08-11 复核 Electron `powerMonitor` suspend/resume、Node.js v24 timers（计时器不承诺精确触发）、ECMA-402 时区解析、IANA TZDB 与 POSIX.1-2024 `crontab`；锁定运行时 Node `24.18.0`、ICU `78.3`、tz `2026b`，当日 IANA 最新发布为 `2026c`。这些来源只冻结外部协议与运行时事实；补跑、DST 和并发仍是 CharaMate Core 策略。
 - OpenAI Responses Compaction 文档于 2026-08-10 复核（页面未标独立版本）；Codex `main` commit `c9c6c0daa994109cec50fddcb57d076fdf9e738c` 的 Plan Tool、协议类型与远端压缩保留逻辑已检查。它们用于区分协议约束、当前参考实现与 CharaMate 自身不变量。
 - OpenAI Realtime conversations 与 WebRTC 文档于 2026-08-09 复核：Realtime Session 是有状态 speech-to-speech conversation，支持 Function Call；WebRTC VAD 可中断活动 response 并自动截断未播放音频。
 - 2026-08-11 再次复核 Azure GA WebRTC 指南 commit `ce66cc3b4f2a6be478aaa7ddedf9e2567fa638a5`、Azure GA client events commit `777f84fbedeb0995f4fdea6c65bee2f2a4af1657` 与 Azure Voice Live 指南 commit `0186eb438fa9be7a8e6d6988f74d90b3e9cdb21f`：会话内配置刷新与媒体连接生命周期分层；未来 Provider 是否热复用由适配器能力决定，不改变共享 Voice/Run 状态机。

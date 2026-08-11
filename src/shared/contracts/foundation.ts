@@ -3,6 +3,7 @@ import type { Static } from "@sinclair/typebox";
 import type { FoundationSnapshotSchema } from "../schemas/foundation";
 import type { AgentApi } from "./agent";
 import type { ActivityApi } from "./activity";
+import type { AutomationApi } from "./automation";
 import type { ChatApi } from "./chat";
 import type { ExtensionsApi } from "./extensions";
 import type { LocalFilesApi } from "./files";
@@ -28,6 +29,7 @@ export interface FoundationApi {
 
 export interface DesktopApi {
   activity: ActivityApi;
+  automations: AutomationApi;
   files: LocalFilesApi;
   foundation: FoundationApi;
   memory: MemoryApi;

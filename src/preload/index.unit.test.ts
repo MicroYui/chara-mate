@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CharaMateApi } from "../shared/contracts/foundation";
+import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_CHANNELS, CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
@@ -9,9 +10,15 @@ import { VOICE_CHANNELS } from "../shared/contracts/voice";
 import {
   chatDataSnapshotFixture,
   FIXTURE_IDS,
+  FIXTURE_TIMESTAMPS,
   runEventEnvelopeFixture,
 } from "../../tests/fixtures/foundationContracts";
 import { activeTerritorySnapshot } from "../../tests/fixtures/territory";
+import {
+  automationDefinitionFixture,
+  automationFinishedEventFixture,
+  automationFixture,
+} from "../../tests/fixtures/automations";
 
 type IpcListener = (event: unknown, input: unknown) => void;
 
@@ -193,6 +200,52 @@ describe("Phase 1 typed preload data boundary", () => {
       /chatId|pattern/u,
     );
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("validates Automation mutations and event subscriptions on both sides", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(AUTOMATION_CHANNELS.create);
+        expect(input).toEqual({
+          definition: automationDefinitionFixture,
+          requestedAt: FIXTURE_TIMESTAMPS.updated,
+        });
+        return Promise.resolve({ ok: true, value: automationFixture });
+      },
+    );
+    let eventListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(AUTOMATION_CHANNELS.subscribe);
+        eventListener = listener;
+      },
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.automations.create({
+        definition: automationDefinitionFixture,
+        requestedAt: FIXTURE_TIMESTAMPS.updated,
+      }),
+    ).resolves.toEqual({ ok: true, value: automationFixture });
+    await expect(
+      api.automations.create({
+        definition: automationDefinitionFixture,
+        requestedAt: "not-a-timestamp",
+      }),
+    ).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+
+    const listener = vi.fn();
+    const unsubscribe = api.automations.subscribe(listener);
+    eventListener?.({}, automationFinishedEventFixture);
+    expect(listener).toHaveBeenCalledWith(automationFinishedEventFixture);
+    expect(() => eventListener?.({}, { type: "raw-electron-event" })).toThrow();
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      AUTOMATION_CHANNELS.subscribe,
+      eventListener,
+    );
   });
 
   it("passes only validated event payloads and removes the wrapped listener", async () => {

@@ -179,6 +179,15 @@ function renderApp({
       setPaused: vi.fn(),
       updateEpisode: vi.fn(),
     },
+    automations: {
+      create: vi.fn(),
+      get: vi.fn(),
+      list: vi.fn(),
+      runNow: vi.fn(),
+      setPaused: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+      update: vi.fn(),
+    },
     agent: {
       cancel: vi.fn<AgentApi["cancel"]>(),
       getPendingApproval: vi.fn<AgentApi["getPendingApproval"]>(),

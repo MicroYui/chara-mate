@@ -6,6 +6,7 @@ const UTC_TIMESTAMP_PATTERN =
   "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$";
 export const UTC_TIMESTAMP_FORMAT = "charamate-utc-timestamp";
 export const CALENDAR_DATE_FORMAT = "date";
+export const TIME_ZONE_ID_FORMAT = "charamate-time-zone-id";
 
 const utcTimestampPattern = new RegExp(UTC_TIMESTAMP_PATTERN, "u");
 
@@ -36,11 +37,25 @@ export function isCalendarDate(value: string): boolean {
   );
 }
 
+export function isTimeZoneId(value: string): boolean {
+  try {
+    return (
+      new Intl.DateTimeFormat("en", { timeZone: value }).resolvedOptions()
+        .timeZone.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 if (!FormatRegistry.Has(UTC_TIMESTAMP_FORMAT)) {
   FormatRegistry.Set(UTC_TIMESTAMP_FORMAT, isUtcTimestamp);
 }
 if (!FormatRegistry.Has(CALENDAR_DATE_FORMAT)) {
   FormatRegistry.Set(CALENDAR_DATE_FORMAT, isCalendarDate);
+}
+if (!FormatRegistry.Has(TIME_ZONE_ID_FORMAT)) {
+  FormatRegistry.Set(TIME_ZONE_ID_FORMAT, isTimeZoneId);
 }
 
 export const EntityIdSchema = Type.String({ pattern: UUID_PATTERN });
@@ -52,6 +67,13 @@ export const TimestampSchema = Type.String({
 
 export const CalendarDateSchema = Type.String({
   format: CALENDAR_DATE_FORMAT,
+});
+
+export const TimeZoneIdSchema = Type.String({
+  description:
+    "A time-zone identifier recognized by the packaged Intl runtime.",
+  format: TIME_ZONE_ID_FORMAT,
+  pattern: "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$",
 });
 
 export const SequenceSchema = Type.Integer({ minimum: 1 });

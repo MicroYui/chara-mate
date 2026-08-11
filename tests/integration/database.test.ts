@@ -267,4 +267,186 @@ describe("foundation database", () => {
     expect(database.pragma("foreign_key_check")).toEqual([]);
     database.close();
   });
+
+  it("migrates v8 data by adding Automation definitions and run history", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-v8-migration-"),
+    );
+    temporaryDirectories.push(directory);
+    const databasePath = path.join(directory, "charamate.sqlite");
+    let database = openApplicationDatabase(databasePath);
+    database.transaction(() => {
+      database.exec("DROP TABLE automation_runs");
+      database.exec("DROP TABLE automations");
+      database
+        .prepare(
+          "UPDATE app_metadata SET value = '8' WHERE key = 'schema_version'",
+        )
+        .run();
+    })();
+    database.close();
+
+    database = openApplicationDatabase(databasePath);
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE name = ?")
+        .get("automations"),
+    ).toEqual({ name: "automations" });
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE name = ?")
+        .get("automation_runs"),
+    ).toEqual({ name: "automation_runs" });
+    expect(
+      database
+        .prepare("SELECT value FROM app_metadata WHERE key = 'schema_version'")
+        .get(),
+    ).toEqual({ value: CURRENT_SCHEMA_VERSION });
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
+  });
+
+  it("keeps Automation revisions, occurrence identity and lifecycle constraints in SQLite", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-automation-schema-"),
+    );
+    temporaryDirectories.push(directory);
+    const databasePath = path.join(directory, "charamate.sqlite");
+    const database = openApplicationDatabase(databasePath);
+    const timestamp = "2026-08-11T12:00:00.000Z";
+    const scheduledFor = "2026-08-12T01:00:00.000Z";
+    const definitionValueV1 = {
+      name: "晨间提醒",
+      schedule: {
+        kind: "daily",
+        localTime: "09:00",
+        timeZone: "Asia/Shanghai",
+      },
+      task: {
+        delivery: "bubble",
+        kind: "reminder",
+        message: "开始今天的计划。",
+      },
+    };
+    const definitionV1 = JSON.stringify(definitionValueV1);
+    const definitionV2 = JSON.stringify({
+      ...definitionValueV1,
+      name: "每日晨间提醒",
+    });
+    database
+      .prepare(
+        `INSERT INTO automations (
+           id, revision, definition_json, state, next_run_at,
+           created_at, updated_at
+         ) VALUES ('automation-1', 1, ?, 'active', ?, ?, ?)`,
+      )
+      .run(definitionV1, scheduledFor, timestamp, timestamp);
+    database
+      .prepare(
+        `INSERT INTO automation_runs (
+           id, automation_id, automation_revision, definition_json,
+           trigger_json, status, requested_at, created_at, updated_at
+         ) VALUES (
+           'automation-run-1', 'automation-1', 1, ?, ?, 'queued', ?, ?, ?
+         )`,
+      )
+      .run(
+        definitionV1,
+        JSON.stringify({ kind: "scheduled", scheduledFor }),
+        timestamp,
+        timestamp,
+        timestamp,
+      );
+    database
+      .prepare(
+        `UPDATE automations
+         SET revision = 2, definition_json = ?, updated_at = ?
+         WHERE id = 'automation-1'`,
+      )
+      .run(definitionV2, timestamp);
+
+    expect(
+      database
+        .prepare(
+          `SELECT automation_revision, definition_json
+           FROM automation_runs
+           WHERE id = 'automation-run-1'`,
+        )
+        .get(),
+    ).toEqual({ automation_revision: 1, definition_json: definitionV1 });
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO automation_runs (
+             id, automation_id, automation_revision, definition_json,
+             trigger_json, status, requested_at, created_at, updated_at
+           ) VALUES (
+             'automation-run-duplicate', 'automation-1', 2, ?, ?,
+             'queued', ?, ?, ?
+           )`,
+        )
+        .run(
+          definitionV2,
+          JSON.stringify({ kind: "scheduled", scheduledFor }),
+          timestamp,
+          timestamp,
+          timestamp,
+        ),
+    ).toThrow();
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO automation_runs (
+             id, automation_id, automation_revision, definition_json,
+             trigger_json, status, requested_at, created_at, updated_at
+           ) VALUES (
+             'automation-run-invalid-trigger', 'automation-1', 2, ?, ?,
+             'queued', ?, ?, ?
+           )`,
+        )
+        .run(
+          definitionV2,
+          JSON.stringify({ kind: "manual", scheduledFor }),
+          timestamp,
+          timestamp,
+          timestamp,
+        ),
+    ).toThrow();
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO automations (
+             id, revision, definition_json, state, next_run_at,
+             created_at, updated_at
+           ) VALUES (
+             'automation-invalid', 1, ?, 'active', NULL, ?, ?
+           )`,
+        )
+        .run(definitionV1, timestamp, timestamp),
+    ).toThrow();
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO automation_runs (
+             id, automation_id, automation_revision, definition_json,
+             trigger_json, status, requested_at, started_at, ended_at,
+             created_at, updated_at
+           ) VALUES (
+             'automation-run-invalid-error', 'automation-1', 2, ?, ?,
+             'failed', ?, ?, ?, ?, ?
+           )`,
+        )
+        .run(
+          definitionV2,
+          JSON.stringify({ kind: "manual" }),
+          timestamp,
+          timestamp,
+          timestamp,
+          timestamp,
+          timestamp,
+        ),
+    ).toThrow();
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
+  });
 });

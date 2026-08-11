@@ -12,6 +12,16 @@ import {
   type SteerRunRequest,
 } from "../shared/contracts/agent";
 import {
+  AUTOMATION_CHANNELS,
+  type AutomationApi,
+  type AutomationCreateRequest,
+  type AutomationEventEnvelope,
+  type AutomationIdRequest,
+  type AutomationRunNowRequest,
+  type AutomationSetPausedRequest,
+  type AutomationUpdateRequest,
+} from "../shared/contracts/automation";
+import {
   CHAT_CHANNELS,
   CHAT_EVENT_CHANNELS,
   type Chat,
@@ -126,6 +136,18 @@ import {
   PendingApprovalResponseSchema,
   ApprovalNavigationTargetSchema,
 } from "../shared/schemas/agent";
+import {
+  AutomationCreateRequestSchema,
+  AutomationDetailResponseSchema,
+  AutomationEventEnvelopeSchema,
+  AutomationIdRequestSchema,
+  AutomationListResponseSchema,
+  AutomationMutationResponseSchema,
+  AutomationRunNowRequestSchema,
+  AutomationRunNowResponseSchema,
+  AutomationSetPausedRequestSchema,
+  AutomationUpdateRequestSchema,
+} from "../shared/schemas/automation";
 import { FoundationSnapshotSchema } from "../shared/schemas/foundation";
 import {
   MemoryCandidateIdRequestSchema,
@@ -375,6 +397,70 @@ const agentApi: AgentApi = Object.freeze({
     ipcRenderer.on(AGENT_CHANNELS.openApproval, wrappedListener);
     return () => ipcRenderer.off(AGENT_CHANNELS.openApproval, wrappedListener);
   },
+});
+
+const automationApi: AutomationApi = Object.freeze({
+  create: async (input: AutomationCreateRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      AutomationMutationResponseSchema,
+      await ipcRenderer.invoke(
+        AUTOMATION_CHANNELS.create,
+        parseSchemaWithoutCodeGeneration(AutomationCreateRequestSchema, input),
+      ),
+    ),
+  get: async (input: AutomationIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      AutomationDetailResponseSchema,
+      await ipcRenderer.invoke(
+        AUTOMATION_CHANNELS.get,
+        parseSchemaWithoutCodeGeneration(AutomationIdRequestSchema, input),
+      ),
+    ),
+  list: async () =>
+    parseSchemaWithoutCodeGeneration(
+      AutomationListResponseSchema,
+      await ipcRenderer.invoke(AUTOMATION_CHANNELS.list, {}),
+    ),
+  runNow: async (input: AutomationRunNowRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      AutomationRunNowResponseSchema,
+      await ipcRenderer.invoke(
+        AUTOMATION_CHANNELS.runNow,
+        parseSchemaWithoutCodeGeneration(AutomationRunNowRequestSchema, input),
+      ),
+    ),
+  setPaused: async (input: AutomationSetPausedRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      AutomationMutationResponseSchema,
+      await ipcRenderer.invoke(
+        AUTOMATION_CHANNELS.setPaused,
+        parseSchemaWithoutCodeGeneration(
+          AutomationSetPausedRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  subscribe: (listener: (event: AutomationEventEnvelope) => void) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        parseSchemaWithoutCodeGeneration(AutomationEventEnvelopeSchema, input),
+      );
+    };
+    ipcRenderer.on(AUTOMATION_CHANNELS.subscribe, wrappedListener);
+    return () =>
+      ipcRenderer.off(AUTOMATION_CHANNELS.subscribe, wrappedListener);
+  },
+  update: async (input: AutomationUpdateRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      AutomationMutationResponseSchema,
+      await ipcRenderer.invoke(
+        AUTOMATION_CHANNELS.update,
+        parseSchemaWithoutCodeGeneration(AutomationUpdateRequestSchema, input),
+      ),
+    ),
 });
 
 const extensionsApi: ExtensionsApi = Object.freeze({
@@ -897,6 +983,7 @@ const activityApi: ActivityApi = Object.freeze({
 const desktopApi: CharaMateApi = Object.freeze({
   activity: activityApi,
   agent: agentApi,
+  automations: automationApi,
   chat: chatApi,
   extensions: extensionsApi,
   files: Object.freeze({

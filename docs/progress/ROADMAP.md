@@ -289,17 +289,21 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 - Reminder/Agent Task 只依赖 Phase 2；
 - 主动聊天依赖 Phase 3 的 Digest/Memory；
+- `P5-AUTOMATIONS-CONTRACT` 串行冻结共享 Schema、IPC、DB 与完成事件；Main Core 和冻结 fixture UI 在其后并行；
 - `MULTI-AGENT`、`SELF-EVOLUTION` 各自决定能力是否存在，而不是决定默认开关。
 
 ### 工作包
 
-- `P5-AUTOMATIONS`：一次/每天/每周/Cron、暂停/编辑/试跑、运行历史和普通 Chat Run。
+- `P5-AUTOMATIONS-CONTRACT`：一次/每天/每周/POSIX 五段 Cron 与显式时区、Reminder/Agent Task 定义、revision/运行快照、`automation.run.finished`、typed IPC/Preload、`automations`/`automation_runs` Schema 和迁移；不实现调度器、Repository/Service 或页面。
+- `P5-AUTOMATIONS-CORE`：来源复核后实现唯一 schedule 计算与休眠恢复策略、Repository/Service、普通 Chat Run、暂停/编辑/试跑、历史、事件发布和 Main IPC 注册。
+- `P5-AUTOMATIONS-UI`：使用冻结 fixture 实现卡片、单页表单、暂停/编辑/试跑、历史及 Chat Run 跳转；最终只消费 typed Preload API。
 - `P5-PROACTIVE`：安静时段、主动程度、触发来源、普通 Chat 持久化和气泡投影。
 - `P5-MULTI-AGENT`：仅晋级后实现获胜 Dispatch、资源隔离、父 Join、Subtask Item 和 Composer 按轮授权。
 - `P5-EVOLUTION`：仅晋级后实现异步 Review、四类候选、Skill replay、版本、归档和恢复。
 
 ### 验收
 
+- `P5-AUTOMATIONS-CONTRACT` 的四种 Schedule、revision/定义快照、运行生命周期、完成事件、typed IPC/Preload 与 v8→v9 迁移分别通过确定性 contract、IPC 和 SQLite 回归；契约闸门不注册无 Service 的 Main handler，也不夹带调度器或页面占位实现；
 - Automation 的 Tool、审批、取消、结果和失败与手动 Run 完全同构；
 - 后台 Approval 不被伪装为成功，气泡始终跳转同一 Chat Item；
 - 未晋级能力的表、协议、组件、设置、依赖和空入口不存在；

@@ -96,6 +96,7 @@ test("launches through the typed preload boundary", async () => {
     const bridgeShape = await page.evaluate(() => ({
       activityKeys: Object.keys(window.charaMate.activity).sort(),
       agentKeys: Object.keys(window.charaMate.agent).sort(),
+      automationKeys: Object.keys(window.charaMate.automations).sort(),
       chatKeys: Object.keys(window.charaMate.chat).sort(),
       extensionKeys: Object.keys(window.charaMate.extensions).sort(),
       fileKeys: Object.keys(window.charaMate.files).sort(),
@@ -129,6 +130,15 @@ test("launches through the typed preload boundary", async () => {
         "start",
         "steer",
         "subscribeOpenApproval",
+      ],
+      automationKeys: [
+        "create",
+        "get",
+        "list",
+        "runNow",
+        "setPaused",
+        "subscribe",
+        "update",
       ],
       chatKeys: [
         "archive",
@@ -187,6 +197,7 @@ test("launches through the typed preload boundary", async () => {
       rootKeys: [
         "activity",
         "agent",
+        "automations",
         "chat",
         "extensions",
         "files",
