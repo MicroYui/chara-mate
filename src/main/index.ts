@@ -1,11 +1,18 @@
 import path from "node:path";
 import { access } from "node:fs/promises";
 
-import { app, BrowserWindow, shell, systemPreferences } from "electron";
+import {
+  app,
+  BrowserWindow,
+  powerMonitor,
+  shell,
+  systemPreferences,
+} from "electron";
 import type Database from "better-sqlite3";
 
 import type { FoundationSnapshot } from "../shared/contracts/foundation";
 import { AGENT_CHANNELS } from "../shared/contracts/agent";
+import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
@@ -27,6 +34,10 @@ import { decodeRuntimeCheckpoint } from "./agent/runtimeCheckpoint";
 import { RunEventService } from "./agent/runEventService";
 import { RunEventWriter } from "./agent/runEventWriter";
 import { RunRepository } from "./agent/runRepository";
+import { registerAutomationIpc } from "./automations/automationIpc";
+import { AutomationRepository } from "./automations/automationRepository";
+import { AutomationScheduler } from "./automations/automationScheduler";
+import { AutomationService } from "./automations/automationService";
 import { registerChatIpc } from "./app/chatIpc";
 import { registerFoundationIpc } from "./app/foundationIpc";
 import { registerApplicationSchemes } from "./app/protocolSchemes";
@@ -145,6 +156,7 @@ let unregisterChatIpc: (() => void) | undefined;
 let unregisterActivityIpc: (() => void) | undefined;
 let unregisterActivityProtocol: (() => void) | undefined;
 let unregisterAgentIpc: (() => void) | undefined;
+let unregisterAutomationIpc: (() => void) | undefined;
 let unregisterExtensionIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
 let unregisterMemoryIpc: (() => void) | undefined;
@@ -158,6 +170,7 @@ let unregisterVoiceIpc: (() => void) | undefined;
 let providerService: ProviderService | undefined;
 let characterWindowController: CharacterWindowController | undefined;
 let agentRuntime: AgentRuntime | undefined;
+let automationScheduler: AutomationScheduler | undefined;
 let activityCapture: ActivityCaptureCoordinator | undefined;
 let activityService: ActivityService | undefined;
 let managedBrowser: ManagedBrowser | undefined;
@@ -187,6 +200,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterActivityProtocol = undefined;
     unregisterAgentIpc?.();
     unregisterAgentIpc = undefined;
+    unregisterAutomationIpc?.();
+    unregisterAutomationIpc = undefined;
     unregisterExtensionIpc?.();
     unregisterExtensionIpc = undefined;
     unregisterChatIpc?.();
@@ -209,6 +224,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterTerritoryProtocol = undefined;
     unregisterVoiceIpc?.();
     unregisterVoiceIpc = undefined;
+    await automationScheduler?.stop();
+    automationScheduler = undefined;
     voiceService?.shutdown();
     await agentRuntime?.interruptAll();
     managedBrowser?.setActivityObserver(undefined);
@@ -281,6 +298,7 @@ async function startApplication(): Promise<void> {
   const runRepository = new RunRepository(applicationDatabase);
   const checkpointRepository = new CheckpointRepository(applicationDatabase);
   const runtimeObservability = new RuntimeObservability(runRepository, logger);
+  const automationServiceReference: { current?: AutomationService } = {};
   let voiceMetrics: VoiceMetrics | undefined;
   const windowPlacementRepository = new WindowPlacementRepository(
     applicationDatabase,
@@ -314,6 +332,15 @@ async function startApplication(): Promise<void> {
         activityCapture?.observeRun(envelope);
       } catch (error) {
         logger.warn("ACTIVITY_RUN_CAPTURE_ERROR", {
+          error,
+          runId: envelope.streamId,
+          sequence: envelope.sequence,
+        });
+      }
+      try {
+        automationServiceReference.current?.observeRun(envelope);
+      } catch (error) {
+        logger.warn("AUTOMATION_RUN_PROJECTION_ERROR", {
           error,
           runId: envelope.streamId,
           sequence: envelope.sequence,
@@ -616,6 +643,40 @@ async function startApplication(): Promise<void> {
     imageInput,
     memoryServiceInstance,
   );
+  const automationServiceInstance = new AutomationService(
+    new AutomationRepository(applicationDatabase),
+    chatService,
+    {
+      getRun: (runId) => runRepository.getRun(runId),
+      listChatRuns: (chatId) => runRepository.getSnapshot(chatId).runs,
+      readCompletedAssistantMessage: (runId) =>
+        chatRepository
+          .listRunMessages(runId)
+          .findLast(
+            ({ role, status }) =>
+              role === "assistant" && status === "completed",
+          )?.content,
+    },
+    agentRuntime,
+    idGenerator,
+    clock,
+    {
+      publish(envelope) {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (window.webContents.isDestroyed()) continue;
+          try {
+            window.webContents.send(AUTOMATION_CHANNELS.subscribe, envelope);
+          } catch (error) {
+            logger.warn("AUTOMATION_EVENT_BROADCAST_ERROR", {
+              automationEventId: envelope.eventId,
+              error,
+            });
+          }
+        }
+      },
+    },
+  );
+  automationServiceReference.current = automationServiceInstance;
   await agentRuntime.initialize();
 
   const petLibrary = new PetLibraryRepository(path.join(userDataPath, "pets"));
@@ -716,6 +777,18 @@ async function startApplication(): Promise<void> {
     start: (request) => agentRuntime!.start(request),
     steer: (request) => agentRuntime!.steer(request),
   });
+  await automationServiceInstance.initialize();
+  automationScheduler = new AutomationScheduler(
+    automationServiceInstance,
+    clock,
+    powerMonitor,
+    (error) => logger.warn("AUTOMATION_SCHEDULER_ERROR", { error }),
+  );
+  automationServiceInstance.setScheduleChangedListener(() =>
+    automationScheduler?.refresh(),
+  );
+  unregisterAutomationIpc = registerAutomationIpc(automationServiceInstance);
+  automationScheduler.start();
   unregisterPetProtocol = registerPetProtocol(petLibrary);
 
   const mainWindows = new MainWindowController(

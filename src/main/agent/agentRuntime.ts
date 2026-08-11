@@ -146,7 +146,10 @@ const IMAGE_INSPECT_TOOL: ModelFunctionTool = {
 };
 
 interface ProviderRuntimeFactory {
-  createChatModelRuntime(profileId: string): Promise<ChatModelRuntime>;
+  createChatModelRuntime(
+    profileId: string,
+    modelId?: string,
+  ): Promise<ChatModelRuntime>;
 }
 
 interface PendingSteering {
@@ -477,6 +480,26 @@ function chatModeToolResult(): ToolResult {
   };
 }
 
+function toolScopeResult(): ToolResult {
+  const modelContent = {
+    code: "TOOL.SCOPE_NOT_ALLOWED",
+    message: "This capability is outside the Tool scope saved for this Run.",
+  } satisfies JsonValue;
+  return {
+    artifacts: [],
+    error: {
+      code: "TOOL.SCOPE_NOT_ALLOWED",
+      message: "该能力不在本次 Run 保存的 Tool 范围内。",
+      retryable: false,
+    },
+    evidenceHash: toolEvidenceHash(modelContent),
+    modelContent,
+    retryable: false,
+    status: "rejected",
+    summary: "能力不在本次 Run 的 Tool 范围内",
+  };
+}
+
 function imageInspectionResult(image: PreparedImageInput): ToolResult {
   const modelContent = {
     byteLength: image.byteLength,
@@ -642,6 +665,7 @@ function initialCheckpoint(
   memoryContext: JsonValue | undefined,
   recentUser: string,
   priorMessages: readonly Message[],
+  toolNames?: readonly string[],
 ): RuntimeCheckpointState {
   return {
     boundaries: [],
@@ -670,6 +694,9 @@ function initialCheckpoint(
     latestUserInput: currentInput,
     recentUsers: [recentUser],
     recoveryAttemptedKeys: [],
+    ...(toolNames === undefined
+      ? {}
+      : { toolNames: [...new Set(toolNames)].sort() }),
     version: 1,
   };
 }
@@ -709,6 +736,7 @@ export class AgentRuntime {
         try {
           const modelRuntime = await this.providers.createChatModelRuntime(
             run.provider.profileId,
+            run.provider.modelId,
           );
           const data = decodeRuntimeCheckpoint(checkpoint.context);
           const limits =
@@ -767,9 +795,27 @@ export class AgentRuntime {
     );
   }
 
+  async startAutomation(
+    request: StartRunRequest,
+    options: {
+      readonly modelId: string;
+      readonly toolNames?: readonly string[];
+    },
+  ): Promise<Run> {
+    return this.#start(
+      request,
+      await this.providers.createChatModelRuntime(
+        request.providerProfileId,
+        options.modelId,
+      ),
+      options.toolNames,
+    );
+  }
+
   async #start(
     request: StartRunRequest,
     modelRuntime: ChatModelRuntime,
+    toolNames?: readonly string[],
   ): Promise<Run> {
     return this.chatTurns.runSerializedTurn(request.chatId, async () => {
       const priorMessages = this.chats.listMessages(request.chatId);
@@ -897,6 +943,7 @@ export class AgentRuntime {
           memoryContext,
           request.content,
           priorMessages,
+          toolNames,
         ),
         0,
       );
@@ -938,7 +985,10 @@ export class AgentRuntime {
     }
     return this.#resume(
       request,
-      await this.providers.createChatModelRuntime(run.provider.profileId),
+      await this.providers.createChatModelRuntime(
+        run.provider.profileId,
+        run.provider.modelId,
+      ),
     );
   }
 
@@ -1116,6 +1166,7 @@ export class AgentRuntime {
     if (!active) {
       const modelRuntime = await this.providers.createChatModelRuntime(
         run.provider.profileId,
+        run.provider.modelId,
       );
       const data = decodeRuntimeCheckpoint(checkpoint.context);
       const limits =
@@ -1345,9 +1396,24 @@ export class AgentRuntime {
   #availableTools(active: ActiveRun, run = this.#requireRun(active.runId)) {
     return active.tools
       .list()
-      .filter((definition) =>
-        toolAllowedInExecution(run.execution, definition.descriptor),
+      .filter(
+        (definition) =>
+          toolAllowedInExecution(run.execution, definition.descriptor) &&
+          this.#toolSelected(active, definition.descriptor.name),
       );
+  }
+
+  #toolSelected(active: ActiveRun, name: string): boolean {
+    return (
+      active.data.toolNames === undefined ||
+      active.data.toolNames.includes(name)
+    );
+  }
+
+  #toolAvailable(active: ActiveRun, name: string): boolean {
+    return this.#availableTools(active).some(
+      ({ descriptor }) => descriptor.name === name,
+    );
   }
 
   #searchTools(active: ActiveRun, query: string, limit: number) {
@@ -1407,7 +1473,8 @@ export class AgentRuntime {
       const toolNamespaces =
         run.execution.mode === "agent" &&
         this.images &&
-        active.limits.supportsVision !== false
+        active.limits.supportsVision !== false &&
+        this.#toolSelected(active, IMAGE_INSPECT_TOOL_NAME)
           ? withImageInspectTool(baseToolNamespaces)
           : baseToolNamespaces;
       const extra = this.additionalInstructions().trim();
@@ -1424,12 +1491,13 @@ export class AgentRuntime {
       const allowedTools = active.data.allowedTools
         ? [
             USER_INPUT_ALLOWED_TOOL,
-            ...(this.tools.get(MEMORY_FORMATION_TOOL_NAME)
+            ...(this.#toolAvailable(active, MEMORY_FORMATION_TOOL_NAME)
               ? [MEMORY_FORMATION_ALLOWED_TOOL]
               : []),
             ...(run.execution.mode === "agent" &&
             this.images &&
-            active.limits.supportsVision !== false
+            active.limits.supportsVision !== false &&
+            this.#toolSelected(active, IMAGE_INSPECT_TOOL_NAME)
               ? [IMAGE_INSPECT_ALLOWED_TOOL]
               : []),
             ...active.data.allowedTools,
@@ -1566,6 +1634,10 @@ export class AgentRuntime {
       this.#recordToolResult(active, pending, undefined, chatModeToolResult());
       return;
     }
+    if (!this.#toolAvailable(active, resolvedName)) {
+      this.#recordToolResult(active, pending, undefined, toolScopeResult());
+      return;
+    }
     try {
       active.tools.validateInput(resolvedName, call.arguments);
     } catch (error) {
@@ -1632,6 +1704,10 @@ export class AgentRuntime {
     const run = this.#requireRun(active.runId);
     if (run.execution.mode === "chat") {
       this.#recordToolResult(active, pending, undefined, chatModeToolResult());
+      return;
+    }
+    if (!this.#toolSelected(active, IMAGE_INSPECT_TOOL_NAME)) {
+      this.#recordToolResult(active, pending, undefined, toolScopeResult());
       return;
     }
     if (!this.images || active.limits.supportsVision === false) {
@@ -1975,7 +2051,11 @@ export class AgentRuntime {
       const cycle = detectToolCycle(boundaries);
       if (cycle) {
         const candidates = descriptor
-          ? active.tools.recoveryCandidates(pending.name)
+          ? active.tools
+              .recoveryCandidates(pending.name)
+              .filter(({ descriptor: candidate }) =>
+                this.#toolAvailable(active, candidate.name),
+              )
           : [];
         const recoveryKey = descriptor?.recoveryGroup
           ? `candidate:${descriptor.recoveryGroup}`

@@ -167,7 +167,10 @@ export class ProviderService {
     return selected.id;
   }
 
-  async createChatModelRuntime(profileId: string): Promise<ChatModelRuntime> {
+  async createChatModelRuntime(
+    profileId: string,
+    modelId?: string,
+  ): Promise<ChatModelRuntime> {
     const record = this.#requireProfile(profileId);
     if (!record.apiKeyRef) {
       throw new ProviderError(
@@ -180,7 +183,7 @@ export class ProviderService {
     const profile = normalizeProviderDraft(recordToDraft(record));
     return {
       provider: this.modelProviderFactory(profile, apiKey),
-      snapshot: this.createSnapshot(profileId),
+      snapshot: this.createSnapshot(profileId, modelId),
     };
   }
 
