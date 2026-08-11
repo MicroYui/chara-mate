@@ -642,7 +642,7 @@ Search / filters
 
 - 卡片显示名称、下次运行、状态、最近结果；
 - 新建使用单页轻表单：目标、时间、Chat/Agent、权限；
-- 每次运行点击后进入对应 Chat Run；
+- Agent Task 运行可进入对应 Chat Run；Reminder 直接查看提醒结果与运行历史，不创建 Chat；
 - 等待批准与失败使用和 Chats 相同的状态组件。
 
 ### 11.5 Settings

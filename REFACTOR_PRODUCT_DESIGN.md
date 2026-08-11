@@ -2020,7 +2020,7 @@ Phase 4 的实验与实现可在 Phase 2 稳定后和 Phase 3 后半段并行，
 
 ### Phase 5：Automations、主动聊天与可选成长能力
 
-- Reminder/Agent Task 使用普通 Chat Run，支持一次/每天/每周/Cron、暂停、编辑、试跑、历史与待审批；
+- Reminder 通过 Automation Run 记录并投递通知/气泡，Agent Task 使用普通 Chat Run；两者支持一次/每天/每周/Cron、暂停、编辑、试跑与历史，Agent Task 保留待审批状态；
 - 主动聊天在 Memory/Activity 稳定后接入时间、Automation、Digest、专注、领地候选和跟进触发，并遵守安静时段；
 - 完成 `SELF-EVOLUTION`；只在晋级时实现唯一异步 Experience Review、高级成长候选、Skill replay、版本/归档/恢复；不重复实现 Phase 3 的普通 Memory 形成；
 - 完成 `MULTI-AGENT`；只在晋级时实现获胜 Dispatch、资源隔离、父 Join、Subtask Item 与 Composer 按轮授权。

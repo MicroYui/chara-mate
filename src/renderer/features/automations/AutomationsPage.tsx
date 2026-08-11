@@ -426,7 +426,11 @@ function DetailPanel({
                       {run.trigger.kind === "manual"
                         ? "手动试跑"
                         : "按计划运行"}
-                      {canOpen ? " · 打开对应 Chat" : " · 尚未创建 Chat"}
+                      {canOpen
+                        ? " · 打开对应 Chat"
+                        : task.kind === "reminder"
+                          ? " · 提醒记录"
+                          : " · 尚未创建 Chat"}
                     </small>
                     {canOpen ? (
                       <ArrowUpRight aria-hidden="true" size={14} />
@@ -680,7 +684,11 @@ export function AutomationsPage({
         return;
       }
       upsertRun(response.value);
-      setNotice("试跑已开始，可在运行历史中打开对应 Chat。");
+      setNotice(
+        automation.definition.task.kind === "reminder"
+          ? "提醒试跑已开始，结果会出现在运行历史中。"
+          : "试跑已开始，可在运行历史中打开对应 Chat。",
+      );
     } catch {
       setActionError("无法开始试跑，请重试。");
     } finally {
@@ -707,7 +715,10 @@ export function AutomationsPage({
             <div>
               <span>Automation</span>
               <h2>按时提醒，也按时完成</h2>
-              <p>每次运行都进入普通 Chat Run，过程、批准与结果保持可追溯。</p>
+              <p>
+                每次运行都保留定义快照；Agent Task 进入普通 Chat
+                Run，过程、批准与结果保持可追溯。
+              </p>
             </div>
             {items.length > 0 ? <strong>{items.length} 个任务</strong> : null}
           </header>

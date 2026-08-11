@@ -294,9 +294,9 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ### 工作包
 
-- `P5-AUTOMATIONS-CONTRACT`：一次/每天/每周/POSIX 五段 Cron 与显式时区、Reminder/Agent Task 定义、revision/运行快照、`automation.run.finished`、typed IPC/Preload、`automations`/`automation_runs` Schema 和迁移；不实现调度器、Repository/Service 或页面。
-- `P5-AUTOMATIONS-CORE`（已完成）：来源复核后实现唯一 schedule 计算与休眠恢复策略、Repository/Service、普通 Chat Run、暂停/编辑/试跑、历史、事件发布和 Main IPC 注册。
-- `P5-AUTOMATIONS-UI`：使用冻结 fixture 实现卡片、单页表单、暂停/编辑/试跑、历史及 Chat Run 跳转；最终只消费 typed Preload API。
+- `P5-AUTOMATIONS-CONTRACT`（已完成）：一次/每天/每周/POSIX 五段 Cron 与显式时区、Reminder/Agent Task 定义、revision/运行快照、`automation.run.finished`、typed IPC/Preload、`automations`/`automation_runs` Schema 和迁移；不实现调度器、Repository/Service 或页面。
+- `P5-AUTOMATIONS-CORE`（已完成）：来源复核后实现唯一 schedule 计算与休眠恢复策略、Repository/Service、Reminder 投递记录、Agent Task 普通 Chat Run、暂停/编辑/试跑、历史、事件发布和 Main IPC 注册。
+- `P5-AUTOMATIONS-UI`（已完成）：使用冻结 fixture 实现卡片、单页表单、暂停/编辑/试跑、历史及 Agent Task Chat Run 跳转；最终只消费 typed Preload API。
 - `P5-PROACTIVE`：安静时段、主动程度、触发来源、普通 Chat 持久化和气泡投影。
 - `P5-MULTI-AGENT`：仅晋级后实现获胜 Dispatch、资源隔离、父 Join、Subtask Item 和 Composer 按轮授权。
 - `P5-EVOLUTION`：仅晋级后实现异步 Review、四类候选、Skill replay、版本、归档和恢复。

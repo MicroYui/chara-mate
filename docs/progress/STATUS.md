@@ -4,9 +4,9 @@
 
 ## 当前里程碑
 
-**Phase 5 — implementing（Automations Core/UI 已合并，集成验收中）**
+**Phase 5 — implementing（Automations Core/UI 已完成集成验收）**
 
-Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Context、Activity 与 Realtime Voice 均为单一生产路径。Phase 6 Pet、Territory、结构化 Item Manifest 与 Azure Image 工作包也已完成。`P5-AUTOMATIONS-CONTRACT`、`P5-AUTOMATIONS-CORE` 与 `P5-AUTOMATIONS-UI` 已在 `main` 汇合，从 Schedule、SQLite、调度恢复、普通 Chat Run 到 typed IPC/Preload 和正式产品页面保持一条生产路径；当前进行合并后的完整验收。
+Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Context、Activity 与 Realtime Voice 均为单一生产路径。Phase 6 Pet、Territory、结构化 Item Manifest 与 Azure Image 工作包也已完成。`P5-AUTOMATIONS-CONTRACT`、`P5-AUTOMATIONS-CORE` 与 `P5-AUTOMATIONS-UI` 已在 `main` 汇合并完成验收，从 Schedule、SQLite、调度恢复、Agent Task 普通 Chat Run 到 typed IPC/Preload 和正式产品页面保持一条生产路径。Phase 5 仍为 implementing，因为主动聊天以及 Decision-gated 的 Multi-agent、Evolution 是独立后续工作包。
 
 退出条件：
 
@@ -15,10 +15,10 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 - [x] Schema v9 增加 `automations` / `automation_runs`、运行快照、外键和计划发生次序去重约束，并覆盖 v8→v9 迁移。
 - [x] 锁定唯一 Cron 计算实现；DST gap/fold、DOM/DOW、无效扩展和显式时区均有确定性回归。
 - [x] 启动、系统恢复和延迟 timer 原子 claim 一个持久化 occurrence；重复计划合并停机期间更早 occurrence，一次性计划完成且不会重复执行。
-- [x] Reminder 与 Agent Task 通过 Repository/Service、普通持久化 Chat/Run、既有 Tool/Approval/取消路径和唯一完成事件运行。
+- [x] Reminder 与 Agent Task 通过 Repository/Service 和唯一完成事件运行；Reminder 记录投递结果，Agent Task 复用普通持久化 Chat/Run 与既有 Tool/Approval/取消路径。
 - [x] Main 注册窄 typed IPC/Preload，桌面 E2E 覆盖创建、暂停、立即运行、编辑、历史与重启恢复。
-- [x] Automations 卡片、一次/每天/每周/Cron 单页表单、暂停/恢复、编辑、试跑、历史和 Chat Run 跳转完成；正常 UI 不暴露调度内部参数。
-- [ ] Core/UI 合并后完成真实 Reminder/Agent Task、Approval/失败跳转、重启恢复与 milestone package/E2E 验收。
+- [x] Automations 卡片、一次/每天/每周/Cron 单页表单、暂停/恢复、编辑、试跑、历史和 Agent Task Chat Run 跳转完成；正常 UI 不暴露调度内部参数。
+- [x] Core/UI 合并后完成真实 Reminder UI 旅程、Agent Task Approval/失败集成边界、重启恢复与 milestone package/E2E 验收。
 
 ## 工作包状态
 
@@ -28,8 +28,8 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 | `P2-RUNTIME-PLAN-CHECKPOINT` | `main` | `done` | Plan RunItem 保持历史/UI 真源，checkpoint 保存并恢复编译快照；普通 Tool、旧 checkpoint、重启与压缩回归完成 |
 | `P6-PET-TERRITORY-IMAGE` | `main` | `done` | 桌宠、领地、Azure Image、候选确认与内建 Tool 完成 |
 | `P5-AUTOMATIONS-CONTRACT` | `main` | `done` | Automations JSON Schema、Schema v9/迁移、完成事件与 typed IPC/Preload 已冻结；456 项 offline、16/16 E2E 与 package/smoke 通过 |
-| `P5-AUTOMATIONS-CORE` | `main` | `done` | 唯一 schedule 计算、休眠恢复、Repository/Service、普通 Chat Run、事件发布与 Main IPC 注册完成；独立验证 474 项 offline、17/17 E2E 与 package/smoke 通过 |
-| `P5-AUTOMATIONS-UI` | `main` | `done` | 卡片、四类计划表单、Reminder/Agent Task、暂停/恢复、编辑、试跑、运行历史与 Chat Run 跳转完成；只消费 typed Preload，未修改 shared Schema、DB 或 Main Core |
+| `P5-AUTOMATIONS-CORE` | `main` | `done` | 唯一 schedule 计算、休眠恢复、Repository/Service、Reminder 投递记录、Agent Task 普通 Chat Run、事件发布与 Main IPC 注册完成；独立验证 474 项 offline、17/17 E2E 与 package/smoke 通过 |
+| `P5-AUTOMATIONS-UI` | `main` | `done` | 卡片、四类计划表单、Reminder/Agent Task、暂停/恢复、编辑、试跑、运行历史与 Agent Task Chat Run 跳转完成；只消费 typed Preload，未修改 shared Schema、DB 或 Main Core |
 | `P4-SOURCE-CONTRACT` | `main` | `done` | Realtime conversation、WebRTC interruption、Function Call 与锁定 SDK 类型已复核 |
 | `P4-VOICE-DECISIONS` | `main` | `done` | 透明修订为 Orchestrated Native Realtime；WebRTC + 串行 continuation |
 | `P4-VOICE-RUNTIME` | `main` | `done` | 原生 response、共享 Tool/Approval、Run/Item、打断、历史与非阻塞标题完成 |
@@ -44,20 +44,18 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 - 范围：`src/main/automations`、Agent Runtime 的已保存 Model/Tool Scope、Provider 精确 Model、Main 生命周期/IPC，以及 Renderer 页面、应用壳层、共享 Run 状态与 Automation→Chat Run 导航。
 - 非目标：主动聊天、气泡/可选语音消费、Multi-agent 与 Evolution 不属于本次合并；没有 fixture fallback、第二套 Run、候选模式或内部调度设置进入生产。
 - 依赖与合同：Agent Task 复用持久化 Chat、`RunExecution`、Provider/Model、Tool Scope、三档执行模式、Tool/Approval/取消路径；定义快照保留 Persona reference，Core 不提前创建 Phase 7 Persona 子系统。
-- 验收：Core 与 UI 独立回归均已通过；合并后的真实 Reminder/Agent Task、Approval/失败跳转、重启恢复、视觉状态和发行链正在本里程碑验收。
+- 验收：合并后的 481 项 offline 与 18/18 Electron E2E 通过；Reminder 真实 UI 旅程覆盖创建、试跑、暂停/恢复、编辑、历史快照和重启恢复，Agent Task 的 Chat/Approval/失败路径由 Automation integration suite 覆盖；macOS arm64 package/smoke 与实际发布包视觉操作通过。
 - Decision：没有待实现候选 Arm。补跑采用每个 Automation 单 pending occurrence 的合并策略；不设任意固定全局并发、补跑次数或 TTL，实际执行继续服从现有 Chat/Run 路径。
 
 ## 依赖与已知边界
 
-- Core/UI 已合并且没有第二条 fallback 路径；本轮完整验收结束前不提前把 Phase 5 标为完成。
+- Automations 已完成且没有第二条 fallback 路径；主动聊天、Multi-agent 与 Evolution 仍按各自依赖和 Decision Gate 推进，因此不把整个 Phase 5 标为完成。
 - Azure Realtime 当前没有 Responses Provider 托管的 `web_search`；它获得同一个客户端 Tool Registry，但不伪造本地 `web.search`。Chat/Agent 入口均可使用既有 `browser.navigate + browser.snapshot` 幂等查询链；Agent 还可按当前审批模式使用既有 `command.run` 以只读 `curl` 查询公开 HTTP/API。空白页或空内容不再伪装成成功 snapshot，其他 Browser/命令操作仍遵循入口权限与审批。
 - 目标 Azure `gpt-realtime-2.1` 于 2026-08-09 实测拒绝 Function Tool 根级 `anyOf`。Voice 仅在 Realtime 传输边界把对象联合投影为单一对象字段并集，实际调用仍由原 Tool Registry Schema 校验；这不是通用协议限制。
 
 ## 最近绿色验证
 
-- 2026-08-11 `P5-AUTOMATIONS-UI`：`npm run verify:offline` 22.7s 通过（contract 83、focused/component 250、integration 130，共 463 项）；`npm run build` 12.0s 通过；`npm run test:e2e` 约 27s、17/17 通过；macOS arm64 `npm run package` 20.0s 与 `npm run smoke:package` 5.2s 通过。实际开发窗口的 Automations 页面与 Reminder/Cron 表单已用 Computer Use 完成视觉验收；Live 未运行，因为本包无远端端点且 Core 尚未集成。
-- 2026-08-11 `P5-AUTOMATIONS-CORE`：`npm run verify:offline` 21.5s 通过（contract 83、focused/component 256、integration 135，共 474 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 17/17 通过；macOS arm64 `npm run package` 15.9s 与 `npm run smoke:package` 4.4s 通过。
-- 2026-08-11 `P5-AUTOMATIONS-CONTRACT`：`npm run verify:offline` 21.1s 通过（contract 83、focused/component 243、integration 130，共 456 项）；`npm run build` 12.3s 通过；`npm run test:e2e` 约 30.0s、16/16 通过；macOS arm64 `npm run package` 15.5s 与 `npm run smoke:package` 4.6s 通过。
+- 2026-08-11 Automations 合并验收：`npm run verify:offline` 21.2s 通过（contract 83、focused/component 263、integration 135，共 481 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 29.2s、18/18 通过并包含 production build；macOS arm64 `npm run package` 15.3s 与 `npm run smoke:package` 4.7s 通过。Computer Use 直接操作本次 `.app`，确认 Reminder 创建/试跑/暂停/恢复/编辑/历史快照/重启恢复、Revision 2、页头和“提醒记录”语义；Live 未运行，因为本工作包没有远端端点要求。
 - 2026-08-11 用户完成目标硬件人工验收，确认 Phase 4 Voice 连接复用、跨 Chat 归属、桌宠暂停/恢复和 Agent 主动挂断达到当前产品预期。
 - 2026-08-11 Voice 入口归属与 Agent 挂断：`npm run verify:offline` 通过（contract 69、focused/component 239、integration 128，共 436 项）；`npm run build` 通过；Electron E2E 最终 16/16 通过（首次并发运行仅 Territory 场景附件等待超时，单项与完整套件立即复跑均通过）；macOS arm64 `npm run package` 与 `npm run smoke:package` 通过。
 - 2026-08-11 Voice 连接生命周期优化：`npm run verify:offline` 通过（contract 69、focused/component 236、integration 127，共 432 项）；`npm run build` 通过；`npm run test:e2e` 16/16 通过；macOS arm64 `npm run package` 与 `npm run smoke:package` 通过。
