@@ -392,6 +392,21 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
         : {}),
       store: false,
       stream: true,
+      ...(request.structuredOutput
+        ? {
+            text: {
+              format: {
+                ...(request.structuredOutput.description
+                  ? { description: request.structuredOutput.description }
+                  : {}),
+                name: request.structuredOutput.name,
+                schema: request.structuredOutput.schema,
+                strict: true,
+                type: "json_schema" as const,
+              },
+            },
+          }
+        : {}),
       ...(tools.length === 0
         ? {}
         : {

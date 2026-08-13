@@ -9,12 +9,15 @@ import {
   McpMutationResponseSchema,
   McpSaveRequestSchema,
   SkillGetResponseSchema,
+  SkillHistoryResponseSchema,
   SkillIdRequestSchema,
   SkillListRequestSchema,
   SkillListResponseSchema,
   SkillMutationResponseSchema,
   SkillSaveRequestSchema,
+  SkillSetPinnedRequestSchema,
   SkillSetEnabledRequestSchema,
+  SkillRevisionRequestSchema,
 } from "../../shared/schemas/extensions";
 import { parseSchema } from "../../shared/schemas/validation";
 import { toExtensionAppError } from "./extensionError";
@@ -24,6 +27,7 @@ import type { SkillService } from "./skillService";
 export function registerExtensionIpc(
   mcp: McpService,
   skills: SkillService,
+  onSkillChanged: (skillId: string) => void = () => undefined,
 ): () => void {
   ipcMain.handle(EXTENSION_CHANNELS.mcpList, (_event, input) => {
     try {
@@ -99,9 +103,17 @@ export function registerExtensionIpc(
   ipcMain.handle(EXTENSION_CHANNELS.skillRefresh, async (_event, input) => {
     try {
       parseSchema(SkillListRequestSchema, input);
+      const previousIds = skills.list().map(({ id }) => id);
+      const refreshed = await skills.refresh();
+      for (const skillId of new Set([
+        ...previousIds,
+        ...refreshed.map(({ id }) => id),
+      ])) {
+        onSkillChanged(skillId);
+      }
       return parseSchema(SkillListResponseSchema, {
         ok: true,
-        value: await skills.refresh(),
+        value: refreshed,
       });
     } catch (error) {
       return parseSchema(SkillListResponseSchema, {
@@ -124,12 +136,28 @@ export function registerExtensionIpc(
       });
     }
   });
+  ipcMain.handle(EXTENSION_CHANNELS.skillHistory, (_event, input) => {
+    try {
+      const request = parseSchema(SkillIdRequestSchema, input);
+      return parseSchema(SkillHistoryResponseSchema, {
+        ok: true,
+        value: skills.history(request.skillId),
+      });
+    } catch (error) {
+      return parseSchema(SkillHistoryResponseSchema, {
+        error: toExtensionAppError(error),
+        ok: false,
+      });
+    }
+  });
   ipcMain.handle(EXTENSION_CHANNELS.skillSave, async (_event, input) => {
     try {
       const request = parseSchema(SkillSaveRequestSchema, input);
+      const saved = await skills.save(request.name, request.content);
+      onSkillChanged(saved.id);
       return parseSchema(SkillMutationResponseSchema, {
         ok: true,
-        value: await skills.save(request.name, request.content),
+        value: saved,
       });
     } catch (error) {
       return parseSchema(SkillMutationResponseSchema, {
@@ -152,12 +180,49 @@ export function registerExtensionIpc(
       });
     }
   });
+  ipcMain.handle(EXTENSION_CHANNELS.skillSetPinned, (_event, input) => {
+    try {
+      const request = parseSchema(SkillSetPinnedRequestSchema, input);
+      const updated = skills.setPinned(request.skillId, request.pinned);
+      onSkillChanged(updated.id);
+      return parseSchema(SkillMutationResponseSchema, {
+        ok: true,
+        value: updated,
+      });
+    } catch (error) {
+      return parseSchema(SkillMutationResponseSchema, {
+        error: toExtensionAppError(error),
+        ok: false,
+      });
+    }
+  });
   ipcMain.handle(EXTENSION_CHANNELS.skillArchive, async (_event, input) => {
     try {
       const request = parseSchema(SkillIdRequestSchema, input);
+      const archived = await skills.archive(request.skillId);
+      onSkillChanged(archived.id);
       return parseSchema(SkillMutationResponseSchema, {
         ok: true,
-        value: await skills.archive(request.skillId),
+        value: archived,
+      });
+    } catch (error) {
+      return parseSchema(SkillMutationResponseSchema, {
+        error: toExtensionAppError(error),
+        ok: false,
+      });
+    }
+  });
+  ipcMain.handle(EXTENSION_CHANNELS.skillRestore, async (_event, input) => {
+    try {
+      const request = parseSchema(SkillRevisionRequestSchema, input);
+      const restored = await skills.restoreRevision(
+        request.skillId,
+        request.revision,
+      );
+      onSkillChanged(restored.id);
+      return parseSchema(SkillMutationResponseSchema, {
+        ok: true,
+        value: restored,
       });
     } catch (error) {
       return parseSchema(SkillMutationResponseSchema, {

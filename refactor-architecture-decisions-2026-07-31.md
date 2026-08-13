@@ -1572,8 +1572,9 @@ Retention 获胜方案还必须让目标时间范围内的磁盘增长有界、�
 
 Hermes Agent 的后台复盘、Memory/Skill 区分、Skill 使用统计和可恢复归档可作为候选机制来源：
 
-- [Hermes background review](https://github.com/NousResearch/hermes-agent/blob/126ff7071b6b755055879648f4e859b3187d0fac/agent/background_review.py)
-- [Hermes curator](https://github.com/NousResearch/hermes-agent/blob/126ff7071b6b755055879648f4e859b3187d0fac/agent/curator.py)
+- [Hermes background review，`35cbad5`，2026-08-09](https://github.com/NousResearch/hermes-agent/blob/35cbad5854155de5541adbe4578008269d60c5af/agent/background_review.py)
+- [Hermes curator，`bc3fa54`，2026-08-03](https://github.com/NousResearch/hermes-agent/blob/bc3fa54f5748fd6c735ad6ced8bacebb752ce3e6/agent/curator.py)
+- [Agent Skills specification，`217be54`，2026-08-04](https://github.com/agentskills/agentskills/blob/217be548739f21d6008915c29aefe320ea1a90af/docs/specification.mdx)
 
 研究重点不是复现 Hermes，而是验证“异步复盘 + 候选 + replay + 版本恢复”能否在 Phase 3 基础记忆形成之外带来可复用任务能力；它不重新决定用户明确陈述是否能形成普通 Memory。
 

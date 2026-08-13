@@ -27,6 +27,8 @@ describe("ActivePlan", () => {
     fireEvent.mouseEnter(screen.getByLabelText("活跃计划"));
     expect(panel).toHaveAttribute("aria-hidden", "false");
     expect(panel).toHaveTextContent("整理组件边界");
+    expect(screen.getByText("进行中")).toBeVisible();
+    expect(screen.queryByText("未完成")).not.toBeInTheDocument();
 
     fireEvent.click(trigger);
     fireEvent.mouseLeave(screen.getByLabelText("活跃计划"));

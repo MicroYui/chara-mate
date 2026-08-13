@@ -168,6 +168,10 @@ export class MemoryService {
     return this.repository.requireDetail(memoryId);
   }
 
+  findBySourceReference(referenceId: string): MemoryDetail | undefined {
+    return this.repository.findDetailBySourceReference(referenceId);
+  }
+
   create(
     request: MemoryCreateRequest & { readonly claimSlot?: MemoryClaimSlot },
   ): MemoryDetail {
@@ -290,6 +294,51 @@ export class MemoryService {
 
   rejectCandidate(candidateId: string): MemoryCandidate {
     return this.repository.rejectCandidate(candidateId, this.clock.now());
+  }
+
+  confirmPreference(input: {
+    readonly claimSlot: Extract<MemoryClaimSlot, `preference.${string}`>;
+    readonly content: string;
+    readonly reason: string;
+    readonly sources: readonly MemorySource[];
+  }): MemoryDetail {
+    let current = this.repository.findDetailByClaimSlot(input.claimSlot);
+    if (
+      current &&
+      (current.memory.deletedAt || current.memory.status === "archived")
+    ) {
+      current = this.restore(current.memory.id);
+    }
+    if (
+      current &&
+      !current.memory.deletedAt &&
+      current.memory.status === "active"
+    ) {
+      return this.revise({
+        confidence: 1,
+        content: input.content,
+        importance: current.memory.importance,
+        memoryId: current.memory.id,
+        reason: input.reason,
+        sources: [...input.sources],
+      });
+    }
+    if (current) {
+      throw new MemoryError(
+        "MEMORY.CONFLICT",
+        "Persona 偏好字段当前绑定到不可编辑的旧记忆。",
+        false,
+      );
+    }
+    return this.create({
+      claimSlot: input.claimSlot,
+      confidence: 1,
+      content: input.content,
+      importance: 0.5,
+      reason: input.reason,
+      sources: [...input.sources],
+      type: "preference",
+    });
   }
 
   form(input: MemoryFormationInput): MemoryFormationResult {

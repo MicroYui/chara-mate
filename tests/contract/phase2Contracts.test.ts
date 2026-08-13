@@ -47,10 +47,15 @@ const skill = {
   description: "Review the current workspace",
   enabled: true,
   id: "workspace:review",
+  lifecycle: "active",
   name: "review",
+  patchCount: 0,
+  pinned: false,
   readOnly: true,
   revision: 1,
   source: "workspace",
+  successCount: 0,
+  useCount: 0,
 } as const;
 const mcpServer = {
   createdAt: FIXTURE_TIMESTAMPS.created,

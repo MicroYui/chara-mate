@@ -15,6 +15,7 @@ import type {
   SkillContent,
   SkillDescriptor,
   SkillSource,
+  SkillVersionSnapshot,
 } from "../../shared/contracts/extensions";
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { ToolResult } from "../../shared/contracts/tool";
@@ -27,7 +28,7 @@ import type { SkillRepository, SkillVersionRecord } from "./skillRepository";
 
 const SKILL_DIRECTORY_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u;
 
-interface SkillFrontmatter {
+export interface SkillFrontmatter {
   readonly description: string;
   readonly name: string;
 }
@@ -37,6 +38,23 @@ interface LoadedSkill {
   readonly descriptor: SkillDescriptor;
   readonly directoryPath: string;
 }
+
+type EvolutionSkillSaveInput = {
+  readonly candidateId: string;
+  readonly content: string;
+  readonly name: string;
+} & (
+  | {
+      readonly targetContentSha256: string;
+      readonly targetRevision: number;
+      readonly targetSkillId: string;
+    }
+  | {
+      readonly targetContentSha256?: undefined;
+      readonly targetRevision?: undefined;
+      readonly targetSkillId?: undefined;
+    }
+);
 
 function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
@@ -48,7 +66,7 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function parseSkill(content: string): SkillFrontmatter {
+export function parseSkill(content: string): SkillFrontmatter {
   const normalized = content.replaceAll("\r\n", "\n");
   if (!normalized.startsWith("---\n")) {
     throw new ExtensionError(
@@ -109,11 +127,17 @@ function descriptor(
     description: metadata.description,
     enabled: version.enabled,
     id,
+    ...(version.lastSuccessAt ? { lastSuccessAt: version.lastSuccessAt } : {}),
     ...(version.lastUsedAt ? { lastUsedAt: version.lastUsedAt } : {}),
+    lifecycle: version.lifecycle,
     name: metadata.name,
+    patchCount: version.patchCount,
+    pinned: version.pinned,
     readOnly,
     revision: version.revision,
     source,
+    successCount: version.successCount,
+    useCount: version.useCount,
   };
 }
 
@@ -129,6 +153,7 @@ function success(summary: string, modelContent: JsonValue): ToolResult {
 }
 
 export class SkillService {
+  readonly #mutationTails = new Map<string, Promise<void>>();
   readonly #skills = new Map<string, LoadedSkill>();
 
   constructor(
@@ -184,6 +209,20 @@ export class SkillService {
     };
   }
 
+  history(id: string): SkillVersionSnapshot[] {
+    this.#require(id);
+    return this.repository.listVersions(id).map((version) => ({
+      ...(version.content === undefined ? {} : { content: version.content }),
+      contentSha256: version.contentSha256,
+      createdAt: version.createdAt,
+      lifecycle: version.lifecycle,
+      revision: version.revision,
+      ...(version.sourceCandidateId
+        ? { sourceCandidateId: version.sourceCandidateId }
+        : {}),
+    }));
+  }
+
   async refresh(): Promise<SkillDescriptor[]> {
     const discovered = [
       ...(await this.#scanDirectory(
@@ -200,7 +239,21 @@ export class SkillService {
     return this.list();
   }
 
-  async save(directoryName: string, content: string): Promise<SkillDescriptor> {
+  async save(
+    directoryName: string,
+    content: string,
+    sourceCandidateId?: string,
+  ): Promise<SkillDescriptor> {
+    return this.#withSkillMutation(directoryName, () =>
+      this.#save(directoryName, content, sourceCandidateId),
+    );
+  }
+
+  async #save(
+    directoryName: string,
+    content: string,
+    sourceCandidateId?: string,
+  ): Promise<SkillDescriptor> {
     this.#assertDirectoryName(directoryName);
     const metadata = parseSkill(content);
     if (metadata.name !== directoryName) {
@@ -233,7 +286,9 @@ export class SkillService {
       id,
       "user",
       sha256(content),
+      content,
       this.clock.now(),
+      sourceCandidateId,
     );
     const loaded: LoadedSkill = {
       contentPath,
@@ -255,7 +310,30 @@ export class SkillService {
     return next.descriptor;
   }
 
+  setPinned(id: string, pinned: boolean): SkillDescriptor {
+    const skill = this.#require(id);
+    if (skill.descriptor.readOnly) {
+      throw new ExtensionError(
+        "SKILL.READ_ONLY",
+        "Workspace Skill 由项目拥有，不能设置用户 pin。",
+        false,
+      );
+    }
+    const version = this.repository.setPinned(id, pinned);
+    const next = {
+      ...skill,
+      descriptor: { ...skill.descriptor, pinned: version.pinned },
+    };
+    this.#skills.set(id, next);
+    return next.descriptor;
+  }
+
   async archive(id: string): Promise<SkillDescriptor> {
+    const name = this.#require(id).descriptor.name;
+    return this.#withSkillMutation(name, () => this.#archive(id));
+  }
+
+  async #archive(id: string): Promise<SkillDescriptor> {
     const skill = this.#require(id);
     if (skill.descriptor.readOnly) {
       throw new ExtensionError(
@@ -275,18 +353,209 @@ export class SkillService {
     const version = this.repository.setArchived(id, archivedAt);
     const next: LoadedSkill = {
       contentPath: path.join(destination, "SKILL.md"),
-      descriptor: {
-        ...skill.descriptor,
-        archived: true,
-        enabled: version.enabled,
-      },
+      descriptor: descriptor(
+        skill.descriptor.id,
+        skill.descriptor.source,
+        skill.descriptor.readOnly,
+        {
+          description: skill.descriptor.description,
+          name: skill.descriptor.name,
+        },
+        version,
+      ),
       directoryPath: destination,
     };
     this.#skills.set(id, next);
     return next.descriptor;
   }
 
-  registerTools(registry: ToolRegistry): void {
+  async restoreRevision(
+    id: string,
+    revision: number,
+  ): Promise<SkillDescriptor> {
+    const name = this.#require(id).descriptor.name;
+    return this.#withSkillMutation(name, () =>
+      this.#restoreRevision(id, revision),
+    );
+  }
+
+  async #restoreRevision(
+    id: string,
+    revision: number,
+  ): Promise<SkillDescriptor> {
+    const skill = this.#require(id);
+    if (skill.descriptor.readOnly) {
+      throw new ExtensionError(
+        "SKILL.READ_ONLY",
+        "Workspace Skill 是只读的，不能恢复用户版本。",
+        false,
+      );
+    }
+    const version = this.repository.getVersion(id, revision);
+    if (!version?.content) {
+      throw new ExtensionError(
+        "SKILL.VERSION_UNAVAILABLE",
+        "这个历史版本没有可恢复的内容快照。",
+        false,
+      );
+    }
+    const metadata = parseSkill(version.content);
+    if (skill.descriptor.archived) {
+      const destination = path.join(this.userSkillsDirectory, metadata.name);
+      try {
+        await rename(skill.directoryPath, destination);
+      } catch (error) {
+        throw new ExtensionError(
+          "SKILL.RESTORE_FAILED",
+          error instanceof Error ? error.message : "无法恢复 Skill。",
+          true,
+        );
+      }
+      this.#skills.set(id, {
+        ...skill,
+        contentPath: path.join(destination, "SKILL.md"),
+        directoryPath: destination,
+      });
+    }
+    return this.#save(metadata.name, version.content);
+  }
+
+  async saveFromEvolution(
+    input: EvolutionSkillSaveInput,
+  ): Promise<SkillDescriptor> {
+    return this.#withSkillMutation(input.name, () =>
+      this.#saveFromEvolution(input),
+    );
+  }
+
+  async #saveFromEvolution(
+    input: EvolutionSkillSaveInput,
+  ): Promise<SkillDescriptor> {
+    this.#assertDirectoryName(input.name);
+    const metadata = parseSkill(input.content);
+    if (metadata.name !== input.name) {
+      throw new ExtensionError(
+        "SKILL.NAME_MISMATCH",
+        "目录名必须与 SKILL.md frontmatter 的 name 一致。",
+        false,
+      );
+    }
+    const contentSha256 = sha256(input.content);
+    if (input.targetSkillId) {
+      const target = this.#require(input.targetSkillId);
+      if (
+        target.descriptor.source !== "user" ||
+        target.descriptor.readOnly ||
+        target.descriptor.archived ||
+        target.descriptor.pinned
+      ) {
+        throw new ExtensionError(
+          "SKILL.PROTECTED",
+          "只读、归档或 pinned Skill 不能由成长候选修改。",
+          false,
+        );
+      }
+      if (target.descriptor.name !== input.name) {
+        throw new ExtensionError(
+          "SKILL.NAME_MISMATCH",
+          "Skill patch 的名称必须与目标 Skill 一致。",
+          false,
+        );
+      }
+      if (target.descriptor.contentSha256 === contentSha256) {
+        const version = this.repository.claimEvolutionSource(
+          target.descriptor.id,
+          input.candidateId,
+          true,
+        );
+        const claimed = {
+          ...target,
+          descriptor: descriptor(
+            target.descriptor.id,
+            target.descriptor.source,
+            target.descriptor.readOnly,
+            metadata,
+            version,
+          ),
+        };
+        this.#skills.set(target.descriptor.id, claimed);
+        return claimed.descriptor;
+      }
+      if (
+        target.descriptor.revision !== input.targetRevision ||
+        target.descriptor.contentSha256 !== input.targetContentSha256
+      ) {
+        throw new ExtensionError(
+          "SKILL.STALE_PATCH",
+          "目标 Skill 已有更新；请基于当前版本重新生成或编辑候选。",
+          false,
+        );
+      }
+    } else {
+      const existing = this.list().find(
+        ({ archived, name }) => name === input.name && !archived,
+      );
+      if (existing?.contentSha256 === contentSha256) {
+        if (existing.source !== "user" || existing.readOnly) {
+          throw new ExtensionError(
+            "SKILL.PROTECTED",
+            "Workspace Skill 不能被成长候选认领或覆盖。",
+            false,
+          );
+        }
+        const loaded = this.#require(existing.id);
+        const version = this.repository.claimEvolutionSource(
+          existing.id,
+          input.candidateId,
+          false,
+        );
+        const claimed = {
+          ...loaded,
+          descriptor: descriptor(
+            existing.id,
+            existing.source,
+            existing.readOnly,
+            metadata,
+            version,
+          ),
+        };
+        this.#skills.set(existing.id, claimed);
+        return claimed.descriptor;
+      }
+      if (existing) {
+        throw new ExtensionError(
+          "SKILL.DUPLICATE",
+          "已有同名 Skill；请改为 patch，而不是创建重复 Skill。",
+          false,
+        );
+      }
+    }
+    return this.#save(input.name, input.content, input.candidateId);
+  }
+
+  recordRunSuccess(skillIds: readonly string[]): void {
+    const succeededAt = this.clock.now();
+    for (const id of new Set(skillIds)) {
+      const skill = this.#skills.get(id);
+      if (!skill || skill.descriptor.archived) continue;
+      const version = this.repository.recordSuccess(id, succeededAt);
+      this.#skills.set(id, {
+        ...skill,
+        descriptor: {
+          ...skill.descriptor,
+          ...(version.lastSuccessAt
+            ? { lastSuccessAt: version.lastSuccessAt }
+            : {}),
+          successCount: version.successCount,
+        },
+      });
+    }
+  }
+
+  registerTools(
+    registry: ToolRegistry,
+    onSkillChanged: (skillId: string) => void = () => undefined,
+  ): void {
     registry.register({
       descriptor: {
         description:
@@ -323,6 +592,7 @@ export class SkillService {
           descriptor: {
             ...skill.descriptor,
             ...(version.lastUsedAt ? { lastUsedAt: version.lastUsedAt } : {}),
+            useCount: version.useCount,
           },
         });
         return success(`已加载 ${skill.descriptor.name}`, {
@@ -366,6 +636,7 @@ export class SkillService {
           throw new TypeError("name and content are required");
         }
         const saved = await this.save(name, content);
+        onSkillChanged(saved.id);
         return success(`已保存 Skill ${saved.name}`, {
           revision: saved.revision,
           skillId: saved.id,
@@ -416,6 +687,7 @@ export class SkillService {
         id,
         source,
         sha256(content),
+        content,
         this.clock.now(),
       );
       const directoryPath = path.join(root, entry.name);
@@ -458,10 +730,16 @@ export class SkillService {
         continue;
       }
       const id = skillId("user", metadata.name);
-      const version = this.repository.getLatest(id);
+      let version = this.repository.getLatest(id);
       if (!version?.archivedAt || version.contentSha256 !== sha256(content)) {
         continue;
       }
+      version = this.repository.ensureContentSnapshot(
+        id,
+        version.revision,
+        version.contentSha256,
+        content,
+      );
       loaded.push({
         contentPath,
         descriptor: descriptor(id, "user", false, metadata, version),
@@ -478,6 +756,28 @@ export class SkillService {
         "Skill 名称只能包含小写字母、数字和连字符，且最长 64 个字符。",
         false,
       );
+    }
+  }
+
+  async #withSkillMutation<T>(
+    name: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.#mutationTails.get(name) ?? Promise.resolve();
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.#mutationTails.set(name, tail);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.#mutationTails.get(name) === tail) {
+        this.#mutationTails.delete(name);
+      }
     }
   }
 

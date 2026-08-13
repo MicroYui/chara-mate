@@ -379,6 +379,98 @@ describe("foundation database", () => {
     database.close();
   });
 
+  it("migrates v10 Skills into versioned Evolution state", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-v10-migration-"),
+    );
+    temporaryDirectories.push(directory);
+    const databasePath = path.join(directory, "charamate.sqlite");
+    let database = openApplicationDatabase(databasePath);
+    database.pragma("foreign_keys = OFF");
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE skill_versions_v10 (
+          skill_id TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK (revision >= 1),
+          source TEXT NOT NULL CHECK (source IN ('workspace', 'user')),
+          content_sha256 TEXT NOT NULL CHECK (length(content_sha256) = 64),
+          enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+          archived_at TEXT,
+          last_used_at TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (skill_id, revision)
+        ) STRICT;
+        INSERT INTO skill_versions_v10 (
+          skill_id, revision, source, content_sha256, enabled,
+          archived_at, last_used_at, created_at
+        ) VALUES (
+          'user:release-flow', 1, 'user',
+          '${"a".repeat(64)}', 1, NULL, NULL, '2026-08-12T00:00:00.000Z'
+        );
+        DROP TABLE skill_versions;
+        ALTER TABLE skill_versions_v10 RENAME TO skill_versions;
+        DROP TABLE evolution_candidates;
+        DROP TABLE evolution_reviews;
+      `);
+      database
+        .prepare(
+          "UPDATE app_metadata SET value = '10' WHERE key = 'schema_version'",
+        )
+        .run();
+    })();
+    database.close();
+
+    database = openApplicationDatabase(databasePath);
+    const columns = database.pragma("table_info(skill_versions)") as Array<{
+      name: string;
+    }>;
+    expect(columns.map(({ name }) => name)).toEqual(
+      expect.arrayContaining([
+        "content",
+        "lifecycle",
+        "pinned",
+        "use_count",
+        "success_count",
+        "last_success_at",
+        "patch_count",
+        "source_candidate_id",
+      ]),
+    );
+    expect(
+      database
+        .prepare(
+          "SELECT lifecycle, pinned, use_count, success_count, patch_count FROM skill_versions",
+        )
+        .get(),
+    ).toEqual({
+      lifecycle: "active",
+      patch_count: 0,
+      pinned: 0,
+      success_count: 0,
+      use_count: 0,
+    });
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE name = ?")
+        .get("evolution_candidates"),
+    ).toEqual({ name: "evolution_candidates" });
+    expect(
+      (
+        database.pragma("foreign_key_list(skill_versions)") as Array<{
+          on_delete: string;
+          table: string;
+        }>
+      ).find(({ table }) => table === "evolution_candidates")?.on_delete,
+    ).toBe("SET NULL");
+    expect(
+      database
+        .prepare("SELECT value FROM app_metadata WHERE key = 'schema_version'")
+        .get(),
+    ).toEqual({ value: CURRENT_SCHEMA_VERSION });
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
+  });
+
   it("keeps Automation revisions, occurrence identity and lifecycle constraints in SQLite", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "chara-mate-automation-schema-"),

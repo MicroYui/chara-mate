@@ -70,9 +70,33 @@ describe("RunProcess", () => {
     fireEvent.click(summary);
     expect(screen.getByLabelText("计划记录")).toBeVisible();
     expect(screen.getByText("整理组件边界")).toBeVisible();
-    expect(screen.getByText("进行中")).toBeVisible();
+    expect(screen.getAllByText("未完成").length).toBeGreaterThan(0);
+    expect(screen.queryByText("进行中")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /已运行命令/u }));
     expect(screen.getByText(/npm run test:focused/u)).toBeVisible();
+  });
+
+  it("renders an unfinished Plan as failed history without a live spinner", () => {
+    const base = runByChatId(chatsFixtureIds.designChat);
+    const failed: FixtureRun = {
+      ...base,
+      record: {
+        ...base.record,
+        error: {
+          code: "PROVIDER.REQUEST_FAILED",
+          message: "Provider 请求失败，请检查配置后重试。",
+          retryable: false,
+        },
+        status: "failed",
+      },
+    };
+
+    render(<RunHarness run={failed} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Provider 请求失败");
+    expect(screen.getByText("执行计划 · 已失败")).toBeVisible();
+    expect(screen.getAllByText("未完成").length).toBeGreaterThan(0);
+    expect(screen.queryByText("进行中")).not.toBeInTheDocument();
   });
 
   it("leaves the latest Plan out of an active Run process", () => {

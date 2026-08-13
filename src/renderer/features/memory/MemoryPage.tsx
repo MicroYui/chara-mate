@@ -28,6 +28,7 @@ import type {
   MemoryType,
 } from "../../../shared/contracts/memory";
 import type { TerritoryApi } from "../../../shared/contracts/territory";
+import { EvolutionCandidates } from "../evolution/EvolutionCandidates";
 import styles from "./MemoryPage.module.css";
 
 const memoryTypes: ReadonlyArray<{ label: string; value: MemoryType }> = [
@@ -398,6 +399,7 @@ export function MemoryPage({
 
   return (
     <section className={styles["page"]}>
+      <EvolutionCandidates allowEdit kinds={["memory", "persona_preference"]} />
       <div className={styles["toolbar"]}>
         <label className={styles["search"]}>
           <Search aria-hidden="true" size={15} />

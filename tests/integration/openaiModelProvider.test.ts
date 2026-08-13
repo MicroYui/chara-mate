@@ -468,6 +468,68 @@ describe("OpenAI Responses Agent wire shape", () => {
     expect(wire).toContain('"store":false');
   });
 
+  it("forwards a strict JSON Schema response format without adding a Tool", async () => {
+    const bodies: JsonValue[] = [];
+    const baseUrl = await listen(
+      createServer((request, response) => {
+        void requestBody(request).then((body) => {
+          bodies.push(body);
+          writeEventStream(response);
+        });
+      }),
+    );
+    const provider = new OpenAIResponsesModelProvider(
+      {
+        apiStyle: "openai-compatible",
+        baseUrl,
+        name: "Structured Output Provider",
+      },
+      "test-secret",
+    );
+
+    const events: ModelEvent[] = [];
+    for await (const event of provider.stream(
+      {
+        input: [{ content: "review", role: "user", type: "message" }],
+        instructions: "Return one structured review.",
+        modelId: "structured-model",
+        structuredOutput: {
+          description: "Review result",
+          name: "charamate_review",
+          schema: {
+            additionalProperties: false,
+            properties: { candidates: { type: "array" } },
+            required: ["candidates"],
+            type: "object",
+          },
+        },
+        toolNamespaces: [],
+      },
+      new AbortController().signal,
+    )) {
+      events.push(event);
+    }
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({
+      text: {
+        format: {
+          description: "Review result",
+          name: "charamate_review",
+          schema: {
+            additionalProperties: false,
+            required: ["candidates"],
+            type: "object",
+          },
+          strict: true,
+          type: "json_schema",
+        },
+      },
+    });
+    expect(bodies[0]).not.toHaveProperty("tools");
+  });
+
   it("resolves Copilot nested model limits from the standard model list", async () => {
     const requests: string[] = [];
     const baseUrl = await listen(

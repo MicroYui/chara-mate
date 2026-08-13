@@ -11,6 +11,7 @@ import type {
   PlanStepStatus,
   PlanUpdate,
   RunItem,
+  RunStatus,
 } from "../../../../shared/contracts";
 import { PlanUpdateSchema } from "../../../../shared/schemas/run";
 import { parseSchemaWithoutCodeGeneration } from "../../../../shared/schemas/valueValidation";
@@ -45,17 +46,24 @@ function currentStepPosition(update: PlanUpdate): number {
   return completed >= update.plan.length ? update.plan.length : completed + 1;
 }
 
-function planStatusLabel(status: PlanStepStatus): string {
+function planStatusLabel(status: PlanStepStatus, live: boolean): string {
   if (status === "completed") return "已完成";
+  if (!live) return "未完成";
   if (status === "in_progress") return "进行中";
   return "待处理";
 }
 
-function PlanStepIcon({ status }: { readonly status: PlanStepStatus }) {
+function PlanStepIcon({
+  live,
+  status,
+}: {
+  readonly live: boolean;
+  readonly status: PlanStepStatus;
+}) {
   if (status === "completed") {
     return <Check aria-hidden="true" size={13} />;
   }
-  if (status === "in_progress") {
+  if (live && status === "in_progress") {
     return (
       <LoaderCircle className={styles["spin"]} aria-hidden="true" size={13} />
     );
@@ -64,9 +72,11 @@ function PlanStepIcon({ status }: { readonly status: PlanStepStatus }) {
 }
 
 function PlanContent({
+  live,
   title,
   update,
 }: {
+  readonly live: boolean;
   readonly title: string;
   readonly update: PlanUpdate;
 }) {
@@ -87,12 +97,17 @@ function PlanContent({
       </header>
       <ol className={styles["steps"]}>
         {update.plan.map((step, index) => (
-          <li key={`${String(index)}:${step.step}`} data-status={step.status}>
+          <li
+            key={`${String(index)}:${step.step}`}
+            data-status={
+              live || step.status === "completed" ? step.status : "unfinished"
+            }
+          >
             <span>
-              <PlanStepIcon status={step.status} />
+              <PlanStepIcon live={live} status={step.status} />
             </span>
             <p>{step.step}</p>
-            <small>{planStatusLabel(step.status)}</small>
+            <small>{planStatusLabel(step.status, live)}</small>
           </li>
         ))}
       </ol>
@@ -100,12 +115,33 @@ function PlanContent({
   );
 }
 
-export function ArchivedPlan({ item }: { readonly item: RunItem }) {
+function archivedPlanTitle(runStatus: RunStatus): string {
+  if (runStatus === "failed") return "执行计划 · 已失败";
+  if (runStatus === "cancelled") return "执行计划 · 已停止";
+  if (runStatus === "interrupted") return "执行计划 · 已中断";
+  return "执行计划";
+}
+
+export function ArchivedPlan({
+  item,
+  runStatus,
+}: {
+  readonly item: RunItem;
+  readonly runStatus: RunStatus;
+}) {
   const update = planUpdateFromItem(item);
   if (!update) return null;
   return (
-    <section className={styles["archiveCard"]} aria-label="计划记录">
-      <PlanContent title="执行计划" update={update} />
+    <section
+      className={styles["archiveCard"]}
+      data-run-status={runStatus}
+      aria-label="计划记录"
+    >
+      <PlanContent
+        live={false}
+        title={archivedPlanTitle(runStatus)}
+        update={update}
+      />
     </section>
   );
 }
@@ -170,7 +206,7 @@ export function ActivePlan({ run }: { readonly run: ChatRunView }) {
         aria-hidden={!open}
         aria-label="当前计划"
       >
-        <PlanContent title="当前计划" update={update} />
+        <PlanContent live title="当前计划" update={update} />
       </div>
     </section>
   );

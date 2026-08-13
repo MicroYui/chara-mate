@@ -99,11 +99,22 @@ function finalAnswer(responseId: string, text: string) {
   ];
 }
 
+const evolutionReviewMarker =
+  "asynchronous Experience Review candidate generator";
+
+function isEvolutionReviewBody(body: string): boolean {
+  return body.includes(evolutionReviewMarker);
+}
+
 async function startFakeProvider(browserUrl?: string) {
   const bodies: string[] = [];
   let responseSequence = 0;
+  let releasePlanFailure: () => void = () => undefined;
   let releasePlanProgress: () => void = () => undefined;
   let releasePlanFinal: () => void = () => undefined;
+  const planFailureGate = new Promise<void>((resolve) => {
+    releasePlanFailure = resolve;
+  });
   const planProgressGate = new Promise<void>((resolve) => {
     releasePlanProgress = resolve;
   });
@@ -128,6 +139,8 @@ async function startFakeProvider(browserUrl?: string) {
       bodies.push(body);
       responseSequence += 1;
       const responseId = `response-${String(responseSequence)}`;
+      const evolutionReviewTask = isEvolutionReviewBody(body);
+      const evolutionTeachingTask = body.includes("自进化端到端测试");
       const titleTask = body.includes("Generate one concise chat title");
       const browserTask = body.includes("浏览器");
       const imageInputTask = body.includes("图片输入测试");
@@ -135,11 +148,59 @@ async function startFakeProvider(browserUrl?: string) {
       const memoryFormationTask = body.includes("记忆形成测试");
       const memoryRecallTask = body.includes("记忆复用测试");
       const memoryUpdateTask = body.includes("记忆更新测试");
+      const planFailureTask = body.includes("计划失败测试");
       const planTask = body.includes("计划测试");
       const structuredInputTask = body.includes("结构化输入测试");
       const territoryTask = body.includes("Agent 端到端验收");
-      if (titleTask) {
+      if (evolutionReviewTask) {
+        const requestPayload = JSON.parse(body) as {
+          input?: Array<{ content?: string; role?: string }>;
+          tools?: unknown[];
+        };
+        const reviewInput = requestPayload.input?.find(
+          ({ role }) => role === "user",
+        )?.content;
+        const reviewEvidence = reviewInput
+          ? (JSON.parse(reviewInput) as {
+              messages?: Array<{ content?: string }>;
+              runItems?: Array<{ id?: string }>;
+            })
+          : undefined;
+        const teaching = reviewEvidence?.messages?.find(({ content }) =>
+          content?.includes("自进化端到端测试"),
+        )?.content;
+        const sourceItemId = reviewEvidence?.runItems?.find(
+          ({ id }) => typeof id === "string",
+        )?.id;
+        writeSse(
+          response,
+          finalAnswer(
+            responseId,
+            JSON.stringify({
+              candidates:
+                teaching && sourceItemId
+                  ? [
+                      {
+                        evidence: [teaching],
+                        proposal: {
+                          claimSlot: "preference.response_style",
+                          content: "回答时先给结论，再补充必要细节。",
+                          kind: "persona_preference",
+                          reason: "用户明确教学回答顺序。",
+                        },
+                        rationale: "这是一条可复用且由用户明确给出的表达偏好。",
+                        replayCases: [],
+                        sourceItemIds: [sourceItemId],
+                      },
+                    ]
+                  : [],
+            }),
+          ),
+        );
+      } else if (titleTask) {
         writeSse(response, finalAnswer(responseId, "E2E 对话标题"));
+      } else if (evolutionTeachingTask) {
+        writeSse(response, finalAnswer(responseId, "明白，以后会先给结论。"));
       } else if (imageInputTask) {
         writeSse(response, finalAnswer(responseId, "已读取本地图片像素"));
       } else if (imageToolTask) {
@@ -262,6 +323,29 @@ async function startFakeProvider(browserUrl?: string) {
             completed(responseId),
           ]);
         }
+      } else if (planFailureTask) {
+        if (
+          body.includes('"call_id":"plan-before-failure"') &&
+          body.includes("function_call_output")
+        ) {
+          await planFailureGate;
+          response.writeHead(500, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({ error: { message: "fixture provider failure" } }),
+          );
+        } else {
+          writeSse(response, [
+            functionCall("plan-before-failure", "plan.update", "plan", {
+              explanation: "先建立计划，再复现 Provider 失败。",
+              plan: [
+                { status: "in_progress", step: "建立执行计划" },
+                { status: "pending", step: "继续请求 Provider" },
+                { status: "pending", step: "汇总结果" },
+              ],
+            }),
+            completed(responseId),
+          ]);
+        }
       } else if (planTask) {
         if (
           body.includes('"call_id":"plan-final"') &&
@@ -370,6 +454,7 @@ async function startFakeProvider(browserUrl?: string) {
     baseUrl: `http://127.0.0.1:${String(address.port)}/v1`,
     bodies,
     close: () => {
+      releasePlanFailure();
       releasePlanProgress();
       releasePlanFinal();
       return new Promise<void>((resolve) => {
@@ -378,6 +463,7 @@ async function startFakeProvider(browserUrl?: string) {
       });
     },
     releasePlanFinal,
+    releasePlanFailure,
     releasePlanProgress,
   };
 }
@@ -713,10 +799,87 @@ test("answers a direct structured question and continues the same Chat Run", asy
       status: "completed",
     });
     const taskBodies = provider.bodies.filter(
-      (body) => !body.includes("Generate one concise chat title"),
+      (body) =>
+        !body.includes("Generate one concise chat title") &&
+        !isEvolutionReviewBody(body),
     );
     expect(taskBodies).toHaveLength(2);
     expect(taskBodies[1]?.match(/input-request/gu)).toHaveLength(2);
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("reviews explicit teaching and applies it only after confirmation", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-evolution-e2e-"),
+  );
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    await launched.main
+      .getByRole("textbox", { name: "消息" })
+      .fill("自进化端到端测试：以后这样回答，先给结论，再补充细节，请记住。");
+    await launched.main.getByRole("button", { name: "发送" }).click();
+    await expect(
+      launched.main.getByText("明白，以后会先给结论。"),
+    ).toBeVisible();
+
+    const candidate = launched.main.getByRole("article", {
+      name: "这次学到了什么",
+    });
+    await expect(candidate).toBeVisible();
+    await expect(candidate.getByText("待确认")).toBeVisible();
+    await expect(
+      candidate.getByText("回答时先给结论，再补充必要细节。"),
+    ).toBeVisible();
+
+    const beforeConfirmation = await launched.main.evaluate(() =>
+      window.charaMate.memory.list({ query: "先给结论" }),
+    );
+    if (!beforeConfirmation.ok) {
+      throw new Error("Could not inspect Memory before confirmation");
+    }
+    expect(beforeConfirmation.value.memories).toHaveLength(0);
+
+    await candidate.getByRole("button", { name: "接受" }).click();
+    await expect(candidate.getByText("已生效")).toBeVisible();
+
+    const afterConfirmation = await launched.main.evaluate(async () => ({
+      evolution: await window.charaMate.evolution.list({ status: "active" }),
+      memory: await window.charaMate.memory.list({ query: "先给结论" }),
+    }));
+    if (!afterConfirmation.evolution.ok || !afterConfirmation.memory.ok) {
+      throw new Error("Could not inspect confirmed Evolution state");
+    }
+    expect(afterConfirmation.evolution.value.candidates).toHaveLength(1);
+    expect(afterConfirmation.evolution.value.candidates[0]).toMatchObject({
+      kind: "persona_preference",
+      status: "active",
+    });
+    expect(afterConfirmation.memory.value.memories).toHaveLength(1);
+    expect(afterConfirmation.memory.value.memories[0]).toMatchObject({
+      memory: { claimSlot: "preference.response_style" },
+      revision: { content: "回答时先给结论，再补充必要细节。" },
+    });
+
+    const reviewBodies = provider.bodies.filter(isEvolutionReviewBody);
+    expect(reviewBodies).toHaveLength(1);
+    const reviewRequest = JSON.parse(reviewBodies[0]!) as { tools?: unknown[] };
+    expect(reviewRequest.tools ?? []).toEqual([]);
 
     await application.close();
     application = undefined;
@@ -755,7 +918,9 @@ test("updates one stable Memory across Chats without leaving conflicting active 
     await expect(launched.main.getByText("你现在的爱好是游泳。")).toBeVisible();
 
     const taskBodies = provider.bodies.filter(
-      (body) => !body.includes("Generate one concise chat title"),
+      (body) =>
+        !body.includes("Generate one concise chat title") &&
+        !isEvolutionReviewBody(body),
     );
     expect(taskBodies).toHaveLength(5);
     expect(taskBodies[0]).toContain('"name":"memory"');
@@ -1068,6 +1233,55 @@ test("steers an active Run while plan.update snapshots render live", async () =>
     expect(
       provider.bodies.every((body) => !body.includes("tool_search_output")),
     ).toBe(true);
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("turns a live Plan into non-spinning history when the Provider fails", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-plan-failure-e2e-"),
+  );
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    await selectAgent(launched.main, "完全访问");
+    await launched.main
+      .getByRole("textbox", { name: "消息" })
+      .fill("计划失败测试：先建立计划，再复现 Provider 失败");
+    await launched.main.getByRole("button", { name: "发送" }).click();
+
+    const activePlan = launched.main.getByLabel("活跃计划");
+    await expect(activePlan).toBeVisible();
+    await activePlan.getByRole("button").hover();
+    const currentPlan = launched.main.getByLabel("当前计划");
+    await expect(currentPlan).toContainText("建立执行计划");
+    await expect(currentPlan.getByText("进行中")).toBeVisible();
+
+    provider.releasePlanFailure();
+    await expect(
+      launched.main.getByRole("button", { name: /处理失败/u }),
+    ).toBeVisible();
+    await expect(activePlan).toHaveCount(0);
+    const archivedPlan = launched.main.getByLabel("计划记录");
+    await expect(archivedPlan).toContainText("执行计划 · 已失败");
+    await expect(
+      archivedPlan.locator('li[data-status="unfinished"]'),
+    ).toHaveCount(3);
+    await expect(archivedPlan.getByText("进行中")).toHaveCount(0);
 
     await application.close();
     application = undefined;

@@ -23,6 +23,12 @@ export interface ModelContextLimits {
   readonly supportsVision?: boolean;
 }
 
+export interface ModelStructuredOutput {
+  readonly description?: string;
+  readonly name: string;
+  readonly schema: Readonly<Record<string, unknown>>;
+}
+
 export interface ModelUsage {
   readonly cachedInputTokens: number;
   readonly inputTokens: number;
@@ -38,6 +44,7 @@ export interface ModelRequest {
   readonly maxOutputTokens?: number;
   readonly modelId: string;
   readonly nativeWebSearch?: boolean;
+  readonly structuredOutput?: ModelStructuredOutput;
   readonly toolNamespaces: readonly ModelToolNamespace[];
 }
 

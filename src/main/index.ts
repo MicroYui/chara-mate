@@ -14,6 +14,7 @@ import type { FoundationSnapshot } from "../shared/contracts/foundation";
 import { AGENT_CHANNELS } from "../shared/contracts/agent";
 import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
+import { EVOLUTION_CHANNELS } from "../shared/contracts/evolution";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
@@ -83,6 +84,10 @@ import { McpRepository } from "./extensions/mcpRepository";
 import { McpService } from "./extensions/mcpService";
 import { SkillRepository } from "./extensions/skillRepository";
 import { SkillService } from "./extensions/skillService";
+import { registerEvolutionIpc } from "./evolution/evolutionIpc";
+import { EvolutionRepository } from "./evolution/evolutionRepository";
+import { ModelEvolutionReviewer } from "./evolution/evolutionReviewer";
+import { EvolutionService } from "./evolution/evolutionService";
 import { LexicalRetrievalPipeline } from "./memory/lexicalRetrievalPipeline";
 import { registerMemoryIpc } from "./memory/memoryIpc";
 import { MemoryRepository } from "./memory/memoryRepository";
@@ -159,6 +164,7 @@ let unregisterActivityProtocol: (() => void) | undefined;
 let unregisterAgentIpc: (() => void) | undefined;
 let unregisterAutomationIpc: (() => void) | undefined;
 let unregisterExtensionIpc: (() => void) | undefined;
+let unregisterEvolutionIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
 let unregisterMemoryIpc: (() => void) | undefined;
 let unregisterProviderIpc: (() => void) | undefined;
@@ -171,6 +177,7 @@ let unregisterVoiceIpc: (() => void) | undefined;
 let providerService: ProviderService | undefined;
 let characterWindowController: CharacterWindowController | undefined;
 let agentRuntime: AgentRuntime | undefined;
+let evolutionService: EvolutionService | undefined;
 let automationScheduler: AutomationScheduler | undefined;
 let activityCapture: ActivityCaptureCoordinator | undefined;
 let activityService: ActivityService | undefined;
@@ -205,6 +212,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterAutomationIpc = undefined;
     unregisterExtensionIpc?.();
     unregisterExtensionIpc = undefined;
+    unregisterEvolutionIpc?.();
+    unregisterEvolutionIpc = undefined;
     unregisterChatIpc?.();
     unregisterChatIpc = undefined;
     unregisterFoundationIpc?.();
@@ -227,6 +236,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterVoiceIpc = undefined;
     await automationScheduler?.stop();
     automationScheduler = undefined;
+    await evolutionService?.shutdown();
+    evolutionService = undefined;
     voiceService?.shutdown();
     await agentRuntime?.interruptAll();
     managedBrowser?.setActivityObserver(undefined);
@@ -300,6 +311,14 @@ async function startApplication(): Promise<void> {
   const checkpointRepository = new CheckpointRepository(applicationDatabase);
   const runtimeObservability = new RuntimeObservability(runRepository, logger);
   const automationServiceReference: { current?: AutomationService } = {};
+  const evolutionServiceReference: { current?: EvolutionService } = {};
+  const synchronizeEvolutionSkill = (skillId: string): void => {
+    try {
+      evolutionServiceReference.current?.synchronizeSkill(skillId);
+    } catch (error) {
+      logger.warn("EVOLUTION_SKILL_SYNC_ERROR", { error, skillId });
+    }
+  };
   let voiceMetrics: VoiceMetrics | undefined;
   const windowPlacementRepository = new WindowPlacementRepository(
     applicationDatabase,
@@ -342,6 +361,15 @@ async function startApplication(): Promise<void> {
         automationServiceReference.current?.observeRun(envelope);
       } catch (error) {
         logger.warn("AUTOMATION_RUN_PROJECTION_ERROR", {
+          error,
+          runId: envelope.streamId,
+          sequence: envelope.sequence,
+        });
+      }
+      try {
+        evolutionServiceReference.current?.observeRun(envelope);
+      } catch (error) {
+        logger.warn("EVOLUTION_RUN_OBSERVER_ERROR", {
           error,
           runId: envelope.streamId,
           sequence: envelope.sequence,
@@ -467,7 +495,7 @@ async function startApplication(): Promise<void> {
     clock,
   );
   await skillService.initialize();
-  skillService.registerTools(toolRegistry);
+  skillService.registerTools(toolRegistry, synchronizeEvolutionSkill);
 
   mcpService = new McpService(
     new McpRepository(applicationDatabase),
@@ -571,7 +599,11 @@ async function startApplication(): Promise<void> {
     );
   }
   await mcpService.initialize();
-  unregisterExtensionIpc = registerExtensionIpc(mcpService, skillService);
+  unregisterExtensionIpc = registerExtensionIpc(
+    mcpService,
+    skillService,
+    synchronizeEvolutionSkill,
+  );
 
   const territoryRepository = new TerritoryRepository(applicationDatabase);
   const territoryAssets = new TerritoryAssetStore(
@@ -626,6 +658,37 @@ async function startApplication(): Promise<void> {
     idGenerator,
     clock,
   );
+  const evolutionReviewer = new ModelEvolutionReviewer(
+    providerService,
+    idGenerator,
+  );
+  evolutionService = new EvolutionService(
+    new EvolutionRepository(applicationDatabase),
+    runRepository,
+    chatRepository,
+    skillService,
+    memoryServiceInstance,
+    evolutionReviewer,
+    evolutionReviewer,
+    idGenerator,
+    clock,
+    logger,
+    {
+      publish(event) {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (window.webContents.isDestroyed()) continue;
+          try {
+            window.webContents.send(EVOLUTION_CHANNELS.changed, event);
+          } catch (error) {
+            logger.warn("EVOLUTION_EVENT_BROADCAST_ERROR", { error });
+          }
+        }
+      },
+    },
+  );
+  evolutionServiceReference.current = evolutionService;
+  unregisterEvolutionIpc = registerEvolutionIpc(evolutionService);
+  evolutionService.initialize();
   const imageInput = new ElectronImageInputProvider(async (source) => {
     if (path.isAbsolute(source)) return path.resolve(source);
     try {

@@ -23,7 +23,7 @@ CharaMate 是一个由常驻二次元桌面角色承载的个人 AI Agent。她�
 | 长期记忆 | `better-sqlite3` 保存 Memory/Revision 真源；索引、图关系、向量布局和写入参数由实验一次选定，发布版只有一套实现 |
 | 检索 | 产品只依赖一个冻结的 `RetrievalPipeline`；候选、模型与参数只存在于研究设计和实验工件 |
 | 行为理解 | 原始活动 → Episode → 周期摘要 → 长期记忆/画像/领地候选 → 定期删除低价值原始数据 |
-| 自我进化 | 由 `SELF-EVOLUTION` 实验决定是否进入产品；晋级后只保留一种异步复盘、候选、replay 与恢复流程 |
+| 自我进化 | 触发式异步复盘；四类用户确认候选，Skill 再经过 replay，版本可恢复 |
 | 实时语音 | Azure OpenAI `gpt-realtime-2.1` 全双工原生 Agent；共享客户端 Tool/Approval、上下文、Run/Item 与持久化边界 |
 | 浏览器与电脑操作 | Playwright/DOM 优先，App Action/Accessibility 次之，视觉 Computer Use 兜底 |
 | 扩展协议 | JSON Schema Tool、Agent Skills `SKILL.md`、MCP stdio/Streamable HTTP |
@@ -540,13 +540,13 @@ Skill 可以包含少量脚本、模板和 references；常驻上下文只加载
 Agent 可在以下情况下创建或修改 Skill：
 
 - 用户明确说“把这个流程学会”；
-- 若 `SELF-EVOLUTION` 晋级，Experience Review 生成候选，并通过 replay 或用户确认。
+- Experience Review 生成候选，由用户确认；Skill 候选再通过 replay。
 
 ### 5.7 自我进化
 
-`SELF-EVOLUTION` 是高级成长功能 Gate：只有实验能证明后续同类任务收益足以覆盖错误迁移、候选膨胀和维护成本时，产品才加入本节能力；否则不提交异步 Review Job、Skill/成长候选 Schema 或对应管理入口。Phase 3 已拥有普通 Memory 候选表和用户明确陈述的基础形成闭环，它们不由本 Gate 回滚。
+`SELF-EVOLUTION` 已由 [`docs/benchmarks/self-evolution.md`](./docs/benchmarks/self-evolution.md) 定案为一条触发式异步路径。完成 Run 只有在出现用户明确纠正、明确教学、具有客观验证的成功或已持久化的重复工具模式时才排入 `ExperienceReview`；不按固定 Tool Call 数或每个 Run 调用模型。Review job 先持久化再异步执行，重启恢复 queued/running 状态，不阻塞刚完成的主回答。
 
-若晋级，有学习价值的 Run 完成后可按唯一获胜触发规则启动异步 `ExperienceReview`。它是候选生成器，不是第二套 Agent Runtime，只输出四类结构化候选：
+`ExperienceReview` 是无 Tool 权限的单次结构化候选生成器，不是第二套 Agent Runtime，也不直接写入任何领域。它复用来源 Run 的 Provider/Model，只输出四类结构化草稿：
 
 ```ts
 type EvolutionCandidate =
@@ -556,19 +556,22 @@ type EvolutionCandidate =
   | NewSkillCandidate
 ```
 
-触发依据是用户纠正、明确教学、可验证复杂任务成功、重复模式，而不是简单累计 Tool Call 数。
-
 候选要求：
 
 - 指向来源 Run/Item；
 - 展示新增或修改内容；
 - 区分“用户是谁”与“这类任务怎样做”；
-- Skill 修改先跑保存的 replay；
+- 所有候选都由用户接受、编辑或拒绝，Reviewer 不自批；
+- Skill 候选在用户接受后跑同类与旁路 replay，通过才激活；replay 是增量质量信号，不替代用户确认；
+- Skill patch 绑定 Review 时加载的目标 ID、revision 与内容 hash；接受和激活都重新校验，不能覆盖其后发生的手动修改；
 - 支持 draft、active、stale、archived、pin、版本和恢复；
+- Settings 或 Agent 显式修改、归档、恢复、pin Skill 时，同步更新关联候选的 stale、archived 与 pin 状态；
 - 后台归档可恢复，不删除用户内容；
 - 候选只覆盖 Memory、Persona 偏好和 Skill，不把产品源码、系统 Prompt 或 Provider 配置变成自进化对象。
 
 用户可以在 Chat 中打开“这次学到了什么”，也可以在 Memory/Settings 统一处理候选。
+
+Phase 3 的 `memory.record` 与普通 Memory 候选仍负责当前 Run 中用户明确陈述的基础形成。本节不复制该路径，也不采用 Hermes 的直接写入、后台 forked Agent、固定 iteration 或自动归档日期。
 
 ---
 

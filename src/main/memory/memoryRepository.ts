@@ -227,9 +227,9 @@ export class MemoryRepository {
         `SELECT id, memory_id, content, source_type, reason, created_at
          FROM memory_revisions
          WHERE memory_id = ?
-         ORDER BY created_at DESC, id DESC`,
+         ORDER BY (id = ?) DESC, created_at DESC, rowid DESC`,
       )
-      .all(memoryId) as RevisionRow[];
+      .all(memoryId, row.current_revision_id) as RevisionRow[];
     const sourceRows = this.database
       .prepare(
         `SELECT s.id, s.type, s.reference_id, s.label, s.created_at,
@@ -315,6 +315,21 @@ export class MemoryRepository {
          LIMIT 1`,
       )
       .get(content) as { id: string } | undefined;
+    return row ? this.requireDetail(row.id) : undefined;
+  }
+
+  findDetailBySourceReference(referenceId: string): MemoryDetail | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT r.memory_id AS id
+         FROM memory_sources s
+         JOIN memory_revision_sources rs ON rs.source_id = s.id
+         JOIN memory_revisions r ON r.id = rs.revision_id
+         WHERE s.reference_id = ?
+         ORDER BY r.created_at DESC, r.id DESC
+         LIMIT 1`,
+      )
+      .get(referenceId) as { id: string } | undefined;
     return row ? this.requireDetail(row.id) : undefined;
   }
 

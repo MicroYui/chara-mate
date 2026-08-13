@@ -6,6 +6,7 @@ import type { ActivityApi } from "./activity";
 import type { AutomationApi } from "./automation";
 import type { ChatApi } from "./chat";
 import type { ExtensionsApi } from "./extensions";
+import type { EvolutionApi } from "./evolution";
 import type { LocalFilesApi } from "./files";
 import type { RunEventsApi } from "./ipc";
 import type { SettingsApi } from "./settings";
@@ -30,6 +31,7 @@ export interface FoundationApi {
 export interface DesktopApi {
   activity: ActivityApi;
   automations: AutomationApi;
+  evolution: EvolutionApi;
   files: LocalFilesApi;
   foundation: FoundationApi;
   memory: MemoryApi;

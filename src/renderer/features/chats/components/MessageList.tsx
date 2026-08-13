@@ -13,6 +13,11 @@ import type {
   EntityId,
   UserInputResolution,
 } from "../../../../shared/contracts";
+import type {
+  EvolutionApi,
+  EvolutionCandidate,
+} from "../../../../shared/contracts/evolution";
+import { EvolutionCandidateCard } from "../../evolution/EvolutionCandidates";
 import { MarkdownRenderer } from "../content/MarkdownRenderer";
 import type {
   ChatAttachmentView,
@@ -27,6 +32,11 @@ import { RunProcess } from "./RunProcess";
 import styles from "./MessageList.module.css";
 
 type TimelineEntry =
+  | {
+      readonly id: EntityId;
+      readonly kind: "evolution";
+      readonly value: EvolutionCandidate;
+    }
   | {
       readonly id: EntityId;
       readonly kind: "message";
@@ -144,7 +154,10 @@ function Message({ value }: { readonly value: ChatMessageView }) {
   );
 }
 
-export function buildTimeline(chat: ChatView): readonly TimelineEntry[] {
+export function buildTimeline(
+  chat: ChatView,
+  candidates: readonly EvolutionCandidate[] = [],
+): readonly TimelineEntry[] {
   const runsById = new Map(chat.runs.map((run) => [run.record.id, run]));
   const lastUserMessageByRun = new Map<EntityId, number>();
   for (const [index, message] of chat.messages.entries()) {
@@ -180,6 +193,12 @@ export function buildTimeline(chat: ChatView): readonly TimelineEntry[] {
     }
   }
 
+  for (const candidate of [...candidates].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  )) {
+    entries.push({ id: candidate.id, kind: "evolution", value: candidate });
+  }
+
   return entries;
 }
 
@@ -193,7 +212,50 @@ export function MessageList({
 }: MessageListProps) {
   const scrollElementRef = useRef<HTMLDivElement>(null);
   const [showLatest, setShowLatest] = useState(false);
-  const timeline = useMemo(() => buildTimeline(chat), [chat]);
+  const [evolutionCandidates, setEvolutionCandidates] = useState<
+    EvolutionCandidate[]
+  >([]);
+  const evolutionApi: EvolutionApi | undefined =
+    typeof window === "undefined" ? undefined : window.charaMate?.evolution;
+  useEffect(() => {
+    if (!evolutionApi) return;
+    let active = true;
+    void evolutionApi.list({ chatId: chat.record.id }).then((response) => {
+      if (!active || !response.ok) return;
+      setEvolutionCandidates(
+        response.value.candidates.filter(
+          ({ status }) => status !== "archived" && status !== "rejected",
+        ),
+      );
+    });
+    const unsubscribe = evolutionApi.subscribe((event) => {
+      if (
+        !active ||
+        event.type !== "candidate.changed" ||
+        event.candidate.chatId !== chat.record.id
+      ) {
+        return;
+      }
+      setEvolutionCandidates((current) => {
+        const without = current.filter(({ id }) => id !== event.candidate.id);
+        if (
+          event.candidate.status !== "archived" &&
+          event.candidate.status !== "rejected"
+        ) {
+          without.push(event.candidate);
+        }
+        return without;
+      });
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [chat.record.id, evolutionApi]);
+  const timeline = useMemo(
+    () => buildTimeline(chat, evolutionCandidates),
+    [chat, evolutionCandidates],
+  );
   // TanStack Virtual intentionally exposes mutable measurement callbacks.
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
@@ -206,6 +268,7 @@ export function MessageList({
       if (entry.kind === "run") {
         return entry.value.record.status === "completed" ? 42 : 220;
       }
+      if (entry.kind === "evolution") return 270;
       return entry.value.record.role === "user" ? 90 : 430;
     },
     getItemKey: (index) => timeline[index]?.id ?? index,
@@ -249,7 +312,7 @@ export function MessageList({
               >
                 {entry.kind === "message" ? (
                   <Message value={entry.value} />
-                ) : (
+                ) : entry.kind === "run" ? (
                   <RunProcess
                     run={entry.value}
                     dispatch={dispatch}
@@ -258,7 +321,20 @@ export function MessageList({
                     onResolveUserInput={onResolveUserInput}
                     state={state}
                   />
-                )}
+                ) : evolutionApi ? (
+                  <EvolutionCandidateCard
+                    api={evolutionApi}
+                    candidate={entry.value}
+                    compact
+                    onChanged={(changed) =>
+                      setEvolutionCandidates((current) =>
+                        current.map((candidate) =>
+                          candidate.id === changed.id ? changed : candidate,
+                        ),
+                      )
+                    }
+                  />
+                ) : null}
               </div>
             ) : null;
           })}

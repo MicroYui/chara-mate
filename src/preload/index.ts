@@ -65,8 +65,20 @@ import {
   type SkillIdRequest,
   type SkillListRequest,
   type SkillSaveRequest,
+  type SkillRevisionRequest,
   type SkillSetEnabledRequest,
+  type SkillSetPinnedRequest,
 } from "../shared/contracts/extensions";
+import {
+  EVOLUTION_CHANNELS,
+  type EvolutionApi,
+  type EvolutionCandidateIdRequest,
+  type EvolutionCandidatePinRequest,
+  type EvolutionCandidateUpdateRequest,
+  type EvolutionChangedEvent,
+  type EvolutionListRequest,
+  type EvolutionRunIdRequest,
+} from "../shared/contracts/evolution";
 import {
   RUN_EVENT_CHANNELS,
   type RunEventEnvelope,
@@ -183,13 +195,27 @@ import {
   McpMutationResponseSchema,
   McpSaveRequestSchema,
   SkillGetResponseSchema,
+  SkillHistoryResponseSchema,
   SkillIdRequestSchema,
   SkillListRequestSchema,
   SkillListResponseSchema,
   SkillMutationResponseSchema,
   SkillSaveRequestSchema,
+  SkillRevisionRequestSchema,
   SkillSetEnabledRequestSchema,
+  SkillSetPinnedRequestSchema,
 } from "../shared/schemas/extensions";
+import {
+  EvolutionCandidateIdRequestSchema,
+  EvolutionCandidateMutationResponseSchema,
+  EvolutionCandidatePinRequestSchema,
+  EvolutionCandidateUpdateRequestSchema,
+  EvolutionChangedEventSchema,
+  EvolutionListRequestSchema,
+  EvolutionReviewMutationResponseSchema,
+  EvolutionRunIdRequestSchema,
+  EvolutionSnapshotResponseSchema,
+} from "../shared/schemas/evolution";
 import {
   RunEventEnvelopeSchema,
   RunEventReplayRequestSchema,
@@ -519,6 +545,14 @@ const extensionsApi: ExtensionsApi = Object.freeze({
         parseSchemaWithoutCodeGeneration(SkillIdRequestSchema, input),
       ),
     ),
+  skillHistory: async (input: SkillIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillHistoryResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillHistory,
+        parseSchemaWithoutCodeGeneration(SkillIdRequestSchema, input),
+      ),
+    ),
   skillList: async (input: SkillListRequest) =>
     parseSchemaWithoutCodeGeneration(
       SkillListResponseSchema,
@@ -535,6 +569,14 @@ const extensionsApi: ExtensionsApi = Object.freeze({
         parseSchemaWithoutCodeGeneration(SkillListRequestSchema, input),
       ),
     ),
+  skillRestore: async (input: SkillRevisionRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillRestore,
+        parseSchemaWithoutCodeGeneration(SkillRevisionRequestSchema, input),
+      ),
+    ),
   skillSave: async (input: SkillSaveRequest) =>
     parseSchemaWithoutCodeGeneration(
       SkillMutationResponseSchema,
@@ -549,6 +591,122 @@ const extensionsApi: ExtensionsApi = Object.freeze({
       await ipcRenderer.invoke(
         EXTENSION_CHANNELS.skillSetEnabled,
         parseSchemaWithoutCodeGeneration(SkillSetEnabledRequestSchema, input),
+      ),
+    ),
+  skillSetPinned: async (input: SkillSetPinnedRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillSetPinned,
+        parseSchemaWithoutCodeGeneration(SkillSetPinnedRequestSchema, input),
+      ),
+    ),
+});
+
+const evolutionApi: EvolutionApi = Object.freeze({
+  acceptCandidate: async (input: EvolutionCandidateIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.acceptCandidate,
+        parseSchemaWithoutCodeGeneration(
+          EvolutionCandidateIdRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  archiveCandidate: async (input: EvolutionCandidateIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.archiveCandidate,
+        parseSchemaWithoutCodeGeneration(
+          EvolutionCandidateIdRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  list: async (input: EvolutionListRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionSnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.list,
+        parseSchemaWithoutCodeGeneration(EvolutionListRequestSchema, input),
+      ),
+    ),
+  rejectCandidate: async (input: EvolutionCandidateIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.rejectCandidate,
+        parseSchemaWithoutCodeGeneration(
+          EvolutionCandidateIdRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  restoreCandidate: async (input: EvolutionCandidateIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.restoreCandidate,
+        parseSchemaWithoutCodeGeneration(
+          EvolutionCandidateIdRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  retryReplay: async (input: EvolutionCandidateIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.retryReplay,
+        parseSchemaWithoutCodeGeneration(
+          EvolutionCandidateIdRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  retryReview: async (input: EvolutionRunIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionReviewMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.retryReview,
+        parseSchemaWithoutCodeGeneration(EvolutionRunIdRequestSchema, input),
+      ),
+    ),
+  setCandidatePinned: async (input: EvolutionCandidatePinRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.setCandidatePinned,
+        parseSchemaWithoutCodeGeneration(
+          EvolutionCandidatePinRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  subscribe: (listener: (event: EvolutionChangedEvent) => void) => {
+    const wrapped = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        parseSchemaWithoutCodeGeneration(EvolutionChangedEventSchema, input),
+      );
+    };
+    ipcRenderer.on(EVOLUTION_CHANNELS.changed, wrapped);
+    return () => ipcRenderer.off(EVOLUTION_CHANNELS.changed, wrapped);
+  },
+  updateCandidate: async (input: EvolutionCandidateUpdateRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.updateCandidate,
+        parseSchemaWithoutCodeGeneration(
+          EvolutionCandidateUpdateRequestSchema,
+          input,
+        ),
       ),
     ),
 });
@@ -1025,6 +1183,7 @@ const desktopApi: CharaMateApi = Object.freeze({
   agent: agentApi,
   automations: automationApi,
   chat: chatApi,
+  evolution: evolutionApi,
   extensions: extensionsApi,
   files: Object.freeze({
     getPathForFile: (file: File) => webUtils.getPathForFile(file),

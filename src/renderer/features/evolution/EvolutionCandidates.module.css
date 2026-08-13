@@ -1,0 +1,169 @@
+.collection {
+  display: grid;
+  gap: 10px;
+  width: min(900px, 100%);
+  margin-bottom: 14px;
+}
+
+.collectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.collectionHeader p,
+.collectionHeader h3 {
+  margin: 0;
+}
+
+.collectionHeader p {
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.collectionHeader h3 {
+  margin-top: 2px;
+  font-size: 16px;
+}
+
+.collectionHeader button,
+.actions button {
+  display: inline-flex;
+  min-height: 29px;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.candidateList {
+  display: grid;
+  gap: 9px;
+}
+
+.candidate {
+  display: grid;
+  gap: 9px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.candidate[data-compact="true"] {
+  width: min(680px, calc(100% - 34px));
+  margin: 4px auto;
+  background: var(--surface-subtle);
+}
+
+.candidate > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.candidate > header div {
+  display: grid;
+  gap: 2px;
+}
+
+.candidate > header small,
+.meta {
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+}
+
+.candidate > header strong {
+  font-size: 13px;
+}
+
+.candidate > header span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.candidate > header span[data-status="active"] {
+  color: var(--success);
+}
+
+.candidate > header span[data-status="draft"] {
+  color: var(--warning);
+}
+
+.rationale,
+.candidate details p,
+.candidate details li {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.candidate pre,
+.candidate textarea {
+  overflow: auto;
+  max-height: 230px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font: 11.5px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.candidate textarea {
+  min-height: 150px;
+  resize: vertical;
+}
+
+.candidate details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.candidate details ul {
+  margin: 7px 0;
+  padding-left: 18px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.primary {
+  border-color: var(--accent) !important;
+  background: var(--accent) !important;
+  color: #fff !important;
+}
+
+.error {
+  margin: 0;
+  color: var(--danger) !important;
+  font-size: 11.5px;
+}

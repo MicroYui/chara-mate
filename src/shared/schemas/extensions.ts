@@ -114,6 +114,12 @@ export const SkillSourceSchema = Type.Union([
   Type.Literal("user"),
 ]);
 
+export const SkillLifecycleSchema = Type.Union([
+  Type.Literal("active"),
+  Type.Literal("stale"),
+  Type.Literal("archived"),
+]);
+
 export const SkillDescriptorSchema = Type.Object(
   {
     archived: Type.Boolean(),
@@ -121,11 +127,17 @@ export const SkillDescriptorSchema = Type.Object(
     description: NonBlankStringSchema,
     enabled: Type.Boolean(),
     id: NonBlankStringSchema,
+    lastSuccessAt: Type.Optional(TimestampSchema),
     lastUsedAt: Type.Optional(TimestampSchema),
+    lifecycle: SkillLifecycleSchema,
     name: NonBlankStringSchema,
+    patchCount: Type.Integer({ minimum: 0 }),
+    pinned: Type.Boolean(),
     readOnly: Type.Boolean(),
     revision: Type.Integer({ minimum: 1 }),
     source: SkillSourceSchema,
+    successCount: Type.Integer({ minimum: 0 }),
+    useCount: Type.Integer({ minimum: 0 }),
   },
   { additionalProperties: false },
 );
@@ -152,6 +164,29 @@ export const SkillSaveRequestSchema = Type.Object(
 );
 export const SkillSetEnabledRequestSchema = Type.Object(
   { enabled: Type.Boolean(), skillId: NonBlankStringSchema },
+  { additionalProperties: false },
+);
+export const SkillSetPinnedRequestSchema = Type.Object(
+  { pinned: Type.Boolean(), skillId: NonBlankStringSchema },
+  { additionalProperties: false },
+);
+export const SkillRevisionRequestSchema = Type.Object(
+  {
+    revision: Type.Integer({ minimum: 1 }),
+    skillId: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const SkillVersionSnapshotSchema = Type.Object(
+  {
+    content: Type.Optional(Type.String()),
+    contentSha256: Sha256Schema,
+    createdAt: TimestampSchema,
+    lifecycle: SkillLifecycleSchema,
+    revision: Type.Integer({ minimum: 1 }),
+    sourceCandidateId: Type.Optional(EntityIdSchema),
+  },
   { additionalProperties: false },
 );
 
@@ -182,3 +217,6 @@ export const SkillMutationResponseSchema = operationResponse(
   SkillDescriptorSchema,
 );
 export const SkillGetResponseSchema = operationResponse(SkillContentSchema);
+export const SkillHistoryResponseSchema = operationResponse(
+  Type.Array(SkillVersionSnapshotSchema),
+);

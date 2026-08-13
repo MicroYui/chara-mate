@@ -356,7 +356,13 @@ export function RunProcess({
           ) : null}
           {visibleItems.map((item) => {
             if (item.kind === "plan" && planUpdateFromItem(item)) {
-              return <ArchivedPlan key={item.id} item={item} />;
+              return (
+                <ArchivedPlan
+                  key={item.id}
+                  item={item}
+                  runStatus={run.record.status}
+                />
+              );
             }
             if (item.kind === "approval") {
               const approval = run.approvals.find(

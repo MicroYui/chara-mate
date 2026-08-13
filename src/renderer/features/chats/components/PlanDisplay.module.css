@@ -191,6 +191,10 @@
   text-decoration-color: var(--text-tertiary);
 }
 
+.steps li[data-status="unfinished"] > p {
+  color: var(--text-secondary);
+}
+
 .spin {
   animation: spin 900ms linear infinite;
 }
