@@ -666,6 +666,7 @@ export const CURRENT_SCHEMA_SQL = `
         'user_message',
         'assistant_message',
         'plan',
+        'subtask',
         'input_request',
         'tool_call',
         'command',

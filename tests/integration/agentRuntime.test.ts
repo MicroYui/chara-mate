@@ -11,6 +11,10 @@ import type { ToolResult } from "../../src/shared/contracts/tool";
 import { SystemClock, type Clock } from "../../src/shared/pure/clock";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { AgentRuntime } from "../../src/main/agent/agentRuntime";
+import {
+  COLLABORATION_DISPATCH_TOOL_NAME,
+  registerCollaborationTool,
+} from "../../src/main/agent/collaborationTool";
 import type {
   ImageInputProvider,
   PreparedImageInput,
@@ -144,6 +148,53 @@ function finalTurn(text = "完成"): Turn {
     { delta: text, type: "text.delta" },
     complete(`response-${text}`),
   ];
+}
+
+function childSummaryTurn(): Turn {
+  return (request) => {
+    const first = request.input[0];
+    if (typeof first !== "object" || first === null || Array.isArray(first)) {
+      throw new TypeError("Missing child input");
+    }
+    const content = first["content"];
+    if (typeof content !== "string") throw new TypeError("Missing child goal");
+    const parsed = JSON.parse(content) as { goal: string };
+    return [
+      { delta: `子任务结论：${parsed.goal}`, type: "text.delta" },
+      complete(`response-child-${parsed.goal}`),
+    ];
+  };
+}
+
+function collaborationDispatch(): Readonly<Record<string, JsonValue>> {
+  return {
+    subtasks: [
+      {
+        goal: "核对模块 A",
+        id: "module_a",
+        reads: [
+          {
+            input: { value: "A evidence" },
+            resourceClaim: "module:A",
+            toolName: "test.read",
+          },
+        ],
+        resourceClaims: ["module:A"],
+      },
+      {
+        goal: "核对模块 B",
+        id: "module_b",
+        reads: [
+          {
+            input: { value: "B evidence" },
+            resourceClaim: "module:B",
+            toolName: "test.read",
+          },
+        ],
+        resourceClaims: ["module:B"],
+      },
+    ],
+  };
 }
 
 function hostedSearchTurn(text: string): Turn {
@@ -419,6 +470,224 @@ async function waitForStatus(
 }
 
 describe("Agent Runtime production path", () => {
+  it("lets the Agent choose two validated read-only children and rejoins the same parent Run", async () => {
+    const dispatch = collaborationDispatch();
+    const fixture = await createFixture([
+      namespacedFunctionTurn(
+        "collaboration-call",
+        "dispatch",
+        "collaboration",
+        dispatch,
+      ),
+      childSummaryTurn(),
+      childSummaryTurn(),
+      finalTurn("父 Agent 已合并两个结论"),
+    ]);
+    registerTool(fixture, {
+      execute: (input) => {
+        const value = input["value"];
+        if (typeof value !== "string") {
+          throw new TypeError("value must be a string");
+        }
+        return Promise.resolve(successfulResult(value));
+      },
+      name: "test.read",
+    });
+    registerCollaborationTool(fixture.tools, {
+      createChatModelRuntime: () =>
+        Promise.resolve({
+          provider: fixture.provider,
+          snapshot: {
+            apiStyle: "openai-compatible",
+            modelId: "gpt-5.6-sol",
+            profileId: PROFILE_ID,
+            profileName: "Test Provider",
+          },
+        }),
+      getRun: (runId) => fixture.runs.getRun(runId),
+    });
+
+    const run = await startAgent(fixture);
+    await fixture.collector.wait(
+      (envelope) =>
+        envelope.streamId === run.id &&
+        "run" in envelope.event &&
+        ["completed", "failed", "cancelled", "interrupted"].includes(
+          envelope.event.run.status,
+        ),
+    );
+    const terminalRun = fixture.runs.getRun(run.id);
+    expect(terminalRun?.error).toBeUndefined();
+    expect(terminalRun?.status).toBe("completed");
+
+    const item = fixture.runs
+      .listRunItems(run.id)
+      .find(({ kind }) => kind === "subtask");
+    expect(item).toMatchObject({ input: dispatch, status: "completed" });
+    expect(item?.output).toMatchObject({
+      modelContent: {
+        children: [
+          { id: "module_a", status: "completed" },
+          { id: "module_b", status: "completed" },
+        ],
+        joinRequired: true,
+      },
+      status: "success",
+    });
+    expect(fixture.provider.requests).toHaveLength(4);
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "collaboration")
+        ?.tools.find(({ name }) => name === COLLABORATION_DISPATCH_TOOL_NAME),
+    ).toMatchObject({ deferLoading: false });
+    expect(fixture.provider.requests.slice(1, 3)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ nativeWebSearch: false, toolNamespaces: [] }),
+        expect.objectContaining({ nativeWebSearch: false, toolNamespaces: [] }),
+      ]),
+    );
+    expect(JSON.stringify(fixture.provider.requests[3]?.input)).toContain(
+      "子任务结论：核对模块 A",
+    );
+    expect(JSON.stringify(fixture.provider.requests[3]?.input)).toContain(
+      "子任务结论：核对模块 B",
+    );
+    expect(
+      fixture.runs
+        .listRunItems(run.id)
+        .filter(({ kind }) => kind === "approval"),
+    ).toEqual([]);
+    fixture.database.close();
+  });
+
+  it("keeps collaboration unavailable in Chat mode without a hidden switch", async () => {
+    const fixture = await createFixture([finalTurn("单 Agent 回答")]);
+    registerCollaborationTool(fixture.tools, {
+      createChatModelRuntime: () =>
+        Promise.resolve({
+          provider: fixture.provider,
+          snapshot: {
+            apiStyle: "openai-compatible",
+            modelId: "gpt-5.6-sol",
+            profileId: PROFILE_ID,
+            profileName: "Test Provider",
+          },
+        }),
+      getRun: (runId) => fixture.runs.getRun(runId),
+    });
+
+    const run = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "直接回答",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces.some(
+        ({ name }) => name === "collaboration",
+      ),
+    ).toBe(false);
+    expect(
+      fixture.runs.listRunItems(run.id).some(({ kind }) => kind === "subtask"),
+    ).toBe(false);
+    fixture.database.close();
+  });
+
+  it("replays an interrupted collaboration through the existing idempotent Tool boundary", async () => {
+    const dispatch = collaborationDispatch();
+    let startedChildren = 0;
+    let bothChildrenStarted!: () => void;
+    const childrenStarted = new Promise<void>((resolve) => {
+      bothChildrenStarted = resolve;
+    });
+    const blockedChild: Turn = async (_request, signal) => {
+      startedChildren += 1;
+      if (startedChildren === 2) bothChildrenStarted();
+      return new Promise<readonly ModelEvent[]>((_resolve, reject) => {
+        const abort = () =>
+          reject(
+            signal.reason instanceof Error
+              ? signal.reason
+              : new DOMException("interrupted", "AbortError"),
+          );
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      });
+    };
+    const fixture = await createFixture([
+      namespacedFunctionTurn(
+        "collaboration-restart",
+        "dispatch",
+        "collaboration",
+        dispatch,
+      ),
+      blockedChild,
+      blockedChild,
+    ]);
+    let reads = 0;
+    registerTool(fixture, {
+      execute: (input) => {
+        reads += 1;
+        const value = input["value"];
+        if (typeof value !== "string") {
+          throw new TypeError("value must be a string");
+        }
+        return Promise.resolve(successfulResult(value));
+      },
+      name: "test.read",
+    });
+    let collaborationProvider: ModelProvider = fixture.provider;
+    registerCollaborationTool(fixture.tools, {
+      createChatModelRuntime: () =>
+        Promise.resolve({
+          provider: collaborationProvider,
+          snapshot: {
+            apiStyle: "openai-compatible",
+            modelId: "gpt-5.6-sol",
+            profileId: PROFILE_ID,
+            profileName: "Test Provider",
+          },
+        }),
+      getRun: (runId) => fixture.runs.getRun(runId),
+    });
+
+    const run = await startAgent(fixture);
+    await childrenStarted;
+    await fixture.runtime.interruptAll();
+
+    expect(fixture.runs.getRun(run.id)?.status).toBe("interrupted");
+    expect(
+      fixture.runs
+        .listRunItems(run.id)
+        .filter(({ kind }) => kind === "subtask"),
+    ).toEqual([expect.objectContaining({ status: "interrupted" })]);
+
+    const resumedProvider = new ScriptedProvider([
+      childSummaryTurn(),
+      childSummaryTurn(),
+      finalTurn("恢复后完成父 Join"),
+    ]);
+    collaborationProvider = resumedProvider;
+    const resumedRuntime = createRuntimeFor(fixture, resumedProvider);
+    await resumedRuntime.resume({ requestedAt: REQUESTED_AT, runId: run.id });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(fixture.runs.getRun(run.id)?.status).toBe("completed");
+    expect(
+      fixture.runs
+        .listRunItems(run.id)
+        .filter(({ kind }) => kind === "subtask")
+        .map(({ status }) => status),
+    ).toEqual(["interrupted", "completed"]);
+    expect(reads).toBe(4);
+    expect(resumedProvider.requests).toHaveLength(3);
+    fixture.database.close();
+  });
+
   it("preinjects one top-8 memory snapshot before the current question", async () => {
     const fixture = await createFixture([]);
     const clock = new SystemClock();
@@ -1492,6 +1761,35 @@ describe("Agent Runtime production path", () => {
       }),
     );
     expect(fixture.runs.getRun(run.id)?.error).toBeUndefined();
+    fixture.database.close();
+  });
+
+  it("rejects a deferred Tool that Tool Search did not load", async () => {
+    const fixture = await createFixture([
+      searchTurn("search-allowed", "allowed"),
+      functionTurn("call-blocked", "test.blocked", {}),
+      finalTurn("未执行未加载能力"),
+    ]);
+    let blockedCalls = 0;
+    registerTool(fixture, {
+      execute: () => Promise.resolve(successfulResult("allowed")),
+      name: "test.allowed",
+    });
+    registerTool(fixture, {
+      execute: () => {
+        blockedCalls += 1;
+        return Promise.resolve(successfulResult("blocked"));
+      },
+      name: "test.blocked",
+    });
+
+    const run = await startAgent(fixture);
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(blockedCalls).toBe(0);
+    expect(JSON.stringify(fixture.provider.requests[2]?.input)).toContain(
+      "TOOL.SCOPE_NOT_ALLOWED",
+    );
     fixture.database.close();
   });
 

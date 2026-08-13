@@ -17,6 +17,7 @@ import { parseSchema } from "../../shared/schemas/validation";
 import { Bm25SearchIndex } from "./bm25";
 
 export interface ToolExecutionContext {
+  readonly availableToolNames?: readonly string[];
   readonly itemId: string;
   readonly onDelta: (delta: string) => void;
   readonly providerProfileId?: string;

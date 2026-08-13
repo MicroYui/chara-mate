@@ -5,14 +5,12 @@ import type {
   ResponseInput,
   ResponseStreamEvent,
   Tool,
-  ToolChoiceAllowed,
 } from "openai/resources/responses/responses";
 
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { ProviderProfileDraft } from "../../shared/contracts/provider";
 import type {
   ModelContextLimits,
-  ModelAllowedTool,
   ModelEvent,
   ModelFunctionTool,
   ModelProvider,
@@ -24,16 +22,13 @@ import { ProviderError } from "./providerError";
 
 const SELECTED_PROMPT_CACHE_MODEL = "gpt-5.6-sol";
 const TOOL_WIRE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/u;
-const TOOL_NAMESPACE_ALIASES: ReadonlyMap<string, string> = new Map([
-  ["browser", "charamate_browser"],
-  ["computer", "charamate_computer"],
-] as const);
-const TOOL_NAMESPACE_ALIASES_REVERSED: ReadonlyMap<string, string> = new Map(
-  [...TOOL_NAMESPACE_ALIASES].map(([runtime, wire]) => [wire, runtime]),
-);
+// Namespace tools are all CharaMate client tools. Provider-native tools such as
+// web_search use distinct wire types, so a uniform prefix avoids every reserved
+// namespace without leaking Provider naming concerns into the runtime contract.
+const TOOL_WIRE_NAMESPACE_PREFIX = "charamate_";
 
 function toolWireNamespace(namespace: string) {
-  const name = TOOL_NAMESPACE_ALIASES.get(namespace) ?? namespace;
+  const name = `${TOOL_WIRE_NAMESPACE_PREFIX}${namespace}`;
   if (!TOOL_WIRE_NAME_PATTERN.test(name)) {
     throw new ProviderError(
       "PROVIDER.INVALID_CONFIGURATION",
@@ -45,7 +40,9 @@ function toolWireNamespace(namespace: string) {
 }
 
 function toolRuntimeNamespace(namespace: string) {
-  return TOOL_NAMESPACE_ALIASES_REVERSED.get(namespace) ?? namespace;
+  return namespace.startsWith(TOOL_WIRE_NAMESPACE_PREFIX)
+    ? namespace.slice(TOOL_WIRE_NAMESPACE_PREFIX.length)
+    : namespace;
 }
 
 function toolWireName(tool: Pick<ModelFunctionTool, "name" | "namespace">) {
@@ -132,6 +129,60 @@ function runtimeOutputItem(value: unknown): JsonValue {
   };
 }
 
+function runtimeToolReferenceMap(
+  namespaces: readonly ModelToolNamespace[],
+): ReadonlyMap<string, string> {
+  const references = new Map<string, string>();
+  for (const namespace of namespaces) {
+    const wireNamespace = toolWireNamespace(namespace.name);
+    references.set(wireNamespace, namespace.name);
+    for (const tool of namespace.tools) {
+      references.set(`${wireNamespace}.${toolWireName(tool)}`, tool.name);
+    }
+  }
+  return references;
+}
+
+function runtimeToolReferences(
+  value: JsonValue,
+  references: ReadonlyMap<string, string>,
+): JsonValue {
+  if (typeof value === "string") return references.get(value) ?? value;
+  if (Array.isArray(value)) {
+    return value.map((entry) => runtimeToolReferences(entry, references));
+  }
+  const record = jsonRecord(value);
+  if (!record) return value;
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [
+      key,
+      runtimeToolReferences(entry, references),
+    ]),
+  );
+}
+
+function runtimeFunctionArguments(
+  value: JsonValue,
+  references: ReadonlyMap<string, string>,
+): Readonly<Record<string, JsonValue>> | undefined {
+  const item = jsonRecord(value);
+  const rawArguments = item?.["arguments"];
+  if (item?.["type"] !== "function_call" || typeof rawArguments !== "string") {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(rawArguments) as JsonValue;
+    const runtime = runtimeToolReferences(parsed, references);
+    const runtimeRecord = jsonRecord(runtime);
+    return runtimeRecord && JSON.stringify(runtime) !== JSON.stringify(parsed)
+      ? runtimeRecord
+      : undefined;
+  } catch {
+    // collectModelTurn owns malformed argument reporting.
+    return undefined;
+  }
+}
+
 function namespaceTool(namespace: ModelToolNamespace): NamespaceTool {
   return {
     description: namespace.description,
@@ -145,21 +196,6 @@ function namespaceTool(namespace: ModelToolNamespace): NamespaceTool {
       type: "function",
     })),
     type: "namespace",
-  };
-}
-
-function toolChoice(
-  allowedTools: readonly ModelAllowedTool[] | undefined,
-): ToolChoiceAllowed | "auto" {
-  if (!allowedTools?.length) return "auto";
-  return {
-    mode: "auto",
-    tools: allowedTools.map(({ name, namespace }) => ({
-      name: toolWireName({ name, namespace }),
-      namespace: toolWireNamespace(namespace),
-      type: "function",
-    })),
-    type: "allowed_tools",
   };
 }
 
@@ -372,6 +408,7 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
       request.toolNamespaces,
       this.supportsNativeWebSearch && request.nativeWebSearch === true,
     );
+    const toolReferences = runtimeToolReferenceMap(request.toolNamespaces);
     const useSelectedPromptCache =
       this.#openAICompatible && request.modelId === SELECTED_PROMPT_CACHE_MODEL;
     const body = {
@@ -410,7 +447,10 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
       ...(tools.length === 0
         ? {}
         : {
-            tool_choice: toolChoice(request.allowedTools),
+            // Responses documents allowed_tools references for top-level tools,
+            // but no portable reference shape for members of a namespace. The
+            // loaded Tool Search scope is therefore enforced by the Harness.
+            tool_choice: "auto" as const,
             tools,
           }),
     } satisfies ResponseCreateParamsStreaming;
@@ -423,7 +463,16 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
         if (event.type === "response.output_text.delta") {
           yield { delta: event.delta, type: "text.delta" };
         } else if (event.type === "response.output_item.done") {
-          yield { item: runtimeOutputItem(event.item), type: "output.item" };
+          const item = runtimeOutputItem(event.item);
+          const runtimeArguments = runtimeFunctionArguments(
+            item,
+            toolReferences,
+          );
+          yield {
+            item,
+            ...(runtimeArguments === undefined ? {} : { runtimeArguments }),
+            type: "output.item",
+          };
         } else if (event.type === "response.completed") {
           const usage = event.response.usage;
           yield {

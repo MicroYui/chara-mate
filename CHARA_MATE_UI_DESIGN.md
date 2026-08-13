@@ -20,7 +20,7 @@ CharaMate 的 UI 采用“现代聊天产品的安静底盘 + 有温度的角色
 | Run 过程 | 运行时展开，完成后折叠为“已处理 6分59秒 · 8 项”；内部 Tool 可二次展开 |
 | 内容复制 | 问题、完整回答、代码块、公式、表格、命令和 Tool 输出都可独立复制 |
 | 语音 | 空输入时显示圆形波形入口；语音中显示实时波形、状态和转写，可自然打断 |
-| Multi-agent | 实验通过后才出现“允许并行协作”图标开关；开启不代表强制派生 |
+| Multi-agent | 不增加 Composer 开关；Agent 自主决定是否调用，实际派生只在 Run 过程显示可折叠 Subtask Item |
 | 像素风 | 集中用于桌宠和领地，不把聊天控件、表格、设置页全部像素化 |
 | 普通用户界面 | 不显示 Harness 参数、Token 图表、检索算法和研发指标 |
 | Renderer 技术 | React + CSS Modules/语义变量；Radix 负责无样式交互，Lucide 负责通用 SVG，TanStack Virtual 负责长列表 |
@@ -255,7 +255,7 @@ Composer 是一个整体，不在输入框外再堆叠多条工具栏：
 ┌────────────────────────────────────────────────────────────┐
 │ [Add]  问问 CharaMate……                                    │
 │                                                            │
-│ [Chat ▾] [Model ▾] [请求批准 ▾] [Parallel]    [Mic] [Voice] │
+│ [Chat ▾] [Model ▾] [请求批准 ▾]               [Mic] [Voice] │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -275,7 +275,6 @@ Composer 是一个整体，不在输入框外再堆叠多条工具栏：
 2. `Chat / Agent` 模式；
 3. `Model`；
 4. Agent 模式的权限；
-5. 实验通过后才出现的并行协作。
 
 右侧：
 
@@ -297,7 +296,7 @@ Composer 是一个整体，不在输入框外再堆叠多条工具栏：
 - Agent 使用 spark/terminal 组合 icon；
 - 切换时在 popover 中用一句话解释差异；
 - Chat 发现需要执行时，回答中给“一键切换到 Agent”，不能静默升级；
-- Agent 选中后才显示权限和可选并行协作。
+- Agent 选中后显示权限；按需协作是 Agent 的内部能力，不增加模式旁开关。
 
 ### 5.4 权限
 
@@ -309,15 +308,12 @@ Composer 是一个整体，不在输入框外再堆叠多条工具栏：
 
 Popover 中每项只有一行说明，不展示风险分值、规则树或几十个 Tool 开关。当前选择随本轮 Run 快照保存。
 
-### 5.5 并行协作
+### 5.5 按需协作反馈
 
-只有实验通过并正式发布时才显示：
-
-- 图标使用 `Branch` 或双节点协作图形；
-- tooltip：“允许主 Agent 在确有独立子任务时并行协作”；
-- 关闭是中性灰，开启使用 `accent-soft` 背景与强调色描边；
-- 开启不保证派生，简单问题仍由单 Agent 回答；
-- 实际派生后，Composer 不持续闪烁，过程区显示 Subtask Item 即可。
+- Composer 和 Settings 都不显示并行授权、并发档位或实验开关；简单问题保持普通单 Agent 视觉。
+- 父 Agent 实际派生后，过程区出现一个使用 `GitFork`/双节点 Lucide 图形的 Subtask Item；运行中标题为“正在并行协作”，完成后为“已完成并行协作”。
+- Item 复用现有展开/收起、spinner、Check、Error、时长和复制交互；展开后显示两个 child 的目标、资源声明、状态、证据摘要与限制。
+- 部分 child 失败时不伪装为全部完成；父 Run 仍可基于已返回证据换策略或诚实说明限制。
 
 ### 5.6 附件
 
@@ -463,7 +459,7 @@ Popover 中每项只有一行说明，不展示风险分值、规则树或几十
 | Browser | 已查看页面 | 域名、动作、结果 |
 | Tool/MCP | 已调用日历 | 参数、结构化结果 |
 | Approval | 等待你确认 | 动作、允许/拒绝 |
-| Subtask（仅 `MULTI-AGENT` 晋级后） | 2 个子任务已完成 | 子任务状态与结果；未晋级时无此 Item 类型与组件 |
+| Subtask | 已完成并行协作 | 两个子任务的目标、互斥资源、状态、证据摘要与限制 |
 | Context compaction | 已整理较早上下文 | 仅显示发生了压缩，不显示隐藏推理 |
 | Error | 某一步失败 | 错误、已尝试恢复、继续动作 |
 
@@ -698,7 +694,7 @@ MainPanelRoot
       │  │  │  ├─ ToolItem
       │  │  │  ├─ CommandItem
       │  │  │  ├─ ApprovalItem
-      │  │  │  └─ SubtaskItem  # 仅 MULTI-AGENT 晋级后存在
+      │  │  │  └─ SubtaskItem
       │  │  └─ AssistantMessage
       │  │     ├─ MarkdownRenderer
       │  │     ├─ CodeBlock
@@ -711,7 +707,6 @@ MainPanelRoot
       │     ├─ ModePicker
       │     ├─ ModelPicker
       │     ├─ ApprovalPicker
-      │     ├─ ParallelToggle  # 仅 MULTI-AGENT 晋级后存在
       │     ├─ MicButton
       │     ├─ SendVoiceStopButton
       │     └─ VoiceDock
@@ -773,7 +768,7 @@ CharacterWindowRoot
 - 权限在 Agent 模式始终可见，Chat 模式不占空间；
 - Stop 后立即反馈并最终落到 cancelled/interrupted 状态；
 - Approval 气泡和 Chat 卡片永远指向同一决定；
-- Multi-agent 开关若存在，用户能理解它是“允许”而不是“强制”。
+- Composer/Settings 不出现 Multi-agent 开关；只有 Agent 实际派生后出现一个可折叠 Subtask Item，Chat 不出现。
 
 ### 15.3 Voice
 
@@ -856,7 +851,7 @@ flowchart LR
 - Phase 1 使用确定性 fixture 完成三组高保真关键画面，并接入真实 Chat/Run snapshot；UI fixture 与 shared Schema 必须由 contract test 证明一致。
 - Phase 2 将 Tool/Command/File/Browser/MCP/Approval 的真实 Item adapter 接入同一骨架；不为不同能力复制 RunProcess。
 - Memory/Activity、Voice、Automation 与 Character/Territory 是可并行的功能分支，但不能并行修改 Composer reducer、Run Item union 或共享视觉 Token；这些文件由指定 integration owner 串行变更。
-- `ParallelToggle`、`SubtaskItem`、Graph view 和 self-evolution candidate UI 只有对应 Decision 晋级后才创建；未晋级时 fixture、组件、route 和 CSS 都不存在。
+- `SubtaskItem` 已由 `MULTI-AGENT` Decision 进入统一 RunProcess；没有 `ParallelToggle`。Graph view 和 self-evolution candidate UI 仍只有对应 Decision 晋级后才创建。
 - Voice Architecture/Transport 未决期间可以用规范化 Voice event fixture验证 Voice Dock，但不得创建两个 Driver 对应的 UI 状态分支。
 - PixiJS canvas 的视觉回归、Retina scaling、sprite atlas 与 placement 使用截图/确定性 scene fixture；Memory 来源、Approval、按钮和键盘焦点仍由 React/DOM 测试。
 - Phase 7 必须同时验证普通开发窗口与 Forge packaged app；Playwright Electron 的 experimental 状态由 Phase 0 兼容性检查承担，不另保留第二个桌面 E2E 框架。

@@ -47,6 +47,7 @@ import {
   collectModelTurn,
   supportsStrictToolSchema,
   type CollectedModelTurn,
+  type ModelAllowedTool,
   type ModelContextLimits,
   type ModelFunctionCall,
   type ModelFunctionTool,
@@ -67,6 +68,7 @@ import {
   materializeMemoryContextInput,
 } from "./memoryContext";
 import { TEXT_AGENT_BASE_INSTRUCTIONS } from "./agentInstructions";
+import { COLLABORATION_DISPATCH_TOOL_NAME } from "./collaborationTool";
 import type { RunRepository } from "./runRepository";
 import type { RunEventWriter } from "./runEventWriter";
 import {
@@ -96,11 +98,8 @@ const USER_ATTACHMENT_KINDS = new Set<ArtifactKind>([
 const ALWAYS_LOADED_CLIENT_TOOLS = new Set([
   "plan.update",
   MEMORY_FORMATION_TOOL_NAME,
+  COLLABORATION_DISPATCH_TOOL_NAME,
 ]);
-const MEMORY_FORMATION_ALLOWED_TOOL = {
-  name: MEMORY_FORMATION_TOOL_NAME,
-  namespace: "memory",
-} as const;
 const USER_INPUT_NAMESPACE = "interaction";
 const USER_INPUT_TOOL_NAME = "request_user_input";
 const USER_INPUT_ALLOWED_TOOL = {
@@ -658,6 +657,60 @@ function searchOutputTools(
     })),
     type: "namespace",
   }));
+}
+
+function loadedToolNames(
+  input: readonly JsonValue[],
+): ReadonlySet<string> | undefined {
+  const names = new Set<string>();
+  let foundSearchOutput = false;
+  for (const value of input) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      continue;
+    }
+    if (value["type"] !== "tool_search_output") continue;
+    foundSearchOutput = true;
+    const namespaces = value["tools"];
+    if (!Array.isArray(namespaces)) continue;
+    for (const namespaceValue of namespaces) {
+      if (
+        typeof namespaceValue !== "object" ||
+        namespaceValue === null ||
+        Array.isArray(namespaceValue)
+      ) {
+        continue;
+      }
+      const namespace = namespaceValue["name"];
+      const tools = namespaceValue["tools"];
+      if (typeof namespace !== "string" || !Array.isArray(tools)) continue;
+      for (const toolValue of tools) {
+        if (
+          typeof toolValue !== "object" ||
+          toolValue === null ||
+          Array.isArray(toolValue)
+        ) {
+          continue;
+        }
+        const name = toolValue["name"];
+        if (typeof name !== "string") continue;
+        names.add(name);
+        if (!name.startsWith(`${namespace}.`)) {
+          names.add(`${namespace}.${name}`);
+        }
+      }
+    }
+  }
+  return foundSearchOutput ? names : undefined;
+}
+
+function uniqueAllowedTools(
+  tools: readonly ModelAllowedTool[],
+): ModelAllowedTool[] {
+  return [
+    ...new Map(
+      tools.map((tool) => [`${tool.namespace}\u0000${tool.name}`, tool]),
+    ).values(),
+  ];
 }
 
 function initialCheckpoint(
@@ -1416,6 +1469,15 @@ export class AgentRuntime {
     );
   }
 
+  #toolAllowedByLoadedScope(active: ActiveRun, name: string): boolean {
+    if (ALWAYS_LOADED_CLIENT_TOOLS.has(name)) return true;
+    if (active.data.allowedTools) {
+      return active.data.allowedTools.some((tool) => tool.name === name);
+    }
+    const loaded = loadedToolNames(active.data.input);
+    return loaded === undefined || loaded.has(name);
+  }
+
   #searchTools(active: ActiveRun, query: string, limit: number) {
     const available = new Set(
       this.#availableTools(active).map(({ descriptor }) => descriptor.name),
@@ -1488,12 +1550,18 @@ export class AgentRuntime {
       ]
         .filter(Boolean)
         .join("\n\n");
+      const alwaysLoadedAllowedTools = registeredTools
+        .filter(({ descriptor }) =>
+          ALWAYS_LOADED_CLIENT_TOOLS.has(descriptor.name),
+        )
+        .map(({ descriptor }) => ({
+          name: descriptor.name,
+          namespace: descriptor.namespace,
+        }));
       const allowedTools = active.data.allowedTools
-        ? [
+        ? uniqueAllowedTools([
             USER_INPUT_ALLOWED_TOOL,
-            ...(this.#toolAvailable(active, MEMORY_FORMATION_TOOL_NAME)
-              ? [MEMORY_FORMATION_ALLOWED_TOOL]
-              : []),
+            ...alwaysLoadedAllowedTools,
             ...(run.execution.mode === "agent" &&
             this.images &&
             active.limits.supportsVision !== false &&
@@ -1501,7 +1569,7 @@ export class AgentRuntime {
               ? [IMAGE_INSPECT_ALLOWED_TOOL]
               : []),
             ...active.data.allowedTools,
-          ]
+          ])
         : undefined;
       const events = active.provider.stream(
         {
@@ -1632,6 +1700,10 @@ export class AgentRuntime {
     const memoryFormation = resolvedName === MEMORY_FORMATION_TOOL_NAME;
     if (!toolAllowedInExecution(run.execution, definition.descriptor)) {
       this.#recordToolResult(active, pending, undefined, chatModeToolResult());
+      return;
+    }
+    if (!this.#toolAllowedByLoadedScope(active, resolvedName)) {
+      this.#recordToolResult(active, pending, undefined, toolScopeResult());
       return;
     }
     if (!this.#toolAvailable(active, resolvedName)) {
@@ -1945,7 +2017,8 @@ export class AgentRuntime {
     const item = this.writer.startItem(
       active.runId,
       definition.descriptor.itemKind,
-      definition.descriptor.itemKind === "plan"
+      definition.descriptor.itemKind === "plan" ||
+        definition.descriptor.itemKind === "subtask"
         ? asJsonValue(pending.arguments)
         : {
             arguments: pending.arguments,
@@ -1976,6 +2049,9 @@ export class AgentRuntime {
     const deltaBatcher = new RunDeltaBatcher(flushDelta);
     try {
       result = await active.tools.execute(pending.name, pending.arguments, {
+        availableToolNames: this.#availableTools(active).map(
+          ({ descriptor }) => descriptor.name,
+        ),
         itemId: item.id,
         onDelta: (delta) => {
           pendingDelta += delta;

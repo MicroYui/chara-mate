@@ -290,7 +290,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - Reminder/Agent Task 只依赖 Phase 2；
 - 主动聊天依赖 Phase 3 的 Digest/Memory；
 - `P5-AUTOMATIONS-CONTRACT` 串行冻结共享 Schema、IPC、DB 与完成事件；Main Core 和冻结 fixture UI 在其后并行；
-- `SELF-EVOLUTION` 已由 Decision 选择“触发式异步 Review + 用户确认 + Skill replay”并完成唯一生产实现；`MULTI-AGENT` 仍由独立 Gate 决定能力是否存在，而不是决定默认开关。
+- `MULTI-AGENT` 已完成并选择无用户开关的 Agent 按需只读协作；`SELF-EVOLUTION` 已由 Decision 选择“触发式异步 Review + 用户确认 + Skill replay”并完成唯一生产实现。
 
 ### 工作包
 
@@ -298,7 +298,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P5-AUTOMATIONS-CORE`（已完成）：来源复核后实现唯一 schedule 计算与休眠恢复策略、Repository/Service、Reminder 投递记录、Agent Task 普通 Chat Run、暂停/编辑/试跑、历史、事件发布和 Main IPC 注册。
 - `P5-AUTOMATIONS-UI`（已完成）：使用冻结 fixture 实现卡片、单页表单、暂停/编辑/试跑、历史及 Agent Task Chat Run 跳转；最终只消费 typed Preload API。
 - `P5-PROACTIVE`：安静时段、主动程度、触发来源、普通 Chat 持久化和气泡投影。
-- `P5-MULTI-AGENT`：仅晋级后实现获胜 Dispatch、资源隔离、父 Join、Subtask Item 和 Composer 按轮授权。
+- `P5-MULTI-AGENT`（已完成）：Agent 自主调用 `collaboration.dispatch`，宿主校验两个 child 的只读性、当前 Tool scope、互斥资源和可变会话禁用，再并发执行确切读取与独立分析；父 Run 等待并合并，统一 Subtask Item 承载状态/证据/Token，取消与恢复复用既有边界；没有 Composer/Settings 开关、候选 Arm 或额外表/依赖。
 - `P5-EVOLUTION`（已完成）：Run 完成事件只在明确纠正、明确教学、客观验证成功或重复流程时持久化异步 Review；单次无 Tool 结构化调用生成四类候选，全部经用户确认，Skill 再经 replay 后激活；patch 使用目标 revision/hash 防止覆盖后续手动编辑，Settings/Agent Skill 变更会同步候选状态；版本、pin、归档、恢复、崩溃恢复和 typed IPC/UI 已进入单一生产路径。
 
 ### 验收
@@ -310,7 +310,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - 后台 Approval 不被伪装为成功，气泡始终跳转同一 Chat Item；
 - Self-evolution 的同 Run 幂等、Review 重启恢复、证据绑定、确认前不落库、Skill replay 失败可编辑重试、版本恢复与真实 typed desktop journey 通过确定性回归；
 - 未晋级能力的表、协议、组件、设置、依赖和空入口不存在；
-- 晋级能力满足 Decision Record 的成功率、错误迁移、冲突、Token 和复杂度门槛。
+- 能力的机械 Gate、任何 owner amendment、成功率、冲突、Token、复杂度与不能声称的范围均透明保存在对应中文 Decision Record；生产只保留最终单路径。
 
 ## Phase 6 — 桌宠与领地
 

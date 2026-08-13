@@ -97,6 +97,7 @@ export const RunItemKindSchema = Type.Union([
   Type.Literal("user_message"),
   Type.Literal("assistant_message"),
   Type.Literal("plan"),
+  Type.Literal("subtask"),
   Type.Literal("input_request"),
   Type.Literal("tool_call"),
   Type.Literal("command"),

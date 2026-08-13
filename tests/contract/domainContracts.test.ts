@@ -260,11 +260,11 @@ describe("Phase 0 domain contracts", () => {
   );
 
   it.each(parsers)(
-    "rejects Decision-gated or hidden fields in Run items through %s",
+    "accepts selected Run item kinds and rejects hidden fields through %s",
     (parse) => {
-      expect(() =>
+      expect(
         parse(RunItemSchema, { ...runItemFixture, kind: "subtask" }),
-      ).toThrow();
+      ).toMatchObject({ kind: "subtask" });
       expect(() =>
         parse(RunItemSchema, {
           ...runItemFixture,

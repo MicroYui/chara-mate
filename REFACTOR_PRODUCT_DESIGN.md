@@ -289,7 +289,7 @@ Voice Session 是需要持久化的例外：开始语音时立即创建或绑定
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │ [Add]  问问 CharaMate……                                      │
-│ [Chat ▾] [Model ▾] [请求批准 ▾] [并行协作]  [Mic] [Voice/Send] │
+│ [Chat ▾] [Model ▾] [请求批准 ▾]  [Mic] [Voice/Send]          │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -302,7 +302,6 @@ Voice Session 是需要持久化的例外：开始语音时立即创建或绑定
 - `Model`：当前 Provider 自动发现的模型下拉框；
 - 权限：Agent 模式显示“请求批准 / 替我审批 / 完全访问”；Chat 模式隐藏或禁用；
 - `Mic / Voice`：线性麦克风图标用于录音入口，圆形波形按钮用于进入/结束 Realtime；连接后明确显示聆听、静音和结束状态；
-- `并行协作`：只有 Multi-agent 实验通过后才在 Agent 模式出现；它表示“允许主 Agent 在确有独立子任务时并行协作”，不强制每轮派生；
 - `发送`：有运行时变为停止按钮。
 
 模式语义：
@@ -310,7 +309,7 @@ Voice Session 是需要持久化的例外：开始语音时立即创建或绑定
 | 模式 | 能力 |
 | --- | --- |
 | Chat | 回答、计划、Provider 原生网页搜索、读当前会话、检索记忆、分析附件及其他幂等只读查询；不执行有外部效果的 Tool |
-| Agent | 具备 Chat 的查询能力，并可使用本地、Browser、Computer Use、MCP 与 Skills；按本轮权限处理审批 |
+| Agent | 具备 Chat 的查询能力，并可使用本地、Browser、Computer Use、MCP 与 Skills；按本轮权限处理审批；自主判断是否调用内建只读协作能力 |
 
 LLM 如果在 Chat 中发现任务需要执行，只能回复建议并给出“一键切换 Agent”按钮；不能自行升级。
 
@@ -425,13 +424,13 @@ Run 的终态语义：
 - 简单任务直接执行，不强制先写计划。
 - 多步骤任务可生成可见、可更新的 Plan Item；Plan 只是同一 Harness 的一种 Item。
 - 活跃 Run 只把最新 Plan 快照投影为 Composer 上方的紧凑悬浮进度；Run 结束后该快照回到“已处理”历史，不复制 Item 或维护第二份计划状态。
-- 默认只有一个 Agent 保持目标和上下文，避免协调与代码膨胀。
-- Multi-agent 作为实验能力：只有两个以上相互独立、可并行且主要为读取的子任务才允许派生。
-- 子任务不能并发写同一工作区或共用同一可变 Browser Profile。
-- 父 Run 负责合并证据、处理冲突和生成最终回答。
-- 是否进入产品由成功率、误派生率、Token、Tool 正确率与端到端时延实验决定；未通过则不保留生产分支。
-- 通过后在 Agent Composer 提供一个紧凑的“允许并行协作”开关，不放进复杂 Settings。关闭时永不派生；开启时只授予能力，主 Agent 仍需判断任务是否值得拆分，简单问题不会派生。
-- UI 使用统一的分支/协作 SVG 图标、状态色和 tooltip，不使用 Emoji；只有 Decision 晋级后才把 `subtask` 加入 Run Item 协议并显示为普通可折叠 Item，未晋级时协议、表和组件中都不存在该类型。
+- 普通路径由父 Agent 保持目标和完整上下文；Chat 始终使用这条单 Agent 路径。
+- Agent 模式始终加载一个内部 `collaboration.dispatch` 能力，但是否调用由父 Agent 根据当前目标自行判断，不增加 Composer、Settings 或每轮授权开关。
+- 只有恰好两个相互独立、可并行、只读且资源声明互斥的具体子目标才能派生；简单任务、顺序依赖、写操作、待审批动作以及 Browser/Computer 可变会话留在父 Agent。
+- 父 Agent 在一次调用中预声明每个 child 的目标、资源与确切幂等读取；宿主只做结构、当前 Tool scope、只读性、幂等性、资源冲突和可变会话校验，不替 Agent 做语义拆分选择。
+- 两个 child 并发读取各自资源并独立生成证据摘要；父 Run 必须等待两者终局，再负责合并证据、处理限制和生成最终回答。取消信号与恢复边界沿同一 Run/Tool 生命周期传播。
+- 实际派生作为一个普通可折叠 `subtask` Run Item 显示，内部列出两个 child 的状态、证据和 Token；UI 使用统一的分支 SVG 图标，不使用 Emoji。
+- 选择依据、机械 no-go 与仓库所有者的透明事后取舍见 [`docs/benchmarks/multi-agent.md`](./docs/benchmarks/multi-agent.md)。生产只保留上述 `D2 + M2R` 路径，不保留实验 Arm、并发档位或 fallback 开关。
 
 ### 4.8 并发与恢复
 
@@ -1336,7 +1335,7 @@ API Key 使用 Electron async `safeStorage`（`encryptStringAsync` / `decryptStr
 | Character | 当前桌宠、导入、缩放、动画、Persona |
 | Voice | Realtime Provider、音色试听、默认 instructions、输入模式 |
 | Models | Provider、URL、Key、Model 自动加载与选择 |
-| Agent | 默认 Chat/Agent、默认权限、工作目录；并行协作若发布则只在 Composer 按轮授权 |
+| Agent | 默认 Chat/Agent、默认权限、工作目录；内部按需协作没有用户设置 |
 | Browser & Computer | Managed Profile、Cookie 导入、OS 权限状态 |
 | Skills | 用户/项目 Skill、版本、编辑、归档 |
 | MCP | Server、传输、环境、工具列表、测试与启停 |
@@ -1875,7 +1874,7 @@ Playwright 官方当前把 Electron automation 标为 experimental，因此 Phas
 ### 18.3 Benchmark 决策门槛
 
 - Harness：成功率、Tool 正确率、模型调用、Token、p95、重复调用。
-- Multi-agent：只在独立只读任务有稳定收益且 Token/冲突可接受时启用。
+- Multi-agent：生产固定为 Agent 自主选择、宿主校验的两个只读分支；机械 execution gate 未证明平均时延收益，事后产品取舍与限制必须保留在中文 Decision Record。
 - Memory：LongMemEval/LoCoMo/中文集同时看 retrieval 和 answer，不用单一 MTEB 分数决定。
 - 存储、检索、Context 与图关系按研究文档分别作 Decision；发布版只接入获胜配方，不形成运行时档位、兼容矩阵或普通用户配置。
 - Voice/Image：真实 Azure endpoint 的性能与体验门槛不能由 mock 宣称通过。
@@ -1906,7 +1905,7 @@ flowchart TD
     AUTO["Reminder / Agent Task"]
     PRO["主动聊天"]
     MAD["MULTI-AGENT"]
-    MA["并行协作（若晋级）"]
+    MA["按需只读协作"]
     SED["SELF-EVOLUTION"]
     SE["自进化（若晋级）"]
     PET["桌宠基础"]
@@ -1959,7 +1958,7 @@ flowchart TD
     VOICE --> P7
     AUTO --> P7
     PRO --> P7
-    MA -.->|若晋级| P7
+    MA --> P7
     SE -.->|若晋级| P7
     P6 --> P7
 ```
@@ -2038,7 +2037,7 @@ Phase 4 的实验与实现可在 Phase 2 稳定后和 Phase 3 后半段并行，
 - Reminder 通过 Automation Run 记录并投递通知/气泡，Agent Task 使用普通 Chat Run；两者支持一次/每天/每周/Cron、暂停、编辑、试跑与历史，Agent Task 保留待审批状态；
 - 主动聊天在 Memory/Activity 稳定后接入时间、Automation、Digest、专注、领地候选和跟进触发，并遵守安静时段；
 - 完成 `SELF-EVOLUTION`；只在晋级时实现唯一异步 Experience Review、高级成长候选、Skill replay、版本/归档/恢复；不重复实现 Phase 3 的普通 Memory 形成；
-- 完成 `MULTI-AGENT`；只在晋级时实现获胜 Dispatch、资源隔离、父 Join、Subtask Item 与 Composer 按轮授权。
+- 完成 `MULTI-AGENT`：实现 Agent 自主 Dispatch、宿主资源/只读校验、两个并发 child、父 Join、取消/恢复与 Subtask Item；不增加 Composer 开关。
 
 退出条件：Automation 与手动 Run 同构；后台 Approval 不伪装成功；未晋级能力的协议、表、组件、设置、依赖和空入口完全不存在。
 

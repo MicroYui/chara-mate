@@ -16,7 +16,10 @@ import { registerBrowserTools } from "../../src/main/browser/managedBrowser";
 import { openApplicationDatabase } from "../../src/main/db/database";
 import type { ProviderService } from "../../src/main/providers/providerService";
 import { registerLocalTools } from "../../src/main/tools/localTools";
-import { ToolRegistry } from "../../src/main/tools/toolRegistry";
+import {
+  ToolRegistry,
+  type ToolExecutionContext,
+} from "../../src/main/tools/toolRegistry";
 import type { RealtimeSessionIssuer } from "../../src/main/voice/azureWebRtcSession";
 import { VoiceRepository } from "../../src/main/voice/voiceRepository";
 import { VoiceService } from "../../src/main/voice/voiceService";
@@ -797,6 +800,16 @@ describe("Realtime native Voice runtime", () => {
       type: "response.done",
     });
     await vi.waitFor(() => expect(value.read).toHaveBeenCalledOnce());
+    const executionContext = value.read.mock.calls[0]?.[1] as
+      ToolExecutionContext | undefined;
+    expect(executionContext?.availableToolNames).toEqual(
+      expect.arrayContaining([
+        "browser.navigate",
+        "file.read",
+        "weather.lookup",
+      ]),
+    );
+    expect(executionContext?.availableToolNames).not.toContain("note.save");
     const result = value.commands.find(
       (command) => command.type === "tool.result",
     );

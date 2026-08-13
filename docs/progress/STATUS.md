@@ -4,9 +4,9 @@
 
 ## 当前里程碑
 
-**Phase 5 — implementing（Automations、Self-evolution 及真人体验修复已完成；Territory Memory 并行工作包完成）**
+**Phase 5 — implementing（Automations、Multi-agent 与 Self-evolution 已完成；Territory Memory 并行工作包完成）**
 
-Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Context、Activity 与 Realtime Voice 均为单一生产路径。Phase 5 Automations Contract/Core/UI 已在 `main` 汇合；`SELF-EVOLUTION` 已完成 Decision、生产重写和真人体验修复，Reviewer 使用严格结构化输出，失败 Run 的 Plan 不再保留活跃状态。Phase 6 Pet、Territory Base、结构化 Item Manifest、Azure Image 与 Territory Memory 也已完成。Phase 5 仍为 implementing，因为主动聊天和 Decision-gated Multi-agent 是独立后续工作包。
+Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Context、Activity 与 Realtime Voice 均为单一生产路径。Phase 5 Automations Contract/Core/UI 已在 `main` 汇合；`P5-MULTI-AGENT` 已完成 source-first Decision Gate、真实模型实验、中文 Decision Record 与单一路径生产重写，提供 Agent 自主按需调用的两个只读 child；`SELF-EVOLUTION` 已完成 Decision、生产重写和真人体验修复，Reviewer 使用严格结构化输出，失败 Run 的 Plan 不再保留活跃状态。Phase 6 Pet、Territory Base、结构化 Item Manifest、Azure Image 与 Territory Memory 也已完成。Phase 5 仍为 implementing，因为主动聊天是独立后续工作包。
 
 当前工作包退出条件：
 
@@ -26,6 +26,8 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 - [x] Chats、Memory 与 Skills 展示候选、证据、来源和状态；真实 Electron E2E 验证确认前不落库、确认后生效。
 - [x] Reviewer 通过 Provider 结构化输出约束生成完整候选，不再因提示未列出必填字段而让整次 Review 失败。
 - [x] Provider 失败后最新 Plan 只作为终态历史显示，未完成步骤不再保留“进行中”动画或文案。
+- [x] `MULTI-AGENT` 保留机械 no-winner 结果并透明记录产品修订；生产仅保留 `D2 + M2R` 的 Agent 自主、两 child、只读、资源互斥路径，无 Composer 开关、候选 Arm 或第二套 Harness。
+- [x] Multi-agent 的资源门、并发、父 Join、取消/失败、持久化、观测、Chat 隔离与桌面旅程通过 offline、build、19/19 E2E、Forge package 和 packaged smoke。
 
 ## 工作包状态
 
@@ -39,6 +41,7 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 | `P5-AUTOMATIONS-CORE` | `main` | `done` | 唯一 schedule 计算、休眠恢复、Repository/Service、Reminder 投递记录、Agent Task 普通 Chat Run、事件发布与 Main IPC 注册完成；独立验证 474 项 offline、17/17 E2E 与 package/smoke 通过 |
 | `P5-AUTOMATIONS-UI` | `main` | `done` | 卡片、四类计划表单、Reminder/Agent Task、暂停/恢复、编辑、试跑、运行历史与 Agent Task Chat Run 跳转完成；只消费 typed Preload，未修改 shared Schema、DB 或 Main Core |
 | `P5-EVOLUTION` | `codex/self-evolution-decision-gate` | `done` | 严格 JSON Schema Reviewer/replay 输出、失败 Run 计划终态、同毫秒 Memory current revision 排序和 513 项 offline、20/20 E2E 验收完成 |
+| `P5-MULTI-AGENT` | `codex/multi-agent-decision-gate` | `done` | `CHM-MULTI-AGENT-20260813-W1` 机械 Gate 为 no-winner；按仓库所有者透明修订，以 `D2 + M2R` 落地 Agent 自主按需调用的两个只读 child 能力，失败候选与实验代码已删除 |
 | `P4-SOURCE-CONTRACT` | `main` | `done` | Realtime conversation、WebRTC interruption、Function Call 与锁定 SDK 类型已复核 |
 | `P4-VOICE-DECISIONS` | `main` | `done` | 透明修订为 Orchestrated Native Realtime；WebRTC + 串行 continuation |
 | `P4-VOICE-RUNTIME` | `main` | `done` | 原生 response、共享 Tool/Approval、Run/Item、打断、历史与非阻塞标题完成 |
@@ -49,16 +52,23 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 ### 最近完成边界
 
-- 结果：`SELF-EVOLUTION` 选择 E4；terminal Run 只在明确纠正、明确教学、客观验证成功或重复流程时进入异步 Experience Review，生成 Memory、Persona 偏好、Skill patch 或新 Skill 草稿，任何候选都不自动生效。
-- 范围：Evolution JSON Schema/types、SQLite Schema v11 与 v10→v11 迁移、Repository/Service、无 Tool Model Reviewer、Skill replay、Memory/Skill 激活与恢复、Main/Preload typed IPC，以及 Chats/Memory/Skills 候选 UI。
-- 非目标：不修改源码、系统根指令、Provider/凭据、审批规则或 Schema 本身；不保留每 Run Review、直接写、Reviewer 自批、固定 Tool 次数、自动归档天数、实验模式或旧 Schema 兼容分支。
-- 依赖与合同：Evolution 是本次 shared contract、IPC 与 Schema 的唯一集成 owner；复用 source Run 的 Provider/Model、既有 `MemoryService` 和用户 Skill 目录，不创建第二套 Harness。workspace、archived 或 pinned Skill 不接受成长 patch；patch 固定并复核目标 revision/hash。
-- 验收：同 Run/事件 replay 幂等、queued/running 重启恢复、证据与 Item 绑定、确认前不落库、Skill replay 失败编辑重试、激活意图崩溃恢复、旧 patch 不覆盖手动新版本、Settings/Agent Skill 变更同步候选状态、版本/归档/恢复/pin、窄 typed preload 和真实桌面确认旅程均有确定性回归。
-- Decision：30 个配对场景中 E4 相对 E0 的正例成功率从 12/16 提升到 16/16；相对 E3 Review 调用减少 46.7%、Token 减少 37.7%。补充 replay 确认层只拦截 5/10 有害 patch，因此生产保留“全部候选用户确认，Skill 再 replay”的串联。一次性 runner、Arm 代码和核对后的原始产物均已删除。
+- Self-evolution 结果：`SELF-EVOLUTION` 选择 E4；terminal Run 只在明确纠正、明确教学、客观验证成功或重复流程时进入异步 Experience Review，生成 Memory、Persona 偏好、Skill patch 或新 Skill 草稿，任何候选都不自动生效。
+- Self-evolution 范围：Evolution JSON Schema/types、SQLite Schema v11 与 v10→v11 迁移、Repository/Service、无 Tool Model Reviewer、Skill replay、Memory/Skill 激活与恢复、Main/Preload typed IPC，以及 Chats/Memory/Skills 候选 UI。
+- Self-evolution 非目标：不修改源码、系统根指令、Provider/凭据、审批规则或 Schema 本身；不保留每 Run Review、直接写、Reviewer 自批、固定 Tool 次数、自动归档天数、实验模式或旧 Schema 兼容分支。
+- Self-evolution 依赖与合同：Evolution 是本次 shared contract、IPC 与 Schema 的唯一集成 owner；复用 source Run 的 Provider/Model、既有 `MemoryService` 和用户 Skill 目录，不创建第二套 Harness。workspace、archived 或 pinned Skill 不接受成长 patch；patch 固定并复核目标 revision/hash。
+- Self-evolution 验收：同 Run/事件 replay 幂等、queued/running 重启恢复、证据与 Item 绑定、确认前不落库、Skill replay 失败编辑重试、激活意图崩溃恢复、旧 patch 不覆盖手动新版本、Settings/Agent Skill 变更同步候选状态、版本/归档/恢复/pin、窄 typed preload 和真实桌面确认旅程均有确定性回归。
+- Self-evolution Decision：30 个配对场景中 E4 相对 E0 的正例成功率从 12/16 提升到 16/16；相对 E3 Review 调用减少 46.7%、Token 减少 37.7%。补充 replay 确认层只拦截 5/10 有害 patch，因此生产保留“全部候选用户确认，Skill 再 replay”的串联。一次性 runner、Arm 代码和核对后的原始产物均已删除。
+- Multi-agent 结果：Agent 模式始终可见 `collaboration.dispatch`，由父 Agent 判断是否值得调用；一次固定两个资源互斥的只读 child，并发完成后由同一父 Run Join。Chat 保持单 Agent，正常 UI 没有 Multi-agent 开关或参数。
+- Multi-agent 范围：Agent-owned Tool、现有 Harness/Provider/Tool Registry/Run checkpoint、一个 `subtask` Item、SQLite greenfield 当前 Schema CHECK、RunProcess 与本地观测；无新 IPC、Preload、表、进程、依赖或新的 Provider Adapter。既有 OpenAI Responses Adapter 在 wire 边界把所有 client namespace `x` 统一映射为 `charamate_x`，并通用反向映射结构化参数中的已知 Tool 引用；namespace Tool continuation 使用 `auto`，Harness 依据 Tool Search 已加载集合做最终执行校验。
+- Multi-agent 非目标：不支持 child 写入、审批、Browser/Computer 可变会话、递归派生、四 child、动态团队规模、运行时 Arm、fallback chain 或实验设置。
+- Multi-agent 依赖与合同：父 Agent 提议目标、资源 claim 与确切读取；宿主只验证当前 Run Tool scope、`read + idempotent`、资源互斥和 bounded input。两个 child 不继承父对话且不获得 Tool/web search；父取消信号和既有 Tool 恢复边界贯穿整次调用。
+- Multi-agent 验收：资源重叠/越界/副作用拒绝、真实并发、父 Join、部分失败证据、父取消、Agent/Chat 隔离、Subtask 持久化与折叠、nested usage、真实本地文件桌面旅程均有确定性回归。
+- Multi-agent Decision：Dispatch 的 `D2` 在 selection + untouched holdout 为 72/72；Execution 的 M0/M2S/M2R 质量均 18/18，但 M2R p95 慢于 M0 且 Token 增加约 39.77%，机械结论为 no-winner。仓库所有者结果后选择将 `D2 + M2R` 作为 Agent 按需能力，完整证据与限制见 `docs/benchmarks/multi-agent.md`。
 
 ## 依赖与已知边界
 
-- Automations 与 `SELF-EVOLUTION` 已完成且没有第二条 fallback 路径；主动聊天和 Multi-agent 仍按各自依赖与 Gate 推进，因此不把整个 Phase 5 标为完成。
+- Automations、Multi-agent 与 `SELF-EVOLUTION` 已完成且都没有第二条 fallback 路径；主动聊天仍按自身依赖推进，因此不把整个 Phase 5 标为完成。
+- `MULTI-AGENT` 的机械 Execution Gate 没有证明平均质量或时延净收益；当前能力存在是透明的结果后产品修订。生产入口只覆盖两个只读、资源互斥 child，真实开放任务的选择质量仍需从开发观测复核，不能表述为通用并行加速。
 - `TERRITORY-CAPACITY` 是一个场景、合成 `96×96` 物件的结构化目标窗口走查，不是多人偏好研究；真实证据若要求改变容量，需替换唯一常量和 Decision，不增加容量档位。
 - Territory 保存来源内容、日期和 Memory revision ID 的历史快照；如果原 Memory 后续删除，“在 Memory 中查看”可能找不到活动记录，但 Territory 物件和快照仍保留，且不会成为新的 Memory 事实源。
 - Azure Realtime 当前没有 Responses Provider 托管的 `web_search`；它获得同一个客户端 Tool Registry，但不伪造本地 `web.search`。Chat/Agent 入口均可使用既有 `browser.navigate + browser.snapshot` 幂等查询链；Agent 还可按当前审批模式使用既有 `command.run` 以只读 `curl` 查询公开 HTTP/API。空白页或空内容不再伪装成成功 snapshot，其他 Browser/命令操作仍遵循入口权限与审批。
@@ -68,6 +78,7 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 - 2026-08-13 Self-evolution 真人体验修复：`npm run verify:offline` 通过（contract 90、focused/component 279、integration 144，共 513 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run build` 与 Electron E2E 20/20 通过，新增“活跃悬浮 Plan → Provider 失败 → 不旋转终态历史”完整旅程。Computer Use 在正常用户数据的真实开发窗口确认原失败 Run 已显示“执行计划 · 已失败”和四项“未完成”，且 Composer 不残留活跃 Plan。未重试真实 Provider Review，避免额外远端调用和在用户数据中生成新候选；严格 `text.format` wire shape 由 Provider integration 回归覆盖。
 - 2026-08-13 `P5-EVOLUTION`：`npm run verify:offline` 19.5s 通过（contract 90、focused/component 278、integration 143，共 511 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 28.8s、19/19 通过（Playwright 17.2s）并包含 production build，其中新增真实确认前/后旅程；macOS arm64 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run package` 16.2s 与 `npm run smoke:package` 3.7s 通过，Electron ZIP SHA-256 与官方清单一致。默认 GitHub checksum 请求在当前代理上多次 `ECONNRESET`，未关闭 checksum 校验。Live 模型实验及 replay 确认层结果单独记录在 `docs/benchmarks/self-evolution.md`。
+- 2026-08-13 `P5-MULTI-AGENT`：初始完整验收、macOS arm64 package 与 packaged smoke 已通过；真实 Provider 后续暴露三层兼容边界：保留 namespace、namespaced `allowed_tools` 不受支持、wire Tool 引用进入结构化参数。最终实现统一 `charamate_` namespace wire 前缀、namespace continuation `auto`、Harness 已加载 Tool 校验和全部已知 Tool 引用的通用反向映射。最终 `npm run verify:offline` 23.7s 通过（contract 83、focused/component 275、integration 142，共 500 项；仅 2 条既有 TanStack Virtual lint warning），`npm run test:e2e` 19/19 通过并包含 production build。应用完整重启后，真实 Provider Run `a57c8778-c1ab-4ab5-8708-9dd06181db22` 59 秒、10 Item 正常完成；第一次 collaboration 即成功，两个 child 各自只读一个指定文件，父 Agent 输出中文对照表，无 Provider/协作失败。通用 `npm run test:live` 未运行。
 - 2026-08-11 Automations + Territory Memory 合并验收：`npm run verify:offline` 21.4s 通过（contract 83、focused/component 267、integration 138，共 488 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 29.3s、18/18 通过并包含 production build；macOS arm64 `npm run package` 15.3s 与 `npm run smoke:package` 4.5s 通过。Live 未运行，因为本次合并没有远端端点要求。
 - 2026-08-11 Automations 合并验收：`npm run verify:offline` 21.2s 通过（contract 83、focused/component 263、integration 135，共 481 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 29.2s、18/18 通过并包含 production build；macOS arm64 `npm run package` 15.3s 与 `npm run smoke:package` 4.7s 通过。Computer Use 直接操作本次 `.app`，确认 Reminder 创建/试跑/暂停/恢复/编辑/历史快照/重启恢复、Revision 2、页头和“提醒记录”语义；Live 未运行，因为本工作包没有远端端点要求。
 - 2026-08-11 `P6-TERRITORY-MEMORY`：`npm run verify:offline` 20.3s 通过（contract 83、focused/component 247、integration 133，共 463 项）；`npm run build` 通过；Electron E2E 最终 16/16、16.6s 通过（首次完整运行只暴露 preload shape 期望未同步，更新契约回归后单项与全套复跑通过）；macOS arm64 `npm run package` 15.5s 与 `npm run smoke:package` 4.2s 通过。容量目标窗口一次性走查 1/1、9.9s 通过并已删除 runner/原图。
@@ -91,6 +102,8 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 - 2026-08-13 复核锁定 `openai@6.49.0` 的官方 Responses 类型：`text.format` 的 `json_schema` 启用 Structured Outputs，`strict: true` 要求输出遵循所给 Schema；Reviewer/replay 仍在应用持久化边界做 TypeBox/Ajv 校验。
 - 2026-08-13 复核 Hermes Agent `main` commit `a871948d8d4b0f774d4ec40467bab1078a9f28d5`、`background_review.py` commit `35cbad5854155de5541adbe4578008269d60c5af`、`curator.py` commit `bc3fa54f5748fd6c735ad6ced8bacebb752ce3e6` 与 Agent Skills specification commit `217be548739f21d6008915c29aefe320ea1a90af`；Hermes 的后台派生 Agent、直接写、16 iterations 和 7/30/90 天只是当前源码行为，不是 CharaMate 协议限制。
+- 2026-08-13 复核 Codex subagents 官方手册（页面未标独立版本）与 Codex 公开源码 commit `95aada11c4150e4ba28d6279c50f0995c1d93e5a`（提交时间 `2026-08-12T15:31:47Z`）：推荐边界清楚、读多写少的协作任务并明确 child Token/冲突成本；v2 spawn、共享 session registry 与 mailbox/event-driven wait 是当前参考实现行为。其 session slot 默认值不是公开协议限制，CharaMate 的两个 child、资源门与阈值均为本 Decision 的启发式。
+- 2026-08-13 真实 Provider 验收：目标 Responses 端点先明确拒绝保留 namespace `collaboration`；统一 `charamate_` 前缀后，最小复现确认下一处真实错误是 `Unknown parameter: 'tool_choice.tools[0].namespace'`，不是此前根据归一化日志推测的 bare `file` 保留词。该端点对 namespaced Tool 的 `allowed_tools` 三种引用形状均拒绝，而 `tool_choice: "auto"` HTTP 200。随后实机暴露结构化参数中的 `charamate_file.read` wire 引用泄漏；最终 Adapter 通用反向映射全部已知 Tool 引用，Harness 保留 Tool Search 已加载范围校验。干净实机 Run `a57c8778-c1ab-4ab5-8708-9dd06181db22` 59 秒、10 Item 正常完成，首次 collaboration 即成功，无 Provider/协作失败。
 - 2026-08-11 `TERRITORY-CAPACITY` 以产品设计 §10.6、UI 设计 §11.1/§14 和锁定 Electron `43.2.0` 的 `1180×800` 默认/`900×640` 最小窗口为边界，比较 8/12/16 并冻结 12；该数值是 CharaMate 启发式，不是 Electron 或 PixiJS 协议限制。
 - 2026-08-11 复核 Electron `powerMonitor` suspend/resume、Node.js v24 timers（计时器不承诺精确触发）、ECMA-402 时区解析、IANA TZDB 与 POSIX.1-2024 `crontab`；锁定运行时 Node `24.18.0`、ICU `78.3`、tz `2026b`，当日 IANA 最新发布为 `2026c`。同时复核并锁定 `cron-parser@5.6.2` tag/commit `750c9a26e8602aed8ece36ed2ce1b7fceb1e0b18`；协议事实与 CharaMate 的补跑、DST、并发策略分别记录。
 - OpenAI Responses Compaction 文档于 2026-08-10 复核（页面未标独立版本）；Codex `main` commit `c9c6c0daa994109cec50fddcb57d076fdf9e738c` 的 Plan Tool、协议类型与远端压缩保留逻辑已检查。它们用于区分协议约束、当前参考实现与 CharaMate 自身不变量。

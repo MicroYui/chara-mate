@@ -143,6 +143,10 @@ async function startFakeProvider(browserUrl?: string) {
       const evolutionTeachingTask = body.includes("自进化端到端测试");
       const titleTask = body.includes("Generate one concise chat title");
       const browserTask = body.includes("浏览器");
+      const collaborationChild = body.includes(
+        "read-only child of CharaMate's current Agent Run",
+      );
+      const collaborationTask = body.includes("并行协作测试");
       const imageInputTask = body.includes("图片输入测试");
       const imageToolTask = body.includes("图片工具测试");
       const memoryFormationTask = body.includes("记忆形成测试");
@@ -201,6 +205,71 @@ async function startFakeProvider(browserUrl?: string) {
         writeSse(response, finalAnswer(responseId, "E2E 对话标题"));
       } else if (evolutionTeachingTask) {
         writeSse(response, finalAnswer(responseId, "明白，以后会先给结论。"));
+      } else if (collaborationChild) {
+        writeSse(
+          response,
+          finalAnswer(
+            responseId,
+            body.includes('\\"goal\\":\\"分析资源 A\\"')
+              ? "子任务 A 已核对 alpha 证据"
+              : "子任务 B 已核对 beta 证据",
+          ),
+        );
+      } else if (collaborationTask) {
+        if (
+          body.includes('"call_id":"collaboration-e2e"') &&
+          body.includes("function_call_output")
+        ) {
+          writeSse(
+            response,
+            finalAnswer(responseId, "父 Agent 已合并两个子任务"),
+          );
+        } else if (body.includes("tool_search_output")) {
+          writeSse(response, [
+            functionCall(
+              "collaboration-e2e",
+              "dispatch",
+              "charamate_collaboration",
+              {
+                subtasks: [
+                  {
+                    goal: "分析资源 A",
+                    id: "resource_a",
+                    reads: [
+                      {
+                        input: { path: "collaboration-a.txt" },
+                        resourceClaim: "file:collaboration-a.txt",
+                        toolName: "file.read",
+                      },
+                    ],
+                    resourceClaims: ["file:collaboration-a.txt"],
+                  },
+                  {
+                    goal: "分析资源 B",
+                    id: "resource_b",
+                    reads: [
+                      {
+                        input: { path: "collaboration-b.txt" },
+                        resourceClaim: "file:collaboration-b.txt",
+                        toolName: "file.read",
+                      },
+                    ],
+                    resourceClaims: ["file:collaboration-b.txt"],
+                  },
+                ],
+              },
+            ),
+            completed(responseId),
+          ]);
+        } else {
+          writeSse(response, [
+            searchCall(
+              "collaboration-search",
+              "read two independent local files with collaboration",
+            ),
+            completed(responseId),
+          ]);
+        }
       } else if (imageInputTask) {
         writeSse(response, finalAnswer(responseId, "已读取本地图片像素"));
       } else if (imageToolTask) {
@@ -568,7 +637,7 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
 
     const approval = first.main.getByLabel("需要你的确认");
     await expect(approval).toBeVisible();
-    expect(provider.bodies[0]).toContain('"name":"territory"');
+    expect(provider.bodies[0]).toContain('"name":"charamate_territory"');
     expect(provider.bodies[0]).toContain('"name":"generate_item"');
     expect(provider.bodies[0]).toContain('"defer_loading":true');
     await expect(approval).toContainText("写入文件 e2e-note.txt");
@@ -626,6 +695,94 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
       .get() as { count: number };
     database.close();
     expect(checkpointCount.count).toBe(0);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("lets the Agent choose collaboration and renders one joined Subtask Item", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-collaboration-e2e-"),
+  );
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    path.join(workspace, "collaboration-a.txt"),
+    "alpha 证据",
+    "utf8",
+  );
+  await writeFile(
+    path.join(workspace, "collaboration-b.txt"),
+    "beta 证据",
+    "utf8",
+  );
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    await selectAgent(launched.main, "完全访问");
+    await expect(
+      launched.main.getByRole("button", { name: /并行协作/u }),
+    ).toHaveCount(0);
+    await launched.main
+      .getByRole("textbox", { name: "消息" })
+      .fill("并行协作测试：比较两个独立文件");
+    await launched.main.getByRole("button", { name: "发送" }).click();
+
+    await expect(
+      launched.main.getByText("父 Agent 已合并两个子任务"),
+    ).toBeVisible();
+    const completedRun = launched.main.getByRole("button", { name: /已处理/u });
+    await completedRun.click();
+    const subtask = launched.main.getByRole("button", {
+      name: /已完成并行协作/u,
+    });
+    await expect(subtask).toBeVisible();
+    await subtask.click();
+    await expect(
+      launched.main.getByText(/子任务 A 已核对 alpha 证据/u),
+    ).toBeVisible();
+    await expect(
+      launched.main.getByText(/子任务 B 已核对 beta 证据/u),
+    ).toBeVisible();
+
+    const state = await launched.main.evaluate(async () => {
+      const chats = await window.charaMate.chat.list({ status: "active" });
+      if (!chats.ok || !chats.value[0]) return null;
+      return window.charaMate.chat.getSnapshot({ chatId: chats.value[0].id });
+    });
+    if (!state?.ok || !state.value) {
+      throw new Error("Missing collaboration E2E state");
+    }
+    expect(
+      state.value.runItems.filter(({ kind }) => kind === "subtask"),
+    ).toEqual([expect.objectContaining({ status: "completed" })]);
+    expect(
+      provider.bodies.filter((body) =>
+        body.includes("read-only child of CharaMate's current Agent Run"),
+      ),
+    ).toHaveLength(2);
+    expect(provider.bodies[0]).toContain('"name":"charamate_collaboration"');
+    expect(provider.bodies[0]).toContain('"name":"dispatch"');
+    expect(provider.bodies[0]).toContain('"defer_loading":false');
+    const collaborationContinuation = provider.bodies.find((body) =>
+      body.includes('"call_id":"collaboration-search"'),
+    );
+    expect(collaborationContinuation).toContain('"type":"tool_search_output"');
+    expect(collaborationContinuation).toContain('"name":"charamate_file"');
+    expect(collaborationContinuation).toContain('"name":"read"');
+    expect(collaborationContinuation).not.toContain('"name":"file"');
+    expect(collaborationContinuation).not.toContain('"name":"file.read"');
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
   } finally {
     await application?.close();
     await provider.close();
@@ -763,7 +920,7 @@ test("answers a direct structured question and continues the same Chat Run", asy
     await expect(request).toBeVisible();
     await expect(request).toContainText("请选择路线偏好");
     expect(provider.bodies).toHaveLength(1);
-    expect(provider.bodies[0]).toContain('"name":"interaction"');
+    expect(provider.bodies[0]).toContain('"name":"charamate_interaction"');
     expect(provider.bodies[0]).toContain('"name":"request_user_input"');
     expect(provider.bodies[0]).toContain('"defer_loading":false');
     expect(provider.bodies[0]).not.toContain("tool_search_output");
@@ -923,7 +1080,7 @@ test("updates one stable Memory across Chats without leaving conflicting active 
         !isEvolutionReviewBody(body),
     );
     expect(taskBodies).toHaveLength(5);
-    expect(taskBodies[0]).toContain('"name":"memory"');
+    expect(taskBodies[0]).toContain('"name":"charamate_memory"');
     expect(taskBodies[0]).toContain('"name":"record"');
     expect(taskBodies[0]).toContain('"defer_loading":false');
     expect(taskBodies[0]).toContain('"type":"tool_search"');
@@ -1104,7 +1261,7 @@ test("loads a known local image through image.inspect in Agent mode", async () =
       }>;
     };
     const imageNamespace = initialRequest.tools?.find(
-      ({ name }) => name === "image",
+      ({ name }) => name === "charamate_image",
     );
     expect(imageNamespace?.tools).toContainEqual(
       expect.objectContaining({ defer_loading: false, name: "inspect" }),
@@ -1169,7 +1326,7 @@ test("steers an active Run while plan.update snapshots render live", async () =>
     await planTrigger.hover();
     await expect(plan).toBeVisible();
     await expect(plan).toContainText("先检查需求，再实现并验证。");
-    expect(provider.bodies[0]).toContain('"name":"plan"');
+    expect(provider.bodies[0]).toContain('"name":"charamate_plan"');
     expect(provider.bodies[0]).toContain('"defer_loading":false');
     expect(provider.bodies[0]).toContain(
       "call the always-loaded plan.update tool directly before other work",

@@ -110,6 +110,7 @@ import { ProviderRepository } from "./providers/providerRepository";
 import { ProviderService } from "./providers/providerService";
 import { SafeStorageSecretStore } from "./providers/secretStore";
 import { registerPlanTool } from "./agent/planTool";
+import { registerCollaborationTool } from "./agent/collaborationTool";
 import { ArtifactStore } from "./tools/artifactStore";
 import { registerLocalTools } from "./tools/localTools";
 import { ToolRegistry } from "./tools/toolRegistry";
@@ -640,6 +641,12 @@ async function startApplication(): Promise<void> {
     images: territoryImageService,
     providers: providerService,
     territory: territoryService,
+  });
+  const collaborationProviderService = providerService;
+  registerCollaborationTool(toolRegistry, {
+    createChatModelRuntime: (profileId, modelId) =>
+      collaborationProviderService.createChatModelRuntime(profileId, modelId),
+    getRun: (runId) => runRepository.getRun(runId),
   });
   unregisterTerritoryProtocol = registerTerritoryProtocol(
     territoryRepository,

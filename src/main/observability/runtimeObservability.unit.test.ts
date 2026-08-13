@@ -14,6 +14,7 @@ const ITEM_ID = "10000000-0000-4000-8000-000000000003";
 const TOOL_ITEM_ID = "10000000-0000-4000-8000-000000000004";
 const CONTEXT_ITEM_ID = "10000000-0000-4000-8000-000000000005";
 const APPROVAL_ID = "10000000-0000-4000-8000-000000000006";
+const SUBTASK_ITEM_ID = "10000000-0000-4000-8000-000000000008";
 
 function logger(): AppLogger {
   return {
@@ -114,18 +115,44 @@ function fixture() {
   );
   observability.record(
     envelope(4, {
+      item: item(SUBTASK_ITEM_ID, "subtask", 30, undefined, {
+        modelContent: {
+          children: [
+            {
+              usage: {
+                cachedInputTokens: 1,
+                inputTokens: 12,
+                outputTokens: 4,
+              },
+            },
+            {
+              usage: {
+                cachedInputTokens: 2,
+                inputTokens: 18,
+                outputTokens: 5,
+              },
+            },
+          ],
+        },
+        status: "success",
+      }),
+      type: "item.completed",
+    }),
+  );
+  observability.record(
+    envelope(5, {
       item: item(CONTEXT_ITEM_ID, "context_compaction", 4),
       type: "item.completed",
     }),
   );
-  observability.record(envelope(5, { approval, type: "approval.requested" }));
+  observability.record(envelope(6, { approval, type: "approval.requested" }));
   currentRun = {
     ...run,
     endedAt: NOW,
-    latestSequence: 6,
+    latestSequence: 7,
     status: "completed",
   };
-  observability.record(envelope(6, { run: currentRun, type: "run.completed" }));
+  observability.record(envelope(7, { run: currentRun, type: "run.completed" }));
   return observability;
 }
 
@@ -137,10 +164,17 @@ describe("Phase 2 runtime observability", () => {
     expect(snapshot.runs).toBe(1);
     expect(snapshot.approvals).toBe(1);
     expect(snapshot.contextCompactions).toBe(1);
-    expect(snapshot.inputTokens).toBe(100);
-    expect(snapshot.cachedInputTokens).toBe(40);
-    expect(snapshot.outputTokens).toBe(20);
+    expect(snapshot.inputTokens).toBe(130);
+    expect(snapshot.cachedInputTokens).toBe(43);
+    expect(snapshot.outputTokens).toBe(29);
     expect(snapshot.tools).toEqual([
+      {
+        calls: 1,
+        errors: 0,
+        p50Ms: 30,
+        p95Ms: 30,
+        toolName: "collaboration.dispatch",
+      },
       {
         calls: 1,
         errors: 0,
