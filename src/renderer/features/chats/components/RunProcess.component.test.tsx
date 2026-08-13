@@ -148,6 +148,59 @@ describe("RunProcess", () => {
     expect(screen.getByText("正在追加输出")).toBeVisible();
   });
 
+  it("shows collaboration as an ordinary collapsible Subtask Item", () => {
+    const base = runByChatId(chatsFixtureIds.designChat);
+    const processItem = base.items.find(({ kind }) => kind === "command");
+    if (!processItem) throw new Error("Missing process Item fixture");
+    const collaborated: FixtureRun = {
+      ...base,
+      items: [
+        {
+          ...processItem,
+          displayOutput: "模块 A 与模块 B 的证据均已返回",
+          input: {
+            subtasks: [
+              { id: "module_a", resourceClaims: ["module:A"] },
+              { id: "module_b", resourceClaims: ["module:B"] },
+            ],
+          },
+          kind: "subtask",
+        },
+      ],
+    };
+
+    render(<RunHarness run={collaborated} />);
+    fireEvent.click(screen.getByRole("button", { name: /已处理/u }));
+    const item = screen.getByRole("button", { name: /已完成并行协作/u });
+    expect(item).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(item);
+    expect(screen.getByText("模块 A 与模块 B 的证据均已返回")).toBeVisible();
+  });
+
+  it("does not describe failed collaboration as completed", () => {
+    const base = runByChatId(chatsFixtureIds.designChat);
+    const processItem = base.items.find(({ kind }) => kind === "command");
+    if (!processItem) throw new Error("Missing process Item fixture");
+    const failed: FixtureRun = {
+      ...base,
+      items: [
+        {
+          ...processItem,
+          displayOutput: "1/2 个只读子任务已完成",
+          kind: "subtask",
+          status: "failed",
+        },
+      ],
+    };
+
+    render(<RunHarness run={failed} />);
+    fireEvent.click(screen.getByRole("button", { name: /已处理/u }));
+    expect(screen.getByRole("button", { name: /并行协作失败/u })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /已完成并行协作/u }),
+    ).not.toBeInTheDocument();
+  });
+
   it("advances the elapsed time before the first token", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-08T09:00:32.900Z"));

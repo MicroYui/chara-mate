@@ -1625,7 +1625,8 @@ export class VoiceService {
     const item = this.writer.startItem(
       pending.runId,
       pending.definition.descriptor.itemKind,
-      pending.definition.descriptor.itemKind === "plan"
+      pending.definition.descriptor.itemKind === "plan" ||
+        pending.definition.descriptor.itemKind === "subtask"
         ? pending.arguments
         : {
             arguments: pending.arguments,
@@ -1640,6 +1641,9 @@ export class VoiceService {
         pending.definition.descriptor.name,
         pending.arguments,
         {
+          availableToolNames: [...active.realtimeTools.aliases.values()].map(
+            ({ descriptor }) => descriptor.name,
+          ),
           itemId: item.id,
           onDelta: (delta) => {
             const current = this.runs.getRunItem(item.id);

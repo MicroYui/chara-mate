@@ -53,6 +53,7 @@ export interface ModelTextDeltaEvent {
 
 export interface ModelOutputItemEvent {
   readonly item: JsonValue;
+  readonly runtimeArguments?: Readonly<Record<string, JsonValue>>;
   readonly type: "output.item";
 }
 
@@ -160,14 +161,14 @@ export async function collectModelTurn(
 ): Promise<CollectedModelTurn> {
   let text = "";
   let completed: ModelCompletedEvent | undefined;
-  const outputItems: JsonValue[] = [];
+  const outputEvents: ModelOutputItemEvent[] = [];
 
   for await (const event of events) {
     if (event.type === "text.delta") {
       text += event.delta;
       onTextDelta?.(event.delta);
     } else if (event.type === "output.item") {
-      outputItems.push(event.item);
+      outputEvents.push(event);
     } else {
       completed = event;
     }
@@ -178,7 +179,8 @@ export async function collectModelTurn(
 
   const functionCalls: ModelFunctionCall[] = [];
   const toolSearchCalls: ModelToolSearchCall[] = [];
-  for (const rawItem of outputItems) {
+  for (const event of outputEvents) {
+    const rawItem = event.item;
     const item = record(rawItem);
     if (!item) continue;
     const type = stringProperty(item, "type");
@@ -191,7 +193,7 @@ export async function collectModelTurn(
       }
       const namespace = stringProperty(item, "namespace");
       functionCalls.push({
-        arguments: parseArguments(argumentsJson),
+        arguments: event.runtimeArguments ?? parseArguments(argumentsJson),
         callId,
         name,
         ...(namespace ? { namespace } : {}),
@@ -222,7 +224,7 @@ export async function collectModelTurn(
 
   return {
     functionCalls,
-    outputItems,
+    outputItems: outputEvents.map(({ item }) => item),
     responseId: completed.responseId,
     status: completed.status,
     text,

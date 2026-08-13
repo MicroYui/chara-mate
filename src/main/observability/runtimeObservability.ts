@@ -59,6 +59,7 @@ function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
 }
 
 function toolName(item: RunItem): string | undefined {
+  if (item.kind === "subtask") return "collaboration.dispatch";
   const input = record(item.input);
   const value = input?.["toolName"];
   return typeof value === "string" ? value : undefined;
@@ -172,10 +173,20 @@ export class RuntimeObservability {
       ...new Set(completedTools.flatMap((trace) => trace.toolName ?? [])),
     ];
     const usage = traces.flatMap((trace) => {
-      if (trace.type !== "model") return [];
       const output = record(trace.payload);
-      const value = record(output?.["usage"]);
-      return value ? [value] : [];
+      if (trace.type === "model") {
+        const value = record(output?.["usage"]);
+        return value ? [value] : [];
+      }
+      if (trace.toolName !== "collaboration.dispatch") return [];
+      const modelContent = record(output?.["modelContent"]);
+      const children = modelContent?.["children"];
+      return Array.isArray(children)
+        ? children.flatMap((child) => {
+            const value = record(record(child)?.["usage"]);
+            return value ? [value] : [];
+          })
+        : [];
     });
     const token = (name: string) =>
       usage.reduce(

@@ -51,7 +51,8 @@ function responseEvents(): readonly JsonValue[] {
     { delta: "完成", type: "response.output_text.delta" },
     {
       item: {
-        arguments: '{"url":"https://example.com"}',
+        arguments:
+          '{"toolName":"charamate_file.read","url":"https://example.com"}',
         call_id: "call-1",
         name: "navigate",
         namespace: "charamate_browser",
@@ -131,6 +132,25 @@ async function collect(
                   ],
                   type: "namespace",
                 },
+                {
+                  description: "File tools",
+                  name: "file",
+                  tools: [
+                    {
+                      description: "Read a file",
+                      name: "file.read",
+                      parameters: {
+                        additionalProperties: false,
+                        properties: { path: { type: "string" } },
+                        required: ["path"],
+                        type: "object",
+                      },
+                      strict: true,
+                      type: "function",
+                    },
+                  ],
+                  type: "namespace",
+                },
               ],
               type: "tool_search_output",
             },
@@ -178,6 +198,43 @@ async function collect(
               ],
             },
             {
+              description: "Agent collaboration",
+              name: "collaboration",
+              tools: [
+                {
+                  deferLoading: false,
+                  description: "Dispatch two read-only child tasks",
+                  inputSchema: {
+                    additionalProperties: false,
+                    properties: { subtasks: { type: "array" } },
+                    required: ["subtasks"],
+                    type: "object",
+                  },
+                  name: "collaboration.dispatch",
+                  namespace: "collaboration",
+                  strict: true,
+                },
+              ],
+            },
+            {
+              description: "Local files",
+              name: "file",
+              tools: [
+                {
+                  description: "Read a file",
+                  inputSchema: {
+                    additionalProperties: false,
+                    properties: { path: { type: "string" } },
+                    required: ["path"],
+                    type: "object",
+                  },
+                  name: "file.read",
+                  namespace: "file",
+                  strict: true,
+                },
+              ],
+            },
+            {
               description: "Current plan",
               name: "plan",
               tools: [
@@ -218,7 +275,10 @@ async function collect(
         : [],
       ...(withTools
         ? {
-            allowedTools: [{ name: "browser.navigate", namespace: "browser" }],
+            allowedTools: [
+              { name: "browser.navigate", namespace: "browser" },
+              { name: "file.read", namespace: "file" },
+            ],
           }
         : {}),
     },
@@ -311,7 +371,7 @@ describe("OpenAI Responses Agent wire shape", () => {
       ],
       tools: [
         {
-          name: "interaction",
+          name: "charamate_interaction",
           tools: [
             {
               defer_loading: false,
@@ -327,7 +387,7 @@ describe("OpenAI Responses Agent wire shape", () => {
     expect(JSON.stringify(bodies[0])).not.toContain('"type":"tool_search"');
   });
 
-  it("uses the accepted native Tool Search, allowed_tools and selected implicit cache shape", async () => {
+  it("prefixes every client namespace and uses portable Tool Search continuation", async () => {
     const bodies: JsonValue[] = [];
     const baseUrl = await listen(
       createServer((request, response) => {
@@ -377,11 +437,16 @@ describe("OpenAI Responses Agent wire shape", () => {
       { delta: "完成", type: "text.delta" },
       {
         item: {
-          arguments: '{"url":"https://example.com"}',
+          arguments:
+            '{"toolName":"charamate_file.read","url":"https://example.com"}',
           call_id: "call-1",
           name: "navigate",
           namespace: "browser",
           type: "function_call",
+        },
+        runtimeArguments: {
+          toolName: "file.read",
+          url: "https://example.com",
         },
         type: "output.item",
       },
@@ -399,18 +464,9 @@ describe("OpenAI Responses Agent wire shape", () => {
     expect(wire).toContain('"strict":true');
     expect(wire).toContain('"type":"tool_search"');
     expect(wire).toContain('"execution":"client"');
-    expect(wire).toContain('"type":"allowed_tools"');
-    expect(wire).toContain('"mode":"auto"');
+    expect(wire).not.toContain('"type":"allowed_tools"');
     expect(bodies[0]).toMatchObject({
-      tool_choice: {
-        tools: [
-          {
-            name: "navigate",
-            namespace: "charamate_browser",
-            type: "function",
-          },
-        ],
-      },
+      tool_choice: "auto",
       tools: [
         {
           name: "charamate_browser",
@@ -423,12 +479,22 @@ describe("OpenAI Responses Agent wire shape", () => {
           type: "namespace",
         },
         {
-          name: "plan",
+          name: "charamate_collaboration",
+          tools: [{ defer_loading: false, name: "dispatch", type: "function" }],
+          type: "namespace",
+        },
+        {
+          name: "charamate_file",
+          tools: [{ name: "read", type: "function" }],
+          type: "namespace",
+        },
+        {
+          name: "charamate_plan",
           tools: [{ defer_loading: false, name: "update", type: "function" }],
           type: "namespace",
         },
         {
-          name: "territory",
+          name: "charamate_territory",
           tools: [{ name: "generate_item", type: "function" }],
           type: "namespace",
         },
@@ -451,13 +517,20 @@ describe("OpenAI Responses Agent wire shape", () => {
               tools: [{ name: "navigate", type: "function" }],
               type: "namespace",
             },
+            {
+              name: "charamate_file",
+              tools: [{ name: "read", type: "function" }],
+              type: "namespace",
+            },
           ],
           type: "tool_search_output",
         },
       ],
     });
     expect(wire).not.toContain('"name":"browser.navigate"');
+    expect(wire).not.toContain('"name":"collaboration.dispatch"');
     expect(wire).not.toContain('"name":"computer.snapshot"');
+    expect(wire).not.toContain('"name":"file.read"');
     expect(wire).not.toContain('"name":"territory.generate_item"');
     expect(wire).toContain(
       '"prompt_cache_options":{"mode":"implicit","ttl":"30m"}',

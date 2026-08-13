@@ -5,6 +5,7 @@ import {
   ChevronRight,
   CircleDot,
   FilePenLine,
+  GitFork,
   LoaderCircle,
   ShieldAlert,
   Terminal,
@@ -74,6 +75,21 @@ function itemTitle(item: RunItem): string {
   switch (item.kind) {
     case "plan":
       return "已更新计划";
+    case "subtask":
+      switch (item.status) {
+        case "running":
+          return "正在并行协作";
+        case "completed":
+          return "已完成并行协作";
+        case "failed":
+          return "并行协作失败";
+        case "cancelled":
+          return "已取消并行协作";
+        case "interrupted":
+          return "并行协作已中断";
+        default:
+          return "等待并行协作";
+      }
     case "tool_call":
       return "已调用工具";
     case "command":
@@ -113,11 +129,13 @@ function ItemIcon({ item }: { readonly item: RunItem }) {
       ? Terminal
       : item.kind === "file_change"
         ? FilePenLine
-        : item.kind === "approval"
-          ? ShieldAlert
-          : item.kind === "tool_call"
-            ? Wrench
-            : CircleDot;
+        : item.kind === "subtask"
+          ? GitFork
+          : item.kind === "approval"
+            ? ShieldAlert
+            : item.kind === "tool_call"
+              ? Wrench
+              : CircleDot;
   return <Icon aria-hidden="true" size={14} />;
 }
 

@@ -1063,6 +1063,39 @@ M2R 只有在可并行只读子集产生稳定收益、总体成本增量受控�
 - 子任务过程作为可折叠 Subtask Item 展示，父 Agent 对最终合并负责；
 - 未通过时不展示灰色开关，也不把 M0/M2R/M4R 留成运行时兼容档位。
 
+### 4.6 2026-08-13 source-first 预注册补充
+
+本补充在首个计分模型请求之前写入，填补原 §4 只有候选和指标、没有冻结样本、分阶段门槛与留出集的缺口。它不改写 §4.1–§4.5 的研究问题，也不预设 Multi-agent 必须进入产品。
+
+#### 来源事实、当前源码行为与 CharaMate 启发式
+
+- **协议/官方产品事实**：2026-08-13 查阅 [Codex subagents 官方手册](https://learn.chatgpt.com/docs/agent-configuration/subagents.md)。手册说明子 Agent 可并行工作并由父 Agent 汇总，每个子 Agent 都会增加自己的模型与 Tool Token；推荐起点是探索、测试、分诊、摘要等读多写少且边界清楚的任务，并提醒并发写冲突与协调成本。手册暴露可配置的 session 并发项，但没有给 CharaMate 一个协议硬上限或最优团队人数。
+- **当前权威源码行为**：复核 OpenAI Codex 公开源码 commit [`95aada11c4150e4ba28d6279c50f0995c1d93e5a`](https://github.com/openai/codex/tree/95aada11c4150e4ba28d6279c50f0995c1d93e5a)，提交时间 `2026-08-12T15:31:47Z`。当时 v2 `spawn_agent` 可继承所选上下文与 session 工具/权限，registry 共享 session 状态，`wait` 订阅 mailbox/steering 事件而非忙轮询，父线程收到子结果后负责整合；源码中的 session slot 默认值只是该版本实现行为，不是公开协议限制，也不复制为 CharaMate 常量。
+- **CharaMate 启发式**：下面的 `D2` 资源门、2 个只读子任务、样本数、`5pp/2pp/3pp/0.80/2.5×` 和 bootstrap 次数都是本 Decision 的预注册判断尺度，不是 OpenAI/Codex 的保证。`M2R/M4R` 的数字是实验 Arm；只有实测胜者才可能形成一个内部上限，且不会成为用户设置。
+
+#### 冻结环境与证据标识
+
+- 基线 commit `aefbe7c09c398dd3585c796b8492e5ce149399f3`；`package-lock.json` Git blob `473b36b8763d99b27bf1563fc8d32ecaca47321c`；Apple `Mac16,7` / 24 GiB / arm64，macOS `26.6.1 (25G76)`，Node `24.18.0`，npm `11.16.0`。
+- 目标路径为本机 Responses-compatible `http://127.0.0.1:4141/v1`、`gpt-5.6-sol`、`reasoning=medium`、`openai@6.49.0`、streaming、`store=false`、`parallel_tool_calls=false`、implicit prompt cache `30m`。执行前 `/v1/models` 中该模型条目的规范化 SHA-256 为 `9d44301bc2611c15d6c0395813d50e4d2df26e1c76d025b2c1dc5fa9917e25e8`；它声明支持 Responses、Tool Calling 与并行 Tool Calling，但不替代本实验。
+- Manifest `CHM-MULTI-AGENT-20260813-W1` SHA-256 `61c88449e90055ff7ada881ef1bb0b294e848aed1bb57211455f12009528470b`；task bank SHA-256 `c51bea9be30279a810759fbe340ea125c6b9c56f512d22c9008e203013c4b1ef`；生成器/runner/analyzer source-set SHA-256 `b084a4059f6cf734afe6bb7f14e97b3ae86d1d53b585128043e6a8858d9cd29d`。原始 JSONL 写到仓库外，最终只在中文 Decision Record 保存聚合、哈希和失败样本分类。
+
+#### 阶段、单变量与真实执行形状
+
+1. **Dispatch selection**：48 个任务，24 个应派发、24 个不应派发；正例等分覆盖双文档、双模块、双数据源只读综合，负例等分覆盖简单回答、顺序依赖、共享写资源、同一可变 Browser Profile、单资源任务和审批后动作。模型只提交一次结构化计划，且只列 child work，父 Join 隐含。`D3` 直接采用模型的 `shouldDispatch`；`D2` 对同一份计划追加确定性宿主校验：至少两个具体子任务、全部只读、资源声明非空且互斥、无依赖、无共享可变 Browser Profile；目标文字可同类，但 resource claim 必须区分实际工作。这样 D2/D3 唯一差异是宿主约束，不让不同模型回答混入比较；`D0` 是全不派发基线。
+2. **Execution selection**：18 个 paired tasks，文档对比、跨模块审计、双来源研究各 6。每题有两个不可变且互不依赖的资源、12 个稳定 evidence ID 和 7 个确定性结论；模型必须经同一个 `fixture_read` wire 读取资源并用严格结构化结果结束。`M0` 由一个 Agent 读取两份资源；`M2S-DIAGNOSTIC` 让两个相同只读 child 串行执行后由父 Agent Join；`M2R` 只把这两个 child 改为真实并发，resource allowlist、child prompt、Join、模型和评分均不变。M2S 不是产品候选，只用于确认收益来自并发而不是额外拆解/调用。
+3. 每个 execution block 内 `M0/M2S/M2R` 六种顺序等频轮换，block 间 `concurrency=1`；M2S/M2R 的 child input 完全相同。记录每个父/子 Responses terminal trace、资源越界、Join 遗漏/冲突、input/cached/output/reasoning Token、TTFT 与端到端时间。只读实验没有审批或外部副作用。408/409/429/5xx、timeout 或掉流只允许整个 paired block 重跑一次；Schema/协议错误不得把输掉的 Arm 单独重跑。
+4. **Untouched holdout**：Dispatch 另有 24 题（12 正/12 负），Execution 另有 9 题（三类各 3），selection 结果冻结前不运行。只有 selection finalist 进入 holdout；没有 finalist 时按依赖停止，而不是运行 holdout 后另调门槛。
+
+#### 冻结评分与晋级链
+
+- Dispatch selection 要求候选的简单/不合格任务误派发点估计 `<=5%`、合格困难任务漏派发点估计 `<=5%`、接受的无效资源计划为 `0`。多个候选合格时先选总分类错误更少者；相同则选 `D2`，因为它把已声明的资源隔离变成宿主可验证条件。finalist 在 holdout 必须 `0/12` 误派发、`0/12` 漏派发；selection+holdout 合并后两类错误率的双侧 Wilson 95% 上界均须 `<=10%`。
+- Execution 使用 10,000 次固定 seed paired bootstrap。`M2R-M0` 的 task success 95% 下界须 `>=-5pp`、evidence coverage 下界须 `>=-2pp`，且 merge 冲突、意外 evidence、资源越界/无效 Tool Call均为 0。还必须至少证明一项净收益：success 下界 `>0`，或结论正确率下界 `>=+3pp`，或端到端 p95 ratio 上界 `<=0.80`。
+- 并发归因另要求 `M2R/M2S` 端到端 p95 ratio 上界 `<=0.80` 且 success 差下界 `>=-5pp`；`M2R/M0` 平均总 Token ratio 上界须 `<=2.5`。任何一项不满足都选择更简单的 `M0`，不因“子 Agent 能完成任务”就晋级。
+- 若 selection 选择 M2R，9 题 holdout 必须保持零资源越界/冲突/意外 evidence、success 不低于 M0，且 selection 中的净收益方向在 holdout 点估计上重复；最后把 27 题合并重算上述 paired gate。两道 Dispatch 和 Execution gate 都通过才允许产品化。
+- `M4R` 只在 M2R 完整晋级后用新的、结果未知前冻结的四资源 paired selection/holdout 比较 `2×分组 child` 与 `4×单资源 child`；必须保持质量并再次证明 p95 上界 `<=0.80`，否则生产上限停在 M2R。`M2W` 也只在 M2R 晋级后以一次性临时目录、两个显式不相交写集和父 Agent 单点提交比较；任何写集重叠、审批重复、冲突或未知结果都会立即淘汰。前级不通过时二者记为 `not-run-by-preregistered-gate`，不是缺失数据，也不得事后用 smoke 宣称胜出。
+
+若最终无 winner，完整产品结论就是保留单 Agent：不新增 Composer 开关、`subtask` Item、IPC/Schema、表、依赖或隐藏 runtime branch。若有 winner，先删除实验 Arm 与 runner，再把胜者重写成单一生产路径并完成 resource isolation、父 Join、取消/恢复、Subtask Item、Composer 按轮授权和离线/E2E 回归。
+
 ---
 
 ## 5. 记忆系统研究模型
