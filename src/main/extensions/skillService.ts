@@ -166,6 +166,7 @@ export class SkillService {
 
   async initialize(): Promise<void> {
     await mkdir(this.userSkillsDirectory, { recursive: true });
+    await this.#recoverPendingDeletes();
     await this.refresh();
   }
 
@@ -350,7 +351,17 @@ export class SkillService {
     );
     await mkdir(archiveDirectory, { recursive: true });
     await rename(skill.directoryPath, destination);
-    const version = this.repository.setArchived(id, archivedAt);
+    let version: SkillVersionRecord;
+    try {
+      version = this.repository.setArchived(id, archivedAt);
+    } catch (error) {
+      await rename(destination, skill.directoryPath).catch(() => undefined);
+      throw new ExtensionError(
+        "SKILL.ARCHIVE_FAILED",
+        error instanceof Error ? error.message : "无法归档 Skill。",
+        true,
+      );
+    }
     const next: LoadedSkill = {
       contentPath: path.join(destination, "SKILL.md"),
       descriptor: descriptor(
@@ -367,6 +378,61 @@ export class SkillService {
     };
     this.#skills.set(id, next);
     return next.descriptor;
+  }
+
+  async delete(id: string): Promise<string> {
+    const name = this.#require(id).descriptor.name;
+    return this.#withSkillMutation(name, () => this.#delete(id));
+  }
+
+  async #delete(id: string): Promise<string> {
+    let skill = this.#require(id);
+    if (skill.descriptor.readOnly || skill.descriptor.source !== "user") {
+      throw new ExtensionError(
+        "SKILL.READ_ONLY",
+        "Workspace Skill 由项目拥有，不能永久删除。",
+        false,
+      );
+    }
+    if (!skill.descriptor.archived) {
+      await this.#archive(id);
+      skill = this.#require(id);
+    }
+
+    const pendingRoot = path.join(this.userSkillsDirectory, ".delete-pending");
+    const pendingPath = path.join(
+      pendingRoot,
+      `${path.basename(skill.directoryPath)}-${this.ids.generate()}`,
+    );
+    await mkdir(pendingRoot, { recursive: true });
+    try {
+      await rename(skill.directoryPath, pendingPath);
+    } catch (error) {
+      throw new ExtensionError(
+        "SKILL.DELETE_FAILED",
+        error instanceof Error ? error.message : "无法暂存待删除 Skill。",
+        true,
+      );
+    }
+
+    try {
+      if (this.repository.deleteSkill(id) === 0) {
+        throw new Error(`Skill ${id} has no persisted versions`);
+      }
+    } catch (error) {
+      await rename(pendingPath, skill.directoryPath).catch(() => undefined);
+      throw new ExtensionError(
+        "SKILL.DELETE_FAILED",
+        error instanceof Error ? error.message : "无法删除 Skill 版本。",
+        true,
+      );
+    }
+
+    this.#skills.delete(id);
+    await rm(pendingPath, { force: true, recursive: true }).catch(
+      () => undefined,
+    );
+    return id;
   }
 
   async restoreRevision(
@@ -747,6 +813,48 @@ export class SkillService {
       });
     }
     return loaded;
+  }
+
+  async #recoverPendingDeletes(): Promise<void> {
+    const pendingRoot = path.join(this.userSkillsDirectory, ".delete-pending");
+    let entries;
+    try {
+      entries = await readdir(pendingRoot, { withFileTypes: true });
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        return;
+      }
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const pendingPath = path.join(pendingRoot, entry.name);
+      let metadata: SkillFrontmatter;
+      try {
+        metadata = parseSkill(
+          await readFile(path.join(pendingPath, "SKILL.md"), "utf8"),
+        );
+      } catch {
+        continue;
+      }
+      const id = skillId("user", metadata.name);
+      if (!this.repository.getLatest(id)) {
+        await rm(pendingPath, { force: true, recursive: true });
+        continue;
+      }
+      const archiveRoot = path.join(this.userSkillsDirectory, ".archive");
+      await mkdir(archiveRoot, { recursive: true });
+      await rename(
+        pendingPath,
+        path.join(archiveRoot, `${metadata.name}-${this.ids.generate()}`),
+      );
+    }
   }
 
   #assertDirectoryName(name: string): void {

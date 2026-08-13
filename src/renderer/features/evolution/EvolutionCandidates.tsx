@@ -110,28 +110,60 @@ export function EvolutionCandidateCard({
     (candidate.status === "draft" ||
       (candidate.status === "accepted" &&
         candidate.replayResult.status === "failed"));
+  const skillName =
+    candidate.proposal.kind === "new_skill" ||
+    candidate.proposal.kind === "skill_patch"
+      ? candidate.proposal.name
+      : undefined;
+  const isSkillCandidate = Boolean(skillName);
+  const isSettledSkillResult = Boolean(
+    skillName &&
+    candidate.activatedAt &&
+    (candidate.status === "active" ||
+      candidate.status === "stale" ||
+      candidate.status === "archived"),
+  );
+  const settledSkillStatus =
+    candidate.status === "archived"
+      ? candidate.activatedSkillId
+        ? "Skill 已归档"
+        : "原 Skill 已删除"
+      : "已保存为 Skill";
   const replayLabel =
     candidate.replayResult.status === "not_required"
       ? undefined
       : `replay · ${candidate.replayResult.status}`;
+  const compactMeta = isSettledSkillResult
+    ? candidate.status === "archived"
+      ? candidate.activatedSkillId
+        ? "可在 Settings → Skills 的“已归档”中恢复。"
+        : "这里只保留本次学习来源，不能从这里恢复。"
+      : candidate.status === "stale"
+        ? "Skill 后来已更新；当前内容以 Settings → Skills 为准。"
+        : "已成为 Agent Skill；请在 Settings → Skills 管理。"
+    : replayLabel;
 
   return (
     <article
       className={styles["candidate"]}
       data-compact={compact || undefined}
-      aria-label="这次学到了什么"
+      aria-label={isSettledSkillResult ? "已学会的 Skill" : "这次学到了什么"}
     >
       <header>
         <div>
-          <small>这次学到了什么</small>
-          <strong>{kindLabels[candidate.kind]}</strong>
+          <small>{isSettledSkillResult ? "成长结果" : "这次学到了什么"}</small>
+          <strong>
+            {isSettledSkillResult ? skillName : kindLabels[candidate.kind]}
+          </strong>
         </div>
         <span data-status={candidate.status}>
-          {statusLabels[candidate.status]}
+          {isSettledSkillResult
+            ? settledSkillStatus
+            : statusLabels[candidate.status]}
         </span>
       </header>
       <p className={styles["rationale"]}>{candidate.rationale}</p>
-      {canEdit ? (
+      {isSettledSkillResult ? null : canEdit ? (
         <textarea
           aria-label="候选内容"
           value={content}
@@ -163,8 +195,8 @@ export function EvolutionCandidateCard({
             </p>
           ) : null}
         </details>
-      ) : replayLabel ? (
-        <small className={styles["meta"]}>{replayLabel}</small>
+      ) : compactMeta ? (
+        <small className={styles["meta"]}>{compactMeta}</small>
       ) : null}
       {error ? (
         <p className={styles["error"]} role="alert">
@@ -232,7 +264,7 @@ export function EvolutionCandidateCard({
             重试 replay
           </button>
         ) : null}
-        {candidate.status === "archived" ? (
+        {!isSkillCandidate && candidate.status === "archived" ? (
           <button
             disabled={busy}
             type="button"
@@ -245,7 +277,9 @@ export function EvolutionCandidateCard({
             <ArchiveRestore aria-hidden="true" size={13} />
             恢复
           </button>
-        ) : candidate.status !== "accepted" ? (
+        ) : !isSkillCandidate &&
+          !canDecide &&
+          candidate.status !== "accepted" ? (
           <button
             disabled={busy}
             type="button"
@@ -259,7 +293,7 @@ export function EvolutionCandidateCard({
             归档
           </button>
         ) : null}
-        {candidate.status === "active" ? (
+        {!isSkillCandidate && candidate.status === "active" ? (
           <button
             disabled={busy}
             type="button"
@@ -290,12 +324,14 @@ export function EvolutionCandidates({
   api = defaultApi(),
   chatId,
   compact = false,
+  description,
   kinds,
 }: {
   readonly allowEdit?: boolean;
   readonly api?: EvolutionApi;
   readonly chatId?: string;
   readonly compact?: boolean;
+  readonly description?: string;
   readonly kinds?: readonly EvolutionCandidateKind[];
 }) {
   const [candidates, setCandidates] = useState<EvolutionCandidate[]>([]);
@@ -388,6 +424,11 @@ export function EvolutionCandidates({
           <div>
             <p>Experience Review</p>
             <h3>成长候选</h3>
+            {description ? (
+              <small className={styles["collectionDescription"]}>
+                {description}
+              </small>
+            ) : null}
           </div>
           <button type="button" onClick={() => void load()}>
             <RefreshCcw aria-hidden="true" size={13} />

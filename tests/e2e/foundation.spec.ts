@@ -51,6 +51,15 @@ test("launches through the typed preload boundary", async () => {
     );
     const chats = new ChatRepository(seedDatabase);
     chats.insertChat(chatFixture);
+    for (let index = 0; index < 30; index += 1) {
+      chats.insertChat({
+        ...chatFixture,
+        createdAt: "2026-07-01T08:00:00.000Z",
+        id: `70000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
+        title: `Overflow fixture ${String(index + 1)}`,
+        updatedAt: "2026-07-01T08:00:00.000Z",
+      });
+    }
     const runs = new RunRepository(seedDatabase);
     runs.appendEvent(runEventEnvelopeFixture);
     runs.appendEvent(completedRunEventEnvelope);
@@ -87,6 +96,30 @@ test("launches through the typed preload boundary", async () => {
     await expect(
       page.getByRole("heading", { name: chatFixture.title }),
     ).toBeVisible();
+    const chatNavigation = page.getByRole("region", { name: "会话列表" });
+    const settingsButton = page.getByRole("button", { name: "Settings" });
+    await expect(settingsButton).toBeInViewport();
+    const [sidebarBox, settingsBox, chatNavigationBox] = await Promise.all([
+      page.locator("aside").first().boundingBox(),
+      settingsButton.boundingBox(),
+      chatNavigation.boundingBox(),
+    ]);
+    expect(sidebarBox).not.toBeNull();
+    expect(settingsBox).not.toBeNull();
+    expect(chatNavigationBox).not.toBeNull();
+    expect(settingsBox!.y + settingsBox!.height).toBeLessThanOrEqual(
+      sidebarBox!.y + sidebarBox!.height,
+    );
+    expect(
+      chatNavigationBox!.y + chatNavigationBox!.height,
+    ).toBeLessThanOrEqual(settingsBox!.y);
+    await expect
+      .poll(() =>
+        chatNavigation.evaluate(
+          (element) => element.scrollHeight > element.clientHeight,
+        ),
+      )
+      .toBe(true);
     await expect(page.getByText(messageFixture.content)).toBeVisible();
     await expect(page.getByRole("button", { name: /已处理/u })).toHaveAttribute(
       "aria-expanded",
@@ -171,6 +204,7 @@ test("launches through the typed preload boundary", async () => {
         "mcpRefresh",
         "mcpSave",
         "skillArchive",
+        "skillDelete",
         "skillGet",
         "skillHistory",
         "skillList",
@@ -392,6 +426,174 @@ test("launches through the typed preload boundary", async () => {
       return shape;
     });
     expect(subscriptionShape).toBe("function");
+
+    const skillContent = `---
+name: e2e-delete-skill
+description: Verify editing, saving, and permanent deletion through Settings.
+---
+
+# Workflow
+
+1. Edit and delete this active test Skill.
+`;
+    await expect(
+      page.evaluate(
+        (content) =>
+          window.charaMate.extensions.skillSave({
+            content,
+            name: "e2e-delete-skill",
+          }),
+        skillContent,
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { id: "user:e2e-delete-skill", revision: 1 },
+    });
+    for (let revision = 2; revision <= 8; revision += 1) {
+      await expect(
+        page.evaluate(
+          ({ content, currentRevision }) =>
+            window.charaMate.extensions.skillSave({
+              content: `${content}\n<!-- revision ${String(currentRevision)} -->\n`,
+              name: "e2e-delete-skill",
+            }),
+          { content: skillContent, currentRevision: revision },
+        ),
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { id: "user:e2e-delete-skill", revision },
+      });
+    }
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { exact: true, name: "Skills" }).click();
+    const skillNameInput = page.getByLabel("名称");
+    const skillEditor = page.getByLabel("SKILL.md");
+    await expect(skillNameInput).toBeEnabled();
+    await expect(skillEditor).toBeEnabled();
+    const activeSkillList = page.getByLabel("当前 Skills");
+    const activeSkillItem = activeSkillList
+      .getByRole("button")
+      .filter({ hasText: "e2e-delete-skill" });
+    await expect(activeSkillItem).toBeVisible();
+    await expect(activeSkillItem).toContainText(
+      "Verify editing, saving, and permanent deletion through Settings.",
+    );
+    await expect(page.getByText(/用户 · r8/u)).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "版本与恢复" })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole("region", { name: "成长候选" })).toHaveCount(0);
+    await skillNameInput.focus();
+    const skillEditorLayout = await skillNameInput.evaluate((element) => {
+      const label = element.closest("label");
+      const form = label?.parentElement;
+      const editor = form?.querySelector("textarea");
+      const panel = element.closest("section");
+      const settingsContent = panel?.parentElement;
+      const settingsPage = settingsContent?.parentElement;
+      if (
+        !label ||
+        !form ||
+        !editor ||
+        !panel ||
+        !settingsContent ||
+        !settingsPage
+      )
+        return null;
+      const originalEditorValue = editor.value;
+      const originalEditorHeight = editor.style.height;
+      editor.style.height = "40px";
+      editor.value = "长行内容不应消失在编辑器右侧".repeat(80);
+      const editorStyle = window.getComputedStyle(editor);
+      const wrappedLongLineScrollHeight = editor.scrollHeight;
+      const wrappedLongLineScrollWidth = editor.scrollWidth;
+      editor.value = originalEditorValue;
+      editor.style.height = originalEditorHeight;
+      const inputStyle = window.getComputedStyle(element);
+      return {
+        editorClientWidth: editor.clientWidth,
+        editorOverflowX: editorStyle.overflowX,
+        editorRight: editor.getBoundingClientRect().right,
+        editorScrollWidth: editor.scrollWidth,
+        editorWhiteSpace: editorStyle.whiteSpace,
+        formClientWidth: form.clientWidth,
+        formScrollWidth: form.scrollWidth,
+        inputBoxShadow: inputStyle.boxShadow,
+        labelOutlineStyle: window.getComputedStyle(label).outlineStyle,
+        panelRight: panel.getBoundingClientRect().right,
+        settingsClientWidth: settingsPage.clientWidth,
+        settingsScrollLeft: settingsPage.scrollLeft,
+        settingsScrollWidth: settingsPage.scrollWidth,
+        wrappedLongLineScrollHeight,
+        wrappedLongLineScrollWidth,
+      };
+    });
+    expect(skillEditorLayout).not.toBeNull();
+    expect(skillEditorLayout!.labelOutlineStyle).toBe("none");
+    expect(skillEditorLayout!.editorRight).toBeLessThanOrEqual(
+      skillEditorLayout!.panelRight + 1,
+    );
+    expect(skillEditorLayout!.editorScrollWidth).toBeLessThanOrEqual(
+      skillEditorLayout!.editorClientWidth + 1,
+    );
+    expect(skillEditorLayout!.editorOverflowX).toBe("auto");
+    expect(skillEditorLayout!.editorWhiteSpace).toBe("pre-wrap");
+    expect(skillEditorLayout!.formScrollWidth).toBeLessThanOrEqual(
+      skillEditorLayout!.formClientWidth + 1,
+    );
+    expect(skillEditorLayout!.inputBoxShadow).not.toContain("105, 89, 217");
+    expect(skillEditorLayout!.settingsScrollLeft).toBe(0);
+    expect(skillEditorLayout!.settingsScrollWidth).toBeLessThanOrEqual(
+      skillEditorLayout!.settingsClientWidth + 1,
+    );
+    expect(skillEditorLayout!.wrappedLongLineScrollHeight).toBeGreaterThan(60);
+    expect(skillEditorLayout!.wrappedLongLineScrollWidth).toBeLessThanOrEqual(
+      skillEditorLayout!.editorClientWidth + 1,
+    );
+    const skillBehavior = page.getByRole("group", { name: "Skill 行为" });
+    await expect(skillBehavior).toBeVisible();
+    await expect(
+      skillBehavior.getByRole("checkbox", { name: /启用 Skill/u }),
+    ).toBeChecked();
+    await skillEditor.fill(
+      skillContent.replace(
+        "Edit and delete this active test Skill.",
+        "Save this edit, then delete the active test Skill.",
+      ),
+    );
+    await page.getByRole("button", { name: "保存更改" }).click();
+    await expect(page.getByRole("status")).toHaveText("已保存。");
+    await expect(page.getByRole("button", { name: "已保存" })).toBeDisabled();
+    await page.getByRole("button", { name: "归档 Skill" }).click();
+    await expect(page.getByRole("status")).toHaveText(
+      "Skill 已归档；它已移出当前列表。",
+    );
+    await expect(page.getByLabel("名称")).toBeDisabled();
+    await expect(page.getByRole("button", { name: "已归档" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByRole("region", { name: "版本与恢复" })).toHaveCount(
+      0,
+    );
+    await page.getByRole("button", { name: "恢复 Skill" }).click();
+    await expect(page.getByRole("status")).toHaveText(
+      "Skill 已恢复并重新启用。",
+    );
+    await expect(page.getByLabel("名称")).toBeEnabled();
+    const dialogPromise = page.waitForEvent("dialog");
+    const deleteClick = page.getByRole("button", { name: "永久删除" }).click();
+    const dialog = await dialogPromise;
+    expect(dialog.message()).toContain(
+      "永久删除“e2e-delete-skill”及其整个目录",
+    );
+    await dialog.accept();
+    await deleteClick;
+    await expect(page.getByRole("status")).toHaveText("Skill 已永久删除。");
+    await expect(
+      page.evaluate(() => window.charaMate.extensions.skillList({})),
+    ).resolves.toEqual({ ok: true, value: [] });
+    await page.getByRole("button", { name: "Chats" }).click();
 
     await expect(
       page.evaluate(() => window.charaMate.voice.getActive()),

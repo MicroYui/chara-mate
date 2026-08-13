@@ -299,7 +299,8 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P5-AUTOMATIONS-UI`（已完成）：使用冻结 fixture 实现卡片、单页表单、暂停/编辑/试跑、历史及 Agent Task Chat Run 跳转；最终只消费 typed Preload API。
 - `P5-PROACTIVE`：安静时段、主动程度、触发来源、普通 Chat 持久化和气泡投影。
 - `P5-MULTI-AGENT`（已完成）：Agent 自主调用 `collaboration.dispatch`，宿主校验两个 child 的只读性、当前 Tool scope、互斥资源和可变会话禁用，再并发执行确切读取与独立分析；父 Run 等待并合并，统一 Subtask Item 承载状态/证据/Token，取消与恢复复用既有边界；没有 Composer/Settings 开关、候选 Arm 或额外表/依赖。
-- `P5-EVOLUTION`（已完成）：Run 完成事件只在明确纠正、明确教学、客观验证成功或重复流程时持久化异步 Review；单次无 Tool 结构化调用生成四类候选，全部经用户确认，Skill 再经 replay 后激活；patch 使用目标 revision/hash 防止覆盖后续手动编辑，Settings/Agent Skill 变更会同步候选状态；版本、pin、归档、恢复、崩溃恢复和 typed IPC/UI 已进入单一生产路径。
+- `P5-EVOLUTION`（已完成）：Run 完成事件只在明确纠正、明确教学、客观验证成功或重复流程时持久化异步 Review；单次无 Tool 结构化调用生成四类候选，全部经用户确认，Skill 再经 replay 后激活；patch 使用内部目标 revision/hash 防止覆盖后续手动编辑，Settings/Agent Skill 变更会同步候选状态；候选生效后只由普通 Skill 管理器负责 pin、归档和恢复，崩溃恢复和 typed IPC/UI 已进入单一生产路径。
+- `P5-SKILL-DELETE`（已完成）：Settings 对当前或已归档用户 Skill 提供二次确认的永久删除；当前 Skill 在删除事务内部先归档，Extension 再删除目录和全部内部 revision，Evolution 只保留来源证据并解除目标绑定，普通 UI 不提供第二条恢复路径，workspace Skill 拒绝删除；不新增表、后台清理任务或候选状态。
 
 ### 验收
 
@@ -308,7 +309,8 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - 创建、暂停、编辑、立即运行、历史、完成事件和跨 Electron 重启通过真实 typed desktop boundary；Agent Task 复用普通持久化 Chat/Run 及既有 Model、Tool、Approval、取消和失败路径；
 - Automation 的 Tool、审批、取消、结果和失败与手动 Run 完全同构；
 - 后台 Approval 不被伪装为成功，气泡始终跳转同一 Chat Item；
-- Self-evolution 的同 Run 幂等、Review 重启恢复、证据绑定、确认前不落库、Skill replay 失败可编辑重试、版本恢复与真实 typed desktop journey 通过确定性回归；
+- Self-evolution 的同 Run 幂等、Review 重启恢复、证据绑定、确认前不落库、Skill replay 失败可编辑重试、过期 patch 防护与真实 typed desktop journey 通过确定性回归；Skills Settings 不暴露历史版本或候选历史；
+- 当前与已归档用户 Skill 的永久删除通过 service、SQLite、typed IPC/Preload 和 Settings 组件回归；删除后旧成长记录只保留来源证据，不会调用不存在的 Skill，也不在普通 UI 提供恢复或重建入口；
 - 未晋级能力的表、协议、组件、设置、依赖和空入口不存在；
 - 能力的机械 Gate、任何 owner amendment、成功率、冲突、Token、复杂度与不能声称的范围均透明保存在对应中文 Decision Record；生产只保留最终单路径。
 

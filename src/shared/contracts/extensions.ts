@@ -12,6 +12,7 @@ import type {
   McpTransportDraftSchema,
   SkillDescriptorSchema,
   SkillContentSchema,
+  SkillDeleteResponseSchema,
   SkillSourceSchema,
   SkillGetResponseSchema,
   SkillHistoryResponseSchema,
@@ -33,6 +34,7 @@ export const EXTENSION_CHANNELS = {
   mcpRefresh: "extension.mcp.refresh",
   mcpSave: "extension.mcp.save",
   skillArchive: "extension.skill.archive",
+  skillDelete: "extension.skill.delete",
   skillGet: "extension.skill.get",
   skillHistory: "extension.skill.history",
   skillList: "extension.skill.list",
@@ -67,6 +69,7 @@ export type SkillSetPinnedRequest = Static<typeof SkillSetPinnedRequestSchema>;
 export type SkillRevisionRequest = Static<typeof SkillRevisionRequestSchema>;
 export type SkillListResponse = Static<typeof SkillListResponseSchema>;
 export type SkillMutationResponse = Static<typeof SkillMutationResponseSchema>;
+export type SkillDeleteResponse = Static<typeof SkillDeleteResponseSchema>;
 export type SkillGetResponse = Static<typeof SkillGetResponseSchema>;
 export type SkillHistoryResponse = Static<typeof SkillHistoryResponseSchema>;
 
@@ -76,6 +79,7 @@ export interface ExtensionsApi {
   mcpRefresh(request: McpIdRequest): Promise<McpMutationResponse>;
   mcpSave(request: McpSaveRequest): Promise<McpMutationResponse>;
   skillArchive(request: SkillIdRequest): Promise<SkillMutationResponse>;
+  skillDelete(request: SkillIdRequest): Promise<SkillDeleteResponse>;
   skillGet(request: SkillIdRequest): Promise<SkillGetResponse>;
   skillHistory(request: SkillIdRequest): Promise<SkillHistoryResponse>;
   skillList(request: SkillListRequest): Promise<SkillListResponse>;

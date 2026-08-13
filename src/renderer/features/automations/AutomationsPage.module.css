@@ -945,8 +945,8 @@
   font-size: 11px;
 }
 
-button:focus-visible,
-label:has(input:focus-visible) {
+.page button:focus-visible,
+.page label:has(input:focus-visible) {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }

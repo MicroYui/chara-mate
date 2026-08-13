@@ -357,7 +357,7 @@ export class EvolutionRepository {
     const result = this.database
       .prepare(
         `UPDATE evolution_candidates
-         SET status = ?, proposal_json = ?, rationale = ?, evidence_json = ?,
+         SET kind = ?, status = ?, proposal_json = ?, rationale = ?, evidence_json = ?,
              replay_cases_json = ?, replay_status = ?,
              replay_failure_reason = ?, replay_completed_at = ?,
              pinned = ?, activated_memory_id = ?, activated_skill_id = ?,
@@ -366,6 +366,7 @@ export class EvolutionRepository {
          WHERE id = ?`,
       )
       .run(
+        persisted.kind,
         persisted.status,
         serializeForPersistence(persisted.proposal),
         persisted.rationale,

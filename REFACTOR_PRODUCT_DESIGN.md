@@ -23,7 +23,7 @@ CharaMate 是一个由常驻二次元桌面角色承载的个人 AI Agent。她�
 | 长期记忆 | `better-sqlite3` 保存 Memory/Revision 真源；索引、图关系、向量布局和写入参数由实验一次选定，发布版只有一套实现 |
 | 检索 | 产品只依赖一个冻结的 `RetrievalPipeline`；候选、模型与参数只存在于研究设计和实验工件 |
 | 行为理解 | 原始活动 → Episode → 周期摘要 → 长期记忆/画像/领地候选 → 定期删除低价值原始数据 |
-| 自我进化 | 触发式异步复盘；四类用户确认候选，Skill 再经过 replay，版本可恢复 |
+| 自我进化 | 触发式异步复盘；四类用户确认候选，Skill 再经过 replay；生效后只由普通 Skill 管理器管理 |
 | 实时语音 | Azure OpenAI `gpt-realtime-2.1` 全双工原生 Agent；共享客户端 Tool/Approval、上下文、Run/Item 与持久化边界 |
 | 浏览器与电脑操作 | Playwright/DOM 优先，App Action/Accessibility 次之，视觉 Computer Use 兜底 |
 | 扩展协议 | JSON Schema Tool、Agent Skills `SKILL.md`、MCP stdio/Streamable HTTP |
@@ -534,7 +534,9 @@ OS 首次要求的 Accessibility/Screen Recording 权限使用系统原生提示
 userData/skills/<skill-name>/SKILL.md
 ```
 
-Skill 可以包含少量脚本、模板和 references；常驻上下文只加载名称与短描述，命中后再读完整 `SKILL.md`。Settings 支持启用、编辑、查看来源、版本、最近使用和归档。
+Skill 可以包含少量脚本、模板和 references；常驻上下文只加载名称与短描述，命中后再读完整 `SKILL.md`。Settings 左侧只显示紧凑的名称与短描述，并以“当前 / 已归档”区分生命周期；详情支持启用、编辑、Pin、保存、归档、恢复和永久删除。保存是普通的“保存更改”，不向用户暴露 revision、历史版本或点击恢复历史的入口；内部 revision/hash 只服务于防止过期成长 patch 覆盖手动编辑、崩溃恢复和删除收口，不构成产品版本功能。归档与删除位于独立的 Skill 管理区，不和保存并列。活动或已归档的用户 Skill 都可以由用户在二次确认后永久删除；活动 Skill 在删除事务内部先进入可恢复归档状态，再清除整个目录和内部 revision 记录，workspace Skill 始终只读且不可删除。关联成长候选只保留内部来源证据并解除已删除 Skill 的激活绑定，不在 Settings 中重新形成第二套 Skill 管理入口。
+
+生命周期来源说明（2026-08-13）：锁定复核的 [Agent Skills specification commit `217be548739f21d6008915c29aefe320ea1a90af`](https://github.com/agentskills/agentskills/blob/217be548739f21d6008915c29aefe320ea1a90af/docs/specification.mdx) 只定义 Skill 目录、`SKILL.md` 与可选资源，不定义启用、归档、恢复或删除协议；这些是 CharaMate 的产品生命周期语义，不冒充外部协议约束。
 
 Agent 可在以下情况下创建或修改 Skill：
 
@@ -562,13 +564,13 @@ type EvolutionCandidate =
 - 区分“用户是谁”与“这类任务怎样做”；
 - 所有候选都由用户接受、编辑或拒绝，Reviewer 不自批；
 - Skill 候选在用户接受后跑同类与旁路 replay，通过才激活；replay 是增量质量信号，不替代用户确认；
-- Skill patch 绑定 Review 时加载的目标 ID、revision 与内容 hash；接受和激活都重新校验，不能覆盖其后发生的手动修改；
-- 支持 draft、active、stale、archived、pin、版本和恢复；
-- Settings 或 Agent 显式修改、归档、恢复、pin Skill 时，同步更新关联候选的 stale、archived 与 pin 状态；
-- 后台归档可恢复，不删除用户内容；
+- Skill patch 绑定 Review 时加载的目标 ID、revision 与内容 hash；接受和激活都重新校验，不能覆盖其后发生的手动修改；revision 是内部并发真源，不是用户版本功能；
+- 用户只处理待确认候选和 replay 失败候选；Skill 候选生效后，在来源 Chat 中降为无生命周期动作的结果记录，后续编辑、Pin、归档、恢复和删除全部进入普通 Skill 管理器；忽略或已归档候选不进入 Skills Settings；
+- Settings 或 Agent 显式修改、归档、恢复、pin Skill 时，仍在内部同步关联候选的 stale、archived 与 pin 状态；用户永久删除 Skill 时，候选只保留来源证据并解除激活绑定，不向普通 UI 提供从候选恢复 Skill 的第二条路径；
+- 后台归档可恢复，不删除用户内容；永久删除只来自 Settings 中用户对用户 Skill 的二次确认，活动 Skill 在删除事务内部先归档；
 - 候选只覆盖 Memory、Persona 偏好和 Skill，不把产品源码、系统 Prompt 或 Provider 配置变成自进化对象。
 
-用户可以在 Chat 中打开“这次学到了什么”，也可以在 Memory/Settings 统一处理候选。
+用户在来源 Chat 中处理“这次学到了什么”；Memory/Persona 候选也可在 Memory 统一处理。Skills Settings 只管理已经存在的 Agent Skills，不展示成长候选历史。
 
 Phase 3 的 `memory.record` 与普通 Memory 候选仍负责当前 Run 中用户明确陈述的基础形成。本节不复制该路径，也不采用 Hermes 的直接写入、后台 forked Agent、固定 iteration 或自动归档日期。
 
@@ -1337,7 +1339,7 @@ API Key 使用 Electron async `safeStorage`（`encryptStringAsync` / `decryptStr
 | Models | Provider、URL、Key、Model 自动加载与选择 |
 | Agent | 默认 Chat/Agent、默认权限、工作目录；内部按需协作没有用户设置 |
 | Browser & Computer | Managed Profile、Cookie 导入、OS 权限状态 |
-| Skills | 用户/项目 Skill、版本、编辑、归档 |
+| Skills | 用户/项目 Skill 的名称与描述、编辑、启停、Pin、归档、恢复和删除；不展示版本历史或成长候选历史 |
 | MCP | Server、传输、环境、工具列表、测试与启停 |
 | Activity | 开关、暂停状态、占用与立即清理；采集/蒸馏内部频率不做用户档位 |
 | Data | 数据目录、资源占用和清理 |
@@ -2036,7 +2038,7 @@ Phase 4 的实验与实现可在 Phase 2 稳定后和 Phase 3 后半段并行，
 
 - Reminder 通过 Automation Run 记录并投递通知/气泡，Agent Task 使用普通 Chat Run；两者支持一次/每天/每周/Cron、暂停、编辑、试跑与历史，Agent Task 保留待审批状态；
 - 主动聊天在 Memory/Activity 稳定后接入时间、Automation、Digest、专注、领地候选和跟进触发，并遵守安静时段；
-- 完成 `SELF-EVOLUTION`；只在晋级时实现唯一异步 Experience Review、高级成长候选、Skill replay、版本/归档/恢复；不重复实现 Phase 3 的普通 Memory 形成；
+- 完成 `SELF-EVOLUTION`；只在晋级时实现唯一异步 Experience Review、高级成长候选、Skill replay、过期 patch 防护和单一 Skill 归档/恢复入口；不重复实现 Phase 3 的普通 Memory 形成；
 - 完成 `MULTI-AGENT`：实现 Agent 自主 Dispatch、宿主资源/只读校验、两个并发 child、父 Join、取消/恢复与 Subtask Item；不增加 Composer 开关。
 
 退出条件：Automation 与手动 Run 同构；后台 Approval 不伪装成功；未晋级能力的协议、表、组件、设置、依赖和空入口完全不存在。

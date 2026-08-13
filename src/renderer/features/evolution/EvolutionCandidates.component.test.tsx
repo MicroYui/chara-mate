@@ -11,7 +11,10 @@ import type {
   EvolutionApi,
   EvolutionCandidate,
 } from "../../../shared/contracts/evolution";
-import { EvolutionCandidates } from "./EvolutionCandidates";
+import {
+  EvolutionCandidateCard,
+  EvolutionCandidates,
+} from "./EvolutionCandidates";
 
 const candidate: EvolutionCandidate = {
   chatId: "10000000-0000-4000-8000-000000000001",
@@ -166,5 +169,48 @@ describe("EvolutionCandidates", () => {
     await waitFor(() =>
       expect(screen.queryByText("复盘失败")).not.toBeInTheDocument(),
     );
+  });
+
+  it("collapses a later-edited Skill candidate into a result record instead of a second Skill manager", () => {
+    const { api } = makeApi();
+    const settledSkillCandidate: EvolutionCandidate = {
+      ...candidate,
+      activatedAt: candidate.updatedAt,
+      activatedSkillId: "user:release-flow",
+      activatedSkillRevision: 2,
+      kind: "new_skill",
+      proposal: {
+        content: "---\nname: release-flow\ndescription: Release safely.\n---",
+        kind: "new_skill",
+        name: "release-flow",
+      },
+      replayResult: {
+        completedAt: candidate.updatedAt,
+        status: "passed",
+      },
+      status: "stale",
+    };
+
+    const { container } = render(
+      <EvolutionCandidateCard
+        api={api}
+        candidate={settledSkillCandidate}
+        compact
+      />,
+    );
+
+    expect(
+      screen.getByText("Skill 后来已更新；当前内容以 Settings → Skills 为准。"),
+    ).toBeVisible();
+    expect(screen.getByText("成长结果")).toBeVisible();
+    expect(screen.getByText("release-flow")).toBeVisible();
+    expect(screen.getByText("已保存为 Skill")).toBeVisible();
+    expect(container.querySelector("pre")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "归档" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Pin" }),
+    ).not.toBeInTheDocument();
   });
 });

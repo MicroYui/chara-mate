@@ -22,10 +22,11 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 - [x] pin 与固定同屏容量生效；超限只回收藏库，不删除 Memory、候选或资产版本。
 - [x] Automations 与 Territory Memory 合并后的 Schema、typed IPC/Preload、组件旅程、重启恢复和 milestone package/E2E 验收通过。
 - [x] Run 完成后只按四类已定触发信号持久化异步 Review；同一 Run 幂等，queued/running 可在重启后恢复，Reviewer 是无 Tool 的单次结构化调用。
-- [x] 四类成长候选全部要求用户确认；Memory/Persona 复用 `MemoryService`，Skill replay 通过后才激活，并支持失败编辑重试、版本、pin、归档和恢复。
-- [x] Chats、Memory 与 Skills 展示候选、证据、来源和状态；真实 Electron E2E 验证确认前不落库、确认后生效。
+- [x] 四类成长候选全部要求用户确认；Memory/Persona 复用 `MemoryService`，Skill replay 通过后才激活，并支持失败编辑重试。Skill 生效后只作为普通 Agent Skill 管理，不再保留第二套候选管理入口。
+- [x] Chats 与 Memory 展示待确认候选、证据、来源和状态；Settings → Skills 只管理当前或已归档 Skill。真实 Electron E2E 验证确认前不落库、确认后生效。
 - [x] Reviewer 通过 Provider 结构化输出约束生成完整候选，不再因提示未列出必填字段而让整次 Review 失败。
 - [x] Provider 失败后最新 Plan 只作为终态历史显示，未完成步骤不再保留“进行中”动画或文案。
+- [x] Settings 允许二次确认后永久删除当前或已归档用户 Skill；当前 Skill 在删除事务内部先归档，目录、内部 revision 和候选绑定同步收口，workspace Skill 拒绝删除。
 - [x] `MULTI-AGENT` 保留机械 no-winner 结果并透明记录产品修订；生产仅保留 `D2 + M2R` 的 Agent 自主、两 child、只读、资源互斥路径，无 Composer 开关、候选 Arm 或第二套 Harness。
 - [x] Multi-agent 的资源门、并发、父 Join、取消/失败、持久化、观测、Chat 隔离与桌面旅程通过 offline、build、19/19 E2E、Forge package 和 packaged smoke。
 
@@ -41,6 +42,7 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 | `P5-AUTOMATIONS-CORE` | `main` | `done` | 唯一 schedule 计算、休眠恢复、Repository/Service、Reminder 投递记录、Agent Task 普通 Chat Run、事件发布与 Main IPC 注册完成；独立验证 474 项 offline、17/17 E2E 与 package/smoke 通过 |
 | `P5-AUTOMATIONS-UI` | `main` | `done` | 卡片、四类计划表单、Reminder/Agent Task、暂停/恢复、编辑、试跑、运行历史与 Agent Task Chat Run 跳转完成；只消费 typed Preload，未修改 shared Schema、DB 或 Main Core |
 | `P5-EVOLUTION` | `codex/self-evolution-decision-gate` | `done` | 严格 JSON Schema Reviewer/replay 输出、失败 Run 计划终态、同毫秒 Memory current revision 排序和 513 项 offline、20/20 E2E 验收完成 |
+| `P5-SKILL-DELETE` | `codex/self-evolution-decision-gate` | `done` | 当前 Skill 编辑/普通保存/归档/恢复/永久删除完成；Skills 移除成长候选与可见版本历史，左栏仅显示小号名称和 description，并以“当前 / 已归档”分组；531 项 offline、build 与 21/21 E2E 通过 |
 | `P5-MULTI-AGENT` | `codex/multi-agent-decision-gate` | `done` | `CHM-MULTI-AGENT-20260813-W1` 机械 Gate 为 no-winner；按仓库所有者透明修订，以 `D2 + M2R` 落地 Agent 自主按需调用的两个只读 child 能力，失败候选与实验代码已删除 |
 | `P4-SOURCE-CONTRACT` | `main` | `done` | Realtime conversation、WebRTC interruption、Function Call 与锁定 SDK 类型已复核 |
 | `P4-VOICE-DECISIONS` | `main` | `done` | 透明修订为 Orchestrated Native Realtime；WebRTC + 串行 continuation |
@@ -53,10 +55,11 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 ### 最近完成边界
 
 - Self-evolution 结果：`SELF-EVOLUTION` 选择 E4；terminal Run 只在明确纠正、明确教学、客观验证成功或重复流程时进入异步 Experience Review，生成 Memory、Persona 偏好、Skill patch 或新 Skill 草稿，任何候选都不自动生效。
-- Self-evolution 范围：Evolution JSON Schema/types、SQLite Schema v11 与 v10→v11 迁移、Repository/Service、无 Tool Model Reviewer、Skill replay、Memory/Skill 激活与恢复、Main/Preload typed IPC，以及 Chats/Memory/Skills 候选 UI。
+- Self-evolution 范围：Evolution JSON Schema/types、SQLite Schema v11 与 v10→v11 迁移、Repository/Service、无 Tool Model Reviewer、Skill replay、Memory/Skill 激活、Main/Preload typed IPC，以及 Chats/Memory 的候选 UI；生效后的 Skill 只进入普通 Settings 管理面。
 - Self-evolution 非目标：不修改源码、系统根指令、Provider/凭据、审批规则或 Schema 本身；不保留每 Run Review、直接写、Reviewer 自批、固定 Tool 次数、自动归档天数、实验模式或旧 Schema 兼容分支。
 - Self-evolution 依赖与合同：Evolution 是本次 shared contract、IPC 与 Schema 的唯一集成 owner；复用 source Run 的 Provider/Model、既有 `MemoryService` 和用户 Skill 目录，不创建第二套 Harness。workspace、archived 或 pinned Skill 不接受成长 patch；patch 固定并复核目标 revision/hash。
-- Self-evolution 验收：同 Run/事件 replay 幂等、queued/running 重启恢复、证据与 Item 绑定、确认前不落库、Skill replay 失败编辑重试、激活意图崩溃恢复、旧 patch 不覆盖手动新版本、Settings/Agent Skill 变更同步候选状态、版本/归档/恢复/pin、窄 typed preload 和真实桌面确认旅程均有确定性回归。
+- Self-evolution 验收：同 Run/事件 replay 幂等、queued/running 重启恢复、证据与 Item 绑定、确认前不落库、Skill replay 失败编辑重试、激活意图崩溃恢复、旧 patch 不覆盖后续手动保存、Settings/Agent Skill 变更同步结果状态、窄 typed preload 和真实桌面确认旅程均有确定性回归。用户不操作内部 revision 历史。
+- Skill 删除边界：只有用户在 Settings 二次确认后才能永久删除用户 Skill；当前 Skill 在删除事务内部先归档，workspace Skill 不可删除。Extension 删除目录与全部内部 revision，Evolution 仅保留来源证据并解除激活绑定；普通 UI 不提供从旧成长记录再次恢复或创建 Skill 的第二入口。
 - Self-evolution Decision：30 个配对场景中 E4 相对 E0 的正例成功率从 12/16 提升到 16/16；相对 E3 Review 调用减少 46.7%、Token 减少 37.7%。补充 replay 确认层只拦截 5/10 有害 patch，因此生产保留“全部候选用户确认，Skill 再 replay”的串联。一次性 runner、Arm 代码和核对后的原始产物均已删除。
 - Multi-agent 结果：Agent 模式始终可见 `collaboration.dispatch`，由父 Agent 判断是否值得调用；一次固定两个资源互斥的只读 child，并发完成后由同一父 Run Join。Chat 保持单 Agent，正常 UI 没有 Multi-agent 开关或参数。
 - Multi-agent 范围：Agent-owned Tool、现有 Harness/Provider/Tool Registry/Run checkpoint、一个 `subtask` Item、SQLite greenfield 当前 Schema CHECK、RunProcess 与本地观测；无新 IPC、Preload、表、进程、依赖或新的 Provider Adapter。既有 OpenAI Responses Adapter 在 wire 边界把所有 client namespace `x` 统一映射为 `charamate_x`，并通用反向映射结构化参数中的已知 Tool 引用；namespace Tool continuation 使用 `auto`，Harness 依据 Tool Search 已加载集合做最终执行校验。
@@ -76,6 +79,8 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 ## 最近绿色验证
 
+- 2026-08-13 Skills 真实使用逻辑收口：`npm run verify:offline` 通过（contract 90、focused/component 292、integration 149，共 531 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 包含 production build，21/21 通过（Playwright 23.5s）。Settings 不再展示成长候选、revision/SHA 元信息或版本恢复网格；左栏仅以紧凑字号显示名称和两行 description，并分为“当前 / 已归档”。普通保存、归档、恢复和永久删除被拆为明确操作，未保存内容会阻止归档；生效后的 Skill 成长记录压缩为来源 Chat 中的“成长结果”，不再展开旧 `SKILL.md`，也不提供归档、Pin 或恢复入口。应用从 `chara-mate-self-evolution` 完整退出并冷启动后，以真实的 `charamate-quick-delivery-check` Skill 只读复核了结果卡片、当前列表、description、普通保存态、编辑器软换行、行为项和底部管理区；未修改用户 Skill。
+- 2026-08-13 `P5-SKILL-DELETE` 与侧栏溢出修复：`npm run verify:offline` 24.4s 通过（contract 90、focused/component 290、integration 149，共 529 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 包含 production build，21/21 通过（Playwright 27.2s）。真实桌面旅程覆盖活动用户 Skill 编辑、保存 revision 与确认式直接删除；30 条会话回归确认列表独立滚动且 Mika/Settings 固定可见。集成回归覆盖活动/已归档用户 Skill 删除、workspace 拒绝、目录与全部 revision 清理、删除中断恢复、成长候选解绑，以及已删除 Skill patch 恢复为重新确认的 new Skill 草稿。
 - 2026-08-13 Self-evolution 合并与真实验收：合入 `main` 的 Provider namespace/continuation 修复后，`npm run verify:offline` 24.4s 通过（contract 90、focused/component 287、integration 148，共 525 项；仅 2 条既有 TanStack Virtual lint warning），`npm run build` 通过，Electron E2E 21/21、23.7s 通过并同时覆盖 Multi-agent、自进化确认和 Provider 失败 Plan 终态。正常用户数据中的旧 Memory Review `d810d20c-6bfc-49b6-b0b6-3d7ab72fdb40` 真实重试后从 failed 变为 completed，因来源 Run 已直接保存长期记忆而正确生成 0 个重复候选。真实 Skill Run `46b92cc1-9cb1-44ca-99d1-8f3abc74132d` 越过原 Provider 失败点并完成；异步 Review `5fc8012a-de42-4865-9f70-ca7b696669c5` 生成一个 `new_skill` 草稿，用户确认后的 replay passed，`user:charamate-quick-delivery-check` r1 已激活并在 Settings → Skills 可见。
 - 这次真实 Skill Run 按 Agent 设置在主 worktree 执行：`check:fast` 成功，`test:focused` 失败。单独复核确认主 worktree 当前缺少本地 `vitest` 可执行文件，而开发 Electron 继承了启动 worktree 的 PATH，导致命令误用另一 worktree 的 Vitest 与不匹配的 matcher 环境；68 项组件失败不作为产品回归或自进化失败证据。该本地多 worktree 依赖边界应通过恢复主 worktree 的锁定依赖后另行处理。
 - 2026-08-13 `P5-EVOLUTION`：`npm run verify:offline` 19.5s 通过（contract 90、focused/component 278、integration 143，共 511 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 28.8s、19/19 通过（Playwright 17.2s）并包含 production build，其中新增真实确认前/后旅程；macOS arm64 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run package` 16.2s 与 `npm run smoke:package` 3.7s 通过，Electron ZIP SHA-256 与官方清单一致。默认 GitHub checksum 请求在当前代理上多次 `ECONNRESET`，未关闭 checksum 校验。Live 模型实验及 replay 确认层结果单独记录在 `docs/benchmarks/self-evolution.md`。

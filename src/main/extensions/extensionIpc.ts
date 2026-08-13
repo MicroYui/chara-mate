@@ -9,6 +9,7 @@ import {
   McpMutationResponseSchema,
   McpSaveRequestSchema,
   SkillGetResponseSchema,
+  SkillDeleteResponseSchema,
   SkillHistoryResponseSchema,
   SkillIdRequestSchema,
   SkillListRequestSchema,
@@ -28,6 +29,7 @@ export function registerExtensionIpc(
   mcp: McpService,
   skills: SkillService,
   onSkillChanged: (skillId: string) => void = () => undefined,
+  onSkillDeleted: (skillId: string) => void = () => undefined,
 ): () => void {
   ipcMain.handle(EXTENSION_CHANNELS.mcpList, (_event, input) => {
     try {
@@ -207,6 +209,22 @@ export function registerExtensionIpc(
       });
     } catch (error) {
       return parseSchema(SkillMutationResponseSchema, {
+        error: toExtensionAppError(error),
+        ok: false,
+      });
+    }
+  });
+  ipcMain.handle(EXTENSION_CHANNELS.skillDelete, async (_event, input) => {
+    try {
+      const request = parseSchema(SkillIdRequestSchema, input);
+      const skillId = await skills.delete(request.skillId);
+      onSkillDeleted(skillId);
+      return parseSchema(SkillDeleteResponseSchema, {
+        ok: true,
+        value: { skillId },
+      });
+    } catch (error) {
+      return parseSchema(SkillDeleteResponseSchema, {
         error: toExtensionAppError(error),
         ok: false,
       });

@@ -105,6 +105,12 @@ export class SkillRepository {
     ).map(record);
   }
 
+  deleteSkill(skillId: string): number {
+    return this.database
+      .prepare("DELETE FROM skill_versions WHERE skill_id = ?")
+      .run(skillId).changes;
+  }
+
   ensureContentSnapshot(
     skillId: string,
     revision: number,

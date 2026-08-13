@@ -159,6 +159,7 @@ export class EvolutionService {
 
   synchronizeSkill(skillId: string): EvolutionCandidate[] {
     const skill = this.skills.list().find(({ id }) => id === skillId);
+    if (!skill) return this.detachDeletedSkill(skillId);
     const now = this.clock.now();
     const changed: EvolutionCandidate[] = [];
     for (const candidate of this.repository.listByActivatedSkill(skillId)) {
@@ -172,10 +173,7 @@ export class EvolutionService {
             status: "archived",
             updatedAt: now,
           };
-        } else if (
-          !skill ||
-          skill.revision !== candidate.activatedSkillRevision
-        ) {
+        } else if (skill.revision !== candidate.activatedSkillRevision) {
           next = { ...candidate, status: "stale", updatedAt: now };
         } else if (candidate.pinned !== skill.pinned) {
           next = { ...candidate, pinned: skill.pinned, updatedAt: now };
@@ -199,6 +197,41 @@ export class EvolutionService {
       }
       if (!next) continue;
       const persisted = this.repository.updateCandidate(next);
+      changed.push(persisted);
+      this.#publishCandidate(persisted);
+    }
+    return changed;
+  }
+
+  detachDeletedSkill(skillId: string): EvolutionCandidate[] {
+    const now = this.clock.now();
+    const changed: EvolutionCandidate[] = [];
+    for (const candidate of this.repository.listByActivatedSkill(skillId)) {
+      const {
+        activatedSkillId,
+        activatedSkillRevision,
+        ...candidateWithoutSkill
+      } = candidate;
+      void activatedSkillId;
+      void activatedSkillRevision;
+      const deletedPatchReplacement =
+        candidate.proposal.kind === "skill_patch"
+          ? {
+              kind: "new_skill" as const,
+              proposal: {
+                content: candidate.proposal.content,
+                kind: "new_skill" as const,
+                name: candidate.proposal.name,
+              },
+            }
+          : {};
+      const persisted = this.repository.updateCandidate({
+        ...candidateWithoutSkill,
+        ...deletedPatchReplacement,
+        archivedAt: candidate.archivedAt ?? now,
+        status: "archived",
+        updatedAt: now,
+      });
       changed.push(persisted);
       this.#publishCandidate(persisted);
     }

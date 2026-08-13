@@ -216,6 +216,12 @@ export const SkillListResponseSchema = operationResponse(
 export const SkillMutationResponseSchema = operationResponse(
   SkillDescriptorSchema,
 );
+export const SkillDeleteResponseSchema = operationResponse(
+  Type.Object(
+    { skillId: NonBlankStringSchema },
+    { additionalProperties: false },
+  ),
+);
 export const SkillGetResponseSchema = operationResponse(SkillContentSchema);
 export const SkillHistoryResponseSchema = operationResponse(
   Type.Array(SkillVersionSnapshotSchema),

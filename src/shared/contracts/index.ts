@@ -280,6 +280,7 @@ export type {
   McpServerDraft,
   McpTransportDraft,
   SkillDescriptor,
+  SkillDeleteResponse,
   SkillGetResponse,
   SkillHistoryResponse,
   SkillIdRequest,

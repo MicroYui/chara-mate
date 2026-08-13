@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CharaMateApi } from "../shared/contracts/foundation";
 import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_CHANNELS, CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
+import { EXTENSION_CHANNELS } from "../shared/contracts/extensions";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { TERRITORY_CHANNELS } from "../shared/contracts/territory";
@@ -68,6 +69,29 @@ beforeEach(() => {
 });
 
 describe("Phase 1 typed preload data boundary", () => {
+  it("validates permanent Skill deletion on both sides", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(EXTENSION_CHANNELS.skillDelete);
+        expect(input).toEqual({ skillId: "user:release-flow" });
+        return Promise.resolve({
+          ok: true,
+          value: { skillId: "user:release-flow" },
+        });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.extensions.skillDelete({ skillId: "user:release-flow" }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { skillId: "user:release-flow" },
+    });
+    await expect(api.extensions.skillDelete({ skillId: "" })).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
   it("validates Voice driver events and command subscriptions on both sides", async () => {
     const sessionId = "20000000-0000-4000-8000-000000000001";
     electron.ipcRenderer.invoke.mockImplementation(

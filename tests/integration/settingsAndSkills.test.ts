@@ -1,4 +1,12 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -254,9 +262,40 @@ describe("Phase 2 Agent Skills", () => {
       ),
     ).rejects.toThrow("未启用");
     service.setEnabled(second.id, true);
+    const directDelete = await service.save(
+      "direct-delete",
+      skillMarkdown(
+        "direct-delete",
+        "Delete without a separate archive step",
+        "Verify the direct deletion flow.",
+      ),
+    );
+    await expect(service.delete(directDelete.id)).resolves.toBe(
+      directDelete.id,
+    );
+    expect(repository.listVersions(directDelete.id)).toEqual([]);
+    await expect(
+      readFile(
+        path.join(userSkillsDirectory, "direct-delete", "SKILL.md"),
+        "utf8",
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      service.delete("workspace:workspace-review"),
+    ).rejects.toMatchObject({ code: "SKILL.READ_ONLY" });
     const archived = await service.archive(second.id);
     expect(archived).toMatchObject({ archived: true, revision: 2 });
     expect(service.instructions()).not.toContain("Create consistent notes");
+
+    const archiveRoot = path.join(userSkillsDirectory, ".archive");
+    const pendingRoot = path.join(userSkillsDirectory, ".delete-pending");
+    const [archivedDirectory] = await readdir(archiveRoot);
+    if (!archivedDirectory) throw new Error("Missing archived Skill directory");
+    await mkdir(pendingRoot, { recursive: true });
+    await rename(
+      path.join(archiveRoot, archivedDirectory),
+      path.join(pendingRoot, archivedDirectory),
+    );
 
     const restarted = new SkillService(
       path.join(workspace, ".agents", "skills"),
@@ -279,12 +318,38 @@ describe("Phase 2 Agent Skills", () => {
         }),
       ]),
     );
+    expect(await readdir(pendingRoot)).toEqual([]);
+    await expect(restarted.delete("user:repeatable-notes")).resolves.toBe(
+      "user:repeatable-notes",
+    );
+    expect(restarted.list()).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "user:repeatable-notes" }),
+      ]),
+    );
+    expect(repository.listVersions("user:repeatable-notes")).toEqual([]);
+
+    const afterDeleteRestart = new SkillService(
+      path.join(workspace, ".agents", "skills"),
+      userSkillsDirectory,
+      new SkillRepository(database),
+      new CryptoIdGenerator(),
+      clock,
+    );
+    await afterDeleteRestart.initialize();
+    expect(
+      afterDeleteRestart
+        .list()
+        .some(({ id }) => id === "user:repeatable-notes"),
+    ).toBe(false);
 
     const nextWorkspace = path.join(root, "next-workspace");
     await mkdir(nextWorkspace, { recursive: true });
-    await restarted.setWorkspaceDirectory(nextWorkspace);
+    await afterDeleteRestart.setWorkspaceDirectory(nextWorkspace);
     expect(
-      restarted.list().some(({ id }) => id === "workspace:workspace-review"),
+      afterDeleteRestart
+        .list()
+        .some(({ id }) => id === "workspace:workspace-review"),
     ).toBe(false);
     database.close();
   });

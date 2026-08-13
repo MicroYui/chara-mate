@@ -18,6 +18,7 @@ import {
   McpSaveRequestSchema,
   McpServerSchema,
   SkillContentSchema,
+  SkillDeleteResponseSchema,
   SkillSetEnabledRequestSchema,
 } from "../../src/shared/schemas/extensions";
 import { IpcChannelSchema } from "../../src/shared/schemas/ipc";
@@ -218,6 +219,11 @@ const validCases: readonly [string, TSchema, unknown][] = [
     "Skill enabled request",
     SkillSetEnabledRequestSchema,
     { enabled: false, skillId: skill.id },
+  ],
+  [
+    "Skill delete response",
+    SkillDeleteResponseSchema,
+    { ok: true, value: { skillId: "user:review" } },
   ],
   [
     "Agent settings request",

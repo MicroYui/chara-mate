@@ -274,6 +274,7 @@ function renderApp({
       mcpRefresh: vi.fn(),
       mcpSave: vi.fn(),
       skillArchive: vi.fn(),
+      skillDelete: vi.fn(),
       skillGet: vi.fn(),
       skillHistory: vi.fn(),
       skillList: vi.fn().mockResolvedValue({ ok: true, value: [] }),

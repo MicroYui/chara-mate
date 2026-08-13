@@ -320,6 +320,13 @@ async function startApplication(): Promise<void> {
       logger.warn("EVOLUTION_SKILL_SYNC_ERROR", { error, skillId });
     }
   };
+  const detachEvolutionSkill = (skillId: string): void => {
+    try {
+      evolutionServiceReference.current?.detachDeletedSkill(skillId);
+    } catch (error) {
+      logger.warn("EVOLUTION_SKILL_DETACH_ERROR", { error, skillId });
+    }
+  };
   let voiceMetrics: VoiceMetrics | undefined;
   const windowPlacementRepository = new WindowPlacementRepository(
     applicationDatabase,
@@ -604,6 +611,7 @@ async function startApplication(): Promise<void> {
     mcpService,
     skillService,
     synchronizeEvolutionSkill,
+    detachEvolutionSkill,
   );
 
   const territoryRepository = new TerritoryRepository(applicationDatabase);

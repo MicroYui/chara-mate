@@ -472,6 +472,152 @@ describe("Self-evolution production path", () => {
     database.close();
   });
 
+  it("detaches candidate history when an archived Skill is permanently deleted", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-evolution-skill-delete-"),
+    );
+    temporaryDirectories.push(root);
+    const database = openApplicationDatabase(path.join(root, "app.sqlite"));
+    const chats = new ChatRepository(database);
+    const runs = new RunRepository(database);
+    persistCompletedRun(chats, runs);
+    const clock = new FakeClock("2026-08-13T08:00:00.000Z");
+    const ids = new CryptoIdGenerator();
+    const skillRepository = new SkillRepository(database);
+    const skills = new SkillService(
+      path.join(root, "workspace", ".agents", "skills"),
+      path.join(root, "user-skills"),
+      skillRepository,
+      ids,
+      clock,
+    );
+    await skills.initialize();
+    const base = await skills.save("release-flow", skillContent);
+    const repository = new EvolutionRepository(database);
+    const reviewId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const candidateId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    repository.createReview({
+      chatId: FIXTURE_IDS.chat,
+      completedAt: FIXTURE_TIMESTAMPS.updated,
+      createdAt: FIXTURE_TIMESTAMPS.created,
+      id: reviewId,
+      runId: FIXTURE_IDS.run,
+      status: "completed",
+      triggers: ["explicit_teaching"],
+      updatedAt: FIXTURE_TIMESTAMPS.updated,
+    });
+    const candidate = repository.insertCandidate({
+      chatId: FIXTURE_IDS.chat,
+      createdAt: FIXTURE_TIMESTAMPS.created,
+      evidence: ["发布流程已经完成验证"],
+      id: candidateId,
+      kind: "skill_patch",
+      pinned: false,
+      proposal: {
+        content: updatedSkillContent,
+        kind: "skill_patch",
+        name: "release-flow",
+        targetContentSha256: base.contentSha256,
+        targetRevision: base.revision,
+        targetSkillId: base.id,
+      },
+      rationale: "将验证步骤补入发布流程",
+      replayCases: [
+        {
+          expectedOutcome: "执行完整发布流程",
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          input: "正式发布",
+          scope: "in_scope",
+        },
+        {
+          expectedOutcome: "不执行发布流程",
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          input: "只运行单元测试",
+          scope: "out_of_scope",
+        },
+      ],
+      replayResult: {
+        completedAt: FIXTURE_TIMESTAMPS.updated,
+        status: "passed",
+      },
+      reviewId,
+      sourceItemIds: [FIXTURE_IDS.item],
+      sourceRunIds: [FIXTURE_IDS.run],
+      status: "accepted",
+      updatedAt: FIXTURE_TIMESTAMPS.updated,
+    });
+    const patched = await skills.saveFromEvolution({
+      candidateId,
+      content: updatedSkillContent,
+      name: "release-flow",
+      targetContentSha256: base.contentSha256,
+      targetRevision: base.revision,
+      targetSkillId: base.id,
+    });
+    repository.updateCandidate({
+      ...candidate,
+      activatedAt: clock.now(),
+      activatedSkillId: patched.id,
+      activatedSkillRevision: patched.revision,
+      status: "active",
+      updatedAt: clock.now(),
+    });
+    const memoryRepository = new MemoryRepository(database);
+    const memory = new MemoryService(
+      memoryRepository,
+      new LexicalRetrievalPipeline(database, memoryRepository, clock),
+      ids,
+      clock,
+    );
+    const service = new EvolutionService(
+      repository,
+      runs,
+      chats,
+      skills,
+      memory,
+      { review: () => Promise.resolve([]) },
+      { replay: () => Promise.resolve({ passed: true }) },
+      ids,
+      clock,
+      { warn: vi.fn() },
+      new EvolutionEventCollector(),
+    );
+
+    await skills.archive(patched.id);
+    expect(service.synchronizeSkill(patched.id)).toMatchObject([
+      { id: candidateId, status: "archived" },
+    ]);
+    await skills.delete(patched.id);
+    const [detached] = service.synchronizeSkill(patched.id);
+    expect(detached).toMatchObject({
+      id: candidateId,
+      kind: "new_skill",
+      proposal: {
+        content: updatedSkillContent,
+        kind: "new_skill",
+        name: "release-flow",
+      },
+      status: "archived",
+    });
+    expect(detached).not.toHaveProperty("activatedSkillId");
+    expect(detached).not.toHaveProperty("activatedSkillRevision");
+    expect(skillRepository.listVersions(patched.id)).toEqual([]);
+
+    const restored = await service.restoreCandidate(candidateId);
+    expect(restored).toMatchObject({
+      kind: "new_skill",
+      proposal: {
+        content: updatedSkillContent,
+        kind: "new_skill",
+        name: "release-flow",
+      },
+      status: "draft",
+    });
+    expect(restored).not.toHaveProperty("activatedSkillId");
+    expect(skills.list()).toEqual([]);
+    database.close();
+  });
+
   it("keeps an activated Skill version when its source Chat is deleted", async () => {
     const root = await mkdtemp(
       path.join(os.tmpdir(), "chara-mate-evolution-chat-delete-"),

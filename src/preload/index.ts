@@ -194,6 +194,7 @@ import {
   McpListResponseSchema,
   McpMutationResponseSchema,
   McpSaveRequestSchema,
+  SkillDeleteResponseSchema,
   SkillGetResponseSchema,
   SkillHistoryResponseSchema,
   SkillIdRequestSchema,
@@ -534,6 +535,14 @@ const extensionsApi: ExtensionsApi = Object.freeze({
       SkillMutationResponseSchema,
       await ipcRenderer.invoke(
         EXTENSION_CHANNELS.skillArchive,
+        parseSchemaWithoutCodeGeneration(SkillIdRequestSchema, input),
+      ),
+    ),
+  skillDelete: async (input: SkillIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      SkillDeleteResponseSchema,
+      await ipcRenderer.invoke(
+        EXTENSION_CHANNELS.skillDelete,
         parseSchemaWithoutCodeGeneration(SkillIdRequestSchema, input),
       ),
     ),

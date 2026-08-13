@@ -173,7 +173,7 @@ CharaMate 复用这种信息密度和层级，但不复制品牌颜色、图标�
 
 - 顶部是当前桌宠的图片槽、产品名和新建 Chat；点击新建只在右侧打开空白草稿，不向左侧插入占位会话，首次发送后才显示真实会话；若 Voice 正在进行，则先结束当前 Voice Session，成功后再打开草稿，结束失败时按钮不得悄悄切走；图片槽使用原生图片源，可随当前 Persona/桌宠切换 PNG、WebP、GIF 或 SVG；
 - 中部是六个一级页面；
-- Chats 页面在导航下显示搜索、置顶和最近会话；
+- Chats 页面在导航下显示搜索、置顶和最近会话；会话数量超过可用高度时只滚动会话区，不扩张侧栏或覆盖底部操作；
 - 底部是当前 Persona，以及处于同一行的 Settings 和侧栏折叠按钮；
 - 不再增加第二条常驻导航栏，避免像研发 IDE。
 
@@ -659,6 +659,8 @@ Search / filters
 - Data。
 
 Settings 只放用户真正会改变的选择。Embedding 档位、RRF、topK、WAL、Harness 步数、Realtime transport 和开发指标都不出现。
+
+Skills 首屏只展示 Agent Skills 管理器，不混入成长候选或候选历史；待确认 Skill 候选留在来源 Chat，生效后由这里唯一管理。左栏顶部是“新建 Skill”和“当前 / 已归档”切换，每个列表项只显示较小字号的 Skill 名称和最多两行 description，不显示用户/项目标签、revision 或版本号；已有活动用户 Skill 优先自动选中。详情上方只放状态说明与主要动作：内容未改时显示不可点击的“已保存”，修改后变为“保存更改”，成功反馈只说“已保存”；已归档 Skill 显示“恢复 Skill”，workspace Skill 明示只读。名称和 `SKILL.md` 始终约束在详情列内，长行使用不改写原内容的软换行，不允许被面板右边界截断；编辑器保留横向滚动作为极端长 token 的兜底。焦点反馈只围绕实际输入控件并使用克制的中性描边。编辑器下方只保留带说明的启用与 Pin；revision、内容 SHA、Patch 计数和历史版本不进入普通 UI。归档与永久删除放在编辑器末尾独立的“Skill 管理”区：归档明确说明会移出“当前”列表且可恢复，永久删除确认文案说明整个 Skill 目录中的 `SKILL.md`、脚本、模板和 references 都会被清除且无法撤销。候选生效后在来源 Chat 只保留“已成为 Agent Skill”的结果记录，不再提供归档、Pin 或恢复动作。
 
 Models 使用和 Codex 设置一致的紧凑密度：分区由细分隔线和小标题组织，不把每个动作做成大卡片；普通输入、选择器和按钮高度为 `30–32px`，按钮按文字内容收缩，表单纵向间距为 `10–12px`。Provider 列表保持窄列，主表单不使用夸张圆角或大面积留白。Chat 的“测试连接 / 加载模型”、Realtime 的“测试 Realtime”、Image 的“测试 Image”分别贴近所属配置。Realtime 与 Image 明示复用当前 Provider Profile 上方的 API Key，不重复展示密钥输入；不同密钥必须拆为另一个 Profile。Azure API Version 标成 Chat/Image 可选项，Realtime-only Profile 可以留空；Image Endpoint 以 `/images/generations` 作为同一 deployment 的唯一配置基准，自带的 `api-version` 继续保留并优先用于 Image 验证。界面要说明这套配置同时服务于新图生成和基于已有图的继续编辑；Phase 6 Adapter 分别派生 `/images/generations` 与同级 `/images/edits`，不让用户重复填写 Endpoint 或 Key。Azure Realtime Endpoint 的示例只到 `/openai/v1/realtime`，API 类型必须为 Azure OpenAI，Model 明示为 deployment 名称；连接时该字段覆盖 Endpoint 中已有的 `model` 查询值。若 Azure 域名误选 OpenAI-compatible，测试必须在联网前给出改正提示。Image 测试旁必须说明只验证 URL、凭据和模型，不调用可能计费的生成或编辑请求。
 
