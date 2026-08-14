@@ -60,6 +60,44 @@ function RunHarness({
 }
 
 describe("RunProcess", () => {
+  it("does not leave a completed process row for messages and internal state updates", () => {
+    const base = runByChatId(chatsFixtureIds.designChat);
+    const assistantItem = base.items.find(
+      ({ kind }) => kind === "assistant_message",
+    );
+    const toolItem = base.items.find(({ kind }) => kind === "tool_call");
+    if (!assistantItem || !toolItem) {
+      throw new Error("Missing message or Tool fixture");
+    }
+    const silent: FixtureRun = {
+      ...base,
+      approvals: [],
+      items: [
+        assistantItem,
+        {
+          ...toolItem,
+          id: "00000000-0000-4000-8000-000000000498",
+          input: {
+            arguments: { action: "start_session" },
+            callId: "call-internal-state",
+            toolName: "companionship.update",
+          },
+        },
+      ],
+      record: {
+        ...base.record,
+        execution: { mode: "chat" },
+        status: "completed",
+      },
+    };
+
+    render(<RunHarness run={silent} />);
+
+    expect(
+      screen.queryByRole("button", { name: /已处理/u }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps a completed Run compact until the reader expands real items", () => {
     render(<RunHarness run={runByChatId(chatsFixtureIds.designChat)} />);
 

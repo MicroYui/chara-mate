@@ -19,12 +19,21 @@ import {
   type CharacterWindowApi,
   PET_CHANNELS,
   type PetCharacterSnapshot,
+  type PetConversationNavigation,
   type PetDragPoint,
+  type ProactiveConversationBubble,
+  type ProactiveConversationBubbleDismissRequest,
+  type ProactiveConversationBubbleReplyRequest,
 } from "../shared/contracts/pet";
 import {
   PetCharacterSnapshotSchema,
+  PetConversationNavigationSchema,
   PetDragPointSchema,
   PetDragResultSchema,
+  ProactiveConversationBubbleDismissRequestSchema,
+  ProactiveConversationBubbleReplyRequestSchema,
+  ProactiveConversationBubbleReplyResponseSchema,
+  ProactiveConversationBubbleSchema,
 } from "../shared/schemas/pet";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
 import { createVoiceApi } from "./voiceApi";
@@ -44,6 +53,11 @@ const characterApi: CharacterWindowApi = Object.freeze({
       PET_CHANNELS.focusApproval,
       parseSchemaWithoutCodeGeneration(ApprovalNavigationRequestSchema, input),
     ),
+  focusConversation: (input: PetConversationNavigation) =>
+    ipcRenderer.send(
+      PET_CHANNELS.focusConversation,
+      parseSchemaWithoutCodeGeneration(PetConversationNavigationSchema, input),
+    ),
   getPendingApproval: async () =>
     parseSchemaWithoutCodeGeneration(
       PendingApprovalResponseSchema,
@@ -58,6 +72,27 @@ const characterApi: CharacterWindowApi = Object.freeze({
       await ipcRenderer.invoke(PET_CHANNELS.characterGetSnapshot, {}),
     ),
   markReady: () => ipcRenderer.send(PET_CHANNELS.characterReady, {}),
+  dismissProactiveBubble: (input: ProactiveConversationBubbleDismissRequest) =>
+    ipcRenderer.send(
+      PET_CHANNELS.dismissProactiveBubble,
+      parseSchemaWithoutCodeGeneration(
+        ProactiveConversationBubbleDismissRequestSchema,
+        input,
+      ),
+    ),
+  replyProactiveBubble: async (
+    input: ProactiveConversationBubbleReplyRequest,
+  ) =>
+    parseSchemaWithoutCodeGeneration(
+      ProactiveConversationBubbleReplyResponseSchema,
+      await ipcRenderer.invoke(
+        PET_CHANNELS.replyProactiveBubble,
+        parseSchemaWithoutCodeGeneration(
+          ProactiveConversationBubbleReplyRequestSchema,
+          input,
+        ),
+      ),
+    ),
   moveDrag: (input: PetDragPoint) => {
     ipcRenderer.send(
       PET_CHANNELS.dragMove,
@@ -124,6 +159,26 @@ const characterApi: CharacterWindowApi = Object.freeze({
       active = false;
       ipcRenderer.off(RUN_EVENT_CHANNELS.subscribe, wrappedListener);
     };
+  },
+  subscribeProactiveBubble: (
+    listener: (bubble: ProactiveConversationBubble | null) => void,
+  ) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        input === null
+          ? null
+          : parseSchemaWithoutCodeGeneration(
+              ProactiveConversationBubbleSchema,
+              input,
+            ),
+      );
+    };
+    ipcRenderer.on(PET_CHANNELS.proactiveBubbleChanged, wrappedListener);
+    return () =>
+      ipcRenderer.off(PET_CHANNELS.proactiveBubbleChanged, wrappedListener);
   },
   voice: createVoiceApi(),
 });

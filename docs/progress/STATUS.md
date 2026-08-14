@@ -1,14 +1,31 @@
 # CharaMate 当前状态
 
-> 更新日期：2026-08-13
+> 更新日期：2026-08-14
 
 ## 当前里程碑
 
-**Phase 5 — implementing（Automations、Multi-agent 与 Self-evolution 已完成；Territory Memory 并行工作包完成）**
+**Phase 5 — implementing（全新主动话题的临时邀请生命周期已完成；广义主动聊天仍为后续工作包）**
 
 Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Context、Activity 与 Realtime Voice 均为单一生产路径。Phase 5 Automations Contract/Core/UI 已在 `main` 汇合；`P5-MULTI-AGENT` 已完成 source-first Decision Gate、真实模型实验、中文 Decision Record 与单一路径生产重写，提供 Agent 自主按需调用的两个只读 child；`SELF-EVOLUTION` 已完成 Decision、生产重写和真人体验修复，Reviewer 使用严格结构化输出，失败 Run 的 Plan 不再保留活跃状态。Phase 6 Pet、Territory Base、结构化 Item Manifest、Azure Image 与 Territory Memory 也已完成。Phase 5 仍为 implementing，因为主动聊天是独立后续工作包。
 
+`P5-COMPANIONSHIP-SEAMLESS` 已完成：保留已验证的 Journey/Together Session、全局唯一活跃态、Home Chat 自动归属、稀疏节点、一次约定跟进和共同记忆，但把这些全部退回 Agent 与持久化内部。普通用户只看到原 Chat、自然对话和一条不带状态动作的当前在场提示；开始、切换、暂停、续接、完成与纠正由 Agent 依据 Activity 和完整对话语义处理，不要求用户理解或管理产品名词。角色主动内容继续是目标 Chat 中真实持久化的助手消息，并投影为可连续文字或语音回复的桌宠气泡；主窗口可以全程保持关闭。
+
+`P5-PROACTIVE-INVITATION` 已完成：Activity 触发的全新话题先进入隐藏 provisional Chat，气泡可见后 20 秒内首个文字回复或从该气泡启动 Voice 才把同一个 Chat 转正；超时、关闭、开场失败或应用重启会级联删除临时 Chat、Run 与消息。已有 Chat/Journey 的续接保持正式历史，不套用短时删除规则。
+
 当前工作包退出条件：
+
+- [x] `P5-PROACTIVE-INVITATION` 为 Activity 全新话题增加隐藏 provisional Chat；首个文字/气泡语音回复转正，20 秒超时、关闭与异常重启清理，已有 Chat 行为不变。
+- [x] 临时邀请不进入最近、搜索或归档列表，转正前不提供“打开完整 Chat”，气泡不显示倒计时或进度条。
+- [x] Schema v14、Chat/气泡生命周期、Renderer、集成与 Electron E2E 回归通过，并以真实用户目录冷启动迁移供验收。
+- [x] `P5-COMPANIONSHIP-MVP` 以一个 Journey 领域冻结 Journey/Together Session/稀疏节点契约与全局唯一活跃态；当前 Schema v14 保留“删除普通 Chat 同步移除其内部续接状态”的级联语义，并增加未接住主动邀请的 provisional Chat 状态。
+- [x] Activity 只提供当前活动事实；陪伴 Agent 自行判断沉默、新开对话或路由到既有 Journey，统一 Run 先持久化助手消息再投影桌宠气泡，观察本身不创建 Session/Journey。
+- [x] Agent 以始终可用的内部语义动作维护同行/共处，宿主解析 Home Chat 与状态不变量；Chat/Agent/Voice 继续复用同一 Run/Tool/Approval。
+- [x] `P5-COMPANIONSHIP-SEAMLESS` 移除同行/共处分组、卡片、详情抽屉和手动状态动作；Home Chat 回到普通最近/已归档列表，跨页仅保留自然在场提示与对话式纠正。
+- [x] Agent 在 Text/Voice 中不向用户说出 Journey/Together Session/Home Chat 或状态名，并根据日常表达自然开始、切换、暂停、续接、结束、长期提议、完成和纠正。
+- [x] typed Preload 只向 Renderer 暴露只读陪伴快照与事件；状态变更继续只走统一 Agent Tool，组件、契约、集成和 Electron E2E 回归通过。
+- [x] 一次明确约定的跟进复用 Automation 投递到 Home Chat；显著共同记忆复用 Memory 并保留 Journey/Session 关联。
+- [x] 创建、切换、暂停、重启恢复、完成/重开、跟进与记忆沉淀通过离线、build 和受影响桌面旅程。
+- [x] 主动气泡在创建时绑定唯一 `chatId`，直接复用该 Chat 的普通消息与 Run；主窗口关闭时可连续短文字对话。媒介动作本身不改状态，用户回复后由 Agent 根据是否实际参与当前活动的整体语义开始或恢复。
 
 - [x] 一次、每天、每周与 POSIX 五段 Cron 使用唯一 Schedule 联合；重复计划显式记录 IANA 时区与 UTC `nextRunAt` 投影。
 - [x] 锁定唯一 Cron 计算实现；DST gap/fold、DOM/DOW、无效扩展和显式时区均有确定性回归。
@@ -34,6 +51,9 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
+| `P5-PROACTIVE-INVITATION` | `main` | `done` | 全新主动话题使用隐藏 provisional Chat；20 秒无回复、关闭、开场失败或重启级联清理，首次文字/气泡 Voice 回复原地转正，已有 Chat 续接保持正式历史 |
+| `P5-COMPANIONSHIP-SEAMLESS` | `main` | `done` | 内部状态机与语义 Tool 保留；用户管理界面已移除，Renderer API 已收窄为只读，Text/Voice 当前 Chat 候选和自然语言生命周期验收通过 |
+| `P5-COMPANIONSHIP-MVP` | `main` | `done` | Activity→Agent 主动对话→用户确认 Journey、Home Chat 自动归属、多个可暂停/唯一活跃共处、一次跟进、Memory 节点、绑定精确 Chat 的桌宠连续文字/语音气泡和 Chats 六页全局状态已完成 |
 | `P3-RUNTIME-MEMORY-ACTIVITY` | `main` | `done` | Chat/Agent、结构化输入、Memory/Context/Activity 单一路径完成 |
 | `P2-RUNTIME-PLAN-CHECKPOINT` | `main` | `done` | Plan RunItem 保持历史/UI 真源，checkpoint 保存并恢复编译快照；普通 Tool、旧 checkpoint、重启与压缩回归完成 |
 | `P6-PET-TERRITORY-IMAGE` | `main` | `done` | 桌宠、领地、Azure Image、候选确认与内建 Tool 完成 |
@@ -54,6 +74,10 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 ### 最近完成边界
 
+- 同行触发边界：Activity 只采集当前应用、应用 ID 与窗口标题事实，不直接创建 Chat、Session 或 Journey。Agent 基于事实与既有 Journey 做整体语义判断；无合适话题时沉默，有自然切口时发送普通助手消息，命中既有 Journey 时自动使用它唯一的 Home Chat。没有关键词表、用户选 Chat 或“陪我”命令入口。
+- 同行会话边界：一次共处最多关联一个 Journey；可同时保留多个未完成共处，但全局只有一个 `active`，开始或恢复另一个时原活动共处自动变为 `paused`。应用退出或异常重启把活动共处恢复为暂停，绝不虚构后台共同在场；Journey 完成会结束其未完成共处，重开 Journey 不自动恢复共处。
+- 同行交互边界：角色主动气泡是已经落入准确目标 Chat 的真实助手消息投影，创建时即绑定唯一 `chatId`；新 Activity 话题先落入不出现在最近、搜索或归档中的 provisional Chat，命中 Journey/跟进则归入其唯一正式 Home Chat，不依赖当前主窗口或用户选 Chat。用户第一次文字回复或从气泡启动 Voice 会原地转正同一 Chat，随后可在不打开主窗口时连续短文字/语音往返；每一轮都作为该 Chat 的普通消息与 Chat-mode Run 持久化。完整历史、附件、富内容、结构化输入、Approval 与复杂执行仍进入转正后提供的“打开完整 Chat”。用户未回复的新话题在 20 秒超时或关闭时级联删除气泡、Chat、Run 与消息；已有 Chat 或已经回复的气泡关闭时只结束投影，不删除历史，也不改变 Journey/Session。仅打开或切换文字、语音、完整 Chat 不改变同行状态，回复后才由 Agent 根据是否实际参与当前活动的整体语义开始或恢复。主动开场 Run 不获得 Tool、交互请求或原生 Web Search，因此气泡不等同后台 Agent Task；用户回复产生的普通 Chat Run 继续拥有始终可用的内部陪伴动作。
+- 同行沉淀边界：长期事项必须由 Agent 在自然对话中提出并获得用户确认后创建；一次明确约定的跟进复用 Automation，完成 Journey 会取消待执行跟进；活动共处中的 Memory 创建会形成关联记忆节点，详情按共处、跟进、关键节点和共同回忆四类稀疏呈现。
 - Self-evolution 结果：`SELF-EVOLUTION` 选择 E4；terminal Run 只在明确纠正、明确教学、客观验证成功或重复流程时进入异步 Experience Review，生成 Memory、Persona 偏好、Skill patch 或新 Skill 草稿，任何候选都不自动生效。
 - Self-evolution 范围：Evolution JSON Schema/types、SQLite Schema v11 与 v10→v11 迁移、Repository/Service、无 Tool Model Reviewer、Skill replay、Memory/Skill 激活、Main/Preload typed IPC，以及 Chats/Memory 的候选 UI；生效后的 Skill 只进入普通 Settings 管理面。
 - Self-evolution 非目标：不修改源码、系统根指令、Provider/凭据、审批规则或 Schema 本身；不保留每 Run Review、直接写、Reviewer 自批、固定 Tool 次数、自动归档天数、实验模式或旧 Schema 兼容分支。
@@ -70,7 +94,7 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 ## 依赖与已知边界
 
-- Automations、Multi-agent 与 `SELF-EVOLUTION` 已完成且都没有第二条 fallback 路径；主动聊天仍按自身依赖推进，因此不把整个 Phase 5 标为完成。
+- Automations、Multi-agent、`SELF-EVOLUTION` 与同行 MVP 已完成且都没有第二条 fallback 路径；广义主动聊天仍按自身依赖推进，因此不把整个 Phase 5 标为完成。
 - `MULTI-AGENT` 的机械 Execution Gate 没有证明平均质量或时延净收益；当前能力存在是透明的结果后产品修订。生产入口只覆盖两个只读、资源互斥 child，真实开放任务的选择质量仍需从开发观测复核，不能表述为通用并行加速。
 - `TERRITORY-CAPACITY` 是一个场景、合成 `96×96` 物件的结构化目标窗口走查，不是多人偏好研究；真实证据若要求改变容量，需替换唯一常量和 Decision，不增加容量档位。
 - Territory 保存来源内容、日期和 Memory revision ID 的历史快照；如果原 Memory 后续删除，“在 Memory 中查看”可能找不到活动记录，但 Territory 物件和快照仍保留，且不会成为新的 Memory 事实源。
@@ -79,6 +103,13 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 ## 最近绿色验证
 
+- 2026-08-14 `P5-PROACTIVE-INVITATION`：`npm run verify:phase0` 完整通过，其中 contract 98、focused/component 329、integration 163，共 590 项（仅 2 条既有 TanStack Virtual lint warning）；production build、开发态 smoke、macOS arm64 package 与打包态 smoke 通过；Electron E2E 23/23 通过（Playwright 26.2s）。新增回归覆盖隐藏列表/搜索/归档、同一 Chat 转正、20 秒超时、文字与气泡 Voice 接住、关闭/启动残留清理、Chat/Run/消息级联和转正前不提供完整 Chat。真实用户目录随后由 Schema v13 冷启动迁移到 v14，`is_provisional` 列唯一存在、临时记录为 0、`foreign_key_check` 为 0；当前开发实例保持运行供验收。本工作包没有必须调用的远端测试端点，因此 Live 未运行。
+- 2026-08-14 `P5-COMPANIONSHIP-SEAMLESS`：`npm run verify:phase0` 完整通过，其中 contract 98、focused/component 324、integration 162，共 584 项（仅 2 条既有 TanStack Virtual lint warning）；production build、开发态 smoke、macOS arm64 package 与打包态 smoke 通过；E2E 23/23 通过（Playwright 26.1s）。桌面旅程验证用户只用日常表达即可继续论文、切换到电影并结束当前活动；长期求职话题先由 Agent 自然询问是否以后继续关心，确认后才创建内部长期续接。普通 Chats、跨页自然在场提示、对话式纠正、只读 Renderer 陪伴 API、Schema v12→v13 级联迁移和删除普通 Chat 同步清理内部状态均有回归。随后以真实用户目录冷启动，现有 Schema v12 数据已由正式迁移升级到 v13，两个 Chat 外键均为 `ON DELETE CASCADE`，`foreign_key_check` 无异常，开发实例保持运行供验收。本工作包没有必须调用的远端端点，因此 Live 未运行。
+- 2026-08-14 主动气泡 Voice 卡死与空过程框修复：真实 Run `22ff930a-23c6-4df1-aa62-b82e7b2e4966` 只完成用户转写后永久停在 running；定位为 Voice Run 的 `run.started` 被主动对话表面误判为外部接管，同 Chat 气泡因此销毁了持有唯一 WebRTC Driver 的跟随窗口。当前 Voice Run 保留该连接 owner，普通 text Run 仍按原规则把 Chat 交回完整表面。完成 Run 若只有用户/助手消息或内部 `companionship.update` / `memory.record`，不再附加“已处理”空壳，摘要项数只统计用户可见过程。`npm run check:fast` 通过（contract 98；仅 2 条既有 TanStack Virtual lint warning），focused/component 323/323、integration 160/160、production build、绑定气泡定向 E2E 1/1 与完整 E2E 23/23 通过。首次完整 E2E 的 22/23 仅暴露 Foundation 仍断言旧空过程框；改为断言无空壳后单项与全套均复跑通过。Live 未自动触发，冷重启后的真实气泡 Voice 留给人工验收。
+- 2026-08-14 Provider Function Tool 严格 Schema 兼容修复：新增的 `companionship.update` 含 `format`、`pattern` 与长度约束，旧适配器只检查 `required/additionalProperties` 后误发 `strict: true`，导致主动气泡的首条无 Tool 消息成功、用户回复恢复完整 Tool Registry 后被端点拒绝。当前仅在 Provider wire Schema 属于官方严格子集时启用 strict；完整 TypeBox/Ajv 领域校验保持不变。`npm run check:fast` 通过（contract 98；仅 2 条既有 TanStack Virtual lint warning），`npm run test:focused` 320/320、`npm run test:integration` 160/160、`npm run build`、绑定 Chat 连续回复定向 E2E 1/1 与完整 E2E 23/23 通过。本轮未自动发送真实 Provider 请求，避免未经确认产生远端调用；保留给当前开发实例中的人工气泡验收。
+- 2026-08-14 主动气泡跟随小窗：`npm run check:fast` 通过（contract 98；仅 2 条既有 TanStack Virtual lint warning）；气泡定位/窗口/Preload focused unit 11/11、Character component 5/5、Voice/Journey integration 24/24、绑定 Chat 的连续文字桌面旅程 1/1 通过，production build 随 E2E 通过。桌面旅程同时验证桌宠 hover 声波入口显示时气泡仍可见、两个窗口不相交且气泡位于当前工作区；实际 Electron 渲染截图复核为浅色半透明大圆角卡片，无进度条和可见滚动条。本轮未重跑完整 `verify:phase0`、package 或 live。
+- 2026-08-14 主动气泡连续文字 Chat：`npm run verify:phase0` 完整通过，其中 contract 98、focused/component 316、integration 160，共 574 项（仅 2 条既有 TanStack Virtual lint warning）；production build、开发态 smoke、macOS arm64 package 与打包态 smoke 通过；E2E 23/23 通过（Playwright 29.9s）。新增真实桌面旅程从 Journey 跟进产生气泡，在主窗口数量始终为 0 时连续完成两轮用户/助手回复，随后打开完整 Chat 验证五条消息均属于同一 Chat，且未创建 Together Session。Live 未运行，因为该路径完全由本地 fake Provider 验证且没有远端端点要求。
+- 2026-08-13 `P5-COMPANIONSHIP-MVP`：最终 `npm run verify:phase0` 完整通过，其中 offline 为 contract 98、focused/component 309、integration 159，共 566 项（仅 2 条既有 TanStack Virtual lint warning）；production build、开发态 smoke、macOS arm64 package 与打包态 smoke 通过；E2E 22/22 通过（Playwright 26.5s）。完整桌面旅程覆盖活动共处启动恢复、跨六页全局栏、自动暂停/恢复、退出与重启后暂停、完成与回忆查看。首次完整 E2E 仅暴露 Foundation preload shape 白名单未同步；补齐 Journey 和原 Chat 导航契约后，Foundation 单项 1/1 与完整验收链均复跑通过。Live 未运行，因为本工作包没有必须调用的远端端点。
 - 2026-08-13 Skills 真实使用逻辑收口：`npm run verify:offline` 通过（contract 90、focused/component 292、integration 149，共 531 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 包含 production build，21/21 通过（Playwright 23.5s）。Settings 不再展示成长候选、revision/SHA 元信息或版本恢复网格；左栏仅以紧凑字号显示名称和两行 description，并分为“当前 / 已归档”。普通保存、归档、恢复和永久删除被拆为明确操作，未保存内容会阻止归档；生效后的 Skill 成长记录压缩为来源 Chat 中的“成长结果”，不再展开旧 `SKILL.md`，也不提供归档、Pin 或恢复入口。应用从 `chara-mate-self-evolution` 完整退出并冷启动后，以真实的 `charamate-quick-delivery-check` Skill 只读复核了结果卡片、当前列表、description、普通保存态、编辑器软换行、行为项和底部管理区；未修改用户 Skill。
 - 2026-08-13 `P5-SKILL-DELETE` 与侧栏溢出修复：`npm run verify:offline` 24.4s 通过（contract 90、focused/component 290、integration 149，共 529 项；仅 2 条既有 TanStack Virtual lint warning）；`npm run test:e2e` 包含 production build，21/21 通过（Playwright 27.2s）。真实桌面旅程覆盖活动用户 Skill 编辑、保存 revision 与确认式直接删除；30 条会话回归确认列表独立滚动且 Mika/Settings 固定可见。集成回归覆盖活动/已归档用户 Skill 删除、workspace 拒绝、目录与全部 revision 清理、删除中断恢复、成长候选解绑，以及已删除 Skill patch 恢复为重新确认的 new Skill 草稿。
 - 2026-08-13 Self-evolution 合并与真实验收：合入 `main` 的 Provider namespace/continuation 修复后，`npm run verify:offline` 24.4s 通过（contract 90、focused/component 287、integration 148，共 525 项；仅 2 条既有 TanStack Virtual lint warning），`npm run build` 通过，Electron E2E 21/21、23.7s 通过并同时覆盖 Multi-agent、自进化确认和 Provider 失败 Plan 终态。正常用户数据中的旧 Memory Review `d810d20c-6bfc-49b6-b0b6-3d7ab72fdb40` 真实重试后从 failed 变为 completed，因来源 Run 已直接保存长期记忆而正确生成 0 个重复候选。真实 Skill Run `46b92cc1-9cb1-44ca-99d1-8f3abc74132d` 越过原 Provider 失败点并完成；异步 Review `5fc8012a-de42-4865-9f70-ca7b696669c5` 生成一个 `new_skill` 草稿，用户确认后的 replay passed，`user:charamate-quick-delivery-check` r1 已激活并在 Settings → Skills 可见。
@@ -106,6 +137,9 @@ Phase 0–4 已完成；结构化输入、图片输入、Agent、Memory、Contex
 
 ## 来源快照
 
+- 2026-08-14 复核 OpenAI 官方 [Structured Outputs 支持的 Schema](https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas) 与锁定 `openai@6.49.0`：strict Function Tool 仅支持 JSON Schema 子集，字符串长度、`pattern`、`format` 与数值范围等约束不在该子集内。CharaMate 据此只决定 Provider wire 的 strict 资格，不删改领域 Schema，也不绕过 Tool Registry 的 TypeBox/Ajv 输入校验。
+- 2026-08-14 复核锁定 `electron@43.2.0` 包内官方类型 `electron.d.ts`：`BrowserWindow` 支持独立 `setBounds`、`loadFile(..., { query })`、`focusable` 与 `acceptFirstMouse`。当前桌宠 panel 始终不可聚焦，主动对话存在时才创建可聚焦的跟随 panel，并在关闭投影时销毁；双窗口、上/下方翻转与工作区内约束是 CharaMate 产品启发式，不是 Electron 协议限制。
+- 2026-08-13 复核 Chronicle 官方说明（页面未标独立版本）：其 Activity context 只作为“前台活动事实可成为后续对话上下文”的参考；何时沉默、发起普通对话、路由既有 Journey，以及何时在用户确认后创建长期同行，均是 CharaMate 产品语义，不继承为协议约束或固定触发规则。
 - 2026-08-13 复核锁定 `openai@6.49.0` 的官方 Responses 类型：`text.format` 的 `json_schema` 启用 Structured Outputs，`strict: true` 要求输出遵循所给 Schema；Reviewer/replay 仍在应用持久化边界做 TypeBox/Ajv 校验。
 - 2026-08-13 复核 Hermes Agent `main` commit `a871948d8d4b0f774d4ec40467bab1078a9f28d5`、`background_review.py` commit `35cbad5854155de5541adbe4578008269d60c5af`、`curator.py` commit `bc3fa54f5748fd6c735ad6ced8bacebb752ce3e6` 与 Agent Skills specification commit `217be548739f21d6008915c29aefe320ea1a90af`；Hermes 的后台派生 Agent、直接写、16 iterations 和 7/30/90 天只是当前源码行为，不是 CharaMate 协议限制。
 - 2026-08-13 复核 Codex subagents 官方手册（页面未标独立版本）与 Codex 公开源码 commit `95aada11c4150e4ba28d6279c50f0995c1d93e5a`（提交时间 `2026-08-12T15:31:47Z`）：推荐边界清楚、读多写少的协作任务并明确 child Token/冲突成本；v2 spawn、共享 session registry 与 mailbox/event-driven wait 是当前参考实现行为。其 session slot 默认值不是公开协议限制，CharaMate 的两个 child、资源门与阈值均为本 Decision 的启发式。

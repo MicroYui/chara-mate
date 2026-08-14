@@ -16,11 +16,16 @@ import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { EVOLUTION_CHANNELS } from "../shared/contracts/evolution";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
+import { JOURNEY_CHANNELS } from "../shared/contracts/journey";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
 import { SystemClock } from "../shared/pure/clock";
 import { CryptoIdGenerator } from "../shared/pure/id";
-import { PetMainNavigationSchema } from "../shared/schemas/pet";
+import {
+  PetConversationNavigationSchema,
+  PetMainNavigationSchema,
+  ProactiveConversationBubbleReplyResponseSchema,
+} from "../shared/schemas/pet";
 import { ApprovalNavigationTargetSchema } from "../shared/schemas/agent";
 import { parseSchema } from "../shared/schemas/validation";
 import {
@@ -29,6 +34,7 @@ import {
 } from "../shared/schemas/voice";
 import { registerAgentIpc } from "./agent/agentIpc";
 import { AgentRuntime } from "./agent/agentRuntime";
+import { toAgentAppError } from "./agent/agentError";
 import { ElectronImageInputProvider } from "./agent/imageInput";
 import { CheckpointRepository } from "./agent/checkpointRepository";
 import { decodeRuntimeCheckpoint } from "./agent/runtimeCheckpoint";
@@ -97,6 +103,15 @@ import {
   registerMemoryFormationTool,
   registerMemoryTool,
 } from "./memory/memoryTool";
+import { registerCompanionshipTool } from "./journey/companionshipTool";
+import {
+  CompanionInitiativeService,
+  ModelCompanionInitiativeDecider,
+} from "./journey/companionInitiative";
+import { registerJourneyIpc } from "./journey/journeyIpc";
+import { JourneyRepository } from "./journey/journeyRepository";
+import { JourneyService } from "./journey/journeyService";
+import { ProactiveConversationSurface } from "./journey/proactiveConversationSurface";
 import { CharacterWindowController } from "./pet/characterWindowController";
 import { bundledPetsDirectory, installBundledPets } from "./pet/bundledPets";
 import { registerPetIpc } from "./pet/petIpc";
@@ -167,6 +182,7 @@ let unregisterAutomationIpc: (() => void) | undefined;
 let unregisterExtensionIpc: (() => void) | undefined;
 let unregisterEvolutionIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
+let unregisterJourneyIpc: (() => void) | undefined;
 let unregisterMemoryIpc: (() => void) | undefined;
 let unregisterProviderIpc: (() => void) | undefined;
 let unregisterSettingsIpc: (() => void) | undefined;
@@ -186,6 +202,9 @@ let managedBrowser: ManagedBrowser | undefined;
 let mcpService: McpService | undefined;
 let devDashboard: DevDashboard | undefined;
 let voiceService: VoiceService | undefined;
+let journeyService: JourneyService | undefined;
+let companionInitiativeService: CompanionInitiativeService | undefined;
+let proactiveConversationSurface: ProactiveConversationSurface | undefined;
 let stopPromise: Promise<void> | undefined;
 let shutdownComplete = false;
 
@@ -219,6 +238,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterChatIpc = undefined;
     unregisterFoundationIpc?.();
     unregisterFoundationIpc = undefined;
+    unregisterJourneyIpc?.();
+    unregisterJourneyIpc = undefined;
     unregisterMemoryIpc?.();
     unregisterMemoryIpc = undefined;
     unregisterProviderIpc?.();
@@ -240,7 +261,6 @@ async function stopApplicationInfrastructure(): Promise<void> {
     await evolutionService?.shutdown();
     evolutionService = undefined;
     voiceService?.shutdown();
-    await agentRuntime?.interruptAll();
     managedBrowser?.setActivityObserver(undefined);
     const activityStops = await Promise.allSettled([
       activityCapture?.stop() ?? Promise.resolve(),
@@ -251,6 +271,12 @@ async function stopApplicationInfrastructure(): Promise<void> {
         logger.warn("ACTIVITY_SHUTDOWN_ERROR", { error: result.reason });
       }
     }
+    await companionInitiativeService?.shutdown();
+    companionInitiativeService = undefined;
+    proactiveConversationSurface?.shutdown();
+    proactiveConversationSurface = undefined;
+    journeyService?.pauseForShutdown();
+    await agentRuntime?.interruptAll();
     await Promise.allSettled([
       managedBrowser?.close() ?? Promise.resolve(),
       mcpService?.close() ?? Promise.resolve(),
@@ -263,6 +289,7 @@ async function stopApplicationInfrastructure(): Promise<void> {
     mcpService = undefined;
     devDashboard = undefined;
     voiceService = undefined;
+    journeyService = undefined;
     characterWindowController?.destroy();
     characterWindowController = undefined;
     mainWindowController?.destroy();
@@ -312,7 +339,13 @@ async function startApplication(): Promise<void> {
   const checkpointRepository = new CheckpointRepository(applicationDatabase);
   const runtimeObservability = new RuntimeObservability(runRepository, logger);
   const automationServiceReference: { current?: AutomationService } = {};
+  const companionInitiativeReference: {
+    current?: CompanionInitiativeService;
+  } = {};
   const evolutionServiceReference: { current?: EvolutionService } = {};
+  const proactiveConversationSurfaceReference: {
+    current?: ProactiveConversationSurface;
+  } = {};
   const synchronizeEvolutionSkill = (skillId: string): void => {
     try {
       evolutionServiceReference.current?.synchronizeSkill(skillId);
@@ -333,6 +366,15 @@ async function startApplication(): Promise<void> {
   );
   const runEventService = new RunEventService(runRepository, {
     publish(envelope) {
+      try {
+        proactiveConversationSurfaceReference.current?.observeRun(envelope);
+      } catch (error) {
+        logger.warn("PROACTIVE_CONVERSATION_RUN_OBSERVER_ERROR", {
+          error,
+          runId: envelope.streamId,
+          sequence: envelope.sequence,
+        });
+      }
       for (const window of BrowserWindow.getAllWindows()) {
         if (window.webContents.isDestroyed()) {
           continue;
@@ -360,6 +402,15 @@ async function startApplication(): Promise<void> {
         activityCapture?.observeRun(envelope);
       } catch (error) {
         logger.warn("ACTIVITY_RUN_CAPTURE_ERROR", {
+          error,
+          runId: envelope.streamId,
+          sequence: envelope.sequence,
+        });
+      }
+      try {
+        companionInitiativeReference.current?.observeRun(envelope);
+      } catch (error) {
+        logger.warn("COMPANION_INITIATIVE_RUN_OBSERVER_ERROR", {
           error,
           runId: envelope.streamId,
           sequence: envelope.sequence,
@@ -411,7 +462,26 @@ async function startApplication(): Promise<void> {
       }
     },
   );
+  chatService.discardAllProvisional();
   unregisterChatIpc = registerChatIpc(chatService, runEventService);
+  const journeyServiceInstance = new JourneyService(
+    new JourneyRepository(applicationDatabase),
+    chatService,
+    { getRun: (runId) => runRepository.getRun(runId) },
+    idGenerator,
+    clock,
+    {
+      publish(value) {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (window.webContents.isDestroyed()) continue;
+          window.webContents.send(JOURNEY_CHANNELS.changed, value);
+        }
+      },
+    },
+  );
+  journeyService = journeyServiceInstance;
+  journeyServiceInstance.initialize();
+  unregisterJourneyIpc = registerJourneyIpc(journeyServiceInstance);
 
   const secretStore = new SafeStorageSecretStore(
     path.join(userDataPath, "secrets.bin"),
@@ -482,7 +552,22 @@ async function startApplication(): Promise<void> {
         sourceType: run.source === "voice" ? "voice" : "chat",
       };
     },
+    ({ content, memoryId, runId }) => {
+      try {
+        journeyServiceInstance.linkMemoryForRun(runId, memoryId, content);
+      } catch (error) {
+        logger.warn("JOURNEY_MEMORY_PROJECTION_ERROR", {
+          error,
+          memoryId,
+          runId,
+        });
+      }
+    },
   );
+  registerCompanionshipTool(toolRegistry, {
+    getRun: (runId) => runRepository.getRun(runId),
+    journeys: journeyServiceInstance,
+  });
   const artifactStore = new ArtifactStore(
     path.join(userDataPath, "artifacts"),
     idGenerator,
@@ -550,6 +635,11 @@ async function startApplication(): Promise<void> {
     new ElectronActivitySystemSource(60),
     clock,
     logger,
+    {
+      observeForeground(observation) {
+        companionInitiativeReference.current?.observeForeground(observation);
+      },
+    },
   );
   if (!backgroundTest) {
     const capture = activityCapture;
@@ -726,11 +816,76 @@ async function startApplication(): Promise<void> {
     idGenerator,
     clock,
     undefined,
-    () => skillService.instructions(),
+    (run) =>
+      [
+        skillService.instructions(),
+        journeyServiceInstance.agentContextInstructions(run.chatId),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     chatTitleService,
     imageInput,
     memoryServiceInstance,
   );
+  const proactiveConversationSurfaceInstance = new ProactiveConversationSurface(
+    {
+      discardProvisional: (chatId) => chatService.discardProvisional(chatId),
+      establishProvisional: (chatId) => {
+        chatService.establishProvisional(chatId);
+      },
+      getStatus: (chatId) => chatRepository.getChat(chatId)?.status,
+      restore: (chatId) => {
+        chatService.restore({ chatId });
+      },
+    },
+    agentRuntime,
+    providerService,
+    {
+      getRun: (runId) => runRepository.getRun(runId),
+      readCompletedAssistantMessage: (runId) =>
+        chatRepository
+          .listRunMessages(runId)
+          .findLast(
+            ({ role, status }) =>
+              role === "assistant" && status === "completed",
+          )?.content,
+    },
+    {
+      clear: (bubbleId) => {
+        characterWindowController?.clearProactiveBubble(bubbleId);
+      },
+      show: (bubble) => {
+        characterWindowController?.showProactiveBubble(bubble);
+      },
+    },
+  );
+  proactiveConversationSurfaceReference.current =
+    proactiveConversationSurfaceInstance;
+  proactiveConversationSurface = proactiveConversationSurfaceInstance;
+  const companionInitiativeServiceInstance = new CompanionInitiativeService(
+    new ModelCompanionInitiativeDecider(providerService),
+    journeyServiceInstance,
+    chatService,
+    agentRuntime,
+    {
+      readCompletedAssistantMessage: (runId) =>
+        chatRepository
+          .listRunMessages(runId)
+          .findLast(
+            ({ role, status }) =>
+              role === "assistant" && status === "completed",
+          )?.content,
+    },
+    {
+      hasOutstandingBubble: () =>
+        proactiveConversationSurfaceInstance.hasOutstandingBubble(),
+      publishBubble: (bubble) =>
+        proactiveConversationSurfaceInstance.publish(bubble),
+    },
+    clock,
+    logger,
+  );
+  companionInitiativeService = companionInitiativeServiceInstance;
   const automationServiceInstance = new AutomationService(
     new AutomationRepository(applicationDatabase),
     chatService,
@@ -750,6 +905,21 @@ async function startApplication(): Promise<void> {
     clock,
     {
       publish(envelope) {
+        try {
+          const bubble = journeyServiceInstance.observeAutomation(
+            envelope.event,
+          );
+          if (bubble) {
+            proactiveConversationSurfaceInstance.publish(bubble, {
+              replace: true,
+            });
+          }
+        } catch (error) {
+          logger.warn("JOURNEY_AUTOMATION_PROJECTION_ERROR", {
+            automationEventId: envelope.eventId,
+            error,
+          });
+        }
         for (const window of BrowserWindow.getAllWindows()) {
           if (window.webContents.isDestroyed()) continue;
           try {
@@ -765,7 +935,53 @@ async function startApplication(): Promise<void> {
     },
   );
   automationServiceReference.current = automationServiceInstance;
+  journeyServiceInstance.setFollowUpScheduler({
+    cancel(automationId) {
+      try {
+        const { automation } = automationServiceInstance.get({ automationId });
+        if (automation.state !== "active") return;
+        automationServiceInstance.setPaused({
+          automationId,
+          expectedRevision: automation.revision,
+          paused: true,
+          requestedAt: clock.now(),
+        });
+      } catch (error) {
+        logger.warn("JOURNEY_FOLLOW_UP_CANCEL_ERROR", {
+          automationId,
+          error,
+        });
+      }
+    },
+    schedule({ journey, message, run, runAt }) {
+      const automation = automationServiceInstance.create({
+        definition: {
+          name: `约好再聊：${journey.title}`,
+          schedule: { kind: "once", runAt },
+          task: {
+            delivery: "assistant_message",
+            execution: { mode: "chat" },
+            goal: [
+              "This is a one-time Journey follow-up that the user explicitly agreed to.",
+              "Send the agreed check-in below as your complete conversational response.",
+              "Do not mention scheduling, call tools, or start/resume a Together Session.",
+              JSON.stringify(message),
+            ].join("\n"),
+            kind: "agent_task",
+            modelId: run.provider.modelId,
+            personaId: "00000000-0000-4000-8000-000000000701",
+            providerProfileId: run.provider.profileId,
+            targetChatId: journey.homeChatId,
+            toolScope: { mode: "selected", toolNames: [] },
+          },
+        },
+        requestedAt: clock.now(),
+      });
+      return automation.id;
+    },
+  });
   await agentRuntime.initialize();
+  companionInitiativeReference.current = companionInitiativeServiceInstance;
 
   const petLibrary = new PetLibraryRepository(path.join(userDataPath, "pets"));
   await installBundledPets(
@@ -816,7 +1032,13 @@ async function startApplication(): Promise<void> {
         }
       },
     },
-    () => skillService.instructions(),
+    (chatId) =>
+      [
+        skillService.instructions(),
+        journeyServiceInstance.agentContextInstructions(chatId),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     chatTitleService,
     memoryServiceInstance,
     (phase) => {
@@ -906,7 +1128,7 @@ async function startApplication(): Promise<void> {
   unregisterVoiceIpc = registerVoiceIpc(
     voiceService,
     () => mainWindows.getWindow(),
-    () => characterWindowController?.getWindow() ?? null,
+    (sender) => characterWindowController?.ownsSender(sender) ?? false,
   );
 
   let resolveRendererReady: (() => void) | undefined;
@@ -926,6 +1148,10 @@ async function startApplication(): Promise<void> {
     openMainWindow,
     !backgroundTest,
   );
+  const proactiveBubble = proactiveConversationSurfaceInstance.current();
+  if (proactiveBubble) {
+    characterWindowController.showProactiveBubble(proactiveBubble);
+  }
   unregisterPetIpc = registerPetIpc(
     petService,
     characterWindowController,
@@ -947,6 +1173,38 @@ async function startApplication(): Promise<void> {
           error,
         });
       });
+    },
+    (chatId) => {
+      void (async () => {
+        const window = await mainWindows.open("chat");
+        window.webContents.send(
+          PET_CHANNELS.openConversation,
+          parseSchema(PetConversationNavigationSchema, { chatId }),
+        );
+      })().catch((error: unknown) => {
+        logger.warn("PROACTIVE_CONVERSATION_NAVIGATION_ERROR", {
+          chatId,
+          error,
+        });
+      });
+    },
+    (bubbleId) => {
+      return proactiveConversationSurfaceInstance.clear(bubbleId);
+    },
+    async (request) => {
+      try {
+        const run = await proactiveConversationSurfaceInstance.reply(request);
+        return parseSchema(ProactiveConversationBubbleReplyResponseSchema, {
+          ok: true,
+          value: { runId: run.id },
+        });
+      } catch (error) {
+        characterWindowController?.flushProactiveBubble();
+        return parseSchema(ProactiveConversationBubbleReplyResponseSchema, {
+          error: toAgentAppError(error),
+          ok: false,
+        });
+      }
     },
   );
   await mainWindows.open();

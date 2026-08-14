@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleEllipsis,
+  HeartHandshake,
   Map,
   MessageCircle,
   PanelLeft,
@@ -30,6 +31,7 @@ import {
 
 import type { Chat } from "../../shared/contracts/chat";
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
+import type { JourneySnapshot } from "../../shared/contracts/journey";
 import type { MemorySource } from "../../shared/contracts/memory";
 import type { PetDescriptor } from "../../shared/contracts/pet";
 import type { AgentSettings } from "../../shared/contracts/settings";
@@ -107,6 +109,8 @@ interface AppShellProps {
   readonly chatDomain: ChatDomainState;
   readonly dispatch: Dispatch<ChatsUiAction>;
   readonly foundation: FoundationSnapshot;
+  readonly journeyError: string | null;
+  readonly journeySnapshot: JourneySnapshot;
   readonly onChatArchive: (chatId: string) => void;
   readonly onChatCreate: () => void;
   readonly onChatDelete: (chatId: string) => void;
@@ -114,6 +118,7 @@ interface AppShellProps {
   readonly onChatRestore: (chatId: string) => void;
   readonly onChatSetPinned: (chatId: string, pinned: boolean) => void;
   readonly onClearChatError: () => void;
+  readonly onClearJourneyError: () => void;
   readonly onClearVoiceError: () => void;
   readonly onBackgroundSchemeChange: (scheme: BackgroundScheme) => void;
   readonly onAgentSettingsChanged: (settings: AgentSettings) => void;
@@ -367,6 +372,9 @@ function Sidebar({
               }
             />
           </label>
+          {state.chatListStatus === "active" ? (
+            <p className={styles["sectionLabel"]}>最近对话</p>
+          ) : null}
           <div className={styles["chatScopes"]} aria-label="会话范围">
             <button
               type="button"
@@ -684,6 +692,48 @@ function PageHeader({
   );
 }
 
+function SharedPresenceHint({
+  dispatch,
+  journeySnapshot,
+  onNaturalCorrection,
+  state,
+}: Pick<AppShellProps, "dispatch" | "journeySnapshot" | "state"> & {
+  readonly onNaturalCorrection: (chatId: string, title: string) => void;
+}) {
+  const session = journeySnapshot.activeSession;
+  if (!session) return null;
+  const showingSessionChat =
+    state.activePage === "chats" && state.activeChatId === session.chatId;
+  return (
+    <section
+      className={styles["sharedPresenceHint"]}
+      aria-label="Mika 正在和你一起"
+    >
+      <HeartHandshake aria-hidden="true" size={15} />
+      <div>
+        <strong>{session.title}</strong>
+        <span>Mika 正和你一起</span>
+      </div>
+      {showingSessionChat ? null : (
+        <button
+          type="button"
+          onClick={() =>
+            dispatch({ chatId: session.chatId, type: "chat.selected" })
+          }
+        >
+          回到对话
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => onNaturalCorrection(session.chatId, session.title)}
+      >
+        理解有误
+      </button>
+    </section>
+  );
+}
+
 function PlaceholderPage({
   page,
 }: {
@@ -863,6 +913,8 @@ export function AppShell({
   chatDomain,
   dispatch,
   foundation,
+  journeyError,
+  journeySnapshot,
   onChatArchive,
   onChatCreate,
   onChatDelete,
@@ -870,6 +922,7 @@ export function AppShell({
   onChatRestore,
   onChatSetPinned,
   onClearChatError,
+  onClearJourneyError,
   onClearVoiceError,
   onBackgroundSchemeChange,
   onAgentSettingsChanged,
@@ -903,6 +956,22 @@ export function AppShell({
     null,
   );
   const renameRequestSequence = useRef(0);
+
+  const focusComposer = () => {
+    window.setTimeout(() => {
+      document
+        .querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')
+        ?.focus();
+    }, 0);
+  };
+  const correctCompanionshipScope = (chatId: string, title: string) => {
+    dispatch({ chatId, type: "chat.selected" });
+    dispatch({
+      draft: `我们现在一起做的不是「${title}」，实际是：`,
+      type: "draft.changed",
+    });
+    focusComposer();
+  };
   const requestChatRename = (chat: Chat) => {
     if (state.activeChatId !== chat.id) {
       dispatch({ chatId: chat.id, type: "chat.selected" });
@@ -946,7 +1015,6 @@ export function AppShell({
     },
     [dispatch],
   );
-
   return (
     <div className={styles["shell"]} data-platform={foundation.platform}>
       <Sidebar
@@ -962,27 +1030,37 @@ export function AppShell({
         state={state}
       />
       <main className={styles["main"]}>
-        <PageHeader
-          key={renameRequest?.requestId ?? 0}
-          activeChat={activeChat}
-          chatDomain={chatDomain}
-          dispatch={dispatch}
-          onChatArchive={onChatArchive}
-          onChatDelete={onChatDelete}
-          onChatRename={onChatRename}
-          onChatRenameRequest={requestChatRename}
-          onChatRestore={onChatRestore}
-          onChatSetPinned={onChatSetPinned}
-          onCreateAutomation={() =>
-            setAutomationCreateToken((token) => token + 1)
-          }
-          renameRequest={renameRequest}
-          state={state}
-        />
-        {chatDomain.error || voiceError ? (
+        <div className={styles["topChrome"]}>
+          <PageHeader
+            key={renameRequest?.requestId ?? 0}
+            activeChat={activeChat}
+            chatDomain={chatDomain}
+            dispatch={dispatch}
+            onChatArchive={onChatArchive}
+            onChatDelete={onChatDelete}
+            onChatRename={onChatRename}
+            onChatRenameRequest={requestChatRename}
+            onChatRestore={onChatRestore}
+            onChatSetPinned={onChatSetPinned}
+            onCreateAutomation={() =>
+              setAutomationCreateToken((token) => token + 1)
+            }
+            renameRequest={renameRequest}
+            state={state}
+          />
+          <SharedPresenceHint
+            dispatch={dispatch}
+            journeySnapshot={journeySnapshot}
+            onNaturalCorrection={correctCompanionshipScope}
+            state={state}
+          />
+        </div>
+        {chatDomain.error || journeyError || voiceError ? (
           <div className={styles["errorBanner"]} role="alert">
-            <span>{chatDomain.error ?? voiceError?.message}</span>
-            {!chatDomain.error && voiceError?.retryable ? (
+            <span>
+              {chatDomain.error ?? journeyError ?? voiceError?.message}
+            </span>
+            {!chatDomain.error && !journeyError && voiceError?.retryable ? (
               <button
                 type="button"
                 onClick={() => {
@@ -997,6 +1075,7 @@ export function AppShell({
               type="button"
               onClick={() => {
                 onClearChatError();
+                onClearJourneyError();
                 onClearVoiceError();
               }}
             >

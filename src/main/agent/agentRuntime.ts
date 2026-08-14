@@ -37,6 +37,7 @@ import type { ChatService } from "../chat/chatService";
 import type { ChatTitleGenerator } from "../chat/chatTitleService";
 import type { MemoryService } from "../memory/memoryService";
 import { MEMORY_FORMATION_TOOL_NAME } from "../memory/memoryTool";
+import { COMPANIONSHIP_UPDATE_TOOL_NAME } from "../journey/companionshipTool";
 import type { ChatModelRuntime } from "../providers/providerService";
 import { ProviderError, toProviderAppError } from "../providers/providerError";
 import { toolEvidenceHash } from "../tools/toolRegistry";
@@ -98,6 +99,7 @@ const USER_ATTACHMENT_KINDS = new Set<ArtifactKind>([
 const ALWAYS_LOADED_CLIENT_TOOLS = new Set([
   "plan.update",
   MEMORY_FORMATION_TOOL_NAME,
+  COMPANIONSHIP_UPDATE_TOOL_NAME,
   COLLABORATION_DISPATCH_TOOL_NAME,
 ]);
 const USER_INPUT_NAMESPACE = "interaction";
@@ -719,6 +721,8 @@ function initialCheckpoint(
   recentUser: string,
   priorMessages: readonly Message[],
   toolNames?: readonly string[],
+  interactionEnabled = true,
+  nativeWebSearchEnabled = true,
 ): RuntimeCheckpointState {
   return {
     boundaries: [],
@@ -744,6 +748,8 @@ function initialCheckpoint(
       ...(memoryContext ? [memoryContext] : []),
       currentInput,
     ],
+    ...(interactionEnabled ? {} : { interactionEnabled: false }),
+    ...(nativeWebSearchEnabled ? {} : { nativeWebSearchEnabled: false }),
     latestUserInput: currentInput,
     recentUsers: [recentUser],
     recoveryAttemptedKeys: [],
@@ -768,7 +774,7 @@ export class AgentRuntime {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly contextCompiler = new ContextCompiler(),
-    private readonly additionalInstructions: () => string = () => "",
+    private readonly additionalInstructions: (run: Run) => string = () => "",
     private readonly chatTitles?: ChatTitleGenerator,
     private readonly images?: ImageInputProvider,
     private readonly memory?: MemoryService,
@@ -865,10 +871,53 @@ export class AgentRuntime {
     );
   }
 
+  async startAssistantInitiated(
+    request: StartRunRequest,
+    options: {
+      readonly modelId: string;
+      readonly onStarted?: (run: Run) => void;
+      readonly toolNames?: readonly string[];
+    },
+  ): Promise<Run> {
+    return this.#start(
+      request,
+      await this.providers.createChatModelRuntime(
+        request.providerProfileId,
+        options.modelId,
+      ),
+      options.toolNames ?? [],
+      false,
+      false,
+      false,
+      options.onStarted,
+    );
+  }
+
+  async startInlineConversation(
+    request: StartRunRequest,
+    options: { readonly onRunAllocated: (runId: string) => void },
+  ): Promise<Run> {
+    return this.#start(
+      request,
+      await this.providers.createChatModelRuntime(request.providerProfileId),
+      undefined,
+      true,
+      false,
+      true,
+      undefined,
+      options.onRunAllocated,
+    );
+  }
+
   async #start(
     request: StartRunRequest,
     modelRuntime: ChatModelRuntime,
     toolNames?: readonly string[],
+    recordTriggerMessage = true,
+    interactionEnabled = true,
+    nativeWebSearchEnabled = true,
+    onStarted?: (run: Run) => void,
+    onRunAllocated?: (runId: string) => void,
   ): Promise<Run> {
     return this.chatTurns.runSerializedTurn(request.chatId, async () => {
       const priorMessages = this.chats.listMessages(request.chatId);
@@ -910,6 +959,7 @@ export class AgentRuntime {
       }
       const now = this.clock.now();
       const runId = this.ids.generate();
+      onRunAllocated?.(runId);
       this.writer.startRun({
         chatId: request.chatId,
         createdAt: now,
@@ -922,42 +972,48 @@ export class AgentRuntime {
         status: "running",
       });
 
-      const userMessage = this.chats.insertMessage({
-        chatId: request.chatId,
-        content: request.content,
-        createdAt: now,
-        id: this.ids.generate(),
-        role: "user",
-        runId,
-        status: "completed",
-        updatedAt: now,
-      });
-      for (const attachment of request.attachments) {
-        if (!USER_ATTACHMENT_KINDS.has(attachment.kind)) continue;
-        this.chats.insertAttachment({
+      if (recordTriggerMessage) {
+        const userMessage = this.chats.insertMessage({
           chatId: request.chatId,
+          content: request.content,
           createdAt: now,
-          displayName: attachment.displayName,
-          id: attachment.artifactId,
-          kind: attachment.kind as Exclude<ArtifactKind, "log" | "data">,
-          ...(attachment.mediaType ? { mediaType: attachment.mediaType } : {}),
-          ...(attachment.byteLength === undefined
-            ? {}
-            : { byteLength: attachment.byteLength }),
+          id: this.ids.generate(),
+          role: "user",
+          runId,
+          status: "completed",
+          updatedAt: now,
+        });
+        for (const attachment of request.attachments) {
+          if (!USER_ATTACHMENT_KINDS.has(attachment.kind)) continue;
+          this.chats.insertAttachment({
+            chatId: request.chatId,
+            createdAt: now,
+            displayName: attachment.displayName,
+            id: attachment.artifactId,
+            kind: attachment.kind as Exclude<ArtifactKind, "log" | "data">,
+            ...(attachment.mediaType
+              ? { mediaType: attachment.mediaType }
+              : {}),
+            ...(attachment.byteLength === undefined
+              ? {}
+              : { byteLength: attachment.byteLength }),
+            messageId: userMessage.id,
+            ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+            storageKey: attachment.storageKey,
+          });
+        }
+        const userItem = this.writer.startItem(runId, "user_message", {
+          attachmentIds: request.attachments.map(
+            ({ artifactId }) => artifactId,
+          ),
+          content: request.content,
           messageId: userMessage.id,
-          ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
-          storageKey: attachment.storageKey,
+        });
+        this.writer.completeItem(userItem.id, {
+          output: { messageId: userMessage.id },
+          status: "completed",
         });
       }
-      const userItem = this.writer.startItem(runId, "user_message", {
-        attachmentIds: request.attachments.map(({ artifactId }) => artifactId),
-        content: request.content,
-        messageId: userMessage.id,
-      });
-      this.writer.completeItem(userItem.id, {
-        output: { messageId: userMessage.id },
-        status: "completed",
-      });
 
       const modelText =
         request.attachments.length === 0
@@ -997,6 +1053,8 @@ export class AgentRuntime {
           request.content,
           priorMessages,
           toolNames,
+          interactionEnabled,
+          nativeWebSearchEnabled,
         ),
         0,
       );
@@ -1005,8 +1063,10 @@ export class AgentRuntime {
         if (prepared) state.imageCache.set(attachment.storageKey, prepared);
       });
       this.#saveCheckpoint(state, "model");
+      const started = this.#requireRun(runId);
+      onStarted?.(started);
       this.#launch(state);
-      return this.#requireRun(runId);
+      return started;
     });
   }
 
@@ -1529,9 +1589,11 @@ export class AgentRuntime {
         active.imageCache,
       )) as JsonValue[];
       const registeredTools = this.#availableTools(active, run);
-      const baseToolNamespaces = withUserInputTool(
-        groupModelTools(registeredTools),
-      );
+      const groupedToolNamespaces = groupModelTools(registeredTools);
+      const baseToolNamespaces =
+        active.data.interactionEnabled === false
+          ? groupedToolNamespaces
+          : withUserInputTool(groupedToolNamespaces);
       const toolNamespaces =
         run.execution.mode === "agent" &&
         this.images &&
@@ -1539,12 +1601,12 @@ export class AgentRuntime {
         this.#toolSelected(active, IMAGE_INSPECT_TOOL_NAME)
           ? withImageInspectTool(baseToolNamespaces)
           : baseToolNamespaces;
-      const extra = this.additionalInstructions().trim();
+      const extra = this.additionalInstructions(run).trim();
       const instructions = [
         TEXT_AGENT_BASE_INSTRUCTIONS,
         `Current timestamp: ${this.clock.now()}. User system time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}. Interpret relative dates such as today in that time zone.`,
         run.execution.mode === "chat"
-          ? "This Run is Chat mode. You may use the provided idempotent read-only query and plan tools. Never perform write, critical, or other external-effect actions; memory.record is the sole internal persistence exception. Ask the user to switch explicitly to Agent mode when another action is required."
+          ? "This Run is Chat mode. You may use the provided idempotent read-only query and plan tools. Never perform write, critical, or other external-effect actions; memory.record and companionship.update are the only internal persistence exceptions. Ask the user to switch explicitly to Agent mode when another action is required."
           : "This Run is Agent mode. Follow its approval decisions and continue after structured rejection when a legitimate alternative exists.",
         extra,
       ]
@@ -1580,7 +1642,7 @@ export class AgentRuntime {
             ? {}
             : { maxOutputTokens: active.limits.maxOutputTokens }),
           modelId: run.provider.modelId,
-          nativeWebSearch: true,
+          nativeWebSearch: active.data.nativeWebSearchEnabled !== false,
           toolNamespaces,
         },
         active.abort.signal,
@@ -1697,7 +1759,9 @@ export class AgentRuntime {
       return;
     }
     const run = this.#requireRun(active.runId);
-    const memoryFormation = resolvedName === MEMORY_FORMATION_TOOL_NAME;
+    const internalPersistence =
+      resolvedName === MEMORY_FORMATION_TOOL_NAME ||
+      resolvedName === COMPANIONSHIP_UPDATE_TOOL_NAME;
     if (!toolAllowedInExecution(run.execution, definition.descriptor)) {
       this.#recordToolResult(active, pending, undefined, chatModeToolResult());
       return;
@@ -1722,7 +1786,7 @@ export class AgentRuntime {
       return;
     }
 
-    if (memoryFormation) {
+    if (internalPersistence) {
       await this.#executeTool(active, pending, definition);
       return;
     }

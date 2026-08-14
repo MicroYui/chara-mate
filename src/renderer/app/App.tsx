@@ -9,6 +9,7 @@ import {
 
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
 import type { ApprovalNavigationTarget } from "../../shared/contracts/agent";
+import type { JourneySnapshot } from "../../shared/contracts/journey";
 import { VOICE_CHAT_FALLBACK_TITLE } from "../../shared/contracts/voice";
 import type {
   PetDescriptor,
@@ -45,12 +46,18 @@ export function App() {
     () => readBackgroundScheme(window.localStorage),
   );
   const [petLibrary, setPetLibrary] = useState<PetLibrarySnapshot | null>(null);
+  const [journeySnapshot, setJourneySnapshot] = useState<JourneySnapshot>({
+    journeys: [],
+    sessions: [],
+  });
+  const [journeyError, setJourneyError] = useState<string | null>(null);
   const [openCharacterSettingsToken, setOpenCharacterSettingsToken] =
     useState(0);
   const [approvalNavigation, setApprovalNavigation] =
     useState<ApprovalNavigationTarget | null>(null);
   const focusedApprovalId = useRef<string | undefined>(undefined);
   const openedVoiceChatId = useRef<string | null>(null);
+  const routedTogetherSessionId = useRef<string | null>(null);
   const sendPending = useRef(false);
   const chatStore = useMemo(
     () =>
@@ -71,6 +78,48 @@ export function App() {
 
   useEffect(() => chatStore.start(), [chatStore]);
   useEffect(() => voiceStore.startListening(), [voiceStore]);
+
+  useEffect(() => {
+    let active = true;
+    let receivedChange = false;
+    const unsubscribe = window.charaMate.journey.subscribeChanged(
+      (snapshot) => {
+        receivedChange = true;
+        if (active) setJourneySnapshot(snapshot);
+      },
+    );
+    void window.charaMate.journey
+      .getSnapshot()
+      .then((response) => {
+        if (!active || receivedChange) return;
+        if (response.ok) setJourneySnapshot(response.value);
+        else setJourneyError(response.error.message);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setJourneyError(
+            error instanceof Error ? error.message : "无法读取当前陪伴状态。",
+          );
+        }
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const activeSession = journeySnapshot.activeSession;
+    if (!activeSession) {
+      routedTogetherSessionId.current = null;
+      return;
+    }
+    if (routedTogetherSessionId.current === activeSession.id) return;
+    routedTogetherSessionId.current = activeSession.id;
+    if (activeSession.chatId !== uiState.activeChatId) {
+      dispatch({ chatId: activeSession.chatId, type: "chat.selected" });
+    }
+  }, [journeySnapshot.activeSession, uiState.activeChatId]);
 
   useEffect(() => {
     let active = true;
@@ -97,6 +146,19 @@ export function App() {
         if (target === "character") {
           setOpenCharacterSettingsToken((token) => token + 1);
         }
+      }),
+    [],
+  );
+
+  useEffect(
+    () =>
+      window.charaMate.pet.subscribeOpenConversation(({ chatId }) => {
+        dispatch({ chatId, type: "chat.selected" });
+        window.setTimeout(() => {
+          document
+            .querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')
+            ?.focus();
+        }, 0);
       }),
     [],
   );
@@ -373,6 +435,8 @@ export function App() {
       chatDomain={chatDomain}
       dispatch={dispatch}
       foundation={foundation.snapshot}
+      journeyError={journeyError}
+      journeySnapshot={journeySnapshot}
       onChatArchive={(chatId) =>
         void chatStore
           .archive(chatId)
@@ -387,10 +451,13 @@ export function App() {
       onChatDelete={(chatId) =>
         void chatStore
           .delete(chatId)
-          .then(() => {
+          .then(async () => {
             if (uiState.activeChatId === chatId) {
               dispatch({ type: "chat.selection-cleared" });
             }
+            const response = await window.charaMate.journey.getSnapshot();
+            if (response.ok) setJourneySnapshot(response.value);
+            else setJourneyError(response.error.message);
           })
           .catch(() => undefined)
       }
@@ -411,6 +478,7 @@ export function App() {
       }
       onClearChatError={() => chatStore.clearError()}
       onClearVoiceError={() => voiceStore.clearError()}
+      onClearJourneyError={() => setJourneyError(null)}
       state={uiState}
       onBackgroundSchemeChange={setBackgroundScheme}
       onProvidersChanged={() => void chatStore.refreshModels()}

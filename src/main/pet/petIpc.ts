@@ -1,10 +1,15 @@
 import { dialog, ipcMain, type BrowserWindow } from "electron";
 
-import { PET_CHANNELS } from "../../shared/contracts/pet";
+import {
+  PET_CHANNELS,
+  type ProactiveConversationBubbleReplyRequest,
+  type ProactiveConversationBubbleReplyResponse,
+} from "../../shared/contracts/pet";
 import { ApprovalNavigationRequestSchema } from "../../shared/schemas/agent";
 import {
   PetAnimationSpeedRequestSchema,
   PetCharacterSnapshotSchema,
+  PetConversationNavigationSchema,
   PetDragPointSchema,
   PetDragResultSchema,
   PetEmptyRequestSchema,
@@ -13,6 +18,9 @@ import {
   PetLibrarySnapshotSchema,
   PetScaleRequestSchema,
   PetSelectRequestSchema,
+  ProactiveConversationBubbleDismissRequestSchema,
+  ProactiveConversationBubbleReplyRequestSchema,
+  ProactiveConversationBubbleReplyResponseSchema,
 } from "../../shared/schemas/pet";
 import { parseSchema } from "../../shared/schemas/validation";
 import type { CharacterWindowController } from "./characterWindowController";
@@ -34,6 +42,11 @@ export function registerPetIpc(
   getMainWindow: () => BrowserWindow | null,
   onCharacterReady?: () => void,
   onFocusApproval?: (approvalId: string) => void,
+  onFocusConversation?: (chatId: string) => void,
+  onClearProactiveBubble?: (bubbleId?: string) => boolean,
+  onReplyProactiveBubble?: (
+    request: ProactiveConversationBubbleReplyRequest,
+  ) => Promise<ProactiveConversationBubbleReplyResponse>,
 ): () => void {
   const requireMain = (sender: Electron.WebContents): BrowserWindow => {
     const main = getMainWindow();
@@ -55,12 +68,17 @@ export function registerPetIpc(
         parseSchema(PetLibrarySnapshotSchema, library),
       );
     }
-    const characterWindow = character.getWindow();
-    if (characterWindow && !characterWindow.isDestroyed()) {
-      characterWindow.webContents.send(
-        PET_CHANNELS.characterChanged,
-        parseSchema(PetCharacterSnapshotSchema, snapshot),
-      );
+    const characterSnapshot = parseSchema(PetCharacterSnapshotSchema, snapshot);
+    for (const characterWindow of [
+      character.getWindow(),
+      character.getConversationWindow(),
+    ]) {
+      if (characterWindow && !characterWindow.isDestroyed()) {
+        characterWindow.webContents.send(
+          PET_CHANNELS.characterChanged,
+          characterSnapshot,
+        );
+      }
     }
   };
   const unsubscribe = service.subscribe(() => {
@@ -180,6 +198,20 @@ export function registerPetIpc(
       character.endDrag(event.sender, parseSchema(PetDragPointSchema, input)),
     ),
   );
+  ipcMain.handle(PET_CHANNELS.replyProactiveBubble, async (event, input) => {
+    character.assertCharacterSender(event.sender);
+    const request = parseSchema(
+      ProactiveConversationBubbleReplyRequestSchema,
+      input,
+    );
+    if (!onReplyProactiveBubble) {
+      throw new Error("Proactive conversation replies are unavailable");
+    }
+    return parseSchema(
+      ProactiveConversationBubbleReplyResponseSchema,
+      await onReplyProactiveBubble(request),
+    );
+  });
   ipcMain.on(PET_CHANNELS.dragMove, (event, input) => {
     try {
       character.moveDrag(event.sender, parseSchema(PetDragPointSchema, input));
@@ -197,6 +229,28 @@ export function registerPetIpc(
     const request = parseSchema(ApprovalNavigationRequestSchema, input);
     onFocusApproval?.(request.approvalId);
   });
+  ipcMain.on(PET_CHANNELS.focusConversation, (event, input) => {
+    character.assertCharacterSender(event.sender);
+    const request = parseSchema(PetConversationNavigationSchema, input);
+    if (request.bubbleId) {
+      const cleared = onClearProactiveBubble
+        ? onClearProactiveBubble(request.bubbleId)
+        : character.clearProactiveBubble(request.bubbleId);
+      if (!cleared) character.flushProactiveBubble();
+    }
+    onFocusConversation?.(request.chatId);
+  });
+  ipcMain.on(PET_CHANNELS.dismissProactiveBubble, (event, input) => {
+    character.assertCharacterSender(event.sender);
+    const request = parseSchema(
+      ProactiveConversationBubbleDismissRequestSchema,
+      input,
+    );
+    const cleared = onClearProactiveBubble
+      ? onClearProactiveBubble(request.bubbleId)
+      : character.clearProactiveBubble(request.bubbleId);
+    if (!cleared) character.flushProactiveBubble();
+  });
   ipcMain.on(PET_CHANNELS.showContextMenu, (event, input) => {
     parseSchema(PetEmptyRequestSchema, input);
     character.showContextMenu(event.sender);
@@ -204,6 +258,7 @@ export function registerPetIpc(
   ipcMain.on(PET_CHANNELS.characterReady, (event, input) => {
     character.assertCharacterSender(event.sender);
     parseSchema(PetEmptyRequestSchema, input);
+    character.flushProactiveBubble();
     onCharacterReady?.();
   });
 
@@ -218,6 +273,7 @@ export function registerPetIpc(
       PET_CHANNELS.characterGetSnapshot,
       PET_CHANNELS.dragStart,
       PET_CHANNELS.dragEnd,
+      PET_CHANNELS.replyProactiveBubble,
     ]) {
       ipcMain.removeHandler(channel);
     }
@@ -225,6 +281,8 @@ export function registerPetIpc(
       PET_CHANNELS.dragMove,
       PET_CHANNELS.focusMain,
       PET_CHANNELS.focusApproval,
+      PET_CHANNELS.focusConversation,
+      PET_CHANNELS.dismissProactiveBubble,
       PET_CHANNELS.showContextMenu,
       PET_CHANNELS.characterReady,
     ]) {

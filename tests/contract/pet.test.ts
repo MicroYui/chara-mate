@@ -4,10 +4,14 @@ import {
   CodexPetManifestSchema,
   PetAnimationSpeedRequestSchema,
   PetCharacterSnapshotSchema,
+  PetConversationNavigationSchema,
   PetDragPointSchema,
   PetLibrarySnapshotSchema,
   PetMainNavigationSchema,
   PetScaleRequestSchema,
+  ProactiveConversationBubbleReplyRequestSchema,
+  ProactiveConversationBubbleReplyResponseSchema,
+  ProactiveConversationBubbleSchema,
 } from "../../src/shared/schemas/pet";
 import { parseSchema } from "../../src/shared/schemas/validation";
 import { parseSchemaWithoutCodeGeneration } from "../../src/shared/schemas/valueValidation";
@@ -124,6 +128,49 @@ describe("pet IPC and import contracts", () => {
       expect(() =>
         parse(PetAnimationSpeedRequestSchema, { animationSpeed: 0.09 }),
       ).toThrow();
+    },
+  );
+
+  it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
+    "allows a proactive conversation before or inside a Journey through %s",
+    (parse) => {
+      const bubble = {
+        chatId: "11111111-1111-4111-8111-111111111111",
+        content: "你在整理这篇文章吗？",
+        createdAt: "2026-08-13T09:00:00.000Z",
+        id: "22222222-2222-4222-8222-222222222222",
+        kind: "continuation",
+        replyState: "ready",
+      };
+      expect(parse(ProactiveConversationBubbleSchema, bubble)).toEqual(bubble);
+      expect(
+        parse(ProactiveConversationBubbleSchema, {
+          ...bubble,
+          journeyId: "33333333-3333-4333-8333-333333333333",
+        }),
+      ).toMatchObject({ journeyId: "33333333-3333-4333-8333-333333333333" });
+      expect(
+        parse(ProactiveConversationBubbleReplyRequestSchema, {
+          bubbleId: bubble.id,
+          content: "我正在整理实验设计。",
+          requestedAt: "2026-08-13T09:01:00.000Z",
+        }),
+      ).toMatchObject({ bubbleId: bubble.id });
+      expect(
+        parse(ProactiveConversationBubbleReplyResponseSchema, {
+          ok: true,
+          value: { runId: "44444444-4444-4444-8444-444444444444" },
+        }),
+      ).toMatchObject({ ok: true });
+      expect(
+        parse(PetConversationNavigationSchema, {
+          bubbleId: bubble.id,
+          chatId: bubble.chatId,
+        }),
+      ).toEqual({ bubbleId: bubble.id, chatId: bubble.chatId });
+      expect(
+        parse(PetConversationNavigationSchema, { chatId: bubble.chatId }),
+      ).toEqual({ chatId: bubble.chatId });
     },
   );
 });

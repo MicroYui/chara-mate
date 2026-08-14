@@ -495,7 +495,7 @@ describe("OpenAI Responses Agent wire shape", () => {
         },
         {
           name: "charamate_territory",
-          tools: [{ name: "generate_item", type: "function" }],
+          tools: [{ name: "generate_item", strict: false, type: "function" }],
           type: "namespace",
         },
         { type: "tool_search" },

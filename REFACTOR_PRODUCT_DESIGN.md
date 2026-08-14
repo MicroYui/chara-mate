@@ -231,7 +231,7 @@ userData/
 | `reply` | 最近一段简短回答；点击打开对应 Chat |
 | `progress` | “正在查看文件”“正在操作浏览器”等当前 Item 摘要 |
 | `waiting_approval` | 动作摘要、允许一次、拒绝、打开详情 |
-| `proactive` | 主动问候或基于长期摘要的轻量话题 |
+| `proactive` | 主动问候或基于长期摘要的轻量话题；全新话题先作为短时邀请，已有对话直接续接 |
 | `automation` | 定时任务完成/失败摘要；点击打开持久化 Run |
 | `error` | 一句用户可理解的错误与打开详情 |
 
@@ -440,6 +440,51 @@ Run 的终态语义：
 - Run/Item 先持久化再广播 UI；Renderer 刷新或应用重启后从数据库重建状态。
 - 崩溃时 `running` Item 变为 `interrupted`，用户可以继续或结束；已完成 Tool 不自动重放。
 
+### 4.9 同行事项与共处会话
+
+CharaMate 的陪伴叙事是“**一起做，一起经历，一起记住**”。它使用两个互相嵌套、但不取代 Chat/Run 的时间尺度：
+
+- **同行事项（Journey）**：持续数天到数月，表达一件对用户重要的事如何被用户和角色共同走过；一个同行事项拥有一个由系统管理的 Home Chat，可以包含多次共处会话、会话间的续接、稀疏阶段节点、一次明确约定的跟进以及最终回望。
+- **共处会话（Together Session）**：持续数十分钟到数小时，表达一次围绕具体活动的共同在场；可以跨文字、Voice、Browser、文档和普通 Agent Run，但不拥有另一套模型循环、Tool、审批或消息系统。
+
+系统不要求用户先说“陪我做什么”，也不把显式创建入口作为常规起点。常规入口是：Activity 提供有来源的当前活动观察，陪伴 Agent 依据完整语境语义判断“不打扰 / 发起一段新对话 / 回到某个既有 Journey”，再通过普通 Chat Run 发出一句轻量、具体且有依据的对话邀请。全新话题的开场 Run 暂存在一个不进入最近或已归档列表的 provisional Chat 中；气泡可见后的 20 秒内，用户第一次文字回复或明确启动该气泡的语音回复才把它原子转为普通 Chat，超时或关闭则连同开场 Run 与消息级联删除。已有 Chat 的续接与约定跟进已经属于正式历史，不使用这套短时删除规则。Activity 不负责判断陪伴意图，也不创建 Journey 或 Together Session；语义门不使用应用名、论文、电影等关键词表或正则硬编码。20 秒是当前仓库所有者选择用于首轮验收的 CharaMate MVP 可用性启发式，不是协议限制，后续只能依据真实体验结果替换。
+
+主动开场本身仍是普通对话，不自动代表共同在场。用户接住话题并让角色实际参与当前活动后，Agent 才可根据语义开始 Together Session，不要求用户说出固定邀约句；只闲聊、忽略或关闭气泡都不产生 Session。对话进一步表明这是一件会持续数天到数月、且对用户重要的事时，Agent 可以自然提议把它作为 Journey 一起走；Journey 仍只能由用户明确提出，或由 Agent 提议并获得用户确认后创建，绝不因 Activity 匹配而静默创建。若新 Journey 正是从当前对话里尚未结束的共处生长出来，宿主在同一事务中完成创建与关联，不让用户重新选择或搬运 Chat。Agent 只提交带候选 ID 的语义动作，宿主负责 ID、Home Chat、路由和全部状态不变量。
+
+状态与基数规则：
+
+- Journey 只有 `active / paused / completed`；完成后可以重开，并保留原完成节点。
+- Together Session 只有 `active / paused / ended`；全局至多一个 `active`。开始或恢复另一场共处时，宿主自动暂停当前未结束共处。
+- 一次共处最多关联一个 Journey；一个 Journey 可以包含多次共处；共处也可以独立存在。
+- 暂停表示仍打算续上这次具体共处；结束表示本次共同在场已经收束，即使 Journey 仍继续。空闲时长、沉默或话题轻微漂移都不自动暂停或结束。
+- 暂停 Journey 会暂停它当前活跃的共处；之后 Agent 基于明确语义恢复其中一场共处时会同时恢复 Journey。
+- 完成 Journey 会结束其全部未结束共处、写入完成节点并停止开放式跟进许可；需要独立继续的共处必须先解除关联。重开 Journey 不复活已结束共处。
+- 应用退出、崩溃或恢复时，遗留 `active` 共处转为 `paused`，绝不伪装为完成。
+
+Journey 的 Home Chat 是系统路由目标，不是用户要理解或挑选的概念。来自 Activity、Automation、Memory 或当前对话的确定入口直接携带内部 ID；自然语言由 Agent 在当前候选中做语义判断，唯一匹配时直接操作，真实歧义时只询问用户说的是哪一件具体事情，不让用户挑 Chat。当前共同活动只在全局显示简短范围提示并允许自然纠正；纠正改变关联，不复制 Run 或消息历史。
+
+`Journey`、`Together Session`、`Home Chat` 及其状态名只属于产品设计、持久化和 Agent Tool 协议，**不是普通用户要创建、浏览或管理的对象**。正常界面不出现“同行中 / 待续共处 / 同行回望”分组、Session 卡片、Journey 详情抽屉或开始、暂停、恢复、完成、重开按钮；系统管理的 Home Chat 与其他 Chat 一样出现在最近对话中，并继续使用普通重命名、置顶、归档和删除交互。删除该 Chat 时随 Chat 一并删除只为续接服务的 Journey/Session/节点引用，不以隐藏外键阻止用户删除；已经独立进入 Memory 的内容继续由 Memory 自己的删除规则管理。跨页面只保留一条非阻塞的当前在场提示，例如“Mika 正和你一起：修改论文引言”，不显示所属 Journey、状态、时长或进度；它只允许回到原对话，或以“理解有误”预填一句自然纠正，不直接暴露状态变更。
+
+生命周期动作由 Agent 根据完整对话语义调用内部 Tool：实际开始共同处理具体内容时开始或续上；明确转去另一项共同活动时开始新 Session 并由宿主自动暂停旧 Session；“先到这里、晚点继续”保存续接点并暂停；“看完了、这次结束了”保存短回顾并结束。用户不需要使用“陪我”“共处”“同行”或任何固定口令，Agent 也不得在回复中播报“已创建 Journey”“已开始共处”等内部结果。话题轻微变化、失焦、沉默或经过一段时间仍不足以改变状态。长期性被自然揭示时，Agent 只用日常语言提出一次具体承诺，例如“以后再看到这篇论文时，我继续从这里接，可以吗？”；用户确认后才创建 Journey。暂停、完成、重开、范围纠正和忘掉这段连续性同样通过普通对话表达，用户面对的始终是具体事情，而不是状态机。
+
+Activity 再次观察到与既有 Journey 语义一致的活动时，陪伴 Agent 可以把开场路由到该 Journey 的 Home Chat，让用户无需重新解释；真实歧义或证据不足时保持沉默，不以气泡逼用户消歧。该路由只恢复对话上下文，不恢复 Journey 状态，不开始或恢复 Together Session，也不扩大执行权限。用户回复后，Agent 再根据“是新的一次共处、续上某次未结束共处，还是只聊几句”分别处理。
+
+共处期间角色拥有**局部、可撤销的语境主动性**：只在当前活动已有内容、Tool 结果或自然边界提供帮助；用户说“安静陪我”后，除审批、错误和重要结果外不制造闲聊。沉默本身是有效陪伴，时间流逝不能触发“还在吗”“加油”等空洞关心；没有真实文档、页面、音视频或 Tool 观察时，角色不得声称看见或听见。共处不会扩大当前 Run 的执行权限，也不会把主动性带到会话外。
+
+创建 Journey 只授予跨会话连续性，不授予外呼权限。会话外默认只记住并在用户回来时自然续接；主动跟进必须有 Journey 范围内的明确自然语言约定。MVP 把约定具体化为一个可见的下一次一次性跟进，复用 Automation 的 Agent Task 并投递到 Home Chat；同一条已完成的助手消息再投影到桌宠气泡，不另存一份“提醒事实”。
+
+气泡是目标 Chat 的轻量第二界面，不是新的 Runtime、提醒卡或共处控制器。每个气泡创建时已经绑定一个精确 `chatId`：Activity 全新话题绑定宿主自动创建但尚未转正的 provisional Chat，匹配既有 Journey 或 Journey 跟进时绑定其正式 Home Chat；它不跟随主窗口当前正在浏览的 Chat，也不要求用户选择归属。provisional Chat 只为统一 Run/Item 和准确回复路由提供短暂内部归属，不出现在 Chat 列表、搜索或归档记录中；用户第一次回复后沿用同一个 `chatId` 转正，不搬运、不复制消息。用户可以完全不打开主窗口，在气泡内连续发送短文字；每轮用户消息和助手回答仍由统一 Agent Runtime 写入这个 Chat 的普通 Run/Item，回答完成后投影回同一个气泡。语音入口同样固定绑定该 Chat，并使用 `Chat` 权限。文字或语音媒介都不会自动恢复 Together Session，也不会继承桌宠通用声波入口的 `Agent + 完全访问` 语义。
+
+气泡只承担轻量文字往返：完整历史、附件、富内容精读、结构化输入、审批和复杂执行过程继续在“打开完整 Chat”后处理；切换界面不复制消息或迁移 Run。全新话题在用户回复前不提供“打开完整 Chat”，不显示倒计时、进度条或“保存会话”；20 秒超时或关闭气泡会撤下投影并删除 provisional Chat，应用退出或崩溃留下的 provisional Chat 在下一次启动时清理。第一次文字回复，或从该气泡明确发起语音回复，代表用户接住对话：宿主先转正原 Chat、取消到期清理，再运行回复；即使后续 Provider 失败，用户已经接住的 Chat 也继续保留。已有 Chat 的气泡关闭只关闭投影，不删除 Chat、消息或已启动的 Run，也不改变 Journey/Session 状态；用户已接住的气泡不会被另一条主动开场替换。回复后只要完整语义表明角色已经实际加入当前活动，Agent 即可开始或恢复，无需“继续陪我”等固定表述。关闭或忽略气泡不产生追问，暂停状态本身绝不触发提醒。后续才评估有界开放式“偶尔问问”，不在 MVP 中建立无限调度。
+
+每次暂停或结束都保存可纠正的续接记录（当前位置、下次切入点和短回顾），但不自动制造长期 Memory。Journey 时间线只保存有意义的决定、转折、结果、完成/重开节点和已关联的共享 Memory。用户明确说“记住”时沿用 `memory.record`；Agent 只可对少量显著时刻语义判断并清楚告知记住了什么、如何纠正或忘记。Territory 物件只在重要里程碑或完成回望时提出，仍需用户选择，不按每次共处自动生成。
+
+项目、考试、求职和内容共赏使用同一组状态与数据结构，不成为模板或场景状态机。差异只进入 Agent 的语境姿态、证据和里程碑表达：项目不变成看板，考试不变成打卡监督，求职不变成 CRM，单次电影或文章共赏默认可以只是独立共处。
+
+MVP 要验证的核心承诺是：用户经历多次切换和间隔后，角色仍能回到正确的事情及准确续接点，用户无需重新解释、挑选 Chat 或管理 Journey/Session；同时只收到一次自己同意的跟进，并能在结束时得到自然回望与可见记忆。成功指标关注范围理解、自动路由、纠正/重述次数、主动介入是否有依据且不打扰，以及用户是否感到“被陪着”而不是“被项目管理”，不以任务完成率代替陪伴价值。可用性验收必须直接检查普通界面和 Agent 文案中不存在内部名词与状态管理控件，不能只证明底层状态正确。
+
+2026-08-13 的触发语义复核参考了 OpenAI 官方 [Chronicle 文档](https://learn.chatgpt.com/docs/customization/chronicle)（当日访问）：Chronicle 使用近期屏幕上下文理解用户当前所见、补足用户未显式写入提示词的信息并识别相关来源。CharaMate 只采用这一“上下文依据”边界；官方文档没有定义主动搭话策略，因此“不打扰 / 新对话 / 既有 Journey”的选择、气泡投影和 Session/Journey 生命周期均是 CharaMate 自身的产品语义，不冒充 Chronicle 行为。
+
 ---
 
 ## 5. Tool、Skills、MCP、Browser 与 Computer Use
@@ -468,6 +513,8 @@ Registry 负责：
 - 输出截断与 artifact 化；
 - Run Item 事件；
 - 指标与错误分类。
+
+Provider wire Schema 与领域 Schema 只有一个真源、两个校验层次：Tool Registry 始终用完整 TypeBox/Ajv Schema 校验真实调用；Responses Adapter 只有在根级对象、全部对象字段必填且没有 strict 子集不支持的约束时，才为该 Tool 启用 `strict: true`。包含 `format`、`pattern`、长度或数值范围等完整领域约束的 Tool 仍发送同一 Schema，但使用非 strict Function Calling，并在宿主执行前完成完整校验，不复制或放宽领域契约。来源：2026-08-14 复核 [OpenAI Structured Outputs supported schemas](https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas) 与锁定的 `openai@6.49.0` 类型。
 
 ### 5.2 内置能力
 
@@ -1009,12 +1056,17 @@ Automation Run 的 `queued/running/waiting_approval/needs_input/interrupted/comp
 
 - 用户设定的时间；
 - 某个重要 Automation 完成；
+- Activity 发布的当前前台活动观察，经陪伴 Agent 语义门判断后适合自然搭话；
 - 当日行为摘要出现值得交流的模式；
 - 长时间专注后的轻量关心；
 - 领地产生新物件候选；
 - 用户明确要求后续跟进。
 
-主动聊天先创建普通 Chat 消息，再投影为气泡；回复后自然进入同一 Chat。用户可设置主动程度和安静时段，也可以对单类气泡说“少一点”。
+Activity 只发布事实，不调用 Journey/Session 写入，也不自行生成话术。陪伴语义门把观察与当前 Journey 候选一起交给模型，模型可以选择保持沉默、开一段新对话或准确回到某个既有 Journey；宿主只校验候选 ID、用户 actor、单次进行中的主动 Run 和现有气泡等结构条件，不用应用名或主题关键词替 Agent 做语义决定。前台切换过程中只保留最新尚未判断的观察，避免把采样流变成排队提醒；失败或证据不足静默退出，不降级为模板问候。
+
+主动聊天由统一 Agent Runtime 在目标 Chat 先写入一条真实助手消息，再投影为气泡；新话题使用普通 Chat，匹配既有 Journey 时使用其 Home Chat。气泡保存并只使用发起时的精确 `chatId`，不会根据当前窗口、Activity 或后续话题重新猜测归属。用户可以在气泡内连续短文字回复，用户消息与助手回答都持久化到该 Chat 的普通 Chat-mode Run，回答再回到同一气泡；“打开完整 Chat”只切换到同一事实源。气泡中的语音入口也固定绑定该 Chat，并默认使用 `Chat` 权限；回复媒介不等于执行授权。仅打开或切换文字/语音媒介不创建或恢复状态；回复内容让 Agent 实际参与当前活动后，才按整体语义开始或恢复 Together Session，长期 Journey 仍必须获得确认。用户可设置主动程度和安静时段，也可以对单类气泡说“少一点”。
+
+Journey 跟进是本节的受限特例：只有用户明确约定后才能创建；使用一次性 Agent Task、固定投递到该 Journey 的 Home Chat，并继续复用普通 Run/Item、Tool 与 Approval。完成消息可以投影为桌宠气泡，但气泡只承载该消息、短文字输入、语音、打开完整 Chat 和关闭，不承载完成率、截止时间、续接开关或执行权限。Journey 或 Together Session 的存在、暂停时长和沉默都不是触发条件。MVP 不把“偶尔问问”解释成无限周期任务，而是在每次确认后只保留一个可见的下一次跟进。
 
 ### 9.3 成长语义
 
@@ -1700,6 +1752,7 @@ userData/
 | Graph | 仅当 `MEMORY-GRAPH` 晋级时存在其唯一表组，否则没有 Graph 表 |
 | Profile | `profile_fields`（指向 Memory Revision） |
 | Activity | `activity_events`, `activity_episodes`, `activity_digests`, `distillation_runs`, `retention_runs` |
+| Journey | `journeys`, `together_sessions`, `journey_moments`；Home Chat 与 Automation/Memory 只保存稳定引用，不复制其领域数据 |
 | Automation | `automations`（包含 Reminder、Agent Task 与主动触发规则）, `automation_runs` |
 | Extension | `mcp_servers`, `skill_versions`, `skill_usage` |
 | Provider | `provider_profiles`（无明文 Key） |
@@ -1716,6 +1769,8 @@ userData/
 6. 若所选检索使用外部字节引用，引用提交前对应字节必须按其一致性协议持久化。
 7. Territory item 只引用 Memory，不成为 Memory 的事实来源。
 8. API Key 不进 SQLite、日志、消息、Tool Result 和 Memory。
+9. 全局至多一条 `together_sessions.status = active`；一次 Session 至多一个 Journey；每个 Journey 恰有一个唯一 Home Chat。
+10. Journey 完成时不存在仍为 `active/paused` 的关联 Session；应用恢复时不存在遗留 `active` Session。
 
 2026-08-01 的 Phase 1 Data 实现前来源刷新使用锁定发布物 `better-sqlite3@13.0.1` 随包源码：其 [`transaction`](https://github.com/WiseLibs/better-sqlite3/blob/v13.0.1/lib/methods/transaction.js) 在同步回调成功后提交、异常时回滚，并以 savepoint 支持嵌套事务。Phase 1 因此只把“事件行、当前投影与 sequence 水位必须在一个同步事务中提交”作为正确性约束；`journal_mode`、`synchronous`、busy timeout、batch 与 checkpoint 仍留给 `MEMORY-STORAGE`，本阶段不据 README 的性能建议提前选择 WAL 或固定数值。
 
@@ -1736,6 +1791,7 @@ userData/
 
 ```text
 chat.*
+journey.*
 run.*
 approval.*
 memory.*

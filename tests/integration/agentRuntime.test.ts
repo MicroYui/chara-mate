@@ -34,6 +34,8 @@ import { ChatRepository } from "../../src/main/chat/chatRepository";
 import { ChatService } from "../../src/main/chat/chatService";
 import type { ChatTitleGenerator } from "../../src/main/chat/chatTitleService";
 import { openApplicationDatabase } from "../../src/main/db/database";
+import { registerCompanionshipTool } from "../../src/main/journey/companionshipTool";
+import type { JourneyService } from "../../src/main/journey/journeyService";
 import { LexicalRetrievalPipeline } from "../../src/main/memory/lexicalRetrievalPipeline";
 import { MemoryRepository } from "../../src/main/memory/memoryRepository";
 import { MemoryService } from "../../src/main/memory/memoryService";
@@ -793,7 +795,7 @@ describe("Agent Runtime production path", () => {
       "always-loaded memory.record tool",
     );
     expect(provider.requests[0]?.instructions).toContain(
-      "sole internal persistence exception",
+      "only internal persistence exceptions",
     );
     expect(provider.requests[1]?.input).toEqual(
       expect.arrayContaining([
@@ -1209,6 +1211,67 @@ describe("Agent Runtime production path", () => {
     expect(JSON.stringify(fixture.provider.requests[0])).not.toContain(
       "web.search",
     );
+    fixture.database.close();
+  });
+
+  it("runs an inline bubble reply in the same Chat without exposing structured input", async () => {
+    const fixture = await createFixture([finalTurn("气泡里的连续回答")]);
+    registerCompanionshipTool(fixture.tools, {
+      getRun: (runId) => fixture.runs.getRun(runId),
+      journeys: {} as JourneyService,
+    });
+    let allocatedRunId: string | undefined;
+
+    const run = await fixture.runtime.startInlineConversation(
+      {
+        attachments: [],
+        chatId: fixture.chatId,
+        content: "继续聊刚才的实验设计",
+        execution: { mode: "chat" },
+        providerProfileId: PROFILE_ID,
+        requestedAt: REQUESTED_AT,
+      },
+      {
+        onRunAllocated: (runId) => {
+          allocatedRunId = runId;
+        },
+      },
+    );
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(allocatedRunId).toBe(run.id);
+    expect(fixture.runs.getRun(run.id)).toMatchObject({
+      chatId: fixture.chatId,
+      execution: { mode: "chat" },
+      status: "completed",
+    });
+    expect(fixture.provider.requests[0]?.nativeWebSearch).toBe(true);
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces.some(
+        ({ name }) => name === "interaction",
+      ),
+    ).toBe(false);
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "companionship")
+        ?.tools.find(({ name }) => name === "companionship.update"),
+    ).toMatchObject({ deferLoading: false, strict: false });
+    expect(
+      new ChatRepository(fixture.database)
+        .listMessages(fixture.chatId)
+        .map(({ content, role, runId }) => ({ content, role, runId })),
+    ).toEqual([
+      {
+        content: "继续聊刚才的实验设计",
+        role: "user",
+        runId: run.id,
+      },
+      {
+        content: "气泡里的连续回答",
+        role: "assistant",
+        runId: run.id,
+      },
+    ]);
     fixture.database.close();
   });
 

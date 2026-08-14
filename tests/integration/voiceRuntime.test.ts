@@ -1138,6 +1138,32 @@ describe("Realtime native Voice runtime", () => {
     value.database.close();
   });
 
+  it("binds a proactive bubble Voice reply to the same Chat with Chat permission", async () => {
+    const value = await fixture();
+    const before = value.chats.listChats({ status: "active" }).length;
+    const connection = await value.service.quickStart({
+      chatId: CHAT_ID,
+      execution: { mode: "chat" },
+      requestedAt: NOW,
+    });
+    expect(value.service.getActive()?.chatId).toBe(CHAT_ID);
+    expect(value.chats.listChats({ status: "active" })).toHaveLength(before);
+
+    await report(value.service, connection.sessionId, {
+      protocolSessionId: "proactive-reply-session",
+      type: "session.ready",
+    });
+    await report(value.service, connection.sessionId, {
+      itemId: "proactive-user",
+      transcript: "对，我在继续整理。",
+      type: "transcript.user.completed",
+    });
+    expect(value.runs.getActiveRun(CHAT_ID)?.execution).toEqual({
+      mode: "chat",
+    });
+    value.database.close();
+  });
+
   it("reuses the ordinary fallback and AI title chain for a quick Voice Chat", async () => {
     const generate = vi
       .fn<ChatTitleGenerator["generate"]>()

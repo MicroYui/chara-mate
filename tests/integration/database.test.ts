@@ -471,6 +471,49 @@ describe("foundation database", () => {
     database.close();
   });
 
+  it("migrates v11 data by adding Journey and Together Session state", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-v11-migration-"),
+    );
+    temporaryDirectories.push(directory);
+    const databasePath = path.join(directory, "charamate.sqlite");
+    let database = openApplicationDatabase(databasePath);
+    database.transaction(() => {
+      database.exec("DROP TABLE journey_moments");
+      database.exec("DROP TABLE together_sessions");
+      database.exec("DROP TABLE journeys");
+      database
+        .prepare(
+          "UPDATE app_metadata SET value = '11' WHERE key = 'schema_version'",
+        )
+        .run();
+    })();
+    database.close();
+
+    database = openApplicationDatabase(databasePath);
+    expect(
+      database
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table' AND name IN (
+             'journeys', 'together_sessions', 'journey_moments'
+           ) ORDER BY name`,
+        )
+        .all(),
+    ).toEqual([
+      { name: "journey_moments" },
+      { name: "journeys" },
+      { name: "together_sessions" },
+    ]);
+    expect(
+      database
+        .prepare("SELECT value FROM app_metadata WHERE key = 'schema_version'")
+        .get(),
+    ).toEqual({ value: CURRENT_SCHEMA_VERSION });
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
+  });
+
   it("keeps Automation revisions, occurrence identity and lifecycle constraints in SQLite", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "chara-mate-automation-schema-"),

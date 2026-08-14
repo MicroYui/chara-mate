@@ -121,10 +121,7 @@ test("launches through the typed preload boundary", async () => {
       )
       .toBe(true);
     await expect(page.getByText(messageFixture.content)).toBeVisible();
-    await expect(page.getByRole("button", { name: /已处理/u })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    await expect(page.getByRole("button", { name: /已处理/u })).toHaveCount(0);
 
     const bridgeShape = await page.evaluate(() => ({
       activityKeys: Object.keys(window.charaMate.activity).sort(),
@@ -135,6 +132,7 @@ test("launches through the typed preload boundary", async () => {
       extensionKeys: Object.keys(window.charaMate.extensions).sort(),
       fileKeys: Object.keys(window.charaMate.files).sort(),
       foundationKeys: Object.keys(window.charaMate.foundation).sort(),
+      journeyKeys: Object.keys(window.charaMate.journey).sort(),
       memoryKeys: Object.keys(window.charaMate.memory).sort(),
       petKeys: Object.keys(window.charaMate.pet).sort(),
       providerKeys: Object.keys(window.charaMate.provider).sort(),
@@ -215,6 +213,7 @@ test("launches through the typed preload boundary", async () => {
         "skillSetPinned",
       ],
       fileKeys: ["getPathForFile"],
+      journeyKeys: ["getSnapshot", "subscribeChanged"],
       memoryKeys: [
         "acceptCandidate",
         "archive",
@@ -242,6 +241,7 @@ test("launches through the typed preload boundary", async () => {
         "setAnimationSpeed",
         "setScale",
         "subscribeChanged",
+        "subscribeOpenConversation",
         "subscribeOpenMain",
       ],
       rootKeys: [
@@ -253,6 +253,7 @@ test("launches through the typed preload boundary", async () => {
         "extensions",
         "files",
         "foundation",
+        "journey",
         "memory",
         "pet",
         "provider",
@@ -334,6 +335,29 @@ test("launches through the typed preload boundary", async () => {
       focusable: process.platform !== "darwin",
       found: true,
     });
+    await expect(
+      characterPage.evaluate(() =>
+        Object.keys(window.charaMateCharacter).sort(),
+      ),
+    ).resolves.toEqual([
+      "dismissProactiveBubble",
+      "endDrag",
+      "focusApproval",
+      "focusConversation",
+      "focusMain",
+      "getPendingApproval",
+      "getSnapshot",
+      "markReady",
+      "moveDrag",
+      "replyProactiveBubble",
+      "resolveApproval",
+      "showContextMenu",
+      "startDrag",
+      "subscribe",
+      "subscribeApproval",
+      "subscribeProactiveBubble",
+      "voice",
+    ]);
     await expect(
       characterPage.evaluate(() =>
         Object.keys(window.charaMateCharacter.voice).sort(),

@@ -69,6 +69,7 @@ function createApi(initial: PetLibrarySnapshot) {
     setScale,
     subscribeChanged: () => () => undefined,
     subscribeOpenMain: () => () => undefined,
+    subscribeOpenConversation: () => () => undefined,
   };
   return {
     api,

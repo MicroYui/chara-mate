@@ -113,10 +113,60 @@ function schemaRecord(
     : undefined;
 }
 
-export function supportsStrictToolSchema(value: unknown): boolean {
-  if (Array.isArray(value)) return value.every(supportsStrictToolSchema);
+// OpenAI strict function schemas support only a JSON Schema subset. Keep the
+// full domain schema in ToolRegistry/Ajv, but do not opt the Provider into
+// strict mode when the wire schema contains unsupported validation keywords.
+// Source checked 2026-08-14:
+// https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas
+const UNSUPPORTED_STRICT_SCHEMA_KEYWORDS = new Set([
+  "allOf",
+  "contains",
+  "else",
+  "exclusiveMaximum",
+  "exclusiveMinimum",
+  "format",
+  "if",
+  "maxContains",
+  "maxItems",
+  "maxLength",
+  "maxProperties",
+  "maximum",
+  "minContains",
+  "minItems",
+  "minLength",
+  "minProperties",
+  "minimum",
+  "multipleOf",
+  "not",
+  "oneOf",
+  "pattern",
+  "patternProperties",
+  "propertyNames",
+  "then",
+  "unevaluatedProperties",
+  "uniqueItems",
+]);
+
+function schemaMapValues(value: unknown): readonly unknown[] {
+  const map = schemaRecord(value);
+  return map ? Object.values(map) : [];
+}
+
+function schemaArray(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function strictSchemaNodeSupported(value: unknown): boolean {
   const schema = schemaRecord(value);
   if (!schema) return true;
+
+  if (
+    Object.keys(schema).some((keyword) =>
+      UNSUPPORTED_STRICT_SCHEMA_KEYWORDS.has(keyword),
+    )
+  ) {
+    return false;
+  }
 
   const type = schema["type"];
   const isObject =
@@ -136,7 +186,25 @@ export function supportsStrictToolSchema(value: unknown): boolean {
     }
   }
 
-  return Object.values(schema).every(supportsStrictToolSchema);
+  const nestedSchemas = [
+    ...schemaMapValues(schema["$defs"]),
+    ...schemaMapValues(schema["definitions"]),
+    ...schemaMapValues(schema["properties"]),
+    ...schemaArray(schema["anyOf"]),
+    ...(schema["items"] === undefined ? [] : [schema["items"]]),
+  ];
+  return nestedSchemas.every(strictSchemaNodeSupported);
+}
+
+export function supportsStrictToolSchema(value: unknown): boolean {
+  const schema = schemaRecord(value);
+  if (!schema) return false;
+  const type = schema["type"];
+  const rootIsObject =
+    type === "object" ||
+    (Array.isArray(type) && type.includes("object")) ||
+    Object.hasOwn(schema, "properties");
+  return rootIsObject && strictSchemaNodeSupported(schema);
 }
 
 function record(value: unknown): Readonly<Record<string, JsonValue>> | null {

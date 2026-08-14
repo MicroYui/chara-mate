@@ -35,9 +35,11 @@ export interface RuntimeCheckpointState {
   readonly forcedCompactionAttempted: boolean;
   readonly handoff: HandoffSummary;
   readonly input: readonly JsonValue[];
+  readonly interactionEnabled?: boolean;
   readonly latestUserInput?: JsonValue;
   readonly lastRequestBytes?: number;
   readonly lastUsage?: ModelUsage;
+  readonly nativeWebSearchEnabled?: boolean;
   readonly pendingTool?: PendingToolCall;
   readonly pendingInput?: PendingInputRequest;
   readonly recentUsers: readonly string[];
@@ -108,6 +110,10 @@ export function decodeRuntimeCheckpoint(
     !Array.isArray(value["boundaries"]) ||
     !validContextLimits(value["contextLimits"]) ||
     !validCurrentPlan(value["currentPlan"]) ||
+    (value["interactionEnabled"] !== undefined &&
+      typeof value["interactionEnabled"] !== "boolean") ||
+    (value["nativeWebSearchEnabled"] !== undefined &&
+      typeof value["nativeWebSearchEnabled"] !== "boolean") ||
     !validToolNames(value["toolNames"])
   ) {
     throw new TypeError("Unsupported or corrupt Agent checkpoint");

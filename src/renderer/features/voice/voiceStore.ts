@@ -121,10 +121,18 @@ export class VoiceStore {
     return this.#beginStart(() => this.api.start(request));
   }
 
-  startQuick(): Promise<void> {
+  startQuick(target?: { readonly chatId: string }): Promise<void> {
     this.preparePlayback();
     return this.#beginStart(() =>
-      this.api.quickStart({ requestedAt: new Date().toISOString() }),
+      this.api.quickStart(
+        target
+          ? {
+              chatId: target.chatId,
+              execution: { mode: "chat" },
+              requestedAt: new Date().toISOString(),
+            }
+          : { requestedAt: new Date().toISOString() },
+      ),
     );
   }
 

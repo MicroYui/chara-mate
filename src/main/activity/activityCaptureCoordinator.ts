@@ -6,6 +6,7 @@ import type {
   ActiveApplication,
   ActiveApplicationProbe,
 } from "./activeApplicationProbe";
+import type { ForegroundActivityObserver } from "./activityObservation";
 import type { ActivityService } from "./activityService";
 import type {
   ActivitySystemBoundary,
@@ -88,6 +89,7 @@ export class ActivityCaptureCoordinator {
     private readonly system: ActivitySystemSource,
     private readonly clock: Clock,
     private readonly logger: AppLogger,
+    private readonly foregroundObserver?: ForegroundActivityObserver,
   ) {}
 
   start(): void {
@@ -228,6 +230,24 @@ export class ActivityCaptureCoordinator {
       actor,
     );
     this.#activeApplication = id ? { actor, id, key } : undefined;
+    if (id && actor === "user") {
+      try {
+        this.foregroundObserver?.observeForeground({
+          ...(current.appId ? { appId: redactText(current.appId) } : {}),
+          appName: redactText(current.appName),
+          eventId: id,
+          observedAt: this.clock.now(),
+          ...(current.windowTitle
+            ? { windowTitle: redactText(current.windowTitle) }
+            : {}),
+        });
+      } catch (error) {
+        this.logger.warn("ACTIVITY_FOREGROUND_OBSERVER_ERROR", {
+          error,
+          eventId: id,
+        });
+      }
+    }
     if (id) await this.#captureScreenshot(actor);
   }
 

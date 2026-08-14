@@ -62,18 +62,22 @@ describe("Character Window typed preload boundary", () => {
 
     expect(Object.keys(api).sort()).toEqual(
       [
+        "dismissProactiveBubble",
         "endDrag",
-        "focusMain",
         "focusApproval",
+        "focusConversation",
+        "focusMain",
         "getPendingApproval",
         "getSnapshot",
         "markReady",
         "moveDrag",
+        "replyProactiveBubble",
         "resolveApproval",
         "showContextMenu",
         "startDrag",
         "subscribe",
         "subscribeApproval",
+        "subscribeProactiveBubble",
         "voice",
       ].sort(),
     );
@@ -147,6 +151,97 @@ describe("Character Window typed preload boundary", () => {
     unsubscribe();
     expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
       PET_CHANNELS.characterChanged,
+      registeredListener,
+    );
+  });
+
+  it("routes proactive conversation actions through their narrow typed channels", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(PET_CHANNELS.replyProactiveBubble);
+        expect(input).toEqual({
+          bubbleId: "20000000-0000-4000-8000-000000000002",
+          content: "我正在整理实验设计。",
+          requestedAt: "2026-08-13T09:01:00.000Z",
+        });
+        return Promise.resolve({
+          ok: true,
+          value: { runId: "20000000-0000-4000-8000-000000000003" },
+        });
+      },
+    );
+    const api = await loadApi();
+    const navigation = {
+      bubbleId: "20000000-0000-4000-8000-000000000002",
+      chatId: "20000000-0000-4000-8000-000000000001",
+    };
+    const dismissRequest = {
+      bubbleId: "20000000-0000-4000-8000-000000000002",
+    };
+
+    api.focusConversation(navigation);
+    api.dismissProactiveBubble(dismissRequest);
+    await expect(
+      api.replyProactiveBubble({
+        ...dismissRequest,
+        content: "我正在整理实验设计。",
+        requestedAt: "2026-08-13T09:01:00.000Z",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { runId: "20000000-0000-4000-8000-000000000003" },
+    });
+
+    expect(electron.ipcRenderer.send).toHaveBeenNthCalledWith(
+      1,
+      PET_CHANNELS.focusConversation,
+      navigation,
+    );
+    expect(electron.ipcRenderer.send).toHaveBeenNthCalledWith(
+      2,
+      PET_CHANNELS.dismissProactiveBubble,
+      dismissRequest,
+    );
+    expect(() =>
+      api.focusConversation({ chatId: "not-an-entity-id" }),
+    ).toThrow();
+    expect(electron.ipcRenderer.send).toHaveBeenCalledTimes(2);
+  });
+
+  it("validates proactive bubbles, accepts dismissal, and removes its wrapper", async () => {
+    let registeredListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(PET_CHANNELS.proactiveBubbleChanged);
+        registeredListener = listener;
+      },
+    );
+    const api = await loadApi();
+    const listener = vi.fn();
+    const unsubscribe = api.subscribeProactiveBubble(listener);
+    if (!registeredListener) {
+      throw new Error("Proactive bubble listener was not registered");
+    }
+    const bubble = {
+      chatId: "20000000-0000-4000-8000-000000000001",
+      content: "你在整理这篇文章吗？",
+      createdAt: "2026-08-13T09:00:00.000Z",
+      id: "20000000-0000-4000-8000-000000000002",
+      kind: "continuation",
+      replyState: "ready",
+    };
+
+    registeredListener({}, bubble);
+    registeredListener({}, null);
+    expect(listener).toHaveBeenNthCalledWith(1, bubble);
+    expect(listener).toHaveBeenNthCalledWith(2, null);
+    expect(() =>
+      registeredListener?.({}, { content: "missing ids" }),
+    ).toThrow();
+
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      PET_CHANNELS.proactiveBubbleChanged,
       registeredListener,
     );
   });

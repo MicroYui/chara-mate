@@ -24,6 +24,18 @@ import {
   type ElectronApplication,
   type Page,
 } from "playwright";
+import { RunEventService } from "../../src/main/agent/runEventService";
+import { RunEventWriter } from "../../src/main/agent/runEventWriter";
+import { RunRepository } from "../../src/main/agent/runRepository";
+import { AutomationRepository } from "../../src/main/automations/automationRepository";
+import { AutomationService } from "../../src/main/automations/automationService";
+import { ChatRepository } from "../../src/main/chat/chatRepository";
+import { ChatService } from "../../src/main/chat/chatService";
+import { openApplicationDatabase } from "../../src/main/db/database";
+import { JourneyRepository } from "../../src/main/journey/journeyRepository";
+import { JourneyService } from "../../src/main/journey/journeyService";
+import { SystemClock } from "../../src/shared/pure/clock";
+import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { createPng } from "../fixtures/png";
 
 const projectRoot = path.resolve(
@@ -203,6 +215,12 @@ async function startFakeProvider(browserUrl?: string) {
         );
       } else if (titleTask) {
         writeSse(response, finalAnswer(responseId, "E2E 对话标题"));
+      } else if (body.includes("气泡第三轮")) {
+        writeSse(response, finalAnswer(responseId, "第三轮仍然留在原气泡。"));
+      } else if (body.includes("气泡第二轮")) {
+        writeSse(response, finalAnswer(responseId, "那就从实验设计接着聊。"));
+      } else if (body.includes("气泡连续聊天端到端")) {
+        writeSse(response, finalAnswer(responseId, "论文现在写到哪里了？"));
       } else if (evolutionTeachingTask) {
         writeSse(response, finalAnswer(responseId, "明白，以后会先给结论。"));
       } else if (collaborationChild) {
@@ -586,7 +604,7 @@ function expectCleanApplicationShutdown(stderr: readonly string[]): void {
   expect(output).not.toContain("Uncaught Exception:");
 }
 
-async function saveProvider(page: Page, baseUrl: string): Promise<void> {
+async function saveProvider(page: Page, baseUrl: string): Promise<string> {
   const saved = await page.evaluate(
     ({ url }) =>
       window.charaMate.provider.saveProfile({
@@ -601,8 +619,127 @@ async function saveProvider(page: Page, baseUrl: string): Promise<void> {
     { url: baseUrl },
   );
   expect(saved.ok).toBe(true);
+  if (!saved.ok) throw new Error(saved.error.message);
   await page.reload();
   await expect(page.getByRole("button", { name: "gpt-5.6-sol" })).toBeVisible();
+  return saved.value.id;
+}
+
+function seedJourneyFollowUp(
+  userData: string,
+  providerProfileId: string,
+): { automationId: string; chatId: string } {
+  const database = openApplicationDatabase(
+    path.join(userData, "charamate.sqlite"),
+  );
+  try {
+    const ids = new CryptoIdGenerator();
+    const clock = new SystemClock();
+    const chatRepository = new ChatRepository(database);
+    const runRepository = new RunRepository(database);
+    const chats = new ChatService(chatRepository, runRepository, ids, clock);
+    const automationService = new AutomationService(
+      new AutomationRepository(database),
+      chats,
+      {
+        getRun: (runId) => runRepository.getRun(runId),
+        listChatRuns: (chatId) => runRepository.getSnapshot(chatId).runs,
+        readCompletedAssistantMessage: (runId) =>
+          chatRepository
+            .listRunMessages(runId)
+            .findLast(
+              ({ role, status }) =>
+                role === "assistant" && status === "completed",
+            )?.content,
+      },
+      {
+        startAssistantInitiated: () =>
+          Promise.reject(new Error("Seeded automation must run in the app")),
+        startAutomation: () =>
+          Promise.reject(new Error("Seeded automation must run in the app")),
+      },
+      ids,
+      clock,
+      { publish: () => undefined },
+    );
+    const journeys = new JourneyService(
+      new JourneyRepository(database),
+      chats,
+      { getRun: (runId) => runRepository.getRun(runId) },
+      ids,
+      clock,
+      { publish: () => undefined },
+    );
+    const homeChat = chats.create({ title: "论文随聊" });
+    const journey = journeys.createJourney({
+      currentPosition: "正在修改实验设计",
+      homeChatId: homeChat.id,
+      nextStep: "继续收敛实验变量",
+      purpose: "完成未来几个月的毕业论文",
+      title: "毕业论文",
+    });
+    const sourceRunId = ids.generate();
+    const now = clock.now();
+    const writer = new RunEventWriter(
+      runRepository,
+      new RunEventService(runRepository, { publish: () => undefined }),
+      ids,
+      clock,
+    );
+    writer.startRun({
+      chatId: homeChat.id,
+      createdAt: now,
+      execution: { mode: "chat" },
+      id: sourceRunId,
+      latestSequence: 1,
+      provider: {
+        apiStyle: "openai-compatible",
+        modelId: "gpt-5.6-sol",
+        profileId: providerProfileId,
+        profileName: "Agent E2E",
+      },
+      source: "text",
+      startedAt: now,
+      status: "running",
+    });
+    writer.transition(sourceRunId, "completed");
+    let automationId: string | undefined;
+    journeys.setFollowUpScheduler({
+      cancel: () => undefined,
+      schedule: ({ journey: target, message, run, runAt }) => {
+        const automation = automationService.create({
+          definition: {
+            name: `约好再聊：${target.title}`,
+            schedule: { kind: "once", runAt },
+            task: {
+              delivery: "assistant_message",
+              execution: { mode: "chat" },
+              goal: `气泡连续聊天端到端：${message}`,
+              kind: "agent_task",
+              modelId: run.provider.modelId,
+              personaId: "00000000-0000-4000-8000-000000000701",
+              providerProfileId: run.provider.profileId,
+              targetChatId: target.homeChatId,
+              toolScope: { mode: "selected", toolNames: [] },
+            },
+          },
+          requestedAt: now,
+        });
+        automationId = automation.id;
+        return automation.id;
+      },
+    });
+    journeys.scheduleFollowUp({
+      journeyId: journey.id,
+      message: "自然问问论文进展。",
+      runAt: new Date(Date.parse(now) + 3_600_000).toISOString(),
+      sourceRunId,
+    });
+    if (!automationId) throw new Error("Failed to seed Journey follow-up");
+    return { automationId, chatId: homeChat.id };
+  } finally {
+    database.close();
+  }
 }
 
 async function selectAgent(
@@ -695,6 +832,175 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
       .get() as { count: number };
     database.close();
     expect(checkpointCount.count).toBe(0);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("keeps two text replies inside the bound proactive Chat without reopening Main", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-inline-bubble-e2e-"),
+  );
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const setup = await launchApplication(userData, workspace);
+    application = setup.application;
+    const providerProfileId = await saveProvider(setup.main, provider.baseUrl);
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(setup.stderr);
+
+    const seeded = seedJourneyFollowUp(userData, providerProfileId);
+    const launched = await launchApplication(userData, workspace, "论文随聊");
+    application = launched.application;
+    const queued = await launched.main.evaluate(
+      ({ automationId }) =>
+        window.charaMate.automations.runNow({
+          automationId,
+          requestedAt: new Date().toISOString(),
+        }),
+      { automationId: seeded.automationId },
+    );
+    expect(queued.ok).toBe(true);
+
+    const conversation = await findWindow(
+      launched.application,
+      "CharaMate Conversation",
+    );
+    const bubble = conversation.getByRole("region", {
+      name: "角色发起的对话",
+    });
+    await expect(bubble).toContainText("论文现在写到哪里了？");
+    const characterSurfaces = await application.evaluate(
+      ({ BrowserWindow, screen }) => {
+        const pet = BrowserWindow.getAllWindows().find(
+          (candidate) => candidate.getTitle() === "CharaMate Character",
+        );
+        const bubbleWindow = BrowserWindow.getAllWindows().find(
+          (candidate) => candidate.getTitle() === "CharaMate Conversation",
+        );
+        if (!pet || !bubbleWindow)
+          throw new Error("Missing character surfaces");
+        const petBounds = pet.getBounds();
+        return {
+          bubbleBounds: bubbleWindow.getBounds(),
+          bubbleFocusable: bubbleWindow.isFocusable(),
+          petBounds,
+          petFocusable: pet.isFocusable(),
+          workArea: screen.getDisplayMatching(petBounds).workArea,
+        };
+      },
+    );
+    expect(characterSurfaces.bubbleFocusable).toBe(true);
+    expect(characterSurfaces.petFocusable).toBe(process.platform !== "darwin");
+    expect(
+      characterSurfaces.bubbleBounds.y +
+        characterSurfaces.bubbleBounds.height <=
+        characterSurfaces.petBounds.y ||
+        characterSurfaces.bubbleBounds.y >=
+          characterSurfaces.petBounds.y + characterSurfaces.petBounds.height,
+    ).toBe(true);
+    expect(characterSurfaces.bubbleBounds.x).toBeGreaterThanOrEqual(
+      characterSurfaces.workArea.x,
+    );
+    expect(
+      characterSurfaces.bubbleBounds.x + characterSurfaces.bubbleBounds.width,
+    ).toBeLessThanOrEqual(
+      characterSurfaces.workArea.x + characterSurfaces.workArea.width,
+    );
+
+    const petWindow = await findWindow(
+      launched.application,
+      "CharaMate Character",
+    );
+    await petWindow.getByRole("button", { name: /桌宠$/ }).hover();
+    await expect(
+      petWindow.getByRole("button", { name: "开始语音聊天" }),
+    ).toBeVisible();
+    await expect(bubble).toBeVisible();
+
+    await launched.main.close();
+    await expect
+      .poll(async () => {
+        const titles = await Promise.all(
+          (application?.windows() ?? []).map((window) => window.title()),
+        );
+        return titles.filter((title) => title === "CharaMate").length;
+      })
+      .toBe(0);
+
+    const input = conversation.getByRole("textbox", {
+      name: "在气泡中回复",
+    });
+    await input.fill("气泡第二轮：从实验设计开始");
+    await conversation.getByRole("button", { name: "发送气泡回复" }).click();
+    await expect(bubble).toContainText("那就从实验设计接着聊。");
+    await expect(input).toHaveValue("");
+
+    await input.fill("气泡第三轮：继续说说变量");
+    await conversation.getByRole("button", { name: "发送气泡回复" }).click();
+    await expect(bubble).toContainText("第三轮仍然留在原气泡。");
+    await expect
+      .poll(async () => {
+        const titles = await Promise.all(
+          (application?.windows() ?? []).map((window) => window.title()),
+        );
+        return titles.filter((title) => title === "CharaMate").length;
+      })
+      .toBe(0);
+
+    await conversation.getByRole("button", { name: "打开完整 Chat" }).click();
+    const reopenedMain = await findWindow(launched.application, "CharaMate");
+    await expect(
+      reopenedMain.getByRole("heading", { name: "论文随聊" }),
+    ).toBeVisible();
+    await expect(
+      reopenedMain.getByRole("button", { name: /已处理/u }),
+    ).toHaveCount(0);
+    const snapshot = await reopenedMain.evaluate(
+      (chatId) => window.charaMate.chat.getSnapshot({ chatId }),
+      seeded.chatId,
+    );
+    if (!snapshot.ok || !snapshot.value) {
+      throw new Error("Missing proactive Chat snapshot");
+    }
+    expect(
+      snapshot.value.messages.map(({ content, role }) => ({ content, role })),
+    ).toEqual([
+      { content: "论文现在写到哪里了？", role: "assistant" },
+      { content: "气泡第二轮：从实验设计开始", role: "user" },
+      { content: "那就从实验设计接着聊。", role: "assistant" },
+      { content: "气泡第三轮：继续说说变量", role: "user" },
+      { content: "第三轮仍然留在原气泡。", role: "assistant" },
+    ]);
+    expect(
+      snapshot.value.runs.every(({ chatId }) => chatId === seeded.chatId),
+    ).toBe(true);
+    const journeySnapshot = await reopenedMain.evaluate(() =>
+      window.charaMate.journey.getSnapshot(),
+    );
+    expect(journeySnapshot).toMatchObject({
+      ok: true,
+      value: { sessions: [] },
+    });
+    await expect
+      .poll(async () =>
+        Promise.all(
+          launched.application.windows().map((window) => window.title()),
+        ),
+      )
+      .not.toContain("CharaMate Conversation");
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
   } finally {
     await application?.close();
     await provider.close();

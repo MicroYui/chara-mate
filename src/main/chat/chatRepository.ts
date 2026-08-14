@@ -20,6 +20,7 @@ interface ChatRow {
   archived_at: string | null;
   created_at: string;
   id: string;
+  is_provisional: number;
   pinned_at: string | null;
   status: string;
   title: string;
@@ -104,18 +105,20 @@ function readAttachment(row: AttachmentRow): Attachment {
 export class ChatRepository {
   constructor(private readonly database: Database.Database) {}
 
-  insertChat(chat: Chat): Chat {
+  insertChat(chat: Chat, options: { provisional?: boolean } = {}): Chat {
     const persisted = sanitizeForPersistence(ChatSchema, chat);
     this.database
       .prepare(
         `INSERT INTO chats (
-          id, title, status, pinned_at, archived_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          id, title, status, is_provisional, pinned_at, archived_at,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         persisted.id,
         persisted.title,
         persisted.status,
+        options.provisional ? 1 : 0,
         persisted.pinnedAt ?? null,
         persisted.archivedAt ?? null,
         persisted.createdAt,
@@ -156,10 +159,46 @@ export class ChatRepository {
     );
   }
 
+  deleteProvisionalChat(chatId: string): boolean {
+    return (
+      this.database
+        .prepare("DELETE FROM chats WHERE id = ? AND is_provisional = 1")
+        .run(chatId).changes === 1
+    );
+  }
+
+  deleteAllProvisionalChats(): number {
+    return this.database
+      .prepare("DELETE FROM chats WHERE is_provisional = 1")
+      .run().changes;
+  }
+
+  establishProvisionalChat(
+    chatId: string,
+    updatedAt: string,
+  ): Chat | undefined {
+    const result = this.database
+      .prepare(
+        `UPDATE chats
+         SET is_provisional = 0, updated_at = ?
+         WHERE id = ? AND is_provisional = 1`,
+      )
+      .run(updatedAt, chatId);
+    return result.changes === 1 ? this.getChat(chatId) : undefined;
+  }
+
+  isProvisionalChat(chatId: string): boolean {
+    const row = this.database
+      .prepare("SELECT is_provisional FROM chats WHERE id = ?")
+      .get(chatId) as { is_provisional: number } | undefined;
+    return row?.is_provisional === 1;
+  }
+
   getChat(chatId: string): Chat | undefined {
     const row = this.database
       .prepare(
-        `SELECT id, title, status, pinned_at, archived_at, created_at, updated_at
+        `SELECT id, title, status, is_provisional, pinned_at, archived_at,
+                created_at, updated_at
          FROM chats
          WHERE id = ?`,
       )
@@ -173,17 +212,20 @@ export class ChatRepository {
       query
         ? this.database
             .prepare(
-              `SELECT id, title, status, pinned_at, archived_at, created_at, updated_at
+              `SELECT id, title, status, is_provisional, pinned_at, archived_at,
+                      created_at, updated_at
                FROM chats
-               WHERE status = ? AND instr(lower(title), lower(?)) > 0
+               WHERE status = ? AND is_provisional = 0
+                 AND instr(lower(title), lower(?)) > 0
                ORDER BY (pinned_at IS NULL), pinned_at DESC, updated_at DESC, id`,
             )
             .all(filter.status, query)
         : this.database
             .prepare(
-              `SELECT id, title, status, pinned_at, archived_at, created_at, updated_at
+              `SELECT id, title, status, is_provisional, pinned_at, archived_at,
+                      created_at, updated_at
                FROM chats
-               WHERE status = ?
+               WHERE status = ? AND is_provisional = 0
                ORDER BY (pinned_at IS NULL), pinned_at DESC, updated_at DESC, id`,
             )
             .all(filter.status)
