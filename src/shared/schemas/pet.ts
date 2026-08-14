@@ -1,7 +1,11 @@
 import { Type, type TSchema } from "@sinclair/typebox";
 
 import { AppErrorSchema } from "./error";
-import { NonBlankStringSchema, TimestampSchema } from "./primitives";
+import {
+  EntityIdSchema,
+  NonBlankStringSchema,
+  TimestampSchema,
+} from "./primitives";
 
 export const PetIdSchema = Type.String({
   maxLength: 64,
@@ -106,6 +110,57 @@ export const PetMainNavigationSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const PetConversationNavigationSchema = Type.Object(
+  {
+    bubbleId: Type.Optional(EntityIdSchema),
+    chatId: EntityIdSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const ProactiveConversationBubbleReplyStateSchema = Type.Union([
+  Type.Literal("ready"),
+  Type.Literal("responding"),
+  Type.Literal("failed"),
+]);
+
+export const ProactiveConversationBubbleKindSchema = Type.Union([
+  Type.Literal("invitation"),
+  Type.Literal("continuation"),
+]);
+
+export const ProactiveConversationBubbleSchema = Type.Object(
+  {
+    chatId: EntityIdSchema,
+    content: NonBlankStringSchema,
+    createdAt: TimestampSchema,
+    id: EntityIdSchema,
+    journeyId: Type.Optional(EntityIdSchema),
+    kind: ProactiveConversationBubbleKindSchema,
+    replyState: ProactiveConversationBubbleReplyStateSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const ProactiveConversationBubbleEventSchema = Type.Union([
+  ProactiveConversationBubbleSchema,
+  Type.Null(),
+]);
+
+export const ProactiveConversationBubbleDismissRequestSchema = Type.Object(
+  { bubbleId: EntityIdSchema },
+  { additionalProperties: false },
+);
+
+export const ProactiveConversationBubbleReplyRequestSchema = Type.Object(
+  {
+    bubbleId: EntityIdSchema,
+    content: NonBlankStringSchema,
+    requestedAt: TimestampSchema,
+  },
+  { additionalProperties: false },
+);
+
 export const PetSelectRequestSchema = Type.Object(
   { petId: PetIdSchema },
   { additionalProperties: false },
@@ -173,4 +228,7 @@ export const PetLibraryResponseSchema = operationResponse(
 );
 export const PetImportResponseSchema = operationResponse(
   Type.Union([PetDescriptorSchema, Type.Null()]),
+);
+export const ProactiveConversationBubbleReplyResponseSchema = operationResponse(
+  Type.Object({ runId: EntityIdSchema }, { additionalProperties: false }),
 );

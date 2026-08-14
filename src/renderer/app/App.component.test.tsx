@@ -18,6 +18,10 @@ import type {
 } from "../../shared/contracts/chat";
 import type { CharaMateApi } from "../../shared/contracts/foundation";
 import type {
+  JourneyApi,
+  JourneySnapshot,
+} from "../../shared/contracts/journey";
+import type {
   PetLibrarySnapshot,
   PetMainTarget,
 } from "../../shared/contracts/pet";
@@ -71,10 +75,12 @@ afterEach(() => {
 
 function renderApp({
   initialChats,
+  initialJourneySnapshot = { journeys: [], sessions: [] },
   modelAvailable = false,
   seeded = false,
 }: {
   readonly initialChats?: readonly Chat[];
+  readonly initialJourneySnapshot?: JourneySnapshot;
   readonly modelAvailable?: boolean;
   readonly seeded?: boolean;
 } = {}) {
@@ -88,6 +94,7 @@ function renderApp({
   let petLibraryListener: ((snapshot: PetLibrarySnapshot) => void) | undefined;
   let petMainListener: ((target: PetMainTarget) => void) | undefined;
   let chatChangedListener: ((chat: Chat) => void) | undefined;
+  let journeyChangedListener: ((snapshot: JourneySnapshot) => void) | undefined;
   let voiceChangedListener:
     ((snapshot: VoiceSessionSnapshot | null) => void) | undefined;
   const snapshots = new Map<string, ChatDataSnapshot>();
@@ -317,6 +324,20 @@ function renderApp({
       }),
       markRendererReady,
     },
+    journey: {
+      getSnapshot: vi.fn().mockResolvedValue({
+        ok: true,
+        value: initialJourneySnapshot,
+      }),
+      subscribeChanged: vi.fn<JourneyApi["subscribeChanged"]>((listener) => {
+        journeyChangedListener = listener;
+        return () => {
+          if (journeyChangedListener === listener) {
+            journeyChangedListener = undefined;
+          }
+        };
+      }),
+    },
     memory: {
       acceptCandidate: vi.fn(),
       archive: vi.fn(),
@@ -353,6 +374,7 @@ function renderApp({
           if (petMainListener === listener) petMainListener = undefined;
         };
       }),
+      subscribeOpenConversation: vi.fn(() => () => undefined),
     },
     provider: {
       deleteProfile: vi.fn(),
@@ -529,6 +551,86 @@ describe("application shell", () => {
     await waitFor(() => {
       expect(setTerritoryActive).toHaveBeenLastCalledWith({ active: false });
     });
+  });
+
+  it("keeps companionship state invisible while showing one natural presence hint", async () => {
+    const homeChat: Chat = {
+      ...chatFixture,
+      id: "11111111-1111-4111-8111-111111111111",
+      title: "毕业论文",
+    };
+    const ordinaryChat: Chat = {
+      ...chatFixture,
+      id: "22222222-2222-4222-8222-222222222222",
+      title: "普通对话",
+    };
+    const journeyId = "33333333-3333-4333-8333-333333333333";
+    const sessionId = "44444444-4444-4444-8444-444444444444";
+    const journeySnapshot: JourneySnapshot = {
+      activeSession: {
+        chatId: homeChat.id,
+        createdAt: FIXTURE_TIMESTAMPS.created,
+        id: sessionId,
+        journeyId,
+        status: "active",
+        title: "一起梳理研究问题",
+        updatedAt: FIXTURE_TIMESTAMPS.updated,
+      },
+      journeys: [
+        {
+          createdAt: FIXTURE_TIMESTAMPS.created,
+          currentPosition: "正在收窄研究问题",
+          homeChatId: homeChat.id,
+          id: journeyId,
+          nextStep: "继续整理相关工作",
+          purpose: "完成未来几个月的毕业论文",
+          status: "active",
+          title: "毕业论文",
+          updatedAt: FIXTURE_TIMESTAMPS.updated,
+        },
+      ],
+      sessions: [
+        {
+          chatId: homeChat.id,
+          createdAt: FIXTURE_TIMESTAMPS.created,
+          id: sessionId,
+          journeyId,
+          status: "active",
+          title: "一起梳理研究问题",
+          updatedAt: FIXTURE_TIMESTAMPS.updated,
+        },
+      ],
+    };
+    renderApp({
+      initialChats: [ordinaryChat, homeChat],
+      initialJourneySnapshot: journeySnapshot,
+    });
+
+    expect(
+      await screen.findByRole("region", { name: "Mika 正在和你一起" }),
+    ).toHaveTextContent("一起梳理研究问题");
+    const chatList = screen.getByRole("region", { name: "会话列表" });
+    expect(
+      within(chatList).getByRole("button", { name: "毕业论文" }),
+    ).toBeVisible();
+    expect(
+      within(chatList).getByRole("button", { name: "普通对话" }),
+    ).toBeVisible();
+    expect(chatList).not.toHaveTextContent(
+      /同行中|待续共处|同行回望|Together Session|Journey/u,
+    );
+    expect(
+      screen.queryByRole("button", { name: /暂停|结束|恢复|告一段落/u }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    expect(
+      screen.getByRole("region", { name: "Mika 正在和你一起" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "理解有误" }));
+    expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(
+      "我们现在一起做的不是「一起梳理研究问题」，实际是：",
+    );
   });
 
   it("opens Automations and starts its one-page form from the header", async () => {

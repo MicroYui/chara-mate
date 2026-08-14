@@ -14,6 +14,7 @@ import type {
   PetAnimationSchema,
   PetAnimationSpeedRequestSchema,
   PetCharacterSnapshotSchema,
+  PetConversationNavigationSchema,
   PetDescriptorSchema,
   PetDragPointSchema,
   PetDragResultSchema,
@@ -29,6 +30,12 @@ import type {
   PetSpriteVersionSchema,
   PetStoredStateSchema,
   PetTerritoryPresenceRequestSchema,
+  ProactiveConversationBubbleDismissRequestSchema,
+  ProactiveConversationBubbleKindSchema,
+  ProactiveConversationBubbleReplyRequestSchema,
+  ProactiveConversationBubbleReplyResponseSchema,
+  ProactiveConversationBubbleReplyStateSchema,
+  ProactiveConversationBubbleSchema,
 } from "../schemas/pet";
 
 export const PET_CHANNELS = {
@@ -40,10 +47,15 @@ export const PET_CHANNELS = {
   dragStart: "pet.character.dragStart",
   focusMain: "pet.character.focusMain",
   focusApproval: "pet.character.focusApproval",
+  focusConversation: "pet.character.focusConversation",
   getLibrary: "pet.library.get",
   importFromFolder: "pet.library.importFromFolder",
   libraryChanged: "pet.library.changed",
   openMain: "pet.main.open",
+  openConversation: "pet.main.openConversation",
+  proactiveBubbleChanged: "pet.character.proactiveBubbleChanged",
+  dismissProactiveBubble: "pet.character.dismissProactiveBubble",
+  replyProactiveBubble: "pet.character.replyProactiveBubble",
   select: "pet.library.select",
   setAnimationSpeed: "pet.library.setAnimationSpeed",
   setScale: "pet.library.setScale",
@@ -61,6 +73,27 @@ export type CodexPetManifest = Static<typeof CodexPetManifestSchema>;
 export type PetManifest = Static<typeof PetManifestSchema>;
 export type PetMainNavigation = Static<typeof PetMainNavigationSchema>;
 export type PetMainTarget = Static<typeof PetMainTargetSchema>;
+export type PetConversationNavigation = Static<
+  typeof PetConversationNavigationSchema
+>;
+export type ProactiveConversationBubble = Static<
+  typeof ProactiveConversationBubbleSchema
+>;
+export type ProactiveConversationBubbleKind = Static<
+  typeof ProactiveConversationBubbleKindSchema
+>;
+export type ProactiveConversationBubbleDismissRequest = Static<
+  typeof ProactiveConversationBubbleDismissRequestSchema
+>;
+export type ProactiveConversationBubbleReplyRequest = Static<
+  typeof ProactiveConversationBubbleReplyRequestSchema
+>;
+export type ProactiveConversationBubbleReplyResponse = Static<
+  typeof ProactiveConversationBubbleReplyResponseSchema
+>;
+export type ProactiveConversationBubbleReplyState = Static<
+  typeof ProactiveConversationBubbleReplyStateSchema
+>;
 export type PetDescriptor = Static<typeof PetDescriptorSchema>;
 export type PetLibrarySnapshot = Static<typeof PetLibrarySnapshotSchema>;
 export type PetCharacterSnapshot = Static<typeof PetCharacterSnapshotSchema>;
@@ -88,22 +121,35 @@ export interface PetManagementApi {
     listener: (snapshot: PetLibrarySnapshot) => void,
   ): () => void;
   subscribeOpenMain(listener: (target: PetMainTarget) => void): () => void;
+  subscribeOpenConversation(
+    listener: (target: PetConversationNavigation) => void,
+  ): () => void;
 }
 
 export interface CharacterWindowApi {
   endDrag(point: PetDragPoint): Promise<PetDragResult>;
   focusMain(): void;
   focusApproval(request: ApprovalNavigationRequest): void;
+  focusConversation(request: PetConversationNavigation): void;
   getSnapshot(): Promise<PetCharacterSnapshot>;
   getPendingApproval(): Promise<PendingApprovalResponse>;
   markReady(): void;
   moveDrag(point: PetDragPoint): void;
   showContextMenu(): void;
+  dismissProactiveBubble(
+    request: ProactiveConversationBubbleDismissRequest,
+  ): void;
+  replyProactiveBubble(
+    request: ProactiveConversationBubbleReplyRequest,
+  ): Promise<ProactiveConversationBubbleReplyResponse>;
   resolveApproval(
     request: ResolveApprovalRequest,
   ): Promise<ResolveApprovalResponse>;
   startDrag(point: PetDragPoint): Promise<PetDragResult>;
   subscribe(listener: (snapshot: PetCharacterSnapshot) => void): () => void;
   subscribeApproval(listener: (approval: Approval | null) => void): () => void;
+  subscribeProactiveBubble(
+    listener: (bubble: ProactiveConversationBubble | null) => void,
+  ): () => void;
   voice: VoiceApi;
 }

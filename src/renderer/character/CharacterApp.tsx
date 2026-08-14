@@ -7,19 +7,29 @@ import {
   useSyncExternalStore,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { AudioLines } from "lucide-react";
+import { AudioLines, ExternalLink, Mic, SendHorizontal, X } from "lucide-react";
 
 import type {
   PetAnimation,
   PetCharacterSnapshot,
   PetDragPoint,
   PetFacing,
+  ProactiveConversationBubble,
 } from "../../shared/contracts/pet";
 import type { Approval } from "../../shared/contracts/run";
 import { getDragAnimation } from "./petAtlas";
 import { PixiPetCanvas } from "./PixiPetCanvas";
 import { VoiceStore } from "../features/voice/voiceStore";
 import styles from "./CharacterApp.module.css";
+
+type CharacterSurface = "conversation" | "pet";
+
+function currentSurface(): CharacterSurface {
+  return new URLSearchParams(window.location.search).get("surface") ===
+    "conversation"
+    ? "conversation"
+    : "pet";
+}
 
 function pointFromEvent(event: ReactPointerEvent): PetDragPoint | null {
   const point = { screenX: event.screenX, screenY: event.screenY };
@@ -28,11 +38,21 @@ function pointFromEvent(event: ReactPointerEvent): PetDragPoint | null {
     : null;
 }
 
-export function CharacterApp() {
+export function CharacterApp({
+  surface = currentSurface(),
+}: {
+  readonly surface?: CharacterSurface;
+}) {
+  const isConversationSurface = surface === "conversation";
   const [snapshot, setSnapshot] = useState<PetCharacterSnapshot | null>(null);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [approval, setApproval] = useState<Approval | null>(null);
+  const [proactiveBubble, setProactiveBubble] =
+    useState<ProactiveConversationBubble | null>(null);
+  const [replyDraft, setReplyDraft] = useState("");
+  const [replyPending, setReplyPending] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
   const [dragFacing, setDragFacing] = useState<PetFacing>("right");
   const [lookAngleDegrees, setLookAngleDegrees] = useState<number | null>(null);
   const voiceStore = useMemo(
@@ -43,12 +63,52 @@ export function CharacterApp() {
   const activePointer = useRef<number | null>(null);
   const lastDragPoint = useRef<PetDragPoint | null>(null);
   const markedReady = useRef(false);
+  const proactiveBubbleId = useRef<string | null>(null);
+  const submittedBubbleId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const previousTitle = document.title;
+    document.title = isConversationSurface
+      ? "CharaMate Conversation"
+      : "CharaMate Character";
+    return () => {
+      document.title = previousTitle;
+    };
+  }, [isConversationSurface]);
 
   const markReady = useCallback(() => {
     if (markedReady.current) return;
     markedReady.current = true;
     window.charaMateCharacter.markReady();
   }, []);
+
+  const receiveProactiveBubble = useCallback(
+    (next: ProactiveConversationBubble | null) => {
+      const nextId = next?.id ?? null;
+      if (proactiveBubbleId.current !== nextId) {
+        setReplyDraft("");
+        setReplyPending(false);
+        setReplyError(null);
+        submittedBubbleId.current = null;
+      }
+      proactiveBubbleId.current = nextId;
+      if (
+        next?.replyState === "ready" &&
+        submittedBubbleId.current === next.id
+      ) {
+        setReplyDraft("");
+        setReplyPending(false);
+        setReplyError(null);
+        submittedBubbleId.current = null;
+      } else if (next?.replyState === "failed") {
+        setReplyPending(false);
+        setReplyError("没有发送成功，可以直接重试。");
+        submittedBubbleId.current = null;
+      }
+      setProactiveBubble(next);
+    },
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -60,7 +120,7 @@ export function CharacterApp() {
       .then((next) => {
         if (!active) return;
         setSnapshot(next);
-        if (!next.activePet) markReady();
+        if (!next.activePet && !isConversationSurface) markReady();
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -73,9 +133,26 @@ export function CharacterApp() {
       active = false;
       unsubscribe();
     };
-  }, [markReady]);
+  }, [isConversationSurface, markReady]);
 
-  useEffect(() => window.charaMateCharacter.subscribeApproval(setApproval), []);
+  useEffect(
+    () =>
+      isConversationSurface
+        ? undefined
+        : window.charaMateCharacter.subscribeApproval(setApproval),
+    [isConversationSurface],
+  );
+  useEffect(() => {
+    if (!isConversationSurface) return undefined;
+    const unsubscribeBubble =
+      window.charaMateCharacter.subscribeProactiveBubble(
+        receiveProactiveBubble,
+      );
+    markReady();
+    return () => {
+      unsubscribeBubble();
+    };
+  }, [isConversationSurface, markReady, receiveProactiveBubble]);
   useEffect(() => voiceStore.startListening(), [voiceStore]);
 
   const decideApproval = (decision: "approved" | "rejected") => {
@@ -178,15 +255,61 @@ export function CharacterApp() {
     event.stopPropagation();
   };
 
+  const dismissProactiveBubble = () => {
+    if (!proactiveBubble) return;
+    window.charaMateCharacter.dismissProactiveBubble({
+      bubbleId: proactiveBubble.id,
+    });
+    setProactiveBubble(null);
+  };
+
+  const submitBubbleReply = () => {
+    if (
+      !proactiveBubble ||
+      replyPending ||
+      proactiveBubble.replyState === "responding"
+    ) {
+      return;
+    }
+    const content = replyDraft.trim();
+    if (!content) return;
+    setReplyPending(true);
+    setReplyError(null);
+    submittedBubbleId.current = proactiveBubble.id;
+    void window.charaMateCharacter
+      .replyProactiveBubble({
+        bubbleId: proactiveBubble.id,
+        content,
+        requestedAt: new Date().toISOString(),
+      })
+      .then((response) => {
+        if (response.ok) return;
+        submittedBubbleId.current = null;
+        setReplyPending(false);
+        setReplyError(response.error.message);
+      })
+      .catch(() => {
+        submittedBubbleId.current = null;
+        setReplyPending(false);
+        setReplyError("没有发送成功，可以直接重试。");
+      });
+  };
+
   return (
     <main
-      className={styles["character"]}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        window.charaMateCharacter.showContextMenu();
-      }}
+      className={`${styles["character"]} ${
+        isConversationSurface ? styles["conversationSurface"] : ""
+      }`}
+      onContextMenu={
+        isConversationSurface
+          ? undefined
+          : (event) => {
+              event.preventDefault();
+              window.charaMateCharacter.showContextMenu();
+            }
+      }
     >
-      {approval ? (
+      {!isConversationSurface && approval ? (
         <section
           aria-label="桌宠审批提醒"
           className={styles["approvalBubble"]}
@@ -218,7 +341,129 @@ export function CharacterApp() {
           </div>
         </section>
       ) : null}
-      {voice.error ? (
+      {isConversationSurface && proactiveBubble ? (
+        <section
+          aria-label="角色发起的对话"
+          className={styles["proactiveBubble"]}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <header className={styles["bubbleToolbar"]}>
+            <span className={styles["bubbleSpeaker"]}>
+              {snapshot?.activePet?.displayName ?? "CharaMate"}
+            </span>
+            <span className={styles["bubbleToolbarActions"]}>
+              {proactiveBubble.kind === "continuation" ? (
+                <button
+                  aria-label="打开完整 Chat"
+                  className={styles["bubbleOpen"]}
+                  title="打开完整 Chat"
+                  type="button"
+                  onClick={() => {
+                    window.charaMateCharacter.focusConversation({
+                      ...(voiceActive ? {} : { bubbleId: proactiveBubble.id }),
+                      chatId: proactiveBubble.chatId,
+                    });
+                    if (!voiceActive) setProactiveBubble(null);
+                  }}
+                >
+                  <ExternalLink aria-hidden="true" size={12} />
+                </button>
+              ) : null}
+              <button
+                aria-label="关闭这次对话邀请"
+                className={styles["bubbleClose"]}
+                disabled={voiceActive}
+                onClick={dismissProactiveBubble}
+                title={voiceActive ? "语音聊天结束后可关闭" : "关闭"}
+                type="button"
+              >
+                <X aria-hidden="true" size={13} />
+              </button>
+            </span>
+          </header>
+          <div
+            aria-label="角色消息"
+            className={styles["bubbleMessage"]}
+            tabIndex={0}
+          >
+            {proactiveBubble.content}
+          </div>
+          <form
+            aria-label="气泡内文字回复"
+            className={styles["bubbleComposer"]}
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitBubbleReply();
+            }}
+          >
+            <input
+              aria-disabled={
+                voiceActive ||
+                replyPending ||
+                proactiveBubble.replyState === "responding"
+              }
+              aria-label="在气泡中回复"
+              onChange={(event) => setReplyDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                }
+              }}
+              placeholder={
+                voiceActive
+                  ? "语音聊天进行中…"
+                  : proactiveBubble.replyState === "responding"
+                    ? "角色正在回复…"
+                    : proactiveBubble.replyState === "failed"
+                      ? "发送失败，可重试"
+                      : "在这里回复…"
+              }
+              readOnly={
+                voiceActive ||
+                replyPending ||
+                proactiveBubble.replyState === "responding"
+              }
+              value={replyDraft}
+            />
+            <button
+              aria-label="发送气泡回复"
+              className={styles["bubbleSend"]}
+              disabled={
+                !replyDraft.trim() ||
+                voiceActive ||
+                replyPending ||
+                proactiveBubble.replyState === "responding"
+              }
+              title="发送"
+              type="submit"
+            >
+              <SendHorizontal aria-hidden="true" size={13} />
+            </button>
+            <button
+              aria-label="在同一对话中语音回复"
+              className={styles["bubbleVoice"]}
+              disabled={
+                voiceActive || proactiveBubble.replyState === "responding"
+              }
+              title="语音回复"
+              type="button"
+              onClick={() => {
+                void voiceStore.startQuick({ chatId: proactiveBubble.chatId });
+              }}
+            >
+              <Mic aria-hidden="true" size={13} />
+            </button>
+          </form>
+          <span aria-live="polite" className={styles["bubbleStatus"]}>
+            {replyError ??
+              (proactiveBubble.replyState === "responding"
+                ? "角色正在回复"
+                : "")}
+          </span>
+        </section>
+      ) : null}
+      {!isConversationSurface && voice.error ? (
         <span
           className={styles["voiceError"]}
           onPointerDown={stopPetInteraction}
@@ -227,70 +472,74 @@ export function CharacterApp() {
           {voice.error.message}
         </span>
       ) : null}
-      <div
-        aria-label={
-          snapshot?.activePet
-            ? `${snapshot.activePet.displayName} 桌宠`
-            : "CharaMate 桌宠"
-        }
-        className={styles["petSurface"]}
-        data-dragging={dragging || undefined}
-        onDoubleClick={() => window.charaMateCharacter.focusMain()}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            window.charaMateCharacter.focusMain();
+      {!isConversationSurface ? (
+        <div
+          aria-label={
+            snapshot?.activePet
+              ? `${snapshot.activePet.displayName} 桌宠`
+              : "CharaMate 桌宠"
           }
-        }}
-        onPointerCancel={finishDrag}
-        onPointerDown={handlePointerDown}
-        onPointerLeave={() => {
-          if (activePointer.current === null) setLookAngleDegrees(null);
-        }}
-        onPointerMove={handlePointerMove}
-        onPointerUp={finishDrag}
-        role="button"
-        tabIndex={0}
-      >
-        {startupError ? (
-          <span className={styles["status"]} role="alert">
-            {startupError}
-          </span>
-        ) : snapshot?.activePet ? (
-          <PixiPetCanvas
-            animation={animation}
-            animationSpeed={snapshot.animationSpeed}
-            lookAngleDegrees={lookAngleDegrees ?? 0}
-            onReady={markReady}
-            pet={snapshot.activePet}
-          />
-        ) : snapshot ? (
-          <span className={styles["status"]}>
-            请在 Character 设置中导入桌宠
-          </span>
-        ) : null}
-      </div>
-      <button
-        aria-label={voiceActionLabel}
-        aria-pressed={voiceActive}
-        className={styles["voiceButton"]}
-        data-active={voiceActive || undefined}
-        disabled={voiceTransitioning}
-        onClick={() => {
-          if (!voice.snapshot) void voiceStore.startQuick();
-          else if (voicePaused) void voiceStore.setPaused(false);
-          else if (voiceFailed) void voiceStore.end();
-          else void voiceStore.setPaused(true);
-        }}
-        onDoubleClick={(event) => event.stopPropagation()}
-        onPointerCancel={stopPetInteraction}
-        onPointerDown={stopPetInteraction}
-        onPointerUp={stopPetInteraction}
-        title={voiceActionLabel}
-        type="button"
-      >
-        <AudioLines aria-hidden="true" size={20} strokeWidth={2.6} />
-      </button>
+          className={styles["petSurface"]}
+          data-dragging={dragging || undefined}
+          onDoubleClick={() => window.charaMateCharacter.focusMain()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              window.charaMateCharacter.focusMain();
+            }
+          }}
+          onPointerCancel={finishDrag}
+          onPointerDown={handlePointerDown}
+          onPointerLeave={() => {
+            if (activePointer.current === null) setLookAngleDegrees(null);
+          }}
+          onPointerMove={handlePointerMove}
+          onPointerUp={finishDrag}
+          role="button"
+          tabIndex={0}
+        >
+          {startupError ? (
+            <span className={styles["status"]} role="alert">
+              {startupError}
+            </span>
+          ) : snapshot?.activePet ? (
+            <PixiPetCanvas
+              animation={animation}
+              animationSpeed={snapshot.animationSpeed}
+              lookAngleDegrees={lookAngleDegrees ?? 0}
+              onReady={markReady}
+              pet={snapshot.activePet}
+            />
+          ) : snapshot ? (
+            <span className={styles["status"]}>
+              请在 Character 设置中导入桌宠
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {!isConversationSurface ? (
+        <button
+          aria-label={voiceActionLabel}
+          aria-pressed={voiceActive}
+          className={styles["voiceButton"]}
+          data-active={voiceActive || undefined}
+          disabled={voiceTransitioning}
+          onClick={() => {
+            if (!voice.snapshot) void voiceStore.startQuick();
+            else if (voicePaused) void voiceStore.setPaused(false);
+            else if (voiceFailed) void voiceStore.end();
+            else void voiceStore.setPaused(true);
+          }}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onPointerCancel={stopPetInteraction}
+          onPointerDown={stopPetInteraction}
+          onPointerUp={stopPetInteraction}
+          title={voiceActionLabel}
+          type="button"
+        >
+          <AudioLines aria-hidden="true" size={20} strokeWidth={2.6} />
+        </button>
+      ) : null}
     </main>
   );
 }

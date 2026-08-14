@@ -70,6 +70,7 @@ function createApi(initial: PetLibrarySnapshot) {
     setTerritoryActive: vi.fn(),
     subscribeChanged: () => () => undefined,
     subscribeOpenMain: () => () => undefined,
+    subscribeOpenConversation: () => () => undefined,
   };
   return {
     api,

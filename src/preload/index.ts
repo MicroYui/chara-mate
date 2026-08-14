@@ -38,6 +38,11 @@ import {
   FOUNDATION_CHANNELS,
 } from "../shared/contracts/foundation";
 import {
+  JOURNEY_CHANNELS,
+  type JourneyApi,
+  type JourneySnapshot,
+} from "../shared/contracts/journey";
+import {
   MEMORY_CHANNELS,
   type MemoryApi,
   type MemoryCandidateIdRequest,
@@ -95,6 +100,7 @@ import {
 import {
   PET_CHANNELS,
   type PetAnimationSpeedRequest,
+  type PetConversationNavigation,
   type PetLibrarySnapshot,
   type PetMainTarget,
   type PetManagementApi,
@@ -167,6 +173,10 @@ import {
 } from "../shared/schemas/automation";
 import { FoundationSnapshotSchema } from "../shared/schemas/foundation";
 import {
+  JourneySnapshotResponseSchema,
+  JourneySnapshotSchema,
+} from "../shared/schemas/journey";
+import {
   MemoryCandidateIdRequestSchema,
   MemoryCandidateMutationResponseSchema,
   MemoryCreateRequestSchema,
@@ -235,6 +245,7 @@ import {
 } from "../shared/schemas/settings";
 import {
   PetAnimationSpeedRequestSchema,
+  PetConversationNavigationSchema,
   PetImportResponseSchema,
   PetLibraryResponseSchema,
   PetLibrarySnapshotSchema,
@@ -361,6 +372,21 @@ const chatApi: ChatApi = Object.freeze({
     };
     ipcRenderer.on(CHAT_EVENT_CHANNELS.changed, wrapped);
     return () => ipcRenderer.off(CHAT_EVENT_CHANNELS.changed, wrapped);
+  },
+});
+
+const journeyApi: JourneyApi = Object.freeze({
+  getSnapshot: async () =>
+    parseSchemaWithoutCodeGeneration(
+      JourneySnapshotResponseSchema,
+      await ipcRenderer.invoke(JOURNEY_CHANNELS.getSnapshot, {}),
+    ),
+  subscribeChanged: (listener: (snapshot: JourneySnapshot) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      listener(parseSchemaWithoutCodeGeneration(JourneySnapshotSchema, input));
+    };
+    ipcRenderer.on(JOURNEY_CHANNELS.changed, wrapped);
+    return () => ipcRenderer.off(JOURNEY_CHANNELS.changed, wrapped);
   },
 });
 
@@ -905,6 +931,24 @@ const petApi: PetManagementApi = Object.freeze({
     ipcRenderer.on(PET_CHANNELS.openMain, wrappedListener);
     return () => ipcRenderer.off(PET_CHANNELS.openMain, wrappedListener);
   },
+  subscribeOpenConversation: (
+    listener: (target: PetConversationNavigation) => void,
+  ) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        parseSchemaWithoutCodeGeneration(
+          PetConversationNavigationSchema,
+          input,
+        ),
+      );
+    };
+    ipcRenderer.on(PET_CHANNELS.openConversation, wrappedListener);
+    return () =>
+      ipcRenderer.off(PET_CHANNELS.openConversation, wrappedListener);
+  },
 });
 
 const territoryWorldApi: TerritoryWorldApi = Object.freeze({
@@ -1242,6 +1286,7 @@ const desktopApi: CharaMateApi = Object.freeze({
       ipcRenderer.send(FOUNDATION_CHANNELS.rendererReady, {});
     },
   }),
+  journey: journeyApi,
   memory: memoryApi,
   pet: petApi,
   provider: providerApi,

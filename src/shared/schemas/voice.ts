@@ -130,10 +130,23 @@ export const VoiceStartRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const VoiceQuickStartRequestSchema = Type.Object(
-  { requestedAt: TimestampSchema },
-  { additionalProperties: false },
-);
+export const VoiceQuickStartRequestSchema = Type.Union([
+  Type.Object(
+    { requestedAt: TimestampSchema },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      chatId: EntityIdSchema,
+      execution: Type.Object(
+        { mode: Type.Literal("chat") },
+        { additionalProperties: false },
+      ),
+      requestedAt: TimestampSchema,
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 export const VoicePreviewRequestSchema = Type.Object(
   {

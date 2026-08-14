@@ -405,7 +405,7 @@ export class VoiceService {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly publisher: VoiceServicePublisher,
-    private readonly skillInstructions: () => string = () => "",
+    private readonly skillInstructions: (chatId?: string) => string = () => "",
     private readonly chatTitles?: ChatTitleGenerator,
     private readonly memory?: MemoryService,
     private readonly onPhaseChanged: (
@@ -505,19 +505,50 @@ export class VoiceService {
       return this.#reconnect(this.#active, request.requestedAt);
     }
     this.#assertCanStart(request.chatId);
-    const prepared = await this.#prepareStart(request.execution);
+    const prepared = await this.#prepareStart(
+      request.execution,
+      request.chatId,
+    );
     this.#assertCanStart(request.chatId);
     return this.#activate(request, prepared);
   }
 
   async quickStart(request: VoiceQuickStartRequest): Promise<VoiceConnection> {
-    this.#assertCanStart();
-    const execution = {
-      approvalMode: "full_access",
-      mode: "agent",
-    } as const;
-    const prepared = await this.#prepareStart(execution);
-    this.#assertCanStart();
+    const targetChatId = "chatId" in request ? request.chatId : undefined;
+    this.#assertCanStart(targetChatId);
+    const execution =
+      "chatId" in request
+        ? request.execution
+        : ({
+            approvalMode: "full_access",
+            mode: "agent",
+          } as const);
+    const prepared = await this.#prepareStart(execution, targetChatId);
+    this.#assertCanStart(targetChatId);
+    if (targetChatId) {
+      const target = this.chatTurns.getSnapshot({ chatId: targetChatId });
+      if (!target) {
+        throw new VoiceError(
+          "VOICE.CHAT_NOT_FOUND",
+          "要回复的对话已经不存在。",
+          false,
+        );
+      }
+      if (target.chat.status === "archived") {
+        this.chatTurns.restore({ chatId: targetChatId });
+      }
+      return this.#activate(
+        {
+          chatId: targetChatId,
+          chatProviderProfileId: this.#chatTitleProfileId(
+            prepared.providerRuntime.snapshot.profileId,
+          ),
+          execution,
+          requestedAt: request.requestedAt,
+        },
+        prepared,
+      );
+    }
     const chat = this.chatTurns.create({ title: VOICE_CHAT_FALLBACK_TITLE });
     try {
       return this.#activate(
@@ -537,8 +568,11 @@ export class VoiceService {
     }
   }
 
-  async #prepareStart(execution: RunExecution): Promise<PreparedVoiceStart> {
-    const prepared = await this.#prepareConfiguration(execution);
+  async #prepareStart(
+    execution: RunExecution,
+    chatId?: string,
+  ): Promise<PreparedVoiceStart> {
+    const prepared = await this.#prepareConfiguration(execution, chatId);
     return this.#issueConfiguration(prepared);
   }
 
@@ -563,6 +597,7 @@ export class VoiceService {
 
   async #prepareConfiguration(
     execution: RunExecution,
+    chatId?: string,
   ): Promise<PreparedVoiceConfiguration> {
     const configured = this.settings.getVoice();
     const providerRuntime = await this.providers.createRealtimeProviderRuntime(
@@ -572,6 +607,8 @@ export class VoiceService {
     const defaultInstructions = this.#instructions(
       configured.instructions,
       execution,
+      undefined,
+      chatId,
     );
     return {
       configured,
@@ -816,7 +853,10 @@ export class VoiceService {
 
     this.#setPhase(active, "resuming");
     try {
-      const prepared = await this.#prepareConfiguration(active.execution);
+      const prepared = await this.#prepareConfiguration(
+        active.execution,
+        active.record.chatId,
+      );
       this.#assertResumeTarget(active);
       if (this.#canReuseConnection(active, prepared)) {
         active.configuredInstructions = prepared.configured.instructions;
@@ -1132,7 +1172,10 @@ export class VoiceService {
     active: ActiveVoice,
     requestedAt: string,
   ): Promise<VoiceConnection> {
-    const prepared = await this.#prepareConfiguration(active.execution);
+    const prepared = await this.#prepareConfiguration(
+      active.execution,
+      active.record.chatId,
+    );
     const issued = await this.#issueConfiguration(prepared);
     if (!this.#sameConnectionIdentity(active, prepared)) {
       return this.#activate(
@@ -1184,13 +1227,14 @@ export class VoiceService {
     configured: string,
     execution: RunExecution,
     context?: string,
+    chatId?: string,
   ): string {
     return realtimeAgentInstructions({
       configured,
       execution,
       ...(context === undefined ? {} : { memoryContext: context }),
       now: this.clock.now(),
-      skills: this.skillInstructions(),
+      skills: this.skillInstructions(chatId),
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     });
   }
@@ -1281,6 +1325,7 @@ export class VoiceService {
       active.configuredInstructions,
       active.execution,
       evidence.content,
+      active.record.chatId,
     );
     let turn = this.repository.updateTurn({
       ...current,

@@ -28,7 +28,7 @@ import type {
   ChatView,
 } from "../types";
 import { CopyButton } from "./CopyButton";
-import { RunProcess } from "./RunProcess";
+import { RunProcess, shouldDisplayRunProcess } from "./RunProcess";
 import styles from "./MessageList.module.css";
 
 type TimelineEntry =
@@ -158,7 +158,8 @@ export function buildTimeline(
   chat: ChatView,
   candidates: readonly EvolutionCandidate[] = [],
 ): readonly TimelineEntry[] {
-  const runsById = new Map(chat.runs.map((run) => [run.record.id, run]));
+  const displayRuns = chat.runs.filter(shouldDisplayRunProcess);
+  const runsById = new Map(displayRuns.map((run) => [run.record.id, run]));
   const lastUserMessageByRun = new Map<EntityId, number>();
   for (const [index, message] of chat.messages.entries()) {
     if (message.record.role === "user" && message.record.runId) {
@@ -187,7 +188,7 @@ export function buildTimeline(
     }
   }
 
-  for (const run of chat.runs) {
+  for (const run of displayRuns) {
     if (!placedRuns.has(run.record.id)) {
       entries.push({ id: run.record.id, kind: "run", value: run });
     }

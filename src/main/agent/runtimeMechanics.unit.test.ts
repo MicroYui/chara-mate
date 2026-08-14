@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { ToolResult } from "../../shared/contracts/tool";
 import { VOICE_END_TOOL_NAME } from "../../shared/contracts/voice";
+import {
+  COMPANIONSHIP_UPDATE_TOOL_NAME,
+  CompanionshipUpdateInputSchema,
+} from "../journey/companionshipTool";
 import { requiresApproval, toolAllowedInExecution } from "./approvalPolicy";
 import { ContextCompiler } from "./contextCompiler";
 import { createMemoryContextInput } from "./memoryContext";
@@ -35,7 +39,7 @@ async function* events(values: readonly ModelEvent[]) {
 }
 
 describe("Phase 2 Runtime mechanics", () => {
-  it("uses Provider strict mode only when every object field is required", () => {
+  it("uses Provider strict mode only for the supported JSON Schema subset", () => {
     expect(
       supportsStrictToolSchema({
         additionalProperties: false,
@@ -62,6 +66,24 @@ describe("Phase 2 Runtime mechanics", () => {
         type: "object",
       }),
     ).toBe(false);
+    expect(
+      supportsStrictToolSchema({
+        additionalProperties: false,
+        properties: {
+          value: {
+            anyOf: [
+              { format: "custom-timestamp", type: "string" },
+              { type: "null" },
+            ],
+          },
+        },
+        required: ["value"],
+        type: "object",
+      }),
+    ).toBe(false);
+    expect(supportsStrictToolSchema(CompanionshipUpdateInputSchema)).toBe(
+      false,
+    );
   });
 
   it("detects only five repeated semantic cycles with periods up to five", () => {
@@ -375,6 +397,16 @@ describe("Phase 2 Runtime mechanics", () => {
         { status: "pending", step: "运行回归测试" },
       ],
     });
+    expect(
+      decodeRuntimeCheckpoint({
+        ...(checkpoint as Readonly<Record<string, JsonValue>>),
+        interactionEnabled: false,
+        nativeWebSearchEnabled: false,
+      }),
+    ).toMatchObject({
+      interactionEnabled: false,
+      nativeWebSearchEnabled: false,
+    });
     expect(() =>
       decodeRuntimeCheckpoint({
         ...(checkpoint as Readonly<Record<string, JsonValue>>),
@@ -384,6 +416,12 @@ describe("Phase 2 Runtime mechanics", () => {
             { status: "in_progress", step: "第二步" },
           ],
         },
+      }),
+    ).toThrow("Unsupported or corrupt Agent checkpoint");
+    expect(() =>
+      decodeRuntimeCheckpoint({
+        ...(checkpoint as Readonly<Record<string, JsonValue>>),
+        nativeWebSearchEnabled: "no",
       }),
     ).toThrow("Unsupported or corrupt Agent checkpoint");
   });
@@ -482,6 +520,18 @@ describe("Phase 2 Runtime mechanics", () => {
       requiresApproval(
         { approvalMode: "request_approval", mode: "agent" },
         read,
+      ),
+    ).toBe(false);
+    const companionship = {
+      ...write,
+      name: COMPANIONSHIP_UPDATE_TOOL_NAME,
+    };
+    expect(toolAllowedInExecution({ mode: "chat" }, companionship)).toBe(true);
+    expect(requiresApproval({ mode: "chat" }, companionship)).toBe(false);
+    expect(
+      requiresApproval(
+        { approvalMode: "request_approval", mode: "agent" },
+        companionship,
       ),
     ).toBe(false);
     const voiceEnd = { ...write, name: VOICE_END_TOOL_NAME };

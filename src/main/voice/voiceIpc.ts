@@ -33,7 +33,7 @@ function senderMatches(
 export function registerVoiceIpc(
   service: VoiceService,
   getMainWindow: () => BrowserWindow | null,
-  getCharacterWindow: () => BrowserWindow | null,
+  isCharacterWindowSender: (sender: Electron.WebContents) => boolean,
 ): () => void {
   const requireMain = (sender: Electron.WebContents): void => {
     if (!senderMatches(sender, getMainWindow())) {
@@ -43,13 +43,13 @@ export function registerVoiceIpc(
   const requireVoiceWindow = (sender: Electron.WebContents): void => {
     if (
       !senderMatches(sender, getMainWindow()) &&
-      !senderMatches(sender, getCharacterWindow())
+      !isCharacterWindowSender(sender)
     ) {
       throw new Error("Voice IPC sender rejected.");
     }
   };
   const requireCharacter = (sender: Electron.WebContents): void => {
-    if (!senderMatches(sender, getCharacterWindow())) {
+    if (!isCharacterWindowSender(sender)) {
       throw new Error("Character Voice IPC sender rejected.");
     }
   };

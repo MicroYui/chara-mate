@@ -58,6 +58,42 @@ const LIVE_RUN_STATUSES = new Set<ChatRunView["record"]["status"]>([
   "needs_input",
 ]);
 
+const INTERNAL_STATE_TOOL_NAMES = new Set([
+  "companionship.update",
+  "memory.record",
+]);
+
+function inputToolName(item: RunItem): string | undefined {
+  if (
+    item.kind !== "tool_call" ||
+    typeof item.input !== "object" ||
+    item.input === null ||
+    Array.isArray(item.input)
+  ) {
+    return undefined;
+  }
+  const toolName = item.input["toolName"];
+  return typeof toolName === "string" ? toolName : undefined;
+}
+
+function visibleRunItems(run: ChatRunView): readonly RunItem[] {
+  const live = LIVE_RUN_STATUSES.has(run.record.status);
+  const latestPlanId = [...run.items]
+    .reverse()
+    .find(({ kind }) => kind === "plan")?.id;
+  return run.items.filter(
+    (item) =>
+      item.kind !== "user_message" &&
+      item.kind !== "assistant_message" &&
+      !INTERNAL_STATE_TOOL_NAMES.has(inputToolName(item) ?? "") &&
+      (item.kind !== "plan" || (!live && item.id === latestPlanId)),
+  );
+}
+
+export function shouldDisplayRunProcess(run: ChatRunView): boolean {
+  return run.record.status !== "completed" || visibleRunItems(run).length > 0;
+}
+
 function runDuration(run: ChatRunView, now: number): number {
   const startedAt = Date.parse(run.record.startedAt ?? run.record.createdAt);
   const endedAt = run.record.endedAt
@@ -329,16 +365,10 @@ export function RunProcess({
 
   const forcedOpen = run.record.status !== "completed";
   const expanded = forcedOpen || state.expandedRunIds.includes(run.record.id);
-  const latestPlanId = [...run.items]
-    .reverse()
-    .find(({ kind }) => kind === "plan")?.id;
-  const visibleItems = run.items.filter(
-    ({ id, kind }) =>
-      kind !== "user_message" &&
-      kind !== "assistant_message" &&
-      (kind !== "plan" || (!live && id === latestPlanId)),
-  );
+  const visibleItems = visibleRunItems(run);
   const summaryLead = runStatusPresentation[run.record.status].label;
+
+  if (!shouldDisplayRunProcess(run)) return null;
 
   return (
     <section className={styles["run"]} data-status={run.record.status}>
@@ -350,7 +380,10 @@ export function RunProcess({
       >
         <span>{summaryLead}</span>
         <small>
-          {formatDuration(runDuration(run, now))} · {run.items.length} 项
+          {formatDuration(runDuration(run, now))}
+          {visibleItems.length > 0
+            ? ` · ${String(visibleItems.length)} 项`
+            : ""}
         </small>
         {expanded ? (
           <ChevronDown aria-hidden="true" size={14} />

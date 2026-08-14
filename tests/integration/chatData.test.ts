@@ -210,6 +210,65 @@ describe("Phase 1 Chat Data and Run event persistence", () => {
     reopened.close();
   });
 
+  it("keeps provisional proactive Chats out of every list until engagement and cleans abandoned records", async () => {
+    const { database, databasePath } = await createDatabase();
+    const repository = new ChatRepository(database);
+    const runs = new RunRepository(database);
+    const changed = vi.fn();
+    const generatedIds = [FIXTURE_IDS.chat, OTHER_CHAT_ID, THIRD_CHAT_ID];
+    const service = new ChatService(
+      repository,
+      runs,
+      { generate: () => generatedIds.shift() ?? FOURTH_CHAT_ID },
+      new FakeClock(FIXTURE_TIMESTAMPS.updated),
+      changed,
+    );
+
+    const invitation = service.createProvisional({ title: "论文随聊" });
+    expect(repository.isProvisionalChat(invitation.id)).toBe(true);
+    expect(changed).not.toHaveBeenCalled();
+    expect(service.list({ status: "active" })).toEqual([]);
+    expect(service.list({ query: "论文", status: "active" })).toEqual([]);
+    expect(service.list({ status: "archived" })).toEqual([]);
+    expect(service.getSnapshot({ chatId: invitation.id })?.chat).toEqual(
+      invitation,
+    );
+
+    const established = service.establishProvisional(invitation.id);
+    expect(established.id).toBe(invitation.id);
+    expect(repository.isProvisionalChat(invitation.id)).toBe(false);
+    expect(service.list({ status: "active" })).toEqual([established]);
+    expect(changed).toHaveBeenCalledOnce();
+
+    const dismissed = service.createProvisional({ title: "未接住的话题" });
+    const dismissedRun = { ...startedRun(), chatId: dismissed.id };
+    runs.appendEvent(envelope(1, { run: dismissedRun, type: "run.started" }));
+    repository.insertMessage({
+      ...messageFixture,
+      chatId: dismissed.id,
+      runId: dismissedRun.id,
+    });
+    expect(service.discardProvisional(dismissed.id)).toBe(true);
+    expect(service.getSnapshot({ chatId: dismissed.id })).toBeNull();
+    expect(runs.getRun(dismissedRun.id)).toBeUndefined();
+    expect(repository.listMessages(dismissed.id)).toEqual([]);
+    const orphaned = service.createProvisional({ title: "重启前邀请" });
+    expect(repository.isProvisionalChat(orphaned.id)).toBe(true);
+    database.close();
+
+    const reopened = openApplicationDatabase(databasePath);
+    const reopenedService = new ChatService(
+      new ChatRepository(reopened),
+      new RunRepository(reopened),
+      { generate: () => FOURTH_CHAT_ID },
+      new FakeClock(FIXTURE_TIMESTAMPS.updated),
+    );
+    expect(reopenedService.discardAllProvisional()).toBe(1);
+    expect(reopenedService.getSnapshot({ chatId: orphaned.id })).toBeNull();
+    expect(reopenedService.list({ status: "active" })).toEqual([established]);
+    reopened.close();
+  });
+
   it("serializes Turns within one Chat while allowing another Chat to proceed", async () => {
     const { database } = await createDatabase();
     const chats = new ChatRepository(database);

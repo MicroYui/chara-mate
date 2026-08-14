@@ -5,6 +5,35 @@ import type { ChatView } from "../types";
 import { buildTimeline } from "./MessageList";
 
 describe("MessageList timeline", () => {
+  it("omits a completed assistant-only Run instead of appending an empty status row", () => {
+    const base = chatsFixture.chats[0];
+    if (!base) throw new Error("Missing Chat fixture");
+    const run = base.runs[0];
+    const assistantItem = run?.items.find(
+      ({ kind }) => kind === "assistant_message",
+    );
+    if (!run || !assistantItem) throw new Error("Missing Run fixture");
+    const chat: ChatView = {
+      ...base,
+      runs: [
+        {
+          ...run,
+          approvals: [],
+          items: [assistantItem],
+          record: {
+            ...run.record,
+            execution: { mode: "chat" },
+            status: "completed",
+          },
+        },
+      ],
+    };
+
+    expect(buildTimeline(chat).filter(({ kind }) => kind === "run")).toEqual(
+      [],
+    );
+  });
+
   it("renders one Run after the latest steering message for that Run", () => {
     const base = chatsFixture.chats[0];
     if (!base) throw new Error("Missing Chat fixture");

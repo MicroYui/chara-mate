@@ -40,6 +40,7 @@ import {
 
 const PROFILE_ID = "10000000-0000-4000-8000-000000000001";
 const PERSONA_ID = "20000000-0000-4000-8000-000000000002";
+const TARGET_CHAT_ID = "30000000-0000-4000-8000-000000000003";
 
 type Turn = (
   request: ModelRequest,
@@ -262,6 +263,24 @@ function agentDefinition(toolNames: string[]): AutomationDefinition {
       personaId: PERSONA_ID,
       providerProfileId: PROFILE_ID,
       toolScope: { mode: "selected", toolNames },
+    },
+  };
+}
+
+function assistantMessageDefinition(): AutomationDefinition {
+  return {
+    name: "约好再聊",
+    schedule: { kind: "once", runAt: "2026-08-12T00:00:00.000Z" },
+    task: {
+      delivery: "assistant_message",
+      execution: { mode: "chat" },
+      goal: "自然问一句论文进展。",
+      kind: "agent_task",
+      modelId: "saved-model",
+      personaId: PERSONA_ID,
+      providerProfileId: PROFILE_ID,
+      targetChatId: TARGET_CHAT_ID,
+      toolScope: { mode: "selected", toolNames: [] },
     },
   };
 }
@@ -509,6 +528,52 @@ describe("Automations Core", () => {
     expect(
       fixture.automationEvents.events.filter(finishedFor(queued.id)),
     ).toHaveLength(1);
+  });
+
+  it("delivers an assistant-only follow-up into the exact existing Chat", async () => {
+    const fixture = await createFixture([finalTurn("论文整理得怎么样了？")]);
+    fixture.chats.insertChat({
+      createdAt: fixture.clock.now(),
+      id: TARGET_CHAT_ID,
+      status: "active",
+      title: "毕业论文",
+      updatedAt: fixture.clock.now(),
+    });
+    const chatCount = fixture.chats.listChats({ status: "active" }).length;
+    const automation = fixture.automationService.create({
+      definition: assistantMessageDefinition(),
+      requestedAt: fixture.clock.now(),
+    });
+    const queued = fixture.automationService.runNow({
+      automationId: automation.id,
+      requestedAt: fixture.clock.now(),
+    });
+    await fixture.automationEvents.wait(finishedFor(queued.id));
+
+    const completed = fixture.automationRepository.getRun(queued.id)!;
+    expect(completed).toMatchObject({
+      chatId: TARGET_CHAT_ID,
+      status: "completed",
+      summary: "论文整理得怎么样了？",
+    });
+    expect(fixture.chats.listChats({ status: "active" })).toHaveLength(
+      chatCount,
+    );
+    const runtimeRunId = "runId" in completed ? completed.runId : undefined;
+    expect(runtimeRunId).toBeTruthy();
+    expect(fixture.chats.listRunMessages(runtimeRunId!)).toEqual([
+      expect.objectContaining({
+        chatId: TARGET_CHAT_ID,
+        content: "论文整理得怎么样了？",
+        role: "assistant",
+        status: "completed",
+      }),
+    ]);
+    expect(fixture.runs.getRun(runtimeRunId!)?.execution).toEqual({
+      mode: "chat",
+    });
+    expect(fixture.provider.requests[0]?.toolNamespaces).toEqual([]);
+    expect(fixture.provider.requests[0]?.nativeWebSearch).toBe(false);
   });
 
   it("projects ordinary Agent cancellation and failure into Automation history", async () => {

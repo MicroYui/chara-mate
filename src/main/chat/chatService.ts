@@ -52,18 +52,71 @@ export class ChatService {
   }
 
   create(input: ChatCreateRequest): Chat {
+    return this.#create(input, false);
+  }
+
+  createProvisional(input: ChatCreateRequest): Chat {
+    return this.#create(input, true);
+  }
+
+  discardAllProvisional(): number {
+    try {
+      return this.chats.deleteAllProvisionalChats();
+    } catch {
+      throw new ChatError(
+        "CHAT.STORAGE_FAILED",
+        "无法清理未开始的会话。",
+        true,
+      );
+    }
+  }
+
+  discardProvisional(chatId: string): boolean {
+    try {
+      return this.chats.deleteProvisionalChat(chatId);
+    } catch {
+      throw new ChatError(
+        "CHAT.STORAGE_FAILED",
+        "无法清理未开始的会话。",
+        true,
+      );
+    }
+  }
+
+  establishProvisional(chatId: string): Chat {
+    const current = this.#requireChat(chatId);
+    if (!this.chats.isProvisionalChat(chatId)) return current;
+    try {
+      const established = this.chats.establishProvisionalChat(
+        chatId,
+        this.clock.now(),
+      );
+      if (!established) {
+        throw new Error("Provisional Chat changed before establishment");
+      }
+      this.#publishChanged(established);
+      return established;
+    } catch {
+      throw new ChatError("CHAT.STORAGE_FAILED", "无法开始这段对话。", true);
+    }
+  }
+
+  #create(input: ChatCreateRequest, provisional: boolean): Chat {
     const request = parseSchema(ChatCreateRequestSchema, input);
     const now = this.clock.now();
     try {
-      const chat = this.chats.insertChat({
-        createdAt: now,
-        id: this.idGenerator.generate(),
-        status: "active",
-        title:
-          request.title?.trim() || fallbackChatTitle(request.initialMessage),
-        updatedAt: now,
-      });
-      this.#publishChanged(chat);
+      const chat = this.chats.insertChat(
+        {
+          createdAt: now,
+          id: this.idGenerator.generate(),
+          status: "active",
+          title:
+            request.title?.trim() || fallbackChatTitle(request.initialMessage),
+          updatedAt: now,
+        },
+        { provisional },
+      );
+      if (!provisional) this.#publishChanged(chat);
       return chat;
     } catch {
       throw new ChatError("CHAT.STORAGE_FAILED", "无法创建会话。", true);

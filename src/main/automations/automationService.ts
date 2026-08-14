@@ -43,6 +43,14 @@ export interface AutomationEventPublisher {
 }
 
 interface AutomationAgentRuntime {
+  startAssistantInitiated(
+    request: StartRunRequest,
+    options: {
+      readonly modelId: string;
+      readonly onStarted?: (run: Run) => void;
+      readonly toolNames?: readonly string[];
+    },
+  ): Promise<Run>;
   startAutomation(
     request: StartRunRequest,
     options: {
@@ -378,6 +386,7 @@ export class AutomationService {
 
   async #dispatchAgentTask(initial: AutomationRun): Promise<void> {
     if (initial.definition.task.kind !== "agent_task") return;
+    const task = initial.definition.task;
     let current = this.repository.getRun(initial.id) ?? initial;
     const linkedRunId = runtimeRunId(current);
     if (linkedRunId) {
@@ -386,7 +395,7 @@ export class AutomationService {
       return;
     }
 
-    let chatId = runChatId(current);
+    let chatId = runChatId(current) ?? task.targetChatId;
     if (!chatId) {
       chatId = this.chats.create({ title: current.definition.name }).id;
       current = this.repository.replaceRun(
@@ -396,44 +405,81 @@ export class AutomationService {
         }),
       );
       this.#publishRun(current, false);
+    } else if (!runChatId(current)) {
+      const target = this.chats.getSnapshot({ chatId });
+      if (!target) {
+        throw new AutomationError(
+          "AUTOMATION.INVALID_STATE",
+          "Agent Task 的目标会话不存在。",
+          false,
+        );
+      }
+      if (target.chat.status === "archived") {
+        this.chats.restore({ chatId });
+      }
+      current = this.repository.replaceRun(
+        updateAutomationRun(current, {
+          chatId,
+          updatedAt: this.clock.now(),
+        }),
+      );
+      this.#publishRun(current, false);
     }
 
-    const existingRuns = this.runProjections.listChatRuns(chatId);
-    const existing =
-      existingRuns.find((run) =>
-        ["queued", "running", "waiting_approval", "needs_input"].includes(
-          run.status,
-        ),
-      ) ?? existingRuns[0];
-    const task = current.definition.task;
-    if (task.kind !== "agent_task") return;
-    const runtimeRun =
-      existing ??
-      (await this.agent.startAutomation(
-        {
-          attachments: [],
-          chatId,
-          content: task.goal,
-          execution: task.execution,
-          providerProfileId: task.providerProfileId,
-          requestedAt: current.requestedAt,
+    const request = {
+      attachments: [],
+      chatId,
+      content: task.goal,
+      execution: task.execution,
+      providerProfileId: task.providerProfileId,
+      requestedAt: current.requestedAt,
+    } satisfies StartRunRequest;
+    const options = {
+      modelId: task.modelId,
+      ...(task.toolScope.mode === "selected"
+        ? { toolNames: task.toolScope.toolNames }
+        : {}),
+    };
+    let runtimeRun: Run;
+    if (task.delivery === "assistant_message") {
+      runtimeRun = await this.agent.startAssistantInitiated(request, {
+        ...options,
+        onStarted: (started) => {
+          current = this.repository.replaceRun(
+            updateAutomationRun(current, {
+              chatId,
+              runId: started.id,
+              updatedAt: this.clock.now(),
+            }),
+          );
+          this.#publishRun(current, false);
         },
-        {
-          modelId: task.modelId,
-          ...(task.toolScope.mode === "selected"
-            ? { toolNames: task.toolScope.toolNames }
-            : {}),
-        },
-      ));
+      });
+    } else {
+      const chatRuns =
+        task.targetChatId === undefined
+          ? this.runProjections.listChatRuns(chatId)
+          : [];
+      const existing =
+        chatRuns.find((run) =>
+          ["queued", "running", "waiting_approval", "needs_input"].includes(
+            run.status,
+          ),
+        ) ?? chatRuns[0];
+      runtimeRun =
+        existing ?? (await this.agent.startAutomation(request, options));
+    }
 
-    current = this.repository.replaceRun(
-      updateAutomationRun(current, {
-        chatId,
-        runId: runtimeRun.id,
-        updatedAt: this.clock.now(),
-      }),
-    );
-    this.#publishRun(current, false);
+    if (runtimeRunId(current) !== runtimeRun.id) {
+      current = this.repository.replaceRun(
+        updateAutomationRun(current, {
+          chatId,
+          runId: runtimeRun.id,
+          updatedAt: this.clock.now(),
+        }),
+      );
+      this.#publishRun(current, false);
+    }
     this.#synchronizeRun(
       current,
       this.runProjections.getRun(runtimeRun.id) ?? runtimeRun,

@@ -14,6 +14,7 @@ import type { PetManagementApi } from "./pet";
 import type { ProviderApi } from "./provider";
 import type { TerritoryWorldApi } from "./territoryWorld";
 import type { MemoryApi } from "./memory";
+import type { JourneyApi } from "./journey";
 import type { VoiceApi } from "./voice";
 
 export const FOUNDATION_CHANNELS = {
@@ -34,6 +35,7 @@ export interface DesktopApi {
   evolution: EvolutionApi;
   files: LocalFilesApi;
   foundation: FoundationApi;
+  journey: JourneyApi;
   memory: MemoryApi;
   pet: PetManagementApi;
   provider: ProviderApi;

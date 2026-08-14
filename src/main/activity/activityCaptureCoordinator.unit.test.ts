@@ -6,6 +6,7 @@ import type { Clock } from "../../shared/pure/clock";
 import type { AppLogger } from "../observability/logger";
 import type { ActiveApplicationProbe } from "./activeApplicationProbe";
 import { ActivityCaptureCoordinator } from "./activityCaptureCoordinator";
+import type { ForegroundActivityObservation } from "./activityObservation";
 import type { ActivityService } from "./activityService";
 import type { ActivitySystemSource } from "./activitySystemSource";
 
@@ -22,6 +23,14 @@ function harness() {
     source: string;
   }> = [];
   const screenshots: string[] = [];
+  const observations: ForegroundActivityObservation[] = [];
+  let activeApplication:
+    | {
+        readonly appId?: string;
+        readonly appName: string;
+        readonly windowTitle?: string;
+      }
+    | undefined;
   const recordEvent = vi.fn(
     (details: ActivityEventDetails, actor: "agent" | "system" | "user") => {
       recorded.push({ actor, source: details.source });
@@ -45,7 +54,7 @@ function harness() {
     ),
   } as unknown as ActivityService;
   const applications = {
-    read: () => Promise.resolve(undefined),
+    read: () => Promise.resolve(activeApplication),
   } satisfies ActiveApplicationProbe;
   const system = {
     isIdle: () => false,
@@ -71,10 +80,15 @@ function harness() {
       system,
       clock,
       logger,
+      { observeForeground: (observation) => observations.push(observation) },
     ),
+    observations,
     recorded,
     recordEvent,
     screenshots,
+    setActiveApplication(value: typeof activeApplication) {
+      activeApplication = value;
+    },
     started,
   };
 }
@@ -114,6 +128,30 @@ function toolEnvelope(
 }
 
 describe("ActivityCaptureCoordinator", () => {
+  it("publishes a typed user foreground fact without assigning companionship state", async () => {
+    const fixture = harness();
+    fixture.setActiveApplication({
+      appId: "com.example.editor",
+      appName: "Editor",
+      windowTitle: "thesis-outline.md",
+    });
+
+    fixture.coordinator.start();
+    await flushQueue();
+    await fixture.coordinator.stop();
+
+    expect(fixture.observations).toEqual([
+      {
+        appId: "com.example.editor",
+        appName: "Editor",
+        eventId: "event-1",
+        observedAt: "2026-08-08T10:00:00.000Z",
+        windowTitle: "thesis-outline.md",
+      },
+    ]);
+    expect(fixture.started).toEqual([{ actor: "user", source: "active_app" }]);
+  });
+
   it("captures at a user transition no more than once per 15 minutes", async () => {
     const fixture = harness();
     const { coordinator, screenshots } = fixture;

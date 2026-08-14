@@ -179,6 +179,11 @@ export function registerMemoryFormationTool(
   registry: ToolRegistry,
   memory: MemoryService,
   resolveEvidence: MemoryFormationEvidenceResolver,
+  onFormed?: (input: {
+    readonly content: string;
+    readonly memoryId: string;
+    readonly runId: string;
+  }) => void,
 ): void {
   registry.register({
     descriptor: {
@@ -209,6 +214,13 @@ export function registerMemoryFormationTool(
           type: evidence.sourceType,
         },
       });
+      if ("memoryId" in result) {
+        onFormed?.({
+          content: request.content,
+          memoryId: result.memoryId,
+          runId: context.runId,
+        });
+      }
       const modelContent = result satisfies JsonValue;
       const summaries = {
         candidate_created: "已生成待确认记忆候选",
