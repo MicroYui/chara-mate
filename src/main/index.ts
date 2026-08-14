@@ -53,6 +53,8 @@ import {
   MainWindowController,
   type MainWindowTarget,
 } from "./app/mainWindowController";
+import { initializeSingleInstance } from "./app/singleInstance";
+import { TrayController } from "./app/trayController";
 import { WindowPlacementRepository } from "./app/windowPlacementRepository";
 import { createMainWindow } from "./app/windows";
 import { registerSettingsIpc } from "./app/settingsIpc";
@@ -160,6 +162,10 @@ if (userDataOverride) {
   app.setPath("userData", path.resolve(userDataOverride));
 }
 
+const primaryInstance = initializeSingleInstance(app, () =>
+  openMainWindow("chat"),
+);
+
 function getSupportedPlatform(): FoundationSnapshot["platform"] {
   if (
     process.platform !== "darwin" &&
@@ -193,6 +199,7 @@ let unregisterTerritoryProtocol: (() => void) | undefined;
 let unregisterVoiceIpc: (() => void) | undefined;
 let providerService: ProviderService | undefined;
 let characterWindowController: CharacterWindowController | undefined;
+let trayController: TrayController | undefined;
 let agentRuntime: AgentRuntime | undefined;
 let evolutionService: EvolutionService | undefined;
 let automationScheduler: AutomationScheduler | undefined;
@@ -222,6 +229,8 @@ function openMainWindow(target?: MainWindowTarget): void {
 async function stopApplicationInfrastructure(): Promise<void> {
   if (stopPromise) return stopPromise;
   stopPromise = (async () => {
+    trayController?.destroy();
+    trayController = undefined;
     unregisterActivityIpc?.();
     unregisterActivityIpc = undefined;
     unregisterActivityProtocol?.();
@@ -1038,6 +1047,7 @@ async function startApplication(): Promise<void> {
             window.webContents.send(VOICE_CHANNELS.changed, value);
           }
         }
+        void trayController?.refresh();
       },
     },
     (chatId) =>
@@ -1219,6 +1229,29 @@ async function startApplication(): Promise<void> {
   );
   await mainWindows.open();
   await characterWindowController.create();
+  const trayActivity = activityService;
+  const trayCharacter = characterWindowController;
+  const trayVoice = voiceService;
+  if (!trayActivity || !trayCharacter || !trayVoice) {
+    throw new Error("Tray dependencies were not initialized.");
+  }
+  trayController = new TrayController(
+    {
+      activity: trayActivity,
+      character: trayCharacter,
+      logger,
+      openMainWindow,
+      pet: petService,
+      quit: () => app.quit(),
+      voice: trayVoice,
+    },
+    {
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+    },
+  );
+  await trayController.create();
   if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
     console.error("CHARAMATE_MAIN_STAGE window-loaded");
     await Promise.all([rendererReady, characterRendererReady]);
@@ -1243,6 +1276,8 @@ async function startApplication(): Promise<void> {
         petIds,
         providerProfileNames,
         rendererReady: true,
+        singleInstance: app.hasSingleInstanceLock(),
+        trayReady: trayController.isCreated(),
         visibleWindowCount: BrowserWindow.getAllWindows().filter((window) =>
           window.isVisible(),
         ).length,
@@ -1252,33 +1287,35 @@ async function startApplication(): Promise<void> {
   }
 }
 
-void app
-  .whenReady()
-  .then(startApplication)
-  .catch(async (error: unknown) => {
-    logger.error(
-      "CHARAMATE_STARTUP_ERROR",
-      error instanceof Error ? error : { error },
-    );
-    await stopApplicationInfrastructure();
-    app.exit(1);
+if (primaryInstance) {
+  void app
+    .whenReady()
+    .then(startApplication)
+    .catch(async (error: unknown) => {
+      logger.error(
+        "CHARAMATE_STARTUP_ERROR",
+        error instanceof Error ? error : { error },
+      );
+      await stopApplicationInfrastructure();
+      app.exit(1);
+    });
+
+  app.on("activate", () => {
+    openMainWindow();
   });
 
-app.on("activate", () => {
-  openMainWindow();
-});
-
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
-
-app.on("before-quit", (event) => {
-  if (shutdownComplete) return;
-  event.preventDefault();
-  void stopApplicationInfrastructure().finally(() => {
-    shutdownComplete = true;
-    app.quit();
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
   });
-});
+
+  app.on("before-quit", (event) => {
+    if (shutdownComplete) return;
+    event.preventDefault();
+    void stopApplicationInfrastructure().finally(() => {
+      shutdownComplete = true;
+      app.quit();
+    });
+  });
+}

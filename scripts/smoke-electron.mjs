@@ -172,6 +172,8 @@ if (
   !result.providerProfileNames.includes("copilot_api") ||
   !result.providerProfileNames.includes("azure") ||
   result.rendererReady !== true ||
+  result.singleInstance !== true ||
+  result.trayReady !== true ||
   result.backgroundTest !== true ||
   result.visibleWindowCount !== 0 ||
   (process.platform === "darwin" && result.dockVisible !== false) ||

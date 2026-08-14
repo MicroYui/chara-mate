@@ -16,6 +16,7 @@ function chromiumRevisionDirectory(): string | undefined {
 
 const chromiumDirectory = chromiumRevisionDirectory();
 const defaultPetsDirectory = path.resolve("resources/default-pets");
+const trayDirectory = path.resolve("resources/tray");
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -23,6 +24,7 @@ const config: ForgeConfig = {
     executableName: "CharaMate",
     extraResource: [
       defaultPetsDirectory,
+      trayDirectory,
       ...(chromiumDirectory && existsSync(chromiumDirectory)
         ? [chromiumDirectory]
         : []),

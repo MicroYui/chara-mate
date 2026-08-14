@@ -84,4 +84,51 @@ describe("CharacterWindowController proactive conversation window", () => {
     );
     expect(destroy).toHaveBeenCalledOnce();
   });
+
+  it("hides both native surfaces until the user shows the desktop pet again", () => {
+    let petVisible = true;
+    let conversationVisible = true;
+    const petWindow = {
+      getBounds: () => ({ height: 135, width: 125, x: 1200, y: 750 }),
+      hide: vi.fn(() => {
+        petVisible = false;
+      }),
+      isDestroyed: () => false,
+      isVisible: () => petVisible,
+      showInactive: vi.fn(() => {
+        petVisible = true;
+      }),
+      webContents: { id: 1 },
+    };
+    const conversationWindow = {
+      hide: vi.fn(() => {
+        conversationVisible = false;
+      }),
+      isDestroyed: () => false,
+      isVisible: () => conversationVisible,
+      setBounds: vi.fn(),
+      showInactive: vi.fn(() => {
+        conversationVisible = true;
+      }),
+      webContents: {
+        id: 2,
+        isDestroyed: () => false,
+        send: vi.fn(),
+      },
+    };
+    const controller = new CharacterWindowController({} as PetService, vi.fn());
+    Reflect.set(controller, "window", petWindow);
+    Reflect.set(controller, "conversationWindow", conversationWindow);
+    Reflect.set(controller, "proactiveBubble", bubble);
+
+    controller.setUserVisible(false);
+    expect(controller.isUserVisible()).toBe(false);
+    expect(petWindow.hide).toHaveBeenCalledOnce();
+    expect(conversationWindow.hide).toHaveBeenCalledOnce();
+
+    controller.setUserVisible(true);
+    expect(controller.isUserVisible()).toBe(true);
+    expect(petWindow.showInactive).toHaveBeenCalledOnce();
+    expect(conversationWindow.showInactive).toHaveBeenCalledOnce();
+  });
 });

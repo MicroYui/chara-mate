@@ -609,12 +609,11 @@ Approval 气泡使用轻量浮层，展示“需要你的允许”、Tool 名和
 
 ## 10. 托盘与短提示音
 
-托盘用于在主面板关闭或后台时保持状态可见：
+托盘首先是“CharaMate 仍在陪伴”的系统级锚点，不是任务看板。macOS 使用 18 px 单色 Template 图标：猫耳轮廓与对话气泡合成一个符号，适配浅色/深色菜单栏；不在图标内部绘制数字、进度环、Run 状态或彩色徽章，也不调用生成式图片作为小尺寸系统图标。
 
-- idle：正常图标；
-- running：轻量活动标记；
-- waiting approval：醒目标记和 tooltip；
-- completed/failed：短暂显示结果标记，点击进入对应 Chat，随后恢复普通图标。
+菜单使用一套自然语义：首行显示 `Mika 正在陪你 · 1 个桌宠`；用户主动隐藏后显示 `Mika 已暂时隐藏 · 1 个桌宠`，没有活动桌宠时显示 0 个。第二行只说明当前 Voice 的连接、聆听、回应、暂停或结束状态。其余动作依次为“显示桌宠”“打开 CharaMate”“麦克风静音”“暂停活动感知”和“退出 CharaMate”。桌宠显隐只改变桌面 Character Window 及其跟随气泡，不改变 Territory 内的角色、所选桌宠或保存位置；Activity 暂停和 Voice 静音直接复用各自现有领域状态。
+
+应用必须持有单实例锁。重复启动不再产生第二套桌宠、Tray、Activity Capture 或 Provider Runtime，而是恢复并聚焦现有主窗口。菜单中的桌宠数量表达当前产品唯一活动桌宠，不把 Run、Journey、Together Session 或自动化数量伪装成“正在运行的桌宠”。
 
 短提示音是 100–300 ms 的非语言 earcon，只提示需要批准、完成或失败。它和助手实时说话完全不同：Realtime 语音播放自然语言，earcon 只传达应用状态；语音正在播放时不叠加完成音。
 
@@ -829,6 +828,7 @@ CharacterWindowRoot
 - 领地在最小窗口保持场景比例；收藏库、检查器和 AI 预览改为一次只打开一个的 Sheet，关闭后镜头回到打开前的焦点与视口；
 - 桌宠独立透明窗口不继承主面板最小尺寸。
 - macOS 桌宠窗口与主动对话小窗都使用 panel 语义。2026-08-14 按锁定 `electron@43.2.0` 的 `electron.d.ts` 复核 `BrowserWindow` 的独立 `setBounds`、`loadFile(..., { query })`、`focusable` 与 `acceptFirstMouse` 能力：桌宠窗口始终保持 `focusable=false`、`acceptFirstMouse=true`；只有存在主动对话投影时才创建可聚焦的跟随小窗，关闭投影即销毁，避免透明区域继续拦截鼠标。两个 React surface 复用同一 Character preload 与 Main 领域服务，不复制 Chat、Run 或 Voice 状态；从对话小窗点击语音时，该 Renderer 在用户点击同步调用栈内建立唯一 WebRTC Driver，并继续复用 Main 的唯一 Voice Session。Voice 活动期间小窗保留为连接 owner，打开完整 Chat 不销毁它，关闭动作暂时不可用；Session 结束后恢复普通关闭生命周期。整个过程不因气泡出现而触发主窗口 `show/focus`；其他平台保留同样的双窗口边界。
+- 同日复核 `electron@43.2.0` 的 `Tray`、`nativeImage.setTemplateImage`、`app.requestSingleInstanceLock` 与 `second-instance` 类型说明：菜单栏图标从随包 PNG 的 1x/2x 表示创建，macOS 标记为 Template Image；第二实例只发送激活事件并立即退出。图标尺寸、猫耳气泡造型、菜单文案和“不显示任务数量”均为 CharaMate 产品选择，不是 Electron 协议限制。
 
 ---
 

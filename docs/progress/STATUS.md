@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-**Phase 6 — Done（自由领地、桌宠与无感陪伴主路径已收口）**
+**Phase 6 — Done（自由领地、桌宠、菜单栏在场与无感陪伴主路径已收口）**
 
 Phase 0–4 已完成。Phase 5 的 Automations、Multi-agent、Self-evolution、无感同行/共处与全新主动话题邀请均已完成单一路径生产实现；Phase 6 已完成 24 px 原子空间、2.5D 深度、高密度起始房、完整生成/编辑/删除生命周期，以及 Memory/Activity 生活化联动。
 
@@ -18,12 +18,14 @@ Phase 0–4 已完成。Phase 5 的 Automations、Multi-agent、Self-evolution�
 - [x] 主动气泡绑定唯一 `chatId`，主窗口关闭时可连续文字/语音回复；临时邀请不进入最近、搜索或归档列表，也不显示倒计时或进度条。
 - [x] World 合同、PixiJS 深度/碰撞/寻路、完整 Candidate/Preview/change-set 与 Memory/Activity 来源快照完成。
 - [x] Character Window 同时支持 Territory 场景交接和独立主动对话跟随窗口，不复制桌宠或遮挡交互。
+- [x] macOS 菜单栏使用单实例 18 px Template 图标，以自然语言投影桌宠、Voice 与 Activity 状态并复用现有领域控制。
 - [x] 合并后的 Schema v14、typed IPC、Renderer、离线、Build、Electron E2E 与 package/smoke 全链重新通过。
 
 ## 工作包状态
 
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
+| `P6-APP-TRAY-PRESENCE` | `main` | `done` | 18 px Template 图标、自然状态菜单、单实例激活与现有 Pet/Voice/Activity 控制完成单一路径接入 |
 | `P5/6-COMPANIONSHIP-TERRITORY-INTEGRATION` | `main` | `done` | Schema v14、Pet IPC、Character Window 生命周期与两条桌面旅程完成单一路径集成 |
 | `P5-PROACTIVE-INVITATION` | `main` | `done` | 全新话题使用隐藏 provisional Chat；首个回复转正，20 秒超时/关闭/失败/重启清理 |
 | `P5-COMPANIONSHIP-SEAMLESS` | `main` | `done` | 内部状态机与语义 Tool 保留；普通界面只显示自然对话和轻量在场提示 |
@@ -49,6 +51,7 @@ Phase 0–4 已完成。Phase 5 的 Automations、Multi-agent、Self-evolution�
 
 ## 最近绿色验证
 
+- 2026-08-14 菜单栏在场入口：`npm run verify:phase0` 完整通过（contract 100、focused/component 336、integration 170，共 606 项；Electron E2E 22/22），production build、开发态 smoke、macOS arm64 package 与 packaged smoke 均通过；两种 smoke 均确认 `singleInstance=true`、`trayReady=true`，实际重复启动在约 0.28 秒内退出并复用现有实例。
 - 2026-08-14 无感陪伴与自由领地合并：`npm run verify:phase0` 完整通过（contract 100、focused/component 331、integration 170，共 601 项；Electron E2E 22/22），production build、开发态 smoke、macOS arm64 package 与 packaged smoke 均通过；仅保留 2 条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示。
 - 2026-08-14 无感陪伴分支：`npm run verify:phase0` 通过（contract 98、focused/component 329、integration 163，Electron E2E 23/23），production build、开发态 smoke、macOS arm64 package 与 packaged smoke 均通过。
 - 2026-08-14 Phase 6 主线：`npm run verify:offline` 通过（contract 92、focused/component 294、integration 156，共 542 项）；production build、Electron E2E 20/20、macOS arm64 package 与 packaged smoke 均通过。
@@ -57,6 +60,7 @@ Phase 0–4 已完成。Phase 5 的 Automations、Multi-agent、Self-evolution�
 
 ## 当前来源快照
 
+- 2026-08-14 复核锁定 `electron@43.2.0` 包内官方类型：`Tray`、`nativeImage.setTemplateImage`、`app.requestSingleInstanceLock` 与 `second-instance` 支持当前菜单栏和单实例实现；图标造型、自然文案和不展示任务数量属于 CharaMate 产品选择。
 - 2026-08-14 复核锁定 `electron@43.2.0` 包内官方类型：`BrowserWindow` 支持独立 `setBounds`、`loadFile(..., { query })`、`focusable` 与 `acceptFirstMouse`；跟随窗口的布局与显示时机属于 CharaMate 产品启发式。
 - 2026-08-14 复核 OpenAI Structured Outputs 支持的 Schema 与锁定 `openai@6.49.0`；仅 Provider wire 严格子集启用 `strict`，领域 TypeBox/Ajv 校验不变。
 - 2026-08-13 复核 Chronicle 官方说明；它只作为“前台活动事实可成为后续对话上下文”的参考，触发、沉默、Chat 路由和长期同行建立仍由 CharaMate 定义。

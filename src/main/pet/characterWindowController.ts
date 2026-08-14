@@ -34,6 +34,7 @@ export class CharacterWindowController {
   private drag: DragState | undefined;
   private mainWindowVisible = false;
   private territoryActive = false;
+  private userVisible = true;
   private proactiveBubble: ProactiveConversationBubble | null = null;
 
   constructor(
@@ -46,14 +47,29 @@ export class CharacterWindowController {
     return this.window;
   }
 
+  private shouldRevealCharacter(): boolean {
+    return (
+      this.userVisible && !(this.mainWindowVisible && this.territoryActive)
+    );
+  }
+
   private reconcileVisibility(): void {
     const window = this.window;
     if (!window || window.isDestroyed() || !this.revealOnReady) return;
-    if (this.mainWindowVisible && this.territoryActive) {
+    if (!this.shouldRevealCharacter()) {
       if (window.isVisible()) window.hide();
+      const conversationWindow = this.conversationWindow;
+      if (
+        conversationWindow &&
+        !conversationWindow.isDestroyed() &&
+        conversationWindow.isVisible()
+      ) {
+        conversationWindow.hide();
+      }
       return;
     }
     if (!window.isVisible()) window.showInactive();
+    if (this.proactiveBubble) this.syncConversationWindow();
   }
 
   setMainWindowVisible(visible: boolean): void {
@@ -63,6 +79,15 @@ export class CharacterWindowController {
 
   setTerritoryActive(active: boolean): void {
     this.territoryActive = active;
+    this.reconcileVisibility();
+  }
+
+  isUserVisible(): boolean {
+    return this.userVisible;
+  }
+
+  setUserVisible(visible: boolean): void {
+    this.userVisible = visible;
     this.reconcileVisibility();
   }
 
@@ -120,6 +145,11 @@ export class CharacterWindowController {
 
   private syncConversationWindow(): void {
     if (!this.proactiveBubble || !this.window || this.window.isDestroyed()) {
+      return;
+    }
+    if (!this.shouldRevealCharacter()) {
+      const window = this.conversationWindow;
+      if (window && !window.isDestroyed() && window.isVisible()) window.hide();
       return;
     }
     if (this.conversationWindow && !this.conversationWindow.isDestroyed()) {
