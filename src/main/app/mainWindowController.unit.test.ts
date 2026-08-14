@@ -5,25 +5,35 @@ import type { BrowserWindow } from "electron";
 import { MainWindowController } from "./mainWindowController";
 
 class FakeMainWindow {
-  readonly hide = vi.fn();
+  readonly hide = vi.fn(() => {
+    this.visible = false;
+    this.emit("hide");
+  });
   readonly focus = vi.fn();
   readonly destroy = vi.fn(() => {
     this.destroyed = true;
+    this.visible = false;
     for (const listener of this.closedListeners) listener();
   });
   readonly restore = vi.fn(() => {
     this.minimized = false;
+    this.emit("restore");
   });
-  readonly show = vi.fn();
+  readonly show = vi.fn(() => {
+    this.visible = true;
+    this.emit("show");
+  });
   private readonly webContentsValue: {
     readonly id: number;
   };
   private destroyed = false;
   private minimized = false;
+  private visible = false;
   private readonly closeListeners: Array<
     (event: { preventDefault(): void }) => void
   > = [];
   private readonly closedListeners: Array<() => void> = [];
+  private readonly windowEventListeners = new Map<string, Array<() => void>>();
 
   constructor(id: number) {
     this.webContentsValue = { id };
@@ -44,6 +54,7 @@ class FakeMainWindow {
     for (const listener of this.closeListeners) listener(event);
     if (prevented) return;
     this.destroyed = true;
+    this.visible = false;
     for (const listener of this.closedListeners) listener();
   }
 
@@ -55,8 +66,13 @@ class FakeMainWindow {
     return this.minimized;
   }
 
+  isVisible(): boolean {
+    return this.visible;
+  }
+
   minimize(): void {
     this.minimized = true;
+    this.emit("minimize");
   }
 
   on(
@@ -67,7 +83,18 @@ class FakeMainWindow {
       this.closeListeners.push((closeEvent) => listener(closeEvent));
     }
     if (event === "closed") this.closedListeners.push(() => listener());
+    if (!["close", "closed"].includes(event)) {
+      const listeners = this.windowEventListeners.get(event) ?? [];
+      listeners.push(() => listener());
+      this.windowEventListeners.set(event, listeners);
+    }
     return this;
+  }
+
+  private emit(event: string): void {
+    for (const listener of this.windowEventListeners.get(event) ?? []) {
+      listener();
+    }
   }
 }
 
@@ -180,6 +207,32 @@ describe("MainWindowController", () => {
     window.close();
     expect(window.isDestroyed()).toBe(true);
     expect(controller.getWindow()).toBeNull();
+  });
+
+  it("reports native visibility changes to window-owned companions", async () => {
+    const window = new FakeMainWindow(63);
+    const onVisibilityChanged = vi.fn();
+    const controller = new MainWindowController(
+      vi.fn().mockResolvedValue(asBrowserWindow(window)),
+      vi.fn(),
+      vi.fn(),
+      { onVisibilityChanged },
+    );
+
+    controller.markRendererReady({ id: 63 });
+    await controller.open();
+    expect(onVisibilityChanged).toHaveBeenLastCalledWith(true);
+
+    window.minimize();
+    expect(onVisibilityChanged).toHaveBeenLastCalledWith(false);
+    window.restore();
+    expect(onVisibilityChanged).toHaveBeenLastCalledWith(true);
+    window.hide();
+    expect(onVisibilityChanged).toHaveBeenLastCalledWith(false);
+    window.show();
+    expect(onVisibilityChanged).toHaveBeenLastCalledWith(true);
+    window.close();
+    expect(onVisibilityChanged).toHaveBeenLastCalledWith(false);
   });
 
   it("keeps background E2E windows loaded without revealing or focusing them", async () => {

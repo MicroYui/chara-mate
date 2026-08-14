@@ -27,7 +27,7 @@ import type {
   MemoryStatus,
   MemoryType,
 } from "../../../shared/contracts/memory";
-import type { TerritoryApi } from "../../../shared/contracts/territory";
+import type { TerritoryWorldApi } from "../../../shared/contracts/territoryWorld";
 import styles from "./MemoryPage.module.css";
 
 const memoryTypes: ReadonlyArray<{ label: string; value: MemoryType }> = [
@@ -119,7 +119,7 @@ interface MemoryPageProps {
   readonly onFocusConsumed?: () => void;
   readonly onOpenSource?: (source: MemorySource) => void;
   readonly onOpenTerritory: (candidateId: string) => void;
-  readonly territoryApi?: Pick<TerritoryApi, "createSourceCandidate">;
+  readonly territoryApi?: Pick<TerritoryWorldApi, "createSourceCandidate">;
 }
 
 export function MemoryPage({

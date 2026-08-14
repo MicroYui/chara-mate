@@ -16,6 +16,7 @@ import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
+import { TERRITORY_WORLD_CHANNELS } from "../shared/contracts/territoryWorld";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
 import { SystemClock } from "../shared/pure/clock";
 import { CryptoIdGenerator } from "../shared/pure/id";
@@ -108,17 +109,16 @@ import { registerPlanTool } from "./agent/planTool";
 import { ArtifactStore } from "./tools/artifactStore";
 import { registerLocalTools } from "./tools/localTools";
 import { ToolRegistry } from "./tools/toolRegistry";
-import { registerTerritoryIpc } from "./territory/territoryIpc";
-import { TerritoryAssetStore } from "./territory/territoryAssetStore";
-import { TerritoryCandidateStore } from "./territory/territoryCandidateStore";
-import { ElectronTerritoryCandidateProcessor } from "./territory/electronTerritoryCandidateProcessor";
-import { ElectronTerritoryImageNormalizer } from "./territory/electronTerritoryImageNormalizer";
-import { TerritoryImageService } from "./territory/territoryImageService";
-import { TerritoryMemoryService } from "./territory/territoryMemoryService";
 import { registerTerritoryProtocol } from "./territory/territoryProtocol";
-import { TerritoryRepository } from "./territory/territoryRepository";
-import { TerritoryService } from "./territory/territoryService";
 import { registerTerritoryTools } from "./territory/territoryTools";
+import { createStarterTerritoryWorldSeed } from "./territory/territoryStarterWorld";
+import { registerTerritoryWorldIpc } from "./territory/territoryWorldIpc";
+import { TerritoryWorldMemoryService } from "./territory/territoryWorldMemoryService";
+import { TerritoryWorldRepository } from "./territory/territoryWorldRepository";
+import { TerritoryWorldService } from "./territory/territoryWorldService";
+import { TerritoryWorldAssetStore } from "./territory/territoryWorldAssetStore";
+import { ElectronTerritoryWorldImageNormalizer } from "./territory/electronTerritoryWorldImageNormalizer";
+import { TerritoryWorldCandidateService } from "./territory/territoryWorldCandidateService";
 import { AzureWebRtcSessionIssuer } from "./voice/azureWebRtcSession";
 import { registerVoiceIpc } from "./voice/voiceIpc";
 import { VoiceRepository } from "./voice/voiceRepository";
@@ -165,7 +165,7 @@ let unregisterProviderIpc: (() => void) | undefined;
 let unregisterSettingsIpc: (() => void) | undefined;
 let unregisterPetIpc: (() => void) | undefined;
 let unregisterPetProtocol: (() => void) | undefined;
-let unregisterTerritoryIpc: (() => void) | undefined;
+let unregisterTerritoryWorldIpc: (() => void) | undefined;
 let unregisterTerritoryProtocol: (() => void) | undefined;
 let unregisterVoiceIpc: (() => void) | undefined;
 let providerService: ProviderService | undefined;
@@ -219,8 +219,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterPetIpc = undefined;
     unregisterPetProtocol?.();
     unregisterPetProtocol = undefined;
-    unregisterTerritoryIpc?.();
-    unregisterTerritoryIpc = undefined;
+    unregisterTerritoryWorldIpc?.();
+    unregisterTerritoryWorldIpc = undefined;
     unregisterTerritoryProtocol?.();
     unregisterTerritoryProtocol = undefined;
     unregisterVoiceIpc?.();
@@ -573,52 +573,60 @@ async function startApplication(): Promise<void> {
   await mcpService.initialize();
   unregisterExtensionIpc = registerExtensionIpc(mcpService, skillService);
 
-  const territoryRepository = new TerritoryRepository(applicationDatabase);
-  const territoryAssets = new TerritoryAssetStore(
-    path.join(userDataPath, "territory", "assets"),
-    new ElectronTerritoryImageNormalizer(),
+  const territoryWorldRepository = new TerritoryWorldRepository(
+    applicationDatabase,
+    idGenerator,
   );
-  const territoryCandidates = new TerritoryCandidateStore(
-    path.join(userDataPath, "territory", "candidates"),
-    new ElectronTerritoryCandidateProcessor(),
+  territoryWorldRepository.ensureInitialized(
+    createStarterTerritoryWorldSeed(clock.now()),
   );
-  const territoryService = new TerritoryService(
-    territoryRepository,
-    territoryAssets,
-    clock,
+  const territoryWorldAssets = new TerritoryWorldAssetStore(
+    path.join(userDataPath, "territory", "world-assets"),
+    new ElectronTerritoryWorldImageNormalizer(),
   );
-  const territoryImageService = new TerritoryImageService(
-    territoryRepository,
-    territoryCandidates,
-    territoryService,
+  const territoryWorldCandidates = new TerritoryWorldCandidateService(
+    territoryWorldRepository,
+    territoryWorldAssets,
     providerService,
     idGenerator,
     clock,
+    (snapshot) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send(
+            TERRITORY_WORLD_CHANNELS.snapshotChanged,
+            snapshot,
+          );
+        }
+      }
+    },
   );
-  const territoryMemoryService = new TerritoryMemoryService(
-    territoryRepository,
-    territoryService,
+  territoryWorldCandidates.recoverInterruptedCandidates();
+  const territoryWorldService = new TerritoryWorldService(
+    territoryWorldRepository,
+    clock,
+    territoryWorldCandidates,
+    territoryWorldAssets,
+  );
+  const territoryWorldMemoryService = new TerritoryWorldMemoryService(
+    territoryWorldRepository,
     memoryServiceInstance,
     activityService,
-    idGenerator,
     clock,
+    territoryWorldCandidates,
   );
-  territoryImageService.recoverInterruptedCandidates();
-  registerTerritoryTools(toolRegistry, {
-    images: territoryImageService,
-    providers: providerService,
-    territory: territoryService,
-  });
   unregisterTerritoryProtocol = registerTerritoryProtocol(
-    territoryRepository,
-    territoryAssets,
-    territoryCandidates,
+    territoryWorldRepository,
+    territoryWorldAssets,
   );
-  unregisterTerritoryIpc = registerTerritoryIpc(
-    territoryService,
-    territoryImageService,
-    territoryMemoryService,
+  unregisterTerritoryWorldIpc = registerTerritoryWorldIpc(
+    territoryWorldService,
+    territoryWorldMemoryService,
   );
+  registerTerritoryTools(toolRegistry, {
+    candidates: territoryWorldCandidates,
+    territory: territoryWorldService,
+  });
 
   const writer = new RunEventWriter(
     runRepository,
@@ -814,6 +822,8 @@ async function startApplication(): Promise<void> {
       );
     },
     {
+      onVisibilityChanged: (visible) =>
+        characterWindowController?.setMainWindowVisible(visible),
       reveal: !backgroundTest,
       shouldKeepAliveOnClose: () => {
         const phase = voiceService?.getActive()?.phase;

@@ -113,7 +113,7 @@ flowchart LR
 | 页面 | 用户看到的内容 |
 | --- | --- |
 | Chats | 会话列表、完整消息、Composer、Run 过程、附件、语音转写 |
-| 领地 | 像素空间、角色、物件、记忆库入口、布置与场景演化 |
+| 领地 | 可扩建 2.5D 像素世界、桌宠生活、自由布置、AI 创作与记忆物件 |
 | Memory | 搜索、画像、长期记忆、来源、Revision 与衰减状态；图关系只在对应 Decision 晋级后出现 |
 | Activity | 今日/历史 Episode、应用/浏览器/截图摘要和蒸馏结果 |
 | Automations | 定时任务、主动聊天规则、运行历史和对应 Chat |
@@ -482,7 +482,7 @@ Registry 负责：
 | Image | 读取用户图片附件、已知本地图片、截图或图片 artifact 的真实像素语义 |
 | Memory | 检索、读取来源、创建候选、编辑记忆 |
 | Chat | 创建会话、附加结果、读取当前 Run 状态 |
-| Territory | 提议物件、生成、放置、收回记忆库 |
+| Territory | 提议物件/套装/区域改造、生成预览、编辑 World change、管理收藏与来源 |
 
 当前公开信息在 Adapter 已确认 Provider 支持时优先使用原生 Web Search；需要页面交互、已登录状态或可复现 DOM/AX 证据时使用 Managed Browser；网页结构化能力不足时才退到 Computer Use。原生搜索、受管浏览器与 Computer 分别承担检索、交互和兜底职责，不构成同一能力的运行时模式或失败回退链。
 
@@ -1028,250 +1028,153 @@ Automation Run 的 `queued/running/waiting_approval/needs_input/interrupted/comp
 
 ## 10. 桌宠领地
 
-### 10.1 产品定位
+### 10.1 产品定位与边界
 
-领地是 CharaMate 最具展示性的一级页面：把抽象的长期记忆、用户画像和日常轨迹变成一个可浏览、可布置、会随使用变化的像素空间。
+领地是 CharaMate 最具展示性的一级页面，也是一个可长期建造、持续演化的 **AI 原生 2.5D 生活沙盒**。它把长期记忆、日常轨迹和用户自己的审美选择变成一个可游览、可扩建、可自由组合且桌宠真实生活其中的像素世界。
 
-视觉方向是温暖、细腻的像素生活模拟与养成气质，可参考经典农场/生活模拟游戏的氛围，但不复制《星露谷物语》的素材、角色、地图或 UI。
+领地吸收生活模拟游戏的完成度、沙盒建造的组合自由和可改造世界的持续性，但不复制任何现有游戏的素材、地图、角色或 UI。这里的“自由”指用户能够改变空间、组合大量兼容元素并形成统一好看的结果，不引入第一人称、真正 3D 体素、物理模拟、挖矿、锻造、战斗、经济、作物收益或关系等级。
 
-### 10.2 首次体验
+产品固定为精致像素风的 2.5D 视角。用户可平移和缩放镜头，但不旋转世界视角；PixiJS 继续是唯一 Territory renderer，不引入第二个游戏引擎。
+
+### 10.2 世界形态与首次体验
+
+一个用户只有一个持续存在的 Territory World。World 由相连的 Zone 组成，Zone 可以是室内房间、庭院、花园、阳台、屋顶或户外地块。用户通过明确的“扩建区域”动作增加 Zone；产品不承诺无限开放世界，也不把每个主题做成互不相干的运行时场景。
 
 首次进入：
 
-1. 用户从数个基础场景选择：林间小屋、海边房间、城市天台、星空工坊等。
-2. 当前桌宠出现在场景中，可走动、待机和朝向点击位置。
-3. 场景包含少量基础物件，保证一开始就是完整可看的空间。
-4. 页面用一句诗意说明：这里会慢慢装下共同经历，但不要求用户先做设置。
+1. 应用立即加载一个本地随包发布、构图完整的起始领地，不等待远端生图。
+2. 用户可以保留当前起始蓝图、选择另一份起始蓝图，或描述一个主题并生成替换预览。
+3. 起始蓝图只创建 World 的第一个不可变 Revision；其中的地面、墙体、背景、家具和装饰之后都可编辑、移动、替换或删除，不存在不可修改的“预设场景”。
+4. 当前桌宠在可行走区域内生活，页面用一句简短说明提示这里会随着共同经历继续生长，不要求用户先完成设置。
 
-### 10.3 记忆生成物件
+主窗口可见且当前一级页面为 Territory 时，角色只在 Territory Canvas 内出现，桌面 Character Window 临时隐藏，避免同一桌宠同时出现在世界内外。离开 Territory，或主窗口被隐藏、最小化到后台、关闭或销毁时，Character Window 立即恢复；该交接只属于当前窗口生命周期，不改变所选桌宠、桌宠开关、位置或其他持久设置。
 
-高信息记忆或跨日模式可以生成 `TerritoryItemCandidate`：
+每个 Zone 有一个当前 Style Profile，保存像素尺度、调色板、轮廓、材质、光照方向、阴影语言、季节/时间基调和已接受的参考资产。用户可以改造一个 Zone，也可以让整个 Territory 使用同一风格；Style Profile 是生成和校验的输入，不是暴露模型参数的高级设置页。
 
-```ts
-interface TerritoryItemCandidate {
-  id: string
-  sources: Array<{
-    kind: "memory" | "activity_digest"
-    id: string
-    revisionId: string | null
-    label: string
-    occurredAt: string
-  }>
-  name: string
-  description: string
-  visualPrompt: string
-  suggestedSceneId: string
-  status: "pending" | "materialized"
-  itemId: string | null
-  createdAt: string
-  updatedAt: string
-}
-```
+### 10.3 空间组合语法
 
-示例：
+自由度来自大量元素共享一套稳定的空间语法，而不是把不受约束的图片叠在一起。World 使用以下确定性层级：
 
-- 连续完成一个重要项目 → 一盏仍亮着的工坊台灯；
-- 经常听某类音乐 → 会轻轻跳动的旧唱片机；
-- 一次难忘旅行 → 窗边带日期的小海螺；
-- 长期学习主题 → 逐渐增厚的一摞书。
+| 层级 | 内容 | 组合规则 |
+| --- | --- | --- |
+| `terrain` | 草地、地板、道路、水面 | 通过网格笔刷绘制，边缘与转角由同一素材组确定性拼接 |
+| `underlay` | 地毯、落叶、水洼、地面光影 | 可与地面物件共格，是否可行走由自己的碰撞声明决定 |
+| `structure` | 墙体、门窗、台阶、屋顶 | 吸附到结构网格并共同定义通行、遮挡和室内外边界 |
+| `object` | 桌椅、床、壁炉、树木等实体 | 按占地、碰撞和深度锚点放置，可在合法范围内微调 |
+| `attachment` | 桌面、书架、墙面、窗台、天花板小物 | 附着到类型匹配的语义锚点，随承载物件一起变换 |
+| `foreground/effect` | 前景叶片、天气、灯光、粒子 | 不成为任意可执行脚本，由类型化视觉能力驱动 |
 
-Memory 详情与 Activity Digest 都通过明确的“放入领地”动作创建候选；同一主来源重复操作只更新同一个候选的语义预填和来源快照，不复制候选或已形成的物件。每个图片生成候选在发起时冻结自己使用的来源 revision 与说明，之后 Memory 更新不会改写已经生成的预览证据。候选只在用户确认图片后形成 Territory Item，Memory 与 Activity 不读取 Territory 表。
+World 只使用一套整数空间坐标，但不同内容采用不同吸附粒度。当前实现以 **24 px 原子世界单位**表达家具位置、碰撞与桌宠寻路；48 px 地形/结构宏格由 `2 × 2` 原子单位组成；附件在父级语义锚点内继续使用受约束的像素偏移。24 px 是用户体验反馈后为了保留既有 48 px 像素素材尺度、同时把横纵放置分辨率各提高一倍而选择的 CharaMate 产品值，不是协议限制、性能容量或可调渲染参数。Zone 边界仍以原子单位表达，任一蓝图尺寸都只是内容选择，不形成全局最大值。
 
-物件描述保持简短、诗意并带来源日期。点击物件打开：名称、描述、形成时间、相关记忆和“在 Memory 中查看”。物件不是新的事实源。
+地形、结构和大型物件使用适用的宏格或原子格保证边缘与寻路稳定；小型装饰在兼容锚点或合法包围区域内支持细粒度移动。物件的视觉 footprint 只负责边界与选区，不把整张透明包围盒都当成不可重叠空间；实体碰撞只由明确 collision cells 决定，因此高物件的上半部可以与后方内容形成自然视觉重叠。视觉范围、占地、碰撞、深度锚点、遮挡模式、可用变换和承载锚点分别声明，不能从透明图片边界猜测。
 
-### 10.4 生成管线
+渲染使用一个共享的 2.5D 深度平面。桌宠、`object`、需要遮挡角色的 `structure` 及其 `attachment` 都按旋转后的脚底/深度锚点世界 Y 排序；附件继承承载物件的脚底深度，只使用稳定的局部次序。`terrain`、`underlay` 和背景结构固定在共享深度平面之后，`foreground` 固定在其之前，效果按 Definition 声明位于背景或覆盖层。这样角色走到桌椅、植物或床后方时会被对应 sprite 遮挡，走到前方时才覆盖它；树冠、屋檐等不能用单一脚底线表达的内容拆成背景主体与前景遮挡片，而不是给角色一个永远最高的层级。
 
-Image deployment 的 Generation 基准 Endpoint：
+承载关系是无环的组合图。桌面、书架、墙面、窗台和天花板等锚点可承载兼容物件；移动、复制、组合、旋转、删除或恢复父级时，整棵组合在一个 Territory 事务中保持一致。用户可以把多个地形、结构、家具、附件与效果保存为可拆分的组合模板，例如“阅读角”“露营区”或“玻璃花房”。
 
-```text
-https://datasetannotator-openai.openai.azure.com/openai/deployments/gpt-image-2/images/generations?api-version=2025-04-01-preview
-```
+物件只声明类型化能力，例如 `seatable`、`sleepable`、`light`、`ambient-animation`、`inspectable` 和 `memory-reveal`。产品不执行生成模型提供的任意代码，也不为每件物品建立独立状态机。
 
-为了保持画风和布局稳定，不每次重画整张领地：
+### 10.4 AI 创作与场景演化
 
-1. 每个基础场景有固定 palette、tile scale、可放置 mask 和统一 style prompt。
-2. 新物件使用 Generation route；用户基于已有预览继续描述修改时，使用同一 deployment 派生的 Edit route，并带入参考图、visual prompt、场景 style prompt 与冻结的尺寸/质量约束。
-3. 生成结果去背景并缓存为候选预览；用户确认后再缩放到 tile，并沿唯一 Territory asset 入口安装。
-4. 场景由底图、地面层、物件层、角色层和特效层确定性合成。
-5. 整体场景大改只在用户主动选择“场景演化”时生成预览，确认后应用。
-6. 失败时保留候选和重试入口，不破坏当前场景。
+GPT Image 的成本和 Edit 能力使生成成为日常建造操作，而不只是少见的奖励动画。用户可以创建单个物件、协调套装、完整区域、扩建蓝图，或重绘选区/Zone/整个 Territory；这些入口都生成同一种 `TerritoryChangeCandidate`，不建立互不兼容的生图模式。
 
-`TERRITORY-IMAGE-PROCESSING` 已固定 Phase 6 的单一路径：Generation/Edit 都请求 `1024x1024`、`medium`、opaque PNG，Edit 使用 `high` input fidelity；统一 prompt 要求纯洋红背景与完整留白，Main 按图片边缘中位色和固定色差 `96` 移除四连通背景。确认时默认归一化为 `96x96` tile asset；内建 Territory Tool 可为单个候选显式声明最终 `visualSizePx`，但不会改变远端请求尺寸或建立另一条处理路径。选择原因、离线标注结果和限制见 [`docs/benchmarks/territory-image-processing.md`](./docs/benchmarks/territory-image-processing.md)。这些值不是 Settings 或运行时模式；若未来真实图片证据要求改变，应替换本段与唯一实现，而不是保留并行路径。
+一次生成遵循唯一流程：
 
-### 10.5 布置与交互
+1. Territory 冻结当前 World Revision、目标 Zone、用户锁定的实体、Style Profile 和来源快照。
+2. 结构化 Territory compiler 产生可校验的地形、结构、实体、锚点、碰撞、寻路与变更边界；图片模型只产生视觉资产或基于参考图编辑视觉，不把整张概念图直接当成可玩的世界状态。
+3. 单个物件生成独立 sprite；套装或选区把实际变化的多个 Definition 视觉放入同一个 Asset Pack；Zone/扩建使用一张连续的可编辑 base environment plate，独立家具、附件、记忆物件、碰撞和寻路仍由结构化实例表达。Asset Pack 是原子 manifest，不要求固定格数的 contact sheet，也不会为了形式完整生成未被当前 change set 使用的空素材。
+4. Main 校验尺寸、透明度、像素尺度、锚点、素材引用和结构语义，并把候选变化合成到真实场景预览。失败素材可在同一候选内定向修复。
+5. 用户可以继续用自然语言修改、排除提案中的分组或锁定更多内容；确认前不写当前 World。
+6. 确认时，结构变化、Asset Pack、来源和新的 World Revision 原子提交。失败、取消或应用中断都保留现有 Revision。
 
-- Territory 使用与桌宠共享语义的 PixiJS sprite/scene runtime；React 负责页面 Header、抽屉、表单、焦点和 Memory 来源卡。
-- 编辑模式拖动物件、旋转/翻转允许的物件、收回记忆库。
-- 网格吸附保证像素整齐；UI 显示合法放置区域。
-- 角色使用简单 A* 或 nav grid 在可走区域移动。
-- 点击空地让角色走过去；点击物件触发走近、朝向和短动画。
-- 可为少量物件配置一条互动动画，不建设复杂游戏战斗或经济系统。
-- 场景变化由季节、时间或长期行为摘要驱动的视觉候选表达，用户可预览。
+典型请求包括：
 
-#### 10.5.1 2.5D 物件语义
+- “生成一套和当前房间一致的雨夜咖啡馆家具”；
+- “把框选区域整理成阅读角，优先使用收藏里的物件”；
+- “向右扩建一间冬季玻璃花房”；
+- “把整个领地变成秋天，但保留书桌、桌宠小窝和全部记忆物件”。
 
-领地使用 2.5D 场景图，不引入真正 3D、物理引擎或自由堆叠。一个物件的视觉范围、地面占用、行走碰撞、深度锚点和承载能力必须分别声明：
+用户锁定的实体、组合和 Zone 在重绘时不可被移动、替换或删除；未锁定内容只能在预览明确展示后改变。普通物件可以生成适配新 Style Profile 的新 Definition Revision，记忆物件默认保留自身视觉，除非用户明确选择修改。
 
-- `underlay` 是地毯等地面覆盖物；同一格允许再放一个 `object`，角色是否可走由碰撞 mask 决定；
-- `object` 是桌子、壁炉、床等地面物件；视觉可以向地面锚点上方延伸，只有碰撞 mask 阻止角色；
-- 角色与地面物件按各自脚底/深度锚点的世界 Y 排序，因此角色可从桌面或壁炉上半部后方经过并被遮挡，但不是站到桌面上；
-- `surface` 物件没有独立地面坐标，只能附着到承载物件的一个结构化插槽；v1 每个插槽最多一个物件，且不允许插槽物件继续提供插槽；
-- 移动、旋转或翻转承载物件时，插槽物件随父物件的局部坐标变换；收回承载物件时，已附着物件在同一事务中一并回到收藏库。
+`TERRITORY-SCENE-GENERATION` 已完成目标 Azure `gpt-image-2` 的协议复核、真实 Zone 生成与视觉验收。生产采用结构化 compiler + 每个实际 Definition 一张视觉资产 + 原子 Asset Pack：物件/选区做 opaque 洋红连通去背景，Zone/扩建保留 full-bleed opaque environment plate，Edit 只使用真实生成源图；图片不推断 World 几何。旧 `TERRITORY-IMAGE-PROCESSING` 只保留为去背景基线，产品中没有 contact-sheet parser、透明请求、固定套装件数或第二套生成路径。
 
-物件定义使用一个可由未来 Skill/Tool 直接生成并由 TypeBox/Ajv 校验的不可变 manifest。当前唯一版本为 `schemaVersion: 1`；它是资产协议版本，不是产品运行模式或兼容开关：
+### 10.5 游览与布置
 
-```ts
-type TerritorySurfaceKind = "tabletop"
-type TerritoryGroundPlane = "underlay" | "object"
-type TerritoryRotation = 0 | 90 | 180 | 270
+Territory 只有两个用户交互状态：
 
-interface TerritoryPixelPoint {
-  x: number
-  y: number
-}
+- **游览**：场景占据视觉主体，编辑网格和面板隐藏；右键任意可见位置把桌宠移动到该 24 px 原子格，目标落在碰撞区时走到最近可达点；行走从第一段位移开始到抵达前必须持续使用与朝向一致的 running atlas 行，不能以 idle、坐下、睡眠或物件互动姿态平移。行走途中再次右键时，从屏幕中桌宠的连续当前位置改道，不回跳到旧目标或闪现。左键只选择物件并打开故事/操作，不触发桌宠移动、寻路或“无法走到”错误。地毯等可互动铺层因而既能用右键走上去，也能用左键查看。
+- **布置**：显示地形、结构、家具、装饰、记忆收藏和 AI 创作入口；支持笔刷、放置、框选、多选、移动、复制、组合、旋转/翻转、删除、撤销和重做。
 
-interface TerritoryGridCell {
-  x: number
-  y: number
-}
+大于当前视口的 Zone 默认保持接近素材原生像素比例，由镜头展示局部并允许平移；不能为了“一次看完整张地图”自动把所有内容缩成微缩图。布置状态用弱化的原子格与更明确的地形/结构宏格同时表达精细位置和大块拼接，游览状态两者都隐藏。
 
-interface TerritorySurfaceSlot {
-  id: string
-  kind: TerritorySurfaceKind
-  anchorPx: TerritoryPixelPoint
-  maxItemSizePx: { width: number; height: number }
-}
+布置模式的直接操作和自然语言修改最终都编译为同一种 Territory change set。一次编辑会话提供撤销/重做；用户明确保存或确认 AI 提案时产生不可变 World Revision，因此跨重启仍可恢复到历史版本。自动对齐、间距、通路、遮挡和色彩搭配只作为软性建议，不能把用户锁在模板布局中。
 
-interface TerritoryItemManifestV1 {
-  schemaVersion: 1
-  definitionId: string
-  revision: number
-  name: string
-  description: string
-  visual: {
-    source:
-      | { kind: "builtin"; key: string }
-      | { kind: "asset"; assetId: string }
-    sizePx: { width: number; height: number }
-  }
-  placement:
-    | {
-        mode: "ground"
-        plane: TerritoryGroundPlane
-        gridSize: { width: number; height: number }
-        occupancyCells: TerritoryGridCell[]
-        collisionCells: TerritoryGridCell[]
-        depthAnchorPx: TerritoryPixelPoint
-      }
-    | {
-        mode: "surface"
-        allowedSurfaceKinds: TerritorySurfaceKind[]
-        attachmentAnchorPx: TerritoryPixelPoint
-      }
-  transforms: {
-    rotations: TerritoryRotation[]
-    flippable: boolean
-  }
-  surfaceSlots: TerritorySurfaceSlot[]
-}
-```
+收藏库支持搜索、来源筛选、普通装饰、记忆物件、组合模板和未放置内容。用户可以要求 AI 只使用现有收藏重新布置选区；没有明确请求时，系统不因“更好看”自动移动已接受内容。
 
-所有 `Px` 点共享物件图片左上角为原点的规范局部坐标；`depthAnchorPx`、插槽锚点和附件锚点都位于这个坐标系内。附件把自己的 `attachmentAnchorPx` 对齐到父物件的插槽锚点，不保存推导后的世界坐标。资产进入自有目录前先归一化到场景的固定 tile scale 和明确 `sizePx`，原始生图像素不直接成为运行时坐标。
+### 10.6 物件与记忆生命周期
 
-manifest 还必须通过领域语义校验：ID/插槽唯一；尺寸为正；所有 mask 单元位于 `gridSize` 内；`collisionCells` 是 `occupancyCells` 的子集；`underlay` 不阻挡行走；插槽锚点位于视觉范围内；附件视觉不超过插槽声明的范围；旋转集合包含 `0`。翻转先作用于规范朝向，再顺时针旋转，视觉、mask、深度锚点和插槽使用同一变换，不能分别解释。
+高信息 Memory 或 Activity Digest 仍只能通过用户明确动作形成 Territory 候选。候选冻结来源 Revision 与说明；Memory/Activity 不读取 Territory 表，Territory 也不把物件反写为 Memory 事实。
 
-典型定义如下：
+每个已接受物件有稳定 Item ID，并引用不可变 Definition Revision。物件详情提供：
 
-| 物件 | placement | occupancy / collision | 插槽 |
-| --- | --- | --- | --- |
-| 地毯 | `ground/underlay` | 完整铺地范围 / 空 | 无 |
-| 桌子 | `ground/object` | 桌脚所在底行 / 桌脚所在底行 | 若干 `tabletop` |
-| 壁炉 | `ground/object` | 底座所在底行 / 底座所在底行 | 无 |
-| 杯子 | `surface` | 无地面 mask | 允许附着 `tabletop` |
+- 编辑名称和描述；
+- 以当前视觉为参考继续编辑或生成新版本；
+- 比较、选择和恢复历史版本；
+- 移动到收藏库、加入/拆出组合、收藏和锁定；
+- 删除到可恢复状态，以及用户明确触发的永久删除。
 
-#### 10.5.2 结构化生成边界
+编辑预览不会改变当前世界；确认后创建新 Definition Revision，并在同一 World Revision 中切换实例引用。涉及占地、碰撞、锚点或承载关系的结构修改必须先在原位置完成合法性预览；无法保持布局时明确展示受影响实体，不静默移动其他内容。
 
-结构化生成的产物是 `item.json + sprite asset`，而不是 SQL、Pixi `zIndex`、世界坐标或任意脚本。管线先校验 manifest，再生成带占用、碰撞、深度锚点和插槽叠层的预览；只有通过校验并经产品流程接受后，才由 Territory Service 创建不可变 definition revision 与 item instance。
+同一 Memory 默认只有一个承载来源关系的物件身份；重新生成形成该物件的新版本，而不是伪造多个来源相同的记忆事实。普通装饰可以复制。删除 Territory 物件不会删除上游 Memory/Activity；永久删除只清理 Territory 自己的实例、无引用 Definition Revision、候选投影和孤儿资产。
 
-Phase 2 的 Agent Runtime/Tool Discovery 已稳定，因此 Phase 6 注册一个内建、延迟发现的写入 Tool：`territory.generate_item`。Agent 只需提供 `name`、`description` 与 `visualPrompt` 三个语义字段；当前活动场景和可用 Azure Image Profile 由宿主解析，不向模型暴露数据库 ID。可选 `structure` 提供以下关键 authoring 参数：
+### 10.7 活世界与桌宠
 
-```ts
-interface TerritoryGeneratedItemStructure {
-  visualSizePx?: { width: number; height: number }
-  placement?: "ground_object" | "ground_underlay" | "surface"
-  footprintTiles?: { width: number; height: number }
-  depthAnchorPx?: TerritoryPixelPoint
-  attachmentAnchorPx?: TerritoryPixelPoint
-  surfaceSlots?: Array<{
-    id: string
-    anchorPx: TerritoryPixelPoint
-    maxItemSizePx: { width: number; height: number }
-  }>
-  rotations?: TerritoryRotation[]
-  flippable?: boolean
-}
-```
+桌宠使用 World 的通行、深度和类型化物件能力，而不是另一套场景状态。它可以在合法位置行走、坐下、睡觉、靠近光源、观察新物件，并根据时间、天气和 Zone 类型播放少量上下文行为。移动结构或应用 AI 提案后，通行图与可用交互从同一个已接受 Revision 重建。
 
-省略结构参数时，领域编译器使用已接受的 `96x96`、`2x2` 地面物件、底边中心深度锚点、底行占用/碰撞、无插槽、可翻转和仅 `0°` 的默认值。`surfaceSlots` 数组本身同时表达数量和位置，不保存重复的 `slotCount`；v1 插槽类型固定为 `tabletop`。地面覆盖物不产生碰撞且不能提供插槽；桌面小物不接受地面占地或插槽。Tool 只创建经过同一 Generation/去背景管线处理的持久化候选，不自动确认或放入场景；用户仍在 Territory 中预览、继续编辑、重试并明确加入收藏库。
+Zone 可呈现昼夜光照、天气、季节、窗外景色、水面、树叶、火焰、蒸汽和前后景视差。它们用于生活感和视觉叙事，不建立饥饿、体力、生产或收益数值。
 
-Territory 领域入口固定为一个异步调用：
+记忆物件首次形成时有一段克制的标志性演出：镜头移向目标区域，物件在光线与粒子中出现，桌宠走近并产生上下文反应，随后展示日期和一句来源摘要。动画遵守 reduced motion，跳过演出不影响提交结果。
 
-```ts
-interface TerritoryInstallGeneratedItemInput {
-  itemId: string
-  sourceImagePath: string
-  manifest: TerritoryItemManifestV1
-}
+### 10.8 数据与领域边界
 
-interface TerritoryService {
-  installGeneratedItem(
-    input: TerritoryInstallGeneratedItemInput,
-  ): Promise<TerritorySnapshot>
-}
-```
+Territory 领域拥有以下聚合，不要求它们一一对应一张表：
 
-`sourceImagePath` 指向 Image Driver 或 Tool Artifact 已落盘的候选图片，只在 Main 进程安装期间使用，不进入 SQLite、Renderer projection 或 manifest。领域入口按 `manifest.visual.sizePx` 使用 Electron `nativeImage` 解码和缩放，统一编码为 PNG，复核输出尺寸后写入 Territory 自有 asset 目录；随后计算 SHA-256，并把 media type、尺寸、字节数、hash 和相对 storage key 与 definition/item 在一个 SQLite 事务中登记。相同 `assetId + 归一化内容 + manifest revision + itemId` 重试是幂等的；同 assetId 不同内容、同 definition revision 不同 manifest 或同 itemId 不同 definition 都拒绝覆盖。文件先通过独立 staging 目录落盘，数据库失败时回滚本次新建文件，已存在资产不删除。
+- World、Zone 与不可变 World Revision；
+- Style Profile 与 Asset Pack Revision；
+- Entity Definition、Entity Instance、组合关系与放置；
+- Memory/Activity 来源快照；
+- Territory Change Candidate 与生成状态；
+- 已登记 Asset、预览 cache 与删除恢复状态。
 
-Renderer 只通过受控 `chara-mate-territory://asset/<assetId>/sprite.png` URL 读取已登记资产；收藏库缩略图与 Pixi Sprite 消费同一 PNG，不读取任意文件路径。`P6-TERRITORY-IMAGE` 的手工面板与 `territory.generate_item` 在用户确认候选后都调用这一入口，Generation/Edit、style prompt、去背景与候选状态不会分叉资产协议。
+Renderer 只通过 typed Preload 取得当前 Territory projection 和受控 Territory asset URL，不读取任意文件路径。Main 负责 JSON Schema 校验、Revision 提交、文件 staging/rollback、资源引用和孤儿清理。数据库不保存大图片 BLOB；图片位于 Territory 自有 asset 目录。
 
-PixiJS `8.19.0` 当前发布包的 `Container.sortableChildren`/`zIndex` 与父子局部坐标变换足以承载上述语义。CharaMate 选择的 mask、插槽和单层附件是产品约束，不是 Pixi 协议硬限制。
+结构化生成的持久产物是经过校验的 World change set、Definition/Asset Pack manifest 和图片资产，而不是 SQL、任意 Pixi `zIndex`、未校验世界坐标或可执行脚本。候选重试以稳定 ID 和冻结的 base Revision 幂等；如果当前 World 已前进，应用前必须重新预览或明确重建候选，不能覆盖新修改。
 
-### 10.6 容量与记忆库
+本项目仍是 greenfield。实现新沙盒合同时，用一次干净 Schema 替换现有固定场景原型；不保留旧场景 Adapter、旧容量 fallback、双 Renderer 或用户可选的“经典领地模式”。
 
-- 每个场景同屏最多 12 个物件，包含场景自带物件；该值已在 `1180×800` 默认窗口与 `900×640` 最小窗口比较 `8 / 12 / 16` 后冻结，证据与限制见 [`docs/benchmarks/territory-capacity.md`](./docs/benchmarks/territory-capacity.md)。不提供多档容量模式。
-- 用户可 pin 特别重要的物件。
-- 新物件超过上限时，最早放入且未 pin 的物件及其未 pin 附件回到“领地收藏库”，不会删除；带有已 pin 附件的承载物件同样受保护。如果没有可安全回收的物件，本次放置失败并提示用户先收回或取消置顶。
-- 用户可以从完整记忆库选择任意合适记忆生成/放回领地。
-- 同一记忆默认只有一个活动物件实例；重新生成会形成图片版本并可切回旧图，后续版本沿用该物件既有的最终尺寸、占地、锚点、变换能力和插槽结构。
+### 10.9 规模与性能
 
-### 10.7 数据模型
+领地没有面向用户的全局物件数量上限，也不会因为同屏数量达到某个常量而自动把最早物件收回收藏库。用户能否继续放置由真实空间、类型化锚点、碰撞和结构合法性决定；已接受内容不会为性能优化而被删除、隐藏为未放置状态或失去来源。
 
-```text
-territory_scenes
-territory_scene_revisions
-territory_item_definitions
-territory_items
-territory_item_candidates
-territory_item_sources
-territory_placements
-territory_image_candidates
-territory_assets
-```
+`TERRITORY-WORLD-PERFORMANCE` 已在目标 Electron 窗口比较直接树、Pixi Culler 与静态层缓存。生产一次只投影活动 Zone，使用稳定层级、直接 scene tree 与 Pixi `Assets` URL cache；当前实测规模下 Culler 和 `cacheAsTexture` 都增加主线程成本且没有改善帧 p95，因此不进入运行时。Repository 保留语义化 viewport projection，但产品不先发明 chunk 大小、预载半径、动画预算或低配档位。其他 Zone 与活动 Zone 视口外内容始终留在同一 World Revision，切换或返回时重建，不因性能被删除或收回。
 
-`territory_item_candidates` 保存 Memory/Activity 主来源唯一键、稳定来源快照、语义预填和 `pending / materialized` 状态；来源以后清理时，已接受物件的追溯说明仍可读，但不会把 Territory 反写成 Memory 事实。`territory_image_candidates` 保存 Generation/Edit 请求、来源候选与 `generating / ready / failed / accepted` 状态；候选 PNG 位于独立 preview cache，不写 BLOB。启动时遗留的 `generating` 会转成可重试失败，安装失败则保持 `ready`，不会改动当前场景。`territory_assets` 保存确认后归一化 PNG 的 media type、宽高、字节数、SHA-256 和相对 storage key；图片字节位于 Territory 自有 asset 目录，表中不存 BLOB 或原始外部路径。`territory_item_definitions` 保存不可变 manifest revision 与可空 asset 外键，并用数据库约束保证 asset 外键与 manifest 的 `visual.source` 一致；内置和生成物件都通过同一 manifest 投影进入 Renderer。`territory_items` 是实例并引用当前 definition revision，历史 revision 仍可选择。
+既有 `TERRITORY-CAPACITY` 的 12 件结论只对固定房间、合成物件的旧问题有效，因用户改变产品目标而被取代；Decision Record 保留为历史证据并标记 superseded。当前获胜路径不沿用“超限自动收回”，也不预先加入分块或视觉降级；若未来真实规模超出已测边界，必须以新 Decision 比较候选并继续保持完整世界状态。
 
-`placement` 保存场景 ID、item ID、朝向和 pin，并使用互斥目标：地面物件保存网格坐标，附件保存 `supportItemId + slotId`。渲染平面和深度由 manifest 推导，不保存任意 `zIndex`；同一插槽最多一个附件。图像在 asset 目录，数据库不存大 BLOB。
+### 10.10 领地验收
 
-### 10.8 领地验收
-
-- 首次进入无需等待生图就有完整可看的初始空间。
-- 记忆候选可以预览、生成、放置、点击追溯和收回。
-- 生图失败不损坏现有场景。
-- 角色可绕过障碍走到点击位置和物件附近。
-- 地毯可被角色和地面物件覆盖；桌子/壁炉按碰撞 mask 阻挡，角色在其前后正确遮挡。
-- 杯子等附件只能进入兼容且空闲的插槽；父物件移动、变换、收回和重启后关系保持确定。
-- 超过物件上限时只回收藏库，不丢失记忆或生成图。
-- 同一场景重启后位置、层级、角色和物件版本完全一致。
+- 首次进入无需等待生图就有构图完整、可直接游览和修改的起始领地。
+- 起始房间像已经共同生活很久的空间，包含多个用途明确的生活角落、层叠附件和使用痕迹；默认视口与继续平移后都有连续内容，不能靠自动缩小整张大地图伪装容量。
+- 两个用户从同一起始蓝图出发，可以通过地形、结构、多层物件、组合和 AI 改造形成明显不同但风格统一的结果。
+- 用户能扩建相连 Zone，并能生成/编辑单物件、协调套装、选区和完整 Zone；所有生成先预览，失败不改变当前 World。
+- 起始内容和生成内容都可编辑、移动、复制、组合、版本切换、删除和恢复；不存在确认后不可修改的物件或背景。
+- 地毯、家具、桌面/墙面/书架附件、前景与灯光可按声明组合；角色、遮挡、碰撞、寻路和父子变换在重启后保持确定。
+- 自动化行走验收至少覆盖同一件高物件的“角色在后方被遮挡、角色在前方覆盖物件”两种顺序，并确认角色脚底不会进入其 collision cells。
+- AI 重绘严格保留锁定实体和来源；用户可以只使用现有收藏重新布置，不被迫生成新资产。
+- Territory 不因数量常量自动收回或删除已接受内容；大区域滚动、缩放和返回时世界状态完整。
+- 桌宠能够使用类型化物件能力，并在时间、天气、场景改造和记忆物件形成时呈现上下文行为。
+- 行走期间实际显示纹理持续来自 running atlas 行，抵达后才切换到 idle 或目标互动姿态；同向、反向、纯竖向与途中改道均不出现坐姿平移。
+- 主窗口可见且停留 Territory 时桌面 Character Window 隐藏；切换到任一其他一级页面或主窗口隐藏/关闭后恢复，且不修改桌宠持久设置。
+- 游览模式以世界为视觉主体；正常 UI 不暴露模型参数、素材处理阈值、分块预算或开发指标。
 
 ---
 
@@ -1305,7 +1208,7 @@ interface ProviderProfile {
 
 同日 Image 协议来源刷新后又按用户提供的目标 deployment 完成配对验证。[OpenAI Image generation guide](https://developers.openai.com/api/docs/guides/image-generation) 将 Image API 明确分为 generation 与 edit，并列出 `gpt-image-2`；edit 接受已有图片与修改提示。[Microsoft Learn Azure OpenAI image REST `2025-04-01-preview`](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/reference-preview)（`ms.date=2026-05-19`，页面更新于 `2026-06-24`）同时定义 `POST /openai/deployments/{deployment-id}/images/generations?api-version=2025-04-01-preview` 与同 deployment 下的 `/images/edits`。目标 Azure deployment 的 Generation 请求返回 HTTP 200；从同一 deployment、model 与 API Version 确定性派生的 Edit 请求也返回 HTTP 200，旧版本 Edit 的 404 不能推出能力不存在。
 
-CharaMate 因此仍只保存一套 `imageGenerationEndpoint` 作为 deployment、API Version 与凭据归属的**配置基准**，而不是把产品能力缩减为只生成。Phase 6 的唯一 Image Adapter 按用户动作确定路由：从文本创建新图使用 `/images/generations`，基于已有图继续修改使用同级 `/images/edits`，并保留基准 Endpoint 的查询参数；这不是 fallback，也不会增加第二个 Endpoint、第二个 Key 或运行时模式。设置页只接受 Generation 基准地址，是为了让一套配置有唯一规范形式，不代表拒绝图片编辑。Generation/Edit 都可能产生计费输出且没有独立只读健康端点；Phase 1 Provider 测试只校验 URL 形状、凭据和 Image Model 可读取性，不调用两种生图动作。若服务不提供模型读取，Image 返回需要手动确认，而不是伪报实际生成或编辑已通过。
+CharaMate 因此仍只保存一套 `imageGenerationEndpoint` 作为 deployment、API Version 与凭据归属的**配置基准**，而不是把产品能力缩减为只生成。唯一 Image Adapter 按用户动作确定路由：从文本创建新图使用 `/images/generations`，基于已有图继续修改使用同级 `/images/edits`，并保留基准 Endpoint 的查询参数；这不是 fallback，也不会增加第二个 Endpoint、第二个 Key 或运行时模式。Territory 的单物件、Asset Pack、选区与 Zone 创作复用该 Adapter，再由 Territory compiler 形成结构化 World change，不在 Provider 层增加场景状态。设置页只接受 Generation 基准地址，是为了让一套配置有唯一规范形式，不代表拒绝图片编辑。Generation/Edit 都可能产生计费输出且没有独立只读健康端点；Phase 1 Provider 测试只校验 URL 形状、凭据和 Image Model 可读取性，不调用两种生图动作。若服务不提供模型读取，Image 返回需要手动确认，而不是伪报实际生成或编辑已通过。
 
 设置流程：
 
@@ -1364,7 +1267,7 @@ http://127.0.0.1:<dynamic-port>/dev
 | Storage | 数据库事务、journal/checkpoint、所选索引工件与清理 |
 | Voice | TTFT、首音频、打断、丢帧、重连、工具 continuation |
 | Activity | 采集吞吐、Episode、蒸馏队列、候选接受率 |
-| Territory | 生图队列、耗时、失败、缓存、asset 占用 |
+| Territory | Change/生图队列、World/Zone Revision、候选耗时/失败、Preview、活动 Zone 投影、asset cache 与占用 |
 
 采用 typed event/metric 与 Pino JSON log，不要求一开始部署外部监控系统。所有 payload 在进入 Pino 前先经过统一 redactor。看板可按时间、Chat、Run ID、Provider、Model、Tool、状态和错误码过滤，日志支持全文查询并可从一条 metric 下钻到对应 Run Item。Dev Dashboard 直接查询只读聚合或 ring buffer；关闭开发模式时不运行。
 
@@ -1375,7 +1278,7 @@ http://127.0.0.1:<dynamic-port>/dev
 - Storage：每次事务写入、journal 增长、checkpoint、所选索引工件占用、清理耗时与相关进程 RSS。
 - Voice：连接、首转写、用户停止说话到首音频、打断停止、误打断、迟到结果、断线恢复；Tool 指标沿用 Agent 口径。
 - Activity：原始事件/episode 比、摘要压缩率、候选接受/编辑/拒绝率、过期清理量、原始数据占用与孤儿资产。
-- Territory：候选到生成转化、生成成功率、首次可见时间、asset cache 命中。
+- Territory：单物件/Asset Pack/区域候选的生成与应用成功率、首次 Preview、Revision 冲突/恢复、锁定内容保留、视口帧耗时、asset cache 命中和 asset 占用。
 
 ### 12.3 实验文档
 
@@ -1699,7 +1602,7 @@ userData/
 | Automation | `automations`（包含 Reminder、Agent Task 与主动触发规则）, `automation_runs` |
 | Extension | `mcp_servers`, `skill_versions`, `skill_usage` |
 | Provider | `provider_profiles`（无明文 Key） |
-| Territory | `territory_scenes`, `territory_scene_revisions`, `territory_items`, `territory_item_candidates`, `territory_item_sources`, `territory_placements`, `territory_image_candidates`, `territory_assets` |
+| Territory | World/Zone/World Revision、Style Profile/Asset Pack、Entity Definition/Instance、来源、Change Candidate 与 Asset 所需的唯一表组；具体表在新合同实现时一次冻结 |
 | App | `personas`, `pet_installations`, `window_placements`, `settings` |
 
 ### 14.3 数据不变量
@@ -1710,7 +1613,7 @@ userData/
 4. Profile 字段必须指向当前有效 Memory Revision。
 5. 若 Graph 晋级，每条关系必须有 evidence，失效通过 `validTo` 表达。
 6. 若所选检索使用外部字节引用，引用提交前对应字节必须按其一致性协议持久化。
-7. Territory item 只引用 Memory，不成为 Memory 的事实来源。
+7. Territory entity 只保存 Memory/Activity 来源快照，不成为上游领域的事实来源；删除 Territory 内容不级联删除来源。
 8. API Key 不进 SQLite、日志、消息、Tool Result 和 Memory。
 
 2026-08-01 的 Phase 1 Data 实现前来源刷新使用锁定发布物 `better-sqlite3@13.0.1` 随包源码：其 [`transaction`](https://github.com/WiseLibs/better-sqlite3/blob/v13.0.1/lib/methods/transaction.js) 在同步回调成功后提交、异常时回滚，并以 savepoint 支持嵌套事务。Phase 1 因此只把“事件行、当前投影与 sequence 水位必须在一个同步事务中提交”作为正确性约束；`journal_mode`、`synchronous`、busy timeout、batch 与 checkpoint 仍留给 `MEMORY-STORAGE`，本阶段不据 README 的性能建议提前选择 WAL 或固定数值。
@@ -1822,7 +1725,7 @@ Renderer 断线后传 `afterSequence` 补事件；不依赖“刚好在线”才
 - 获胜检索方案的模型计算、图片处理、OCR 和大摘要不在 Main/Renderer UI 热线程运行。
 - Markdown/KaTeX 长消息使用分块与虚拟列表。
 - Run delta 合批刷新，命令高频输出先写 artifact/ring buffer。
-- 领地使用固定图层与 sprite atlas，场景生图在后台队列。
+- 领地一次投影活动 Zone，按稳定层级、直接 scene tree 与 Pixi `Assets` cache 渲染；图片与区域候选在后台生成，不能阻塞当前 Revision 的游览和布置。
 
 ### 17.3 存储维护
 
@@ -1865,8 +1768,8 @@ Playwright 官方当前把 Electron automation 标为 experimental，因此 Phas
 10. Realtime 原生语音 Agent 可在说话时被打断；它获得与文字 Agent 相同的客户端 Tool Registry、入口权限和 Approval 规则，Tool 结果回注后继续说话，实际输入与输出转写写回同一 Chat 和 Run/Item。
 11. 用户填写 URL/Key 后模型列表加载，Key 不出现在数据库、日志和错误。
 12. Codex v1/v2 pet 文件夹导入 CharaMate 自有目录后动画正确；角色拖到任意位置并跨重启恢复。
-13. 领地初始可见，记忆物件可生成、放置、追溯、收回；失败不破坏场景。
-14. 超过领地上限时最老未 pin 物件回收藏库，不删除 Memory。
+13. 领地初始可见且可全部改写；地形、结构、多层物件、组合与记忆来源在生成、编辑、删除、恢复和重启后保持一致，失败不改变当前 World Revision。
+14. 领地不设置全局物件数量常量，也不为性能自动收回内容；当前使用获胜的活动 Zone 直接 scene tree 与 `Assets` cache，并在跨 Zone、视口和重启时保持完整世界状态。
 15. Skill 教学产生版本化候选，replay 失败时不自动激活。
 
 ### 18.3 Benchmark 决策门槛
@@ -2044,11 +1947,14 @@ Phase 4 的实验与实现可在 Phase 2 稳定后和 Phase 3 后半段并行，
 - PixiJS 桌宠透明窗口、CompanionState 动画、自由拖动、多显示器、位置/尺寸/朝向恢复、托盘和 earcon；
 - Codex v1/v2 pet 校验、复制安装、自有目录与 v1 缺少 look row 的语义降级；
 - reply/progress/approval/proactive/automation/error 气泡投影，所有事实来自同一 Chat/Run/Approval；
-- 首次可见的基础像素场景、图层、nav grid、角色移动、游览/布置、收藏库和确定性恢复；
-- Memory/Activity → Territory candidate、来源追溯、pin、容量回收和版本；
-- Azure Image Generation/Edit 共用一套 deployment 配置与统一 style prompt；实现新图、基于预览继续编辑、去背景、tile 缩放、cache、preview、确认和失败恢复。
+- 用唯一沙盒合同替换固定场景原型：一个持续存在的 World、可扩建 Zone、地形/结构/物件/附件/前景与效果层、组合、寻路、镜头和确定性恢复；
+- 游览与布置两种交互状态；地形笔刷、结构建造、搜索收藏、框选/多选、移动、复制、组合、锁定、删除/恢复、撤销/重做和 World Revision；
+- Memory/Activity → Territory candidate、来源追溯、稳定物件身份、Definition Revision，以及普通装饰复制；不因数量常量自动收回内容；
+- 完成 `TERRITORY-SCENE-GENERATION`，以同一 Image Adapter 生成/编辑单物件、协调 Asset Pack、选区、扩建和 Style Profile，并由结构化 compiler 产生唯一可玩的 World change set；
+- 完成 `TERRITORY-WORLD-PERFORMANCE`，在目标硬件与真实组合世界冻结活动 Zone + 直接 scene tree + Pixi `Assets` cache；Culler、静态层缓存和用户可调参数不进入生产；
+- 桌宠消费同一个 World Revision 的通行与类型化能力，加入时间/天气氛围、上下文行为和记忆物件形成演出。
 
-退出条件：桌宠和气泡跨重启可信，v1/v2 动画正确；领地无需等待生图即可完整使用；失败不损坏场景，超容量不删除 Memory 或资产版本。
+退出条件：桌宠和气泡跨重启可信，v1/v2 动画正确；起始领地无需等待生图即可完整使用并可全部改写；用户能通过直接布置与 AI 创作形成明显不同但风格统一的领地；生成失败不损坏当前 Revision；滚动、缩放和重启不丢失未在视口内的世界内容。
 
 ### Phase 7：整体体验收口
 
@@ -2085,7 +1991,7 @@ CharaMate 达到首个完整产品版本时，应满足：
 - 长期记忆可编辑、可追溯、可更新、可衰减，画像能回到证据；若图关系晋级，关系也必须回到证据，否则产品中不存在图谱入口。
 - Activity 被蒸馏为高信息摘要和候选；低价值原始数据定期删除，不淹没长期记忆或无限占用磁盘。
 - Provider URL/Key/Model 配置顺畅，Key 简单加密且不进入业务数据。
-- 领地从首次进入就完整好看，并能把真实记忆转成可生成、可布置、可追溯的像素物件。
+- 领地从首次进入就完整好看且可全部改写；用户能扩建 Zone、自由组合多层内容、用 AI 生成/编辑物件与区域，并让真实记忆成为可追溯、可版本化的世界组成部分。
 - 开发者能在本地看板查询 Run、Tool、Memory、Storage、Voice 与 Image 指标，普通产品界面不被研发控制淹没。
 - 检索、embedding、rerank、ANN、图扩展、Provider Prompt Cache、Realtime transport 与 multi-agent 的候选只存在于实验；发布版每项只保留一个获胜实现。
 - `package-lock.json`、实际 scripts、`AGENTS.md` Commands、`STATUS.md` 最近绿色验证和已接受 Decision Record 指向同一真实工具链与生产路径。

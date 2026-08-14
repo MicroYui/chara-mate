@@ -14,7 +14,7 @@ import type {
   MemoryHit,
   MemorySnapshot,
 } from "../../../shared/contracts/memory";
-import { emptyTerritorySnapshot } from "../../../../tests/fixtures/territory";
+import { starterTerritorySnapshot } from "../../../../tests/fixtures/territoryWorld";
 import { MemoryPage } from "./MemoryPage";
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -142,7 +142,7 @@ describe("MemoryPage", () => {
       ok: true,
       value: {
         candidateId: territoryCandidateId,
-        snapshot: emptyTerritorySnapshot,
+        snapshot: starterTerritorySnapshot,
       },
     });
     const onOpenTerritory = vi.fn();

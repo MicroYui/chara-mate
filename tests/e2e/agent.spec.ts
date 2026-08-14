@@ -237,18 +237,6 @@ async function startFakeProvider(browserUrl?: string) {
             functionCall("territory-generate", "generate_item", "territory", {
               description: "纪念完成一次完整的 Agent 领地生成。",
               name: "Agent 纪念灯",
-              structure: {
-                depthAnchorPx: { x: 72, y: 120 },
-                footprintTiles: { height: 2, width: 3 },
-                surfaceSlots: [
-                  {
-                    anchorPx: { x: 72, y: 54 },
-                    id: "center",
-                    maxItemSizePx: { height: 32, width: 32 },
-                  },
-                ],
-                visualSizePx: { height: 120, width: 144 },
-              },
               visualPrompt: "一盏小巧的深蓝黄铜像素工坊灯",
             }),
             completed(responseId),
@@ -599,15 +587,11 @@ test("generates a structured Territory candidate through the Agent Tool", async 
             name: "Agent Territory Image",
           },
         });
-        const scene = await window.charaMate.territory.selectScene({
-          sceneId: "star-workshop",
-        });
-        return { saved, scene };
+        return { saved };
       },
       { baseUrl: imageBaseUrl },
     );
     expect(prepared.saved).toMatchObject({ ok: true });
-    expect(prepared.scene).toMatchObject({ ok: true });
 
     await selectAgent(launched.main, "完全访问");
     await launched.main
@@ -620,26 +604,32 @@ test("generates a structured Territory candidate through the Agent Tool", async 
       const response = await window.charaMate.territory.getSnapshot();
       return response.ok ? response.value : null;
     });
-    expect(snapshot?.imageCandidates[0]).toMatchObject({
-      name: "Agent 纪念灯",
+    expect(snapshot?.candidates[0]).toMatchObject({
+      intent: "item",
       status: "ready",
-      structure: {
-        footprintTiles: { height: 2, width: 3 },
-        surfaceSlots: [{ id: "center" }],
-        visualSizePx: { height: 120, width: 144 },
-      },
     });
-    expect(snapshot?.collection).toHaveLength(3);
+    expect(snapshot?.collection).toHaveLength(1);
+    expect(
+      snapshot?.candidates[0]?.changeSet?.mutations.some(
+        (mutation) =>
+          mutation.kind === "definition.put" &&
+          mutation.definition.visual.sizePx.width === 72 &&
+          mutation.definition.visual.sizePx.height === 72,
+      ),
+    ).toBe(true);
     expect(imageRequests).toBe(1);
     expect(
       provider.bodies.some((body) => body.includes("awaiting_confirmation")),
     ).toBe(true);
 
     await launched.main.getByRole("button", { name: "Territory" }).click();
-    await expect(launched.main.getByTestId("territory-canvas")).toBeVisible();
-    await launched.main.getByRole("button", { name: "生成物件" }).click();
     await expect(
-      launched.main.getByRole("img", { name: "Agent 纪念灯预览" }),
+      launched.main.getByTestId("territory-world-canvas"),
+    ).toBeVisible();
+    await launched.main.getByRole("button", { name: "建造" }).click();
+    await launched.main.getByRole("button", { name: /生成/u }).click();
+    await expect(
+      launched.main.getByText(/Agent 纪念灯/u).first(),
     ).toBeVisible();
 
     await application.close();

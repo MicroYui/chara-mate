@@ -182,7 +182,7 @@ CharaMate 复用这种信息密度和层级，但不复制品牌颜色、图标�
 Header 高度约 52 px，只放当前页面真正需要的动作：
 
 - Chats：会话名、重命名、归档、更多；
-- 领地：场景名、布置/游览切换、收藏库；
+- 领地：当前 Zone、布置/游览切换；布置时按需出现 Undo/Redo、Revision 与 Preview；
 - Memory：搜索、筛选；
 - Activity：日期、暂停/恢复；
 - Automations：新建任务；
@@ -597,19 +597,58 @@ Approval 气泡使用轻量浮层，展示“需要你的允许”、Tool 名和
 
 ### 11.1 领地
 
-领地是视觉展示页，应与工具型页面明显不同：
+领地是一个可游览、可扩建、可自由组合的 2.5D 像素世界，应与 Chats、Memory 等工具型页面明显不同。场景始终是视觉主体，React 面板只在需要时出现；用户退出编辑后看到的是一个桌宠正在生活的世界，而不是带网格的后台管理器。
 
-- 主区域占满可用空间，展示像素场景；
-- 角色可走动，点击地面移动，拖动物件布置；
-- 角色按脚底、地面物件按深度锚点排序；穿过桌子或壁炉的视觉上半部时从其后方经过，地毯保持可踩踏；
-- 底部/右侧抽屉是收藏库，不常驻遮挡场景；
-- 收藏库标题显示当前场景物件数与固定容量 `12`，并直接说明超限时最早且未置顶的物件会自动收回；不显示容量档位或调参入口；
-- 收藏库卡片区分地面物件与“桌面小物”；图片资产物件显示其真实缩略图；选择桌面小物后自动收起可能遮挡场景的收藏库，不显示地面网格，而在所有兼容且空闲的桌面插槽上显示高对比发光落点；
-- 点击地面物件或桌面附件都显示短描述、内置/图片资产来源和结构标签；有 Memory 来源时显示来源摘要、日期和“在 Memory 中查看”，并提供 pin 与历史图片版本切换；
-- 布置模式出现网格、旋转、收回；游览模式隐藏编辑控件；
-- 桌面附件随承载物件移动、旋转和翻转；收回承载物件后，附件同时回到收藏库，并作为独立卡片继续可选；
-- 场景加载先显示本地基础图，不因生图等待而空白；
-- 生成新物件使用有质感的 reveal 动画，但避免老虎机式奖励表达。
+同一时刻只展示一份当前桌宠。主窗口可见并停留 Territory 时，桌面透明 Character Window 临时隐藏；切换到 Chats、Memory、Activity、Automations 或 Settings，或主窗口隐藏/关闭时，桌面桌宠立即恢复。这个临时交接不写入桌宠设置，也不改变桌宠在桌面的保存位置。
+
+#### 11.1.1 游览状态
+
+- Canvas 占满页面扣除应用侧栏后的所有空间，顶部只保留 Zone 名、游览/布置切换、镜头复位和必要的返回动作；控件在无操作时弱化。
+- 用户可平移、缩放和复位镜头，但不能旋转 2.5D 视角。大于视口的 Zone 默认以接近原生像素比例显示局部，不自动缩放成完整微缩地图；复位回到蓝图的默认生活焦点。缩放保持像素边缘清晰，不能把 sprite 插值成模糊插画。
+- 右键任意可见位置让桌宠走到对应 24 px 原子格；落在家具底座等碰撞区时停在最近可达点，因此右键地毯仍可精确走到毯面。从第一段位置插值开始到抵达前，实际显示纹理必须持续来自对应朝向的 running atlas 行；纯竖向沿用最近朝向，但不能以 idle、坐下、睡眠或互动帧平移。行走途中再次右键会从桌宠当前屏幕位置平滑改道，不回跳旧目标、不消失重建。左键物件只选中并立即打开紧凑故事卡或操作，不移动桌宠、不运行寻路，也不会因物件不可达而报错；左键与右键不因物件叠层互相抢占。
+- 桌宠、家具、可遮挡结构和父子附件共享脚底/深度锚点的 Y 排序；角色在物件后方时被遮挡、在前方时覆盖物件。背景结构与前景遮挡片分开声明；游览状态完全隐藏编辑网格、合法落点、碰撞和锚点。
+- 日夜、天气、灯光、环境动画和前景视差只增强生活感，不抢占点击目标；reduced motion 下停用非必要镜头和粒子运动。
+- 页面打开先显示随包发布的当前 World Revision 与可用本地资产，不因远端生成、区域修复或未完成候选出现空白。
+
+#### 11.1.2 布置工作区
+
+桌面宽度充足时采用“可收起收藏库 + 场景 + 按需检查器”，底部 AI 创作条与当前选择共享上下文：
+
+```text
+┌ Zone / 游览·布置 / Undo / Redo / Revision / Preview ┐
+├──────────────┬─────────────────────────┬──────────────┤
+│ 收藏与建造    │                         │ 选择检查器    │
+│ 地形 / 结构   │      Territory Canvas   │ 外观 / 结构   │
+│ 家具 / 装饰   │                         │ 来源 / 版本   │
+│ 记忆 / 组合   │                         │ 删除 / 恢复   │
+├──────────────┴─────────────────────────┴──────────────┤
+│ AI：描述要生成、扩建、重绘或整理的内容      [预览]   │
+└──────────────────────────────────────────────────────┘
+```
+
+- 左侧收藏库按地形、结构、家具、装饰、记忆物件和组合模板分类，支持搜索、来源筛选、收藏和最近删除；不显示全局容量或建议用户清理已接受内容。
+- 工具条提供选择、地形笔刷、结构、擦除、框选、多选、移动、复制、组合/拆分、旋转/翻转、删除、撤销和重做。只有当前目标需要时才显示网格或结构线。
+- 布置网格同时呈现弱化的原子单位与更明确的地形/结构宏格；家具可以按原子单位移动，不再被一个 48 px 大格限制。地形、墙体和大型结构吸附到适用宏格；小型装饰进入桌面、书架、墙面、窗台和天花板等兼容锚点，并可在合法区域细调。选中附件时，只高亮可接收它的锚点，不铺满无关地面网格。
+- 拖动组合或承载物件时，以半透明 ghost 同时展示子物件、占地、通路和最终遮挡；非法位置说明具体原因，不只改变边框颜色。
+- 右侧检查器只在选中内容时出现。物件详情包含名称、描述、形成时间、视觉/结构标签、组合关系和 Memory/Activity 来源；操作包含编辑名称与故事、编辑外观、历史版本、收藏/锁定、移回收藏库、删除和恢复。
+- 结构修改会在原位置预览占地、碰撞、锚点和受影响子物件；用户确认前不移动其他内容。
+- 起始蓝图中的地面、墙体、背景和家具与生成内容遵循同一编辑语义，不出现无法删除或只能切换整张预设图的特殊场景对象。
+
+#### 11.1.3 AI 创作交互
+
+- 底部 AI 创作条是一个入口，通过当前选择表达作用域。无选择时作用于当前 Zone；框选区域、选中组合或锁定实体后，输入条明确显示“正在修改哪里”和“会保留什么”。
+- 用户可以描述单物件、协调套装、区域整理、扩建或整体风格变化，也可以要求“只使用现有收藏”。UI 不暴露 prompt 模板、模型参数、图片尺寸、分块或素材处理阈值。
+- 生成期间当前 World 保持可游览。进度卡说明正在准备蓝图、视觉资产或场景预览，允许取消；不把局部图片完成伪装成可应用世界。
+- 完成后进入全场景 Preview：可在修改前/后之间切换，查看新增、移动、替换和删除分组，继续自然语言修改、排除某个分组或锁定更多内容。
+- “应用变化”一次提交新的 World Revision；取消或失败返回原 Revision。Base Revision 已变化的旧候选必须重新预览，不能直接覆盖用户后续编辑。
+- 单物件、套装和记忆物件确认后使用克制的 reveal；区域/整体改造使用镜头过渡和逐层出现，不使用老虎机、稀有度、货币或连续奖励表达。
+
+#### 11.1.4 记忆与桌宠演出
+
+- Memory/Activity 候选仍通过明确的“放入领地”进入 AI 创作条，来源摘要和日期在预览、物件详情与版本历史中保持可见。
+- 记忆物件首次形成时，镜头移向目标区域、物件出现、桌宠走近并展示一句来源摘要；用户可跳过，结果不依赖演出是否完成。
+- 删除记忆物件不会删除 Memory；可恢复删除和永久删除的区别必须在动作发生前明确。永久删除只处理 Territory 内容。
+- 桌宠正在使用椅子、床或其他物件时，进入布置状态会平滑结束该互动再允许移动目标，不让角色和物件状态分裂。
 
 ### 11.2 Memory
 
@@ -664,7 +703,7 @@ Search / filters
 
 Settings 只放用户真正会改变的选择。Embedding 档位、RRF、topK、WAL、Harness 步数、Realtime transport 和开发指标都不出现。
 
-Models 使用和 Codex 设置一致的紧凑密度：分区由细分隔线和小标题组织，不把每个动作做成大卡片；普通输入、选择器和按钮高度为 `30–32px`，按钮按文字内容收缩，表单纵向间距为 `10–12px`。Provider 列表保持窄列，主表单不使用夸张圆角或大面积留白。Chat 的“测试连接 / 加载模型”、Realtime 的“测试 Realtime”、Image 的“测试 Image”分别贴近所属配置。Realtime 与 Image 明示复用当前 Provider Profile 上方的 API Key，不重复展示密钥输入；不同密钥必须拆为另一个 Profile。Azure API Version 标成 Chat/Image 可选项，Realtime-only Profile 可以留空；Image Endpoint 以 `/images/generations` 作为同一 deployment 的唯一配置基准，自带的 `api-version` 继续保留并优先用于 Image 验证。界面要说明这套配置同时服务于新图生成和基于已有图的继续编辑；Phase 6 Adapter 分别派生 `/images/generations` 与同级 `/images/edits`，不让用户重复填写 Endpoint 或 Key。Azure Realtime Endpoint 的示例只到 `/openai/v1/realtime`，API 类型必须为 Azure OpenAI，Model 明示为 deployment 名称；连接时该字段覆盖 Endpoint 中已有的 `model` 查询值。若 Azure 域名误选 OpenAI-compatible，测试必须在联网前给出改正提示。Image 测试旁必须说明只验证 URL、凭据和模型，不调用可能计费的生成或编辑请求。
+Models 使用和 Codex 设置一致的紧凑密度：分区由细分隔线和小标题组织，不把每个动作做成大卡片；普通输入、选择器和按钮高度为 `30–32px`，按钮按文字内容收缩，表单纵向间距为 `10–12px`。Provider 列表保持窄列，主表单不使用夸张圆角或大面积留白。Chat 的“测试连接 / 加载模型”、Realtime 的“测试 Realtime”、Image 的“测试 Image”分别贴近所属配置。Realtime 与 Image 明示复用当前 Provider Profile 上方的 API Key，不重复展示密钥输入；不同密钥必须拆为另一个 Profile。Azure API Version 标成 Chat/Image 可选项，Realtime-only Profile 可以留空；Image Endpoint 以 `/images/generations` 作为同一 deployment 的唯一配置基准，自带的 `api-version` 继续保留并优先用于 Image 验证。界面要说明这套配置同时服务于新图生成和基于已有图的继续编辑；唯一 Image Adapter 分别派生 `/images/generations` 与同级 `/images/edits`，不让用户重复填写 Endpoint 或 Key。Azure Realtime Endpoint 的示例只到 `/openai/v1/realtime`，API 类型必须为 Azure OpenAI，Model 明示为 deployment 名称；连接时该字段覆盖 Endpoint 中已有的 `model` 查询值。若 Azure 域名误选 OpenAI-compatible，测试必须在联网前给出改正提示。Image 测试旁必须说明只验证 URL、凭据和模型，不调用可能计费的生成或编辑请求。
 
 ---
 
@@ -674,7 +713,7 @@ Models 使用和 Codex 设置一致的紧凑密度：分区由细分隔线和小
 - 折叠过程：160–220 ms，长内容使用高度/透明度组合并避免昂贵全量重排；
 - Voice 波形使用音频 envelope 驱动，不做随机高频闪烁；
 - 新消息进入不使用弹跳；
-- 领地物件生成可使用 600–900 ms reveal；
+- 领地单物件接受可使用 `600–900 ms` reveal 原型 Token；区域改造使用可跳过的分层过渡，最终时长经 Territory 视觉测试后只保留一套；
 - 用户启用减少动态效果后，保留状态变化但移除位移和连续波形动画。
 
 所有异步动作必须有三类反馈：已接收、进行中、完成/失败。不能让一次点击只靠日志证明发生了。
@@ -716,8 +755,14 @@ MainPanelRoot
       │     ├─ SendVoiceStopButton
       │     └─ VoiceDock
       ├─ TerritoryPage
-      │  ├─ PixiTerritoryCanvas
-      │  └─ AccessibleSceneControls
+      │  ├─ TerritoryToolbar
+      │  ├─ TerritoryWorkspace
+      │  │  ├─ TerritoryLibrary
+      │  │  ├─ PixiTerritoryCanvas
+      │  │  ├─ TerritoryInspector
+      │  │  └─ TerritoryAiComposer
+      │  ├─ TerritoryChangePreview
+      │  └─ AccessibleWorldControls
       ├─ MemoryPage
       ├─ ActivityPage
       ├─ AutomationsPage
@@ -752,7 +797,7 @@ CharacterWindowRoot
 - 消息内容绝不因侧栏开关改变阅读位置过多；
 - 代码、公式和表格在自己的容器横向滚动；
 - Approval 主按钮始终在可见区域；
-- 领地在最小窗口保持场景比例，收藏库改为底部 Sheet；
+- 领地在最小窗口保持场景比例；收藏库、检查器和 AI 预览改为一次只打开一个的 Sheet，关闭后镜头回到打开前的焦点与视口；
 - 桌宠独立透明窗口不继承主面板最小尺寸。
 - macOS 桌宠窗口使用不激活应用的 panel 语义；2026-08-09 按 Electron `43.2.0` 的 [BrowserWindow 选项](https://www.electronjs.org/docs/latest/api/structures/base-window-options)与锁定类型复核为 `type=panel`、`focusable=false`、`acceptFirstMouse=true`。点击桌宠或聊天图标只处理桌宠窗口动作，不触发主窗口 `show/focus`；其他平台保留可聚焦控件。
 
@@ -792,7 +837,22 @@ CharacterWindowRoot
 - Voice 活跃时点击新建 Chat 会先可靠结束 Voice，再进入新草稿；
 - 结束语音后仍能从普通文字 Composer 延续同一会话。
 
-### 15.4 视觉
+### 15.4 Territory
+
+- 首次进入立即看到构图完整的起始领地，不先面对空画布、加载占位或强制生成表单。
+- 起始领地必须像已经共同生活很久的房间：默认视口中至少能辨认多个用途不同的角落、层叠附件和使用痕迹，继续平移仍有连续布置；所有内容均可选中和修改。
+- 游览状态不显示网格、锚点、容量或开发参数；用户能用右键移动桌宠、左键点击物件、移动镜头并回到默认视角。
+- 桌宠绕过实体底部碰撞区，并在同一高物件前后产生相反遮挡顺序；不能永远盖住所有家具，也不能从实体底座穿过。
+- 桌宠同向、反向、纯竖向和途中改道时都使用实际 running atlas 帧，抵达后才回到 idle 或目标互动姿态；不能只更新诊断属性却继续显示坐姿帧。
+- 主窗口可见且停留 Territory 时桌面 Character Window 不重复出现；切到其他一级页面或隐藏/关闭主窗口后恢复，且所选桌宠、桌面位置和尺寸不变。
+- 布置状态能在不遮住主要构图的前提下找到地形、结构、家具、装饰、记忆物件、组合、Undo/Redo 和 AI 创作入口。
+- 用户可以把地毯、家具、桌面/书架/墙面附件、前景和灯光组成一个区域；父子移动、组合拆分、删除恢复和重启后的结果一致。
+- 起始内容与生成内容均能编辑外观和说明、切换版本、移回收藏库、删除和恢复；“收回”与“删除”不会混淆。
+- AI Preview 明确显示作用域、锁定内容和新增/移动/替换/删除分组；取消、失败或过期候选不会改变当前 World Revision。
+- 页面不显示固定物件容量，也不会因继续放置而自动收回旧内容；视口外内容再次进入时保持原状。
+- reduced motion、键盘和辅助技术可以完成模式切换、选择、检查器操作、生成确认和取消；Canvas 中不可读的文字语义由 React 控件提供。
+
+### 15.5 视觉
 
 - 浅色和深色下正文、代码、公式、禁用状态均达到可读对比；
 - 所有正式控件使用 SVG 图标，不使用 Emoji 替代图标；
@@ -812,10 +872,10 @@ CharacterWindowRoot
 5. 助手消息无气泡，用户消息使用浅灰圆角气泡；
 6. 对话不显示头像；正文采用紧凑排版，Copy、Retry 等动作保持次要层级；
 7. 完成过程默认折叠，内部 Tool 使用两级展开；
-8. 领地使用完整像素场景，其他页面只保留轻量角色插画和强调色。
+8. 领地使用完整、可扩建的像素世界和沉浸式游览/布置工作区，其他页面只保留轻量角色插画和强调色。
 9. 新建 Chat 在首次发送前只存在于右侧草稿态；首次发送后才进入侧栏，标题先用首条消息兜底，再无阻塞地更新为可用 Provider 生成的摘要。
 
-评审只观察三组关键画面：Chats 空状态、Agent 执行完成态、Realtime 说话/打断态。可用性与视觉测试完成后，直接修改本节和 Design Token 为胜者，并删除被否决的组件/CSS 分支；Memory、Activity 和 Settings 复用同一视觉系统。
+首轮通用组件评审观察 Chats 空状态、Agent 执行完成态、Realtime 说话/打断态；Territory 另观察全屏游览、布置多层组合和 AI 改造 Preview 三组关键画面。可用性与视觉测试完成后，直接修改本节、§11.1 和 Design Token 为胜者，并删除被否决的组件/CSS 分支；Memory、Activity 和 Settings 复用同一视觉系统。
 
 ---
 
@@ -832,7 +892,7 @@ flowchart LR
     U4["Phase 4<br/>Voice Dock / transcript / interruption"]
     U5["Phase 5<br/>Automations / proactive / gated controls"]
     U6A["Phase 6A<br/>Character Window / bubbles"]
-    U6B["Phase 6B<br/>Pixi Territory / collection"]
+    U6B["Phase 6B<br/>Territory sandbox / AI preview"]
     U7["Phase 7<br/>主题 / 响应式 / E2E / packaged QA"]
 
     U0 --> U1 --> U2
@@ -858,5 +918,6 @@ flowchart LR
 - Memory/Activity、Voice、Automation 与 Character/Territory 是可并行的功能分支，但不能并行修改 Composer reducer、Run Item union 或共享视觉 Token；这些文件由指定 integration owner 串行变更。
 - `ParallelToggle`、`SubtaskItem`、Graph view 和 self-evolution candidate UI 只有对应 Decision 晋级后才创建；未晋级时 fixture、组件、route 和 CSS 都不存在。
 - Voice Architecture/Transport 未决期间可以用规范化 Voice event fixture验证 Voice Dock，但不得创建两个 Driver 对应的 UI 状态分支。
-- PixiJS canvas 的视觉回归、Retina scaling、sprite atlas 与 placement 使用截图/确定性 scene fixture；Memory 来源、Approval、按钮和键盘焦点仍由 React/DOM 测试。
+- PixiJS canvas 的视觉回归、Retina scaling、活动 Zone 视口、Asset Pack、多层组合与 placement 使用截图/确定性 World fixture；Memory 来源、AI Preview diff、删除恢复、按钮和键盘焦点仍由 React/DOM 测试。
+- `TERRITORY-SCENE-GENERATION` 与 `TERRITORY-WORLD-PERFORMANCE` 已接受；UI 只消费结构化 compiler/原子 Asset Pack 与活动 Zone 直接 scene tree 的唯一结果，不把旧固定场景、固定物件容量或失败候选做成分支。
 - Phase 7 必须同时验证普通开发窗口与 Forge packaged app；Playwright Electron 的 experimental 状态由 Phase 0 兼容性检查承担，不另保留第二个桌面 E2E 框架。

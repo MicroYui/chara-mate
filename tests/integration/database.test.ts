@@ -236,38 +236,6 @@ describe("foundation database", () => {
     database.close();
   });
 
-  it("migrates v6 data by adding Territory image candidates", async () => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "chara-mate-v6-migration-"),
-    );
-    temporaryDirectories.push(directory);
-    const databasePath = path.join(directory, "charamate.sqlite");
-    let database = openApplicationDatabase(databasePath);
-    database.transaction(() => {
-      database.exec("DROP TABLE territory_image_candidates");
-      database
-        .prepare(
-          "UPDATE app_metadata SET value = '6' WHERE key = 'schema_version'",
-        )
-        .run();
-    })();
-    database.close();
-
-    database = openApplicationDatabase(databasePath);
-    expect(
-      database
-        .prepare("SELECT name FROM sqlite_master WHERE name = ?")
-        .get("territory_image_candidates"),
-    ).toEqual({ name: "territory_image_candidates" });
-    expect(
-      database
-        .prepare("SELECT value FROM app_metadata WHERE key = 'schema_version'")
-        .get(),
-    ).toEqual({ value: CURRENT_SCHEMA_VERSION });
-    expect(database.pragma("foreign_key_check")).toEqual([]);
-    database.close();
-  });
-
   it("migrates v8 data by adding Automation definitions and run history", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "chara-mate-v8-migration-"),
@@ -297,79 +265,6 @@ describe("foundation database", () => {
         .prepare("SELECT name FROM sqlite_master WHERE name = ?")
         .get("automation_runs"),
     ).toEqual({ name: "automation_runs" });
-    expect(
-      database
-        .prepare("SELECT value FROM app_metadata WHERE key = 'schema_version'")
-        .get(),
-    ).toEqual({ value: CURRENT_SCHEMA_VERSION });
-    expect(database.pragma("foreign_key_check")).toEqual([]);
-    database.close();
-  });
-
-  it("migrates v9 Territory image candidates into sourced item history", async () => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "chara-mate-v9-migration-"),
-    );
-    temporaryDirectories.push(directory);
-    const databasePath = path.join(directory, "charamate.sqlite");
-    let database = openApplicationDatabase(databasePath);
-    database.transaction(() => {
-      database.exec(
-        "ALTER TABLE territory_image_candidates DROP COLUMN item_candidate_id",
-      );
-      database.exec("DROP TABLE territory_item_sources");
-      database.exec("DROP TABLE territory_item_candidates");
-      database.exec("DROP INDEX territory_placements_scene_age_idx");
-      database
-        .prepare(
-          `INSERT INTO territory_image_candidates (
-             candidate_id, provider_profile_id, scene_id, operation,
-             source_candidate_id, request_json, status, error_json,
-             accepted_item_id, created_at, updated_at
-           ) VALUES (?, ?, 'forest-cabin', 'generate', NULL, ?, 'ready',
-                     NULL, NULL, ?, ?)`,
-        )
-        .run(
-          "4382a540-0ed1-472c-a9b7-9e320fd0906a",
-          "0114dfa3-c4b8-4b06-87c2-06451d079d93",
-          JSON.stringify({
-            description: "迁移前的图片候选。",
-            editInstruction: null,
-            name: "旧候选",
-            structure: null,
-            visualPrompt: "一件迁移后仍可确认的小物",
-          }),
-          "2026-08-11T08:00:00.000Z",
-          "2026-08-11T08:00:00.000Z",
-        );
-      database
-        .prepare(
-          "UPDATE app_metadata SET value = '9' WHERE key = 'schema_version'",
-        )
-        .run();
-    })();
-    database.close();
-
-    database = openApplicationDatabase(databasePath);
-    expect(
-      database
-        .prepare(
-          "SELECT status FROM territory_image_candidates WHERE candidate_id = ?",
-        )
-        .get("4382a540-0ed1-472c-a9b7-9e320fd0906a"),
-    ).toEqual({ status: "ready" });
-    expect(
-      (
-        database.pragma("table_info(territory_image_candidates)") as Array<{
-          name: string;
-        }>
-      ).some(({ name }) => name === "item_candidate_id"),
-    ).toBe(true);
-    expect(
-      database
-        .prepare("SELECT name FROM sqlite_master WHERE name = ?")
-        .get("territory_item_sources"),
-    ).toEqual({ name: "territory_item_sources" });
     expect(
       database
         .prepare("SELECT value FROM app_metadata WHERE key = 'schema_version'")

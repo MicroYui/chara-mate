@@ -5,6 +5,7 @@ import type { PetMainTarget } from "../../shared/contracts/pet";
 export type MainWindowTarget = PetMainTarget;
 
 interface MainWindowControllerOptions {
+  readonly onVisibilityChanged?: (visible: boolean) => void;
   readonly reveal?: boolean;
   readonly shouldKeepAliveOnClose?: () => boolean;
 }
@@ -82,6 +83,7 @@ export class MainWindowController {
     if (this.options.reveal === false) return;
     if (window.isMinimized()) window.restore();
     window.show();
+    this.options.onVisibilityChanged?.(true);
     this.activateApplication();
     window.focus();
   }
@@ -118,12 +120,27 @@ export class MainWindowController {
     };
     this.readyState = readyState;
 
+    const reportVisibility = (): void => {
+      this.options.onVisibilityChanged?.(
+        window.isVisible() && !window.isMinimized(),
+      );
+    };
+    this.options.onVisibilityChanged?.(
+      window.isVisible() && !window.isMinimized(),
+    );
+    window.on("show", reportVisibility);
+    window.on("hide", reportVisibility);
+    window.on("minimize", reportVisibility);
+    window.on("restore", reportVisibility);
+
     window.on("close", (event) => {
       if (!this.options.shouldKeepAliveOnClose?.()) return;
       event.preventDefault();
       window.hide();
+      this.options.onVisibilityChanged?.(false);
     });
     window.on("closed", () => {
+      this.options.onVisibilityChanged?.(false);
       if (this.window === window) this.window = null;
       if (this.readyState === readyState) this.readyState = undefined;
       this.earlyReadySenders.delete(webContentsId);

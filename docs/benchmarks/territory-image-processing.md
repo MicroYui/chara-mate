@@ -1,19 +1,25 @@
 # TERRITORY-IMAGE-PROCESSING：领地图片生成与去背景单路径决策
 
 - 日期：2026-08-08
-- 状态：接受
-- 范围：`P6-TERRITORY-IMAGE`
+- 状态：现有孤立物件原型接受；**目标沙盒生成范围已由 2026-08-13 产品修订取代**
+- 范围：旧 `P6-TERRITORY-IMAGE` 单物件路径
+
+## 2026-08-13 范围修订
+
+新的 Territory 产品目标同时需要单物件、协调 Asset Pack、地形/结构、选区、Zone 重绘和扩建。本文只比较孤立物件的洋红去背景与默认缩放，不能证明它适用于 tileset 边缘、墙体、场景背景、动画变体、Style Profile 或完整区域一致性。
+
+本文继续作为当前原型和 `TERRITORY-SCENE-GENERATION` 的基线证据保留；它不再单独定义目标产品管线。新 Decision 必须用目标 `gpt-image-2` deployment 和真实 World Preview 比较唯一素材生成/编辑、归一化、修复与一致性方案，随后用胜者替换旧单物件假设；不能把本文路径与新 Asset Pack 路径作为两个运行时模式并存。
 
 ## 问题与结论
 
-目标 deployment 是 `gpt-image-2`，它的 Generation 与 Edit 都不能直接请求透明背景。生产实现因此固定为一条路径：同一 Azure deployment 生成或编辑一张 `1024x1024`、`medium`、opaque PNG，Edit 使用 `high` input fidelity；统一 prompt 要求纯洋红背景和完整留白；Main 进程按边缘中位色做四连通背景移除；用户确认后默认缩放为 `96x96` PNG，并调用既有 Territory asset + manifest 入口。
+目标 deployment 是 `gpt-image-2`，它的 Generation 与 Edit 都不能直接请求透明背景。生产实现因此固定为一条路径：同一 Azure deployment 生成或编辑一张 `1024x1024`、`medium`、opaque PNG；统一 prompt 要求纯洋红背景和完整留白；Main 进程按边缘中位色做四连通背景移除；用户确认后默认缩放为 `96x96` PNG，并调用既有 Territory asset + manifest 入口。2026-08-13 的模型专属指南明确要求 `gpt-image-2` 省略 `input_fidelity`，当前生产请求已按新来源修订。
 
 本地连通背景的色差阈值固定为 `96`。不安装 `sharp`、抠图模型或第二个 Image Provider，不提供阈值、质量、尺寸或去背景模式开关。
 
 ## 一手来源快照
 
 - [OpenAI Image generation guide](https://platform.openai.com/docs/guides/image-generation)，读取于 2026-08-08：Images API 分为 Generation 与 Edit，Edit 接收已有图片。
-- [OpenAI JavaScript SDK `6.49.0` Images 源码](https://github.com/openai/openai-node/blob/v6.49.0/src/resources/images.ts)，仓库锁定版本 `6.49.0`、tag commit [`04671d278ef1531692ae31a870251eec90f3c2d2`](https://github.com/openai/openai-node/tree/04671d278ef1531692ae31a870251eec90f3c2d2)。生成类型明确说明 `gpt-image-2` / `gpt-image-2-2026-04-21` 不支持 `background: transparent`，该请求会报错；Generation/Edit 都支持 PNG、`medium` 与 `1024x1024`，Edit 的 `input_fidelity` 支持 `high / low` 且默认 `low`。
+- [OpenAI JavaScript SDK `6.49.0` Images 源码](https://github.com/openai/openai-node/blob/v6.49.0/src/resources/images.ts)，仓库锁定版本 `6.49.0`、tag commit [`04671d278ef1531692ae31a870251eec90f3c2d2`](https://github.com/openai/openai-node/tree/04671d278ef1531692ae31a870251eec90f3c2d2)。生成类型明确说明 `gpt-image-2` / `gpt-image-2-2026-04-21` 不支持 `background: transparent`，该请求会报错；Generation/Edit 都支持 PNG、`medium` 与 `1024x1024`。SDK 暴露跨模型通用 `input_fidelity` 类型，但 2026-08-13 的 [GPT Image 专属指南](https://developers.openai.com/api/docs/guides/image-generation) 要求该模型省略它，因为所有输入已自动高保真处理。
 - [Microsoft Learn Azure OpenAI REST `2025-04-01-preview`](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/reference-preview)，页面元数据 `ms.date=2026-05-19`、读取于 2026-08-08：同一 deployment 下分别提供 `/images/generations` JSON 请求与 `/images/edits` multipart 请求。
 - [Electron `nativeImage`](https://www.electronjs.org/docs/latest/api/native-image)，项目锁定 Electron `43.2.0`：`toBitmap()` 返回平台相关的原始位图，`createFromBitmap()` 接受该格式。生产算法不解释前三个颜色通道的顺序，只计算同一位图内的颜色距离并修改第四个 alpha 字节。
 
@@ -21,7 +27,7 @@
 
 1. 当前 API/SDK 能力约束：目标 `gpt-image-2` 不能直接输出透明背景；Edit 必须使用 multipart。
 2. 当前源码与本地协议观察：锁定 SDK 在回环 HTTP 端点上把 Generation 发送到配置 deployment 的 `/images/generations`，把 Edit 发送到同级 `/images/edits`，并保留 `api-version` 与其他查询参数。
-3. CharaMate 启发式：`medium`、Edit 的 `high` input fidelity、`1024x1024`、色差 `96` 与默认最终 `96x96` tile asset 都是产品选择，不是协议硬限制。
+3. CharaMate 启发式：`medium`、`1024x1024`、色差 `96` 与默认最终 `96x96` tile asset 都是产品选择，不是协议硬限制。
 
 ## 最小离线比较
 
@@ -48,7 +54,7 @@
 
 ## 尺寸与质量取舍
 
-没有用真实 Provider 做 `low / medium / high` 的付费质量排名，不能声称 `medium` 在所有物件上质量最好。选择 `1024x1024 + medium` 的理由是：它是当前双方协议直接支持的标准正方形请求，能提供足够的轮廓像素给去背景，而默认最终运行时只保留 `96x96`，继续提高源图质量与尺寸会增加成本和延迟，却没有本项目证据证明缩小后的收益。Edit 选择 `high` input fidelity 是为了让用户基于已确认预览做局部修改时尽量保留原物件；本轮没有付费比较 `high / low`，因此不声称它在所有输入上质量或成本最优。真实 Azure Generation/Edit 仍需独立于离线回归报告，mock 不能伪造其视觉质量。
+没有用真实 Provider 做 `low / medium / high` 的付费质量排名，不能声称 `medium` 在所有物件上质量最好。选择 `1024x1024 + medium` 的理由是：它是当前双方协议直接支持的标准正方形请求，能提供足够的轮廓像素给去背景，而默认最终运行时只保留 `96x96`，继续提高源图质量与尺寸会增加成本和延迟，却没有本项目证据证明缩小后的收益。Edit 不发送 `input_fidelity`，由目标模型按当前官方行为自动高保真处理。真实 Azure Generation/Edit 仍需独立于离线回归报告，mock 不能伪造其视觉质量。
 
 ### 产品接口补充（2026-08-08，非实验改判）
 

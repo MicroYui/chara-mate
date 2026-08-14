@@ -11,7 +11,7 @@ import type {
   ActivityApi,
   ActivitySnapshot,
 } from "../../../shared/contracts/activity";
-import { emptyTerritorySnapshot } from "../../../../tests/fixtures/territory";
+import { starterTerritorySnapshot } from "../../../../tests/fixtures/territoryWorld";
 import { ActivityPage } from "./ActivityPage";
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -86,7 +86,7 @@ describe("ActivityPage", () => {
       ok: true,
       value: {
         candidateId: territoryCandidateId,
-        snapshot: emptyTerritorySnapshot,
+        snapshot: starterTerritorySnapshot,
       },
     });
     const onOpenTerritory = vi.fn();

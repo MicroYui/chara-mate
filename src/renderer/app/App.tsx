@@ -101,6 +101,14 @@ export function App() {
     [],
   );
 
+  useEffect(() => {
+    const active = uiState.activePage === "territory";
+    window.charaMate.pet.setTerritoryActive({ active });
+    return () => {
+      if (active) window.charaMate.pet.setTerritoryActive({ active: false });
+    };
+  }, [uiState.activePage]);
+
   useEffect(
     () =>
       window.charaMate.agent.subscribeOpenApproval((target) => {

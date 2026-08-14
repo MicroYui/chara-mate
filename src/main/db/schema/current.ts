@@ -65,26 +65,45 @@ export const CURRENT_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   ) STRICT;
 
-  CREATE TABLE IF NOT EXISTS territory_scenes (
-    scene_id TEXT PRIMARY KEY NOT NULL CHECK (
-      scene_id IN (
-        'forest-cabin',
-        'seaside-room',
-        'city-rooftop',
-        'star-workshop'
-      )
-    ),
-    is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
-    pet_x INTEGER NOT NULL CHECK (pet_x >= 0),
-    pet_y INTEGER NOT NULL CHECK (pet_y >= 0),
-    pet_facing TEXT NOT NULL CHECK (pet_facing IN ('left', 'right')),
-    initialized_at TEXT NOT NULL,
+  CREATE TABLE IF NOT EXISTS territory_worlds (
+    world_id TEXT PRIMARY KEY NOT NULL CHECK (world_id = 'territory'),
+    name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+    current_revision_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   ) STRICT;
 
-  CREATE TABLE IF NOT EXISTS territory_assets (
+  CREATE TABLE IF NOT EXISTS territory_world_revisions (
+    revision_id TEXT PRIMARY KEY NOT NULL,
+    world_id TEXT NOT NULL REFERENCES territory_worlds(world_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL CHECK (sequence >= 1),
+    parent_revision_id TEXT REFERENCES territory_world_revisions(revision_id),
+    label TEXT NOT NULL CHECK (length(trim(label)) > 0),
+    reason TEXT NOT NULL CHECK (reason IN ('initial', 'direct', 'ai', 'restore')),
+    state_json TEXT NOT NULL CHECK (json_valid(state_json)),
+    created_at TEXT NOT NULL,
+    UNIQUE (world_id, sequence)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS territory_world_pet_state (
+    world_id TEXT PRIMARY KEY NOT NULL
+      REFERENCES territory_worlds(world_id) ON DELETE CASCADE,
+    zone_id TEXT NOT NULL,
+    pet_x INTEGER NOT NULL CHECK (pet_x >= 0),
+    pet_y INTEGER NOT NULL CHECK (pet_y >= 0),
+    facing TEXT NOT NULL CHECK (facing IN ('left', 'right')),
+    behavior TEXT NOT NULL CHECK (
+      behavior IN ('idle', 'walking', 'sitting', 'sleeping', 'observing')
+    ),
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS territory_world_assets (
     asset_id TEXT PRIMARY KEY NOT NULL,
-    media_type TEXT NOT NULL CHECK (media_type = 'image/png'),
+    media_type TEXT NOT NULL CHECK (
+      media_type IN ('image/png', 'application/vnd.charamate.pixi')
+    ),
+    origin TEXT NOT NULL CHECK (origin IN ('packaged', 'generated', 'edited')),
     width INTEGER NOT NULL CHECK (width > 0),
     height INTEGER NOT NULL CHECK (height > 0),
     byte_length INTEGER NOT NULL CHECK (byte_length > 0),
@@ -93,159 +112,72 @@ export const CURRENT_SCHEMA_SQL = `
     created_at TEXT NOT NULL
   ) STRICT;
 
-  CREATE TABLE IF NOT EXISTS territory_item_definitions (
-    definition_id TEXT NOT NULL,
+  CREATE TABLE IF NOT EXISTS territory_asset_pack_revisions (
+    pack_id TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK (revision >= 1),
-    asset_id TEXT REFERENCES territory_assets(asset_id),
     manifest_json TEXT NOT NULL CHECK (json_valid(manifest_json)),
     created_at TEXT NOT NULL,
-    PRIMARY KEY (definition_id, revision),
-    CHECK (
-      (
-        asset_id IS NULL AND
-        json_extract(manifest_json, '$.visual.source.kind') = 'builtin'
-      ) OR (
-        asset_id IS NOT NULL AND
-        json_extract(manifest_json, '$.visual.source.kind') = 'asset' AND
-        json_extract(manifest_json, '$.visual.source.assetId') = asset_id
-      )
-    )
+    PRIMARY KEY (pack_id, revision)
   ) STRICT;
 
-  CREATE TABLE IF NOT EXISTS territory_items (
-    item_id TEXT PRIMARY KEY NOT NULL,
+  CREATE TABLE IF NOT EXISTS territory_definition_revisions (
     definition_id TEXT NOT NULL,
-    definition_revision INTEGER NOT NULL CHECK (definition_revision >= 1),
-    initial_scene_id TEXT REFERENCES territory_scenes(scene_id),
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    manifest_json TEXT NOT NULL CHECK (json_valid(manifest_json)),
     created_at TEXT NOT NULL,
-    FOREIGN KEY (definition_id, definition_revision)
-      REFERENCES territory_item_definitions(definition_id, revision)
+    PRIMARY KEY (definition_id, revision)
   ) STRICT;
 
-  CREATE TABLE IF NOT EXISTS territory_placements (
-    item_id TEXT PRIMARY KEY NOT NULL
-      REFERENCES territory_items(item_id) ON DELETE CASCADE,
-    location TEXT NOT NULL CHECK (location IN ('scene', 'collection')),
-    scene_id TEXT REFERENCES territory_scenes(scene_id),
-    placement_kind TEXT CHECK (placement_kind IN ('ground', 'surface')),
-    grid_x INTEGER CHECK (grid_x IS NULL OR grid_x >= 0),
-    grid_y INTEGER CHECK (grid_y IS NULL OR grid_y >= 0),
-    support_item_id TEXT REFERENCES territory_items(item_id),
-    slot_id TEXT,
-    rotation INTEGER NOT NULL CHECK (rotation IN (0, 90, 180, 270)),
-    flipped INTEGER NOT NULL CHECK (flipped IN (0, 1)),
-    pinned INTEGER NOT NULL CHECK (pinned IN (0, 1)),
-    placed_at TEXT,
-    updated_at TEXT NOT NULL,
-    CHECK (
-      (
-        location = 'scene' AND scene_id IS NOT NULL AND
-        placed_at IS NOT NULL AND
-        (
-          (
-            placement_kind = 'ground' AND
-            grid_x IS NOT NULL AND grid_y IS NOT NULL AND
-            support_item_id IS NULL AND slot_id IS NULL
-          ) OR (
-            placement_kind = 'surface' AND
-            grid_x IS NULL AND grid_y IS NULL AND
-            support_item_id IS NOT NULL AND slot_id IS NOT NULL AND
-            support_item_id <> item_id
-          )
-        )
-      ) OR (
-        location = 'collection' AND scene_id IS NULL AND
-        placement_kind IS NULL AND grid_x IS NULL AND grid_y IS NULL AND
-        support_item_id IS NULL AND slot_id IS NULL AND placed_at IS NULL
-      )
-    )
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS territory_item_candidates (
+  CREATE TABLE IF NOT EXISTS territory_change_candidates (
     candidate_id TEXT PRIMARY KEY NOT NULL,
-    primary_source_kind TEXT NOT NULL CHECK (
-      primary_source_kind IN ('memory', 'activity_digest')
+    base_revision_id TEXT NOT NULL
+      REFERENCES territory_world_revisions(revision_id),
+    request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+    edit_request_json TEXT CHECK (
+      edit_request_json IS NULL OR json_valid(edit_request_json)
     ),
-    primary_source_id TEXT NOT NULL,
-    name TEXT NOT NULL CHECK (length(trim(name)) > 0),
-    description TEXT NOT NULL CHECK (length(trim(description)) > 0),
-    visual_prompt TEXT NOT NULL CHECK (length(trim(visual_prompt)) > 0),
-    suggested_scene_id TEXT NOT NULL CHECK (
-      suggested_scene_id IN (
-        'forest-cabin',
-        'seaside-room',
-        'city-rooftop',
-        'star-workshop'
+    status TEXT NOT NULL CHECK (
+      status IN (
+        'draft',
+        'generating',
+        'ready',
+        'failed',
+        'stale',
+        'cancelled',
+        'applied'
       )
     ),
-    sources_json TEXT NOT NULL CHECK (json_valid(sources_json)),
-    status TEXT NOT NULL CHECK (status IN ('pending', 'materialized')),
-    accepted_item_id TEXT REFERENCES territory_items(item_id),
+    change_set_json TEXT CHECK (
+      change_set_json IS NULL OR json_valid(change_set_json)
+    ),
+    preview_groups_json TEXT NOT NULL CHECK (json_valid(preview_groups_json)),
+    error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+    applied_revision_id TEXT REFERENCES territory_world_revisions(revision_id),
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE (primary_source_kind, primary_source_id),
-    CHECK (
-      (status = 'pending' AND accepted_item_id IS NULL) OR
-      (status = 'materialized' AND accepted_item_id IS NOT NULL)
-    )
+    updated_at TEXT NOT NULL
   ) STRICT;
 
-  CREATE TABLE IF NOT EXISTS territory_item_sources (
-    item_id TEXT NOT NULL
-      REFERENCES territory_items(item_id) ON DELETE CASCADE,
+  CREATE TABLE IF NOT EXISTS territory_instance_sources (
     source_kind TEXT NOT NULL CHECK (
       source_kind IN ('memory', 'activity_digest')
     ),
     source_id TEXT NOT NULL,
-    revision_id TEXT,
-    label TEXT NOT NULL CHECK (length(trim(label)) > 0),
-    occurred_at TEXT NOT NULL,
-    candidate_id TEXT REFERENCES territory_item_candidates(candidate_id),
-    PRIMARY KEY (item_id, source_kind, source_id)
+    instance_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+    PRIMARY KEY (source_kind, source_id),
+    UNIQUE (instance_id, source_kind, source_id)
   ) STRICT;
 
-  CREATE TABLE IF NOT EXISTS territory_image_candidates (
-    candidate_id TEXT PRIMARY KEY NOT NULL,
-    provider_profile_id TEXT NOT NULL,
-    scene_id TEXT NOT NULL CHECK (
-      scene_id IN (
-        'forest-cabin',
-        'seaside-room',
-        'city-rooftop',
-        'star-workshop'
-      )
-    ),
-    operation TEXT NOT NULL CHECK (operation IN ('generate', 'edit')),
-    source_candidate_id TEXT REFERENCES territory_image_candidates(candidate_id),
-    item_candidate_id TEXT REFERENCES territory_item_candidates(candidate_id),
-    request_json TEXT NOT NULL CHECK (json_valid(request_json)),
-    status TEXT NOT NULL CHECK (
-      status IN ('generating', 'ready', 'failed', 'accepted')
-    ),
-    error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
-    accepted_item_id TEXT REFERENCES territory_items(item_id),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    CHECK (
-      (operation = 'generate' AND source_candidate_id IS NULL) OR
-      (operation = 'edit' AND source_candidate_id IS NOT NULL)
-    ),
-    CHECK (
-      (
-        status IN ('generating', 'ready') AND
-        error_json IS NULL AND accepted_item_id IS NULL
-      ) OR (
-        status = 'failed' AND
-        error_json IS NOT NULL AND accepted_item_id IS NULL
-      ) OR (
-        status = 'accepted' AND
-        error_json IS NULL AND accepted_item_id IS NOT NULL
-      )
-    )
+  CREATE TABLE IF NOT EXISTS territory_purged_instances (
+    instance_id TEXT PRIMARY KEY NOT NULL,
+    purged_at TEXT NOT NULL
   ) STRICT;
 
-  CREATE INDEX IF NOT EXISTS territory_placements_scene_age_idx
-    ON territory_placements(location, scene_id, pinned, placed_at, item_id);
+  CREATE INDEX IF NOT EXISTS territory_world_revisions_sequence_idx
+    ON territory_world_revisions(world_id, sequence DESC);
+
+  CREATE INDEX IF NOT EXISTS territory_change_candidates_updated_idx
+    ON territory_change_candidates(updated_at DESC, candidate_id DESC);
 
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY NOT NULL,
@@ -921,16 +853,4 @@ export const CURRENT_SCHEMA_SQL = `
     ON voice_turns(session_id, generation, id);
   CREATE INDEX IF NOT EXISTS voice_turns_run_idx
     ON voice_turns(run_id, id);
-  CREATE UNIQUE INDEX IF NOT EXISTS territory_one_active_scene_idx
-    ON territory_scenes(is_active)
-    WHERE is_active = 1;
-  CREATE INDEX IF NOT EXISTS territory_placements_scene_idx
-    ON territory_placements(scene_id, placement_kind, grid_y, grid_x, item_id);
-  CREATE INDEX IF NOT EXISTS territory_placements_collection_idx
-    ON territory_placements(location, updated_at, item_id);
-  CREATE UNIQUE INDEX IF NOT EXISTS territory_one_item_per_surface_slot_idx
-    ON territory_placements(support_item_id, slot_id)
-    WHERE location = 'scene' AND placement_kind = 'surface';
-  CREATE INDEX IF NOT EXISTS territory_image_candidates_created_idx
-    ON territory_image_candidates(created_at DESC, candidate_id DESC);
 `;

@@ -266,13 +266,18 @@ Manifest 在运行前冻结并计算 hash。结果只引用该 hash，防止实�
 | `MEMORY-FORMATION` | §8.6 | Chat/Agent 使用期形成、修订或候选化 Memory 的唯一流程 |
 | `ACTIVITY-DISTILLATION` | §9 | 唯一 Episode/Digest/候选生成流程 |
 | `ACTIVITY-RETENTION` | §9 | 唯一保留、容量与清理策略 |
-| `TERRITORY-CAPACITY` | 产品设计 §10.6 | 唯一同屏物件容量与超限回收规则 |
+| `TERRITORY-SCENE-GENERATION` | 产品设计 §10.4 | 单物件、协调 Asset Pack、选区/Zone/扩建与局部 Edit 的唯一生成、归一化、修复和验收流程 |
+| `TERRITORY-WORLD-PERFORMANCE` | 产品设计 §10.9 | 活动 Zone 投影、scene tree、Culler 与 asset cache 的唯一生产策略；不得转化为全局物件容量 |
 | `SELF-EVOLUTION` | §10 | 唯一触发、候选与 Skill 生效流程 |
 | `VOICE-ARCHITECTURE` | §12.3 | 唯一语音/Agent 组织方式 |
 | `VOICE-TRANSPORT` | §12.4 | 唯一媒体 Transport |
 | `VOICE-TOOL-JOIN` | §12.6 | 唯一 Tool 调度与 continuation 规则 |
 
 Decision 未完成时，产品文档只写稳定契约和 Gate；Decision 完成后，必须把胜者写回产品文档并删除其中的占位描述。
+
+`TERRITORY-SCENE-GENERATION` 与 `TERRITORY-WORLD-PERFORMANCE` 已于 2026-08-13 接受，中文结果分别见 `docs/benchmarks/territory-scene-generation.md` 与 `docs/benchmarks/territory-world-performance.md`；产品设计 §10.4/§10.9 已写回唯一胜者。
+
+`TERRITORY-CAPACITY` 曾针对固定房间内 `8 / 12 / 16` 个合成物件选择 12 件与超限自动收回。2026-08-13 用户把目标产品改为可扩建、可自由组合的 2.5D Territory World，该研究问题不再匹配产品边界，因此从活动 Registry 移除；原中文 Decision Record 保留并标记 superseded，只证明旧固定房间问题的当时结果，不能约束新 World。
 
 ### 2.7 Decision 与产品 Phase 依赖
 
@@ -295,6 +300,10 @@ flowchart TD
     AD["ACTIVITY-DISTILLATION"]
     AR["ACTIVITY-RETENTION"]
     ACT["Phase 3 Activity"]
+
+    TG["TERRITORY-SCENE-GENERATION"]
+    TW["TERRITORY-WORLD-PERFORMANCE"]
+    TERR["Phase 6 Territory Sandbox"]
 
     VC["目标 Azure Contract Test"]
     VA["VOICE-ARCHITECTURE"]
@@ -331,7 +340,14 @@ flowchart TD
     AD --> ACT
     AR --> ACT
 
+    M --> TG
+    ACT --> TG
+    F --> TW
+    TG --> TERR
+    TW --> TERR
+
     A --> VC
+    VC --> TG
     VC --> VA
     VC --> VT
     A --> VJ
@@ -347,6 +363,8 @@ flowchart TD
 `MEMORY-STORAGE` 是一个分阶段 Decision：journal 阶段可在 Retrieval 质量实验前运行；向量/compute 阶段只有 dense lane 证明有晋级价值后才触发。最终仍只产生一份完整 Decision Record 和一套生产存储配置。若 dense 未晋级，`SV` 节点视为“不触发”，不是缺失实验，也不会创建向量 worker/segment/service。
 
 Voice Architecture 与 Transport 在 Azure Contract Test 后可以并行研究；Tool Join 必须使用稳定 Agent Scheduler 和仍有竞争力的 Architecture。Multi-agent 只在单 Agent Harness 稳定后研究；Self-evolution 必须同时拥有稳定 Run evidence、Memory/Revision 和 Skills 生命周期。
+
+Territory 的产品方向、World/Zone 与组合合同由用户选择，不作为实验 Arm。`TERRITORY-SCENE-GENERATION` 只比较怎样把同一产品意图可靠编译为结构化 change set 与统一视觉资产；`TERRITORY-WORLD-PERFORMANCE` 只比较在不删除或自动收回用户内容的前提下如何渲染同一个 World。两项已接受，失败候选和一次性 runner 均已删除，最终产品各自只保留一个胜者。
 
 ---
 

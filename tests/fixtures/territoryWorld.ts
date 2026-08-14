@@ -1,0 +1,468 @@
+import type {
+  TerritoryAsset,
+  TerritoryAssetPack,
+  TerritoryChangeCandidate,
+  TerritoryDefinition,
+  TerritoryInstance,
+  TerritoryStyleProfile,
+  TerritoryWorldChangeSet,
+  TerritoryWorldRevisionSummary,
+  TerritoryWorldSnapshot,
+  TerritoryZone,
+  TerritoryZoneView,
+} from "../../src/shared/contracts/territoryWorld";
+
+export const territoryWorldFixtureIds = {
+  candidate: "90000000-0000-4000-8000-000000000001",
+  candidateChange: "90000000-0000-4000-8000-000000000002",
+  candidateChangeSet: "90000000-0000-4000-8000-000000000003",
+  candidateInstance: "30000000-0000-4000-8000-000000000005",
+  collectionInstance: "30000000-0000-4000-8000-000000000004",
+  deskInstance: "30000000-0000-4000-8000-000000000002",
+  floorInstance: "30000000-0000-4000-8000-000000000001",
+  lampInstance: "30000000-0000-4000-8000-000000000003",
+  provider: "80000000-0000-4000-8000-000000000001",
+  revision: "10000000-0000-4000-8000-000000000001",
+  trashedInstance: "30000000-0000-4000-8000-000000000006",
+  zone: "20000000-0000-4000-8000-000000000001",
+} as const;
+
+const now = "2026-08-13T08:00:00.000Z";
+
+export const starterTerritoryStyle = {
+  id: "starter.twilight-cabin",
+  lightingDirection: "左上方柔和窗光",
+  materialLanguage: "温暖木材、苔石与亚麻织物",
+  name: "暮色林间小屋",
+  outlineLanguage: "单像素深蓝灰轮廓",
+  palette: {
+    accent: "#e2b66f",
+    ambient: "#8097a6",
+    dark: "#27323d",
+    light: "#f1dfb9",
+    mid: "#78896b",
+  },
+  pixelScale: 3,
+  referenceAssetIds: ["starter.cabin-floor", "starter.cabin-desk"],
+  revision: 1,
+  seasonTone: "初秋",
+  shadowLanguage: "右下短投影与柔和接触阴影",
+  timeTone: "日落后蓝调时刻",
+} satisfies TerritoryStyleProfile;
+
+export const starterTerritoryZone = {
+  bounds: { height: 10, width: 16, x: 0, y: 0 },
+  createdAt: now,
+  id: territoryWorldFixtureIds.zone,
+  kind: "room",
+  name: "暮色小屋",
+  status: "active",
+  styleProfile: {
+    id: starterTerritoryStyle.id,
+    revision: starterTerritoryStyle.revision,
+  },
+  trashedAt: null,
+  updatedAt: now,
+} satisfies TerritoryZone;
+
+export const starterTerritoryAssets = [
+  {
+    byteLength: 2048,
+    createdAt: now,
+    height: 48,
+    id: "starter.cabin-floor",
+    mediaType: "image/png",
+    origin: "packaged",
+    sha256: "1".repeat(64),
+    width: 48,
+  },
+  {
+    byteLength: 8192,
+    createdAt: now,
+    height: 96,
+    id: "starter.cabin-desk",
+    mediaType: "image/png",
+    origin: "packaged",
+    sha256: "2".repeat(64),
+    width: 144,
+  },
+  {
+    byteLength: 2048,
+    createdAt: now,
+    height: 36,
+    id: "starter.amber-lamp",
+    mediaType: "image/png",
+    origin: "packaged",
+    sha256: "3".repeat(64),
+    width: 28,
+  },
+  {
+    byteLength: 4096,
+    createdAt: now,
+    height: 96,
+    id: "starter.moss-rug",
+    mediaType: "image/png",
+    origin: "packaged",
+    sha256: "4".repeat(64),
+    width: 192,
+  },
+] satisfies TerritoryAsset[];
+
+export const starterTerritoryAssetPack = {
+  assets: [
+    {
+      assetId: "starter.cabin-floor",
+      key: "cabin.floor",
+      layer: "terrain",
+    },
+    {
+      assetId: "starter.cabin-desk",
+      key: "cabin.desk",
+      layer: "object",
+    },
+    {
+      assetId: "starter.amber-lamp",
+      key: "cabin.amber-lamp",
+      layer: "attachment",
+    },
+    {
+      assetId: "starter.moss-rug",
+      key: "cabin.moss-rug",
+      layer: "underlay",
+    },
+  ],
+  createdAt: now,
+  id: "starter.cabin",
+  name: "暮色小屋起始素材",
+  revision: 1,
+  styleProfile: {
+    id: starterTerritoryStyle.id,
+    revision: starterTerritoryStyle.revision,
+  },
+} satisfies TerritoryAssetPack;
+
+export const starterTerritoryDefinitions = [
+  {
+    anchors: [],
+    capabilities: [],
+    createdAt: now,
+    description: "可与道路、地毯和家具自由组合的木地板。",
+    id: "starter.cabin-floor",
+    layer: "terrain",
+    name: "暖木地板",
+    placement: {
+      collision: false,
+      mode: "tile",
+      span: { height: 2, width: 2 },
+    },
+    revision: 1,
+    schemaVersion: 3,
+    tags: ["floor", "wood"],
+    transforms: { flippable: false, rotations: [0] },
+    visual: {
+      assetId: "starter.cabin-floor",
+      depthAnchorPx: { x: 24, y: 48 },
+      depthMode: "flat",
+      frame: null,
+      sizePx: { height: 48, width: 48 },
+    },
+  },
+  {
+    anchors: [
+      {
+        anchorPx: { x: 72, y: 34 },
+        id: "top",
+        kind: "tabletop",
+        maxItemSizePx: { height: 48, width: 96 },
+      },
+    ],
+    capabilities: ["inspectable"],
+    createdAt: now,
+    description: "窗边书桌可以承载灯、小盆栽和记忆物件。",
+    id: "starter.cabin-desk",
+    layer: "object",
+    name: "窗边书桌",
+    placement: {
+      collisionCells: [
+        { x: 0, y: 1 },
+        { x: 1, y: 1 },
+        { x: 2, y: 1 },
+      ],
+      footprintCells: [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 2, y: 0 },
+        { x: 0, y: 1 },
+        { x: 1, y: 1 },
+        { x: 2, y: 1 },
+      ],
+      mode: "grid",
+    },
+    revision: 1,
+    schemaVersion: 3,
+    tags: ["desk", "wood"],
+    transforms: { flippable: true, rotations: [0, 90, 180, 270] },
+    visual: {
+      assetId: "starter.cabin-desk",
+      depthAnchorPx: { x: 72, y: 96 },
+      depthMode: "sorted",
+      frame: null,
+      sizePx: { height: 96, width: 144 },
+    },
+  },
+  {
+    anchors: [],
+    capabilities: ["light", "inspectable"],
+    createdAt: now,
+    description: "会在暮色里留下一圈暖光的小灯。",
+    id: "starter.amber-lamp",
+    layer: "attachment",
+    name: "琥珀桌灯",
+    placement: {
+      allowedAnchors: ["tabletop"],
+      attachmentAnchorPx: { x: 14, y: 36 },
+      mode: "attachment",
+    },
+    revision: 1,
+    schemaVersion: 3,
+    tags: ["lamp", "amber"],
+    transforms: { flippable: true, rotations: [0] },
+    visual: {
+      assetId: "starter.amber-lamp",
+      depthAnchorPx: { x: 14, y: 36 },
+      depthMode: "sorted",
+      frame: null,
+      sizePx: { height: 36, width: 28 },
+    },
+  },
+  {
+    anchors: [],
+    capabilities: ["inspectable"],
+    createdAt: now,
+    description: "柔软青苔与细小星点组成的地毯。",
+    id: "starter.moss-rug",
+    layer: "underlay",
+    name: "星苔软毯",
+    placement: {
+      collisionCells: [],
+      footprintCells: [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 2, y: 0 },
+        { x: 3, y: 0 },
+        { x: 0, y: 1 },
+        { x: 1, y: 1 },
+        { x: 2, y: 1 },
+        { x: 3, y: 1 },
+      ],
+      mode: "grid",
+    },
+    revision: 1,
+    schemaVersion: 3,
+    tags: ["rug", "moss"],
+    transforms: { flippable: true, rotations: [0, 90, 180, 270] },
+    visual: {
+      assetId: "starter.moss-rug",
+      depthAnchorPx: { x: 96, y: 96 },
+      depthMode: "flat",
+      frame: null,
+      sizePx: { height: 96, width: 192 },
+    },
+  },
+] satisfies TerritoryDefinition[];
+
+export const starterPlacedInstances = [
+  {
+    createdAt: now,
+    definition: { id: "starter.cabin-floor", revision: 1 },
+    favorite: false,
+    groupId: null,
+    id: territoryWorldFixtureIds.floorInstance,
+    locked: false,
+    placement: {
+      flipped: false,
+      kind: "zone",
+      offsetPx: { x: 0, y: 0 },
+      point: { x: 0, y: 0 },
+      rotation: 0,
+      zoneId: territoryWorldFixtureIds.zone,
+    },
+    sources: [],
+    status: "active",
+    trashedAt: null,
+    updatedAt: now,
+  },
+  {
+    createdAt: now,
+    definition: { id: "starter.cabin-desk", revision: 1 },
+    favorite: true,
+    groupId: null,
+    id: territoryWorldFixtureIds.deskInstance,
+    locked: false,
+    placement: {
+      flipped: false,
+      kind: "zone",
+      offsetPx: { x: 0, y: 0 },
+      point: { x: 6, y: 4 },
+      rotation: 0,
+      zoneId: territoryWorldFixtureIds.zone,
+    },
+    sources: [],
+    status: "active",
+    trashedAt: null,
+    updatedAt: now,
+  },
+  {
+    createdAt: now,
+    definition: { id: "starter.amber-lamp", revision: 1 },
+    favorite: false,
+    groupId: null,
+    id: territoryWorldFixtureIds.lampInstance,
+    locked: false,
+    placement: {
+      anchorId: "top",
+      flipped: false,
+      kind: "attachment",
+      offsetPx: { x: 0, y: 0 },
+      parentInstanceId: territoryWorldFixtureIds.deskInstance,
+      rotation: 0,
+      zoneId: territoryWorldFixtureIds.zone,
+    },
+    sources: [],
+    status: "active",
+    trashedAt: null,
+    updatedAt: now,
+  },
+] satisfies TerritoryInstance[];
+
+export const starterCollectionInstance = {
+  createdAt: now,
+  definition: { id: "starter.moss-rug", revision: 1 },
+  favorite: false,
+  groupId: null,
+  id: territoryWorldFixtureIds.collectionInstance,
+  locked: false,
+  placement: { kind: "collection" },
+  sources: [],
+  status: "active",
+  trashedAt: null,
+  updatedAt: now,
+} satisfies TerritoryInstance;
+
+export const starterTrashedInstance = {
+  createdAt: now,
+  definition: { id: "starter.cabin-desk", revision: 1 },
+  favorite: false,
+  groupId: null,
+  id: territoryWorldFixtureIds.trashedInstance,
+  locked: false,
+  placement: {
+    flipped: true,
+    kind: "zone",
+    offsetPx: { x: 0, y: 0 },
+    point: { x: 2, y: 4 },
+    rotation: 0,
+    zoneId: territoryWorldFixtureIds.zone,
+  },
+  sources: [],
+  status: "trashed",
+  trashedAt: "2026-08-13T08:05:00.000Z",
+  updatedAt: "2026-08-13T08:05:00.000Z",
+} satisfies TerritoryInstance;
+
+export const starterTerritoryRevision = {
+  createdAt: now,
+  id: territoryWorldFixtureIds.revision,
+  label: "创建暮色小屋",
+  parentRevisionId: null,
+  reason: "initial",
+  sequence: 1,
+} satisfies TerritoryWorldRevisionSummary;
+
+const candidateInstance = {
+  ...starterCollectionInstance,
+  id: territoryWorldFixtureIds.candidateInstance,
+  placement: {
+    flipped: false,
+    kind: "zone",
+    offsetPx: { x: 0, y: 0 },
+    point: { x: 4, y: 6 },
+    rotation: 0,
+    zoneId: territoryWorldFixtureIds.zone,
+  },
+} satisfies TerritoryInstance;
+
+export const starterCandidateChangeSet = {
+  baseRevisionId: territoryWorldFixtureIds.revision,
+  id: territoryWorldFixtureIds.candidateChangeSet,
+  label: "增加一个阅读角软毯",
+  mutations: [
+    {
+      changeId: territoryWorldFixtureIds.candidateChange,
+      instance: candidateInstance,
+      kind: "instance.put",
+    },
+  ],
+} satisfies TerritoryWorldChangeSet;
+
+export const starterTerritoryCandidate = {
+  appliedRevisionId: null,
+  baseRevisionId: territoryWorldFixtureIds.revision,
+  changeSet: starterCandidateChangeSet,
+  createdAt: now,
+  error: null,
+  id: territoryWorldFixtureIds.candidate,
+  intent: "zone",
+  lockedInstanceIds: [territoryWorldFixtureIds.deskInstance],
+  previewGroups: [
+    {
+      action: "add",
+      changeIds: [territoryWorldFixtureIds.candidateChange],
+      instanceIds: [territoryWorldFixtureIds.candidateInstance],
+      label: "阅读角",
+    },
+  ],
+  prompt: "在书桌旁增加一个温暖的阅读角，保留书桌。",
+  providerProfileId: territoryWorldFixtureIds.provider,
+  scope: { kind: "zone", zoneId: territoryWorldFixtureIds.zone },
+  sources: [],
+  status: "ready",
+  updatedAt: now,
+} satisfies TerritoryChangeCandidate;
+
+export const starterTerritorySnapshot = {
+  assetPacks: [starterTerritoryAssetPack],
+  assets: starterTerritoryAssets,
+  candidates: [starterTerritoryCandidate],
+  collection: [starterCollectionInstance],
+  definitions: starterTerritoryDefinitions,
+  pet: {
+    behavior: "idle",
+    facing: "right",
+    point: { x: 8, y: 7 },
+    updatedAt: now,
+    zoneId: territoryWorldFixtureIds.zone,
+  },
+  revisions: [starterTerritoryRevision],
+  styles: [starterTerritoryStyle],
+  trash: [starterTrashedInstance],
+  world: {
+    activeZoneId: territoryWorldFixtureIds.zone,
+    connections: [],
+    currentRevision: starterTerritoryRevision,
+    id: "territory",
+    name: "我和小家伙的领地",
+    zones: [starterTerritoryZone],
+  },
+} satisfies TerritoryWorldSnapshot;
+
+export const starterTerritoryZoneView = {
+  definitions: starterTerritoryDefinitions.slice(0, 3),
+  groups: [],
+  instances: starterPlacedInstances,
+  pet: starterTerritorySnapshot.pet,
+  revisionId: territoryWorldFixtureIds.revision,
+  style: starterTerritoryStyle,
+  viewport: null,
+  zone: starterTerritoryZone,
+} satisfies TerritoryZoneView;

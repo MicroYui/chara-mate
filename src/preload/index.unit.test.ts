@@ -5,7 +5,7 @@ import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_CHANNELS, CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
-import { TERRITORY_CHANNELS } from "../shared/contracts/territory";
+import { TERRITORY_WORLD_CHANNELS } from "../shared/contracts/territoryWorld";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
 import {
   chatDataSnapshotFixture,
@@ -13,7 +13,11 @@ import {
   FIXTURE_TIMESTAMPS,
   runEventEnvelopeFixture,
 } from "../../tests/fixtures/foundationContracts";
-import { activeTerritorySnapshot } from "../../tests/fixtures/territory";
+import {
+  starterCollectionInstance,
+  starterTerritorySnapshot,
+  territoryWorldFixtureIds,
+} from "../../tests/fixtures/territoryWorld";
 import {
   automationDefinitionFixture,
   automationFinishedEventFixture,
@@ -351,65 +355,110 @@ describe("Phase 1 typed preload data boundary", () => {
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });
 
-  it("validates Territory commands and snapshots on both sides of IPC", async () => {
+  it("validates Territory World change sets and snapshots on both sides of IPC", async () => {
     electron.ipcRenderer.invoke.mockImplementation(
       (channel: string, input: unknown) => {
-        expect(channel).toBe(TERRITORY_CHANNELS.placeItem);
+        expect(channel).toBe(TERRITORY_WORLD_CHANNELS.commitChangeSet);
         expect(input).toEqual({
-          flipped: true,
-          itemId: "forest-cabin.desk",
-          rotation: 90,
-          target: {
-            kind: "ground",
-            sceneId: "forest-cabin",
-            x: 6,
-            y: 5,
+          changeSet: {
+            baseRevisionId: territoryWorldFixtureIds.revision,
+            id: "65000000-0000-4000-8000-000000000001",
+            label: "放置收藏物件",
+            mutations: [
+              {
+                changeId: "65000000-0000-4000-8000-000000000002",
+                instance: {
+                  ...starterCollectionInstance,
+                  placement: {
+                    flipped: false,
+                    kind: "zone",
+                    offsetPx: { x: 0, y: 0 },
+                    point: { x: 6, y: 5 },
+                    rotation: 0,
+                    zoneId: territoryWorldFixtureIds.zone,
+                  },
+                },
+                kind: "instance.put",
+              },
+            ],
           },
         });
-        return Promise.resolve({ ok: true, value: activeTerritorySnapshot });
+        return Promise.resolve({ ok: true, value: starterTerritorySnapshot });
       },
     );
     const api = await loadApi();
 
     await expect(
-      api.territory.placeItem({
-        flipped: true,
-        itemId: "forest-cabin.desk",
-        rotation: 90,
-        target: {
-          kind: "ground",
-          sceneId: "forest-cabin",
-          x: 6,
-          y: 5,
+      api.territory.commitChangeSet({
+        changeSet: {
+          baseRevisionId: territoryWorldFixtureIds.revision,
+          id: "65000000-0000-4000-8000-000000000001",
+          label: "放置收藏物件",
+          mutations: [
+            {
+              changeId: "65000000-0000-4000-8000-000000000002",
+              instance: {
+                ...starterCollectionInstance,
+                placement: {
+                  flipped: false,
+                  kind: "zone",
+                  offsetPx: { x: 0, y: 0 },
+                  point: { x: 6, y: 5 },
+                  rotation: 0,
+                  zoneId: territoryWorldFixtureIds.zone,
+                },
+              },
+              kind: "instance.put",
+            },
+          ],
         },
       }),
-    ).resolves.toEqual({ ok: true, value: activeTerritorySnapshot });
+    ).resolves.toEqual({ ok: true, value: starterTerritorySnapshot });
     await expect(
-      api.territory.placeItem({
-        flipped: false,
-        itemId: "../escape",
-        rotation: 0,
-        target: {
-          kind: "ground",
-          sceneId: "forest-cabin",
-          x: 0,
-          y: 0,
+      api.territory.commitChangeSet({
+        changeSet: {
+          baseRevisionId: "invalid",
+          id: "invalid",
+          label: "invalid",
+          mutations: [],
         },
       }),
-    ).rejects.toThrow(/itemId|pattern/u);
+    ).rejects.toThrow();
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });
 
-  it("keeps Territory source, pin and version mutations on narrow typed channels", async () => {
+  it("validates Territory World background-generation updates before notifying UI", async () => {
+    let changedListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(TERRITORY_WORLD_CHANNELS.snapshotChanged);
+        changedListener = listener;
+      },
+    );
+    const api = await loadApi();
+    const listener = vi.fn();
+    const unsubscribe = api.territory.subscribeChanged(listener);
+
+    changedListener?.({}, starterTerritorySnapshot);
+    expect(listener).toHaveBeenCalledWith(starterTerritorySnapshot);
+    expect(() => changedListener?.({}, { world: "invalid" })).toThrow();
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      TERRITORY_WORLD_CHANNELS.snapshotChanged,
+      changedListener,
+    );
+  });
+
+  it("keeps Territory source and Zone navigation on narrow typed channels", async () => {
     const candidateId = "6b90bf76-893b-47dc-b9ea-913d0c25c5e6";
     electron.ipcRenderer.invoke.mockImplementation((channel: string) =>
       Promise.resolve(
-        channel === TERRITORY_CHANNELS.createSourceCandidate
+        channel === TERRITORY_WORLD_CHANNELS.createSourceCandidate
           ? {
               ok: true,
-              value: { candidateId, snapshot: activeTerritorySnapshot },
+              value: { candidateId, snapshot: starterTerritorySnapshot },
             }
-          : { ok: true, value: activeTerritorySnapshot },
+          : { ok: true, value: starterTerritorySnapshot },
       ),
     );
     const api = await loadApi();
@@ -423,20 +472,14 @@ describe("Phase 1 typed preload data boundary", () => {
       }),
     ).resolves.toMatchObject({ ok: true, value: { candidateId } });
     await expect(
-      api.territory.setItemPinned({
-        itemId: `memory.${candidateId}`,
-        pinned: true,
-      }),
-    ).resolves.toMatchObject({ ok: true });
-    await expect(
-      api.territory.selectItemVersion({
-        itemId: `memory.${candidateId}`,
-        revision: 2,
+      api.territory.enterZone({
+        fromZoneId: territoryWorldFixtureIds.zone,
+        toZoneId: "30000000-0000-4000-8000-000000000099",
       }),
     ).resolves.toMatchObject({ ok: true });
     expect(electron.ipcRenderer.invoke.mock.calls).toEqual([
       [
-        TERRITORY_CHANNELS.createSourceCandidate,
+        TERRITORY_WORLD_CHANNELS.createSourceCandidate,
         {
           source: {
             kind: "memory",
@@ -445,12 +488,11 @@ describe("Phase 1 typed preload data boundary", () => {
         },
       ],
       [
-        TERRITORY_CHANNELS.setItemPinned,
-        { itemId: `memory.${candidateId}`, pinned: true },
-      ],
-      [
-        TERRITORY_CHANNELS.selectItemVersion,
-        { itemId: `memory.${candidateId}`, revision: 2 },
+        TERRITORY_WORLD_CHANNELS.enterZone,
+        {
+          fromZoneId: territoryWorldFixtureIds.zone,
+          toZoneId: "30000000-0000-4000-8000-000000000099",
+        },
       ],
     ]);
     await expect(
@@ -458,7 +500,7 @@ describe("Phase 1 typed preload data boundary", () => {
         source: { kind: "memory", memoryId: "invalid" },
       }),
     ).rejects.toThrow();
-    expect(electron.ipcRenderer.invoke).toHaveBeenCalledTimes(3);
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledTimes(2);
   });
 
   it("validates continuous Character animation speed requests", async () => {
@@ -481,6 +523,20 @@ describe("Phase 1 typed preload data boundary", () => {
       api.pet.setAnimationSpeed({ animationSpeed: 0.09 }),
     ).rejects.toThrow();
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("validates the transient Territory presence handoff", async () => {
+    const api = await loadApi();
+
+    api.pet.setTerritoryActive({ active: true });
+    expect(electron.ipcRenderer.send).toHaveBeenCalledWith(
+      PET_CHANNELS.setTerritoryActive,
+      { active: true },
+    );
+    expect(() =>
+      api.pet.setTerritoryActive({ active: "yes" as never }),
+    ).toThrow();
+    expect(electron.ipcRenderer.send).toHaveBeenCalledOnce();
   });
 
   it("validates Character library events and detaches the wrapped listener", async () => {
