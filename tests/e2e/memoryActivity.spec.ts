@@ -195,9 +195,7 @@ test("uses Memory and Activity through the typed desktop boundary", async () => 
     await page.getByRole("button", { name: "Memory" }).click();
     await page.getByRole("button", { name: /用户偏爱安静且有插座/u }).click();
     await page.getByRole("button", { name: "放入领地" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Territory" }),
-    ).toBeVisible();
+    await expect(page.getByTestId("territory-world-canvas")).toBeVisible();
     await expect(page.getByText(/喜欢的事/u).first()).toBeVisible();
     const territoryResponse = await page.evaluate(() =>
       window.charaMate.territory.getSnapshot(),

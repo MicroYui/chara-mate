@@ -558,11 +558,7 @@ async function findWindow(
   throw new Error(`Missing Electron window: ${title}`);
 }
 
-async function launchApplication(
-  userData: string,
-  workspace: string,
-  expectedHeading = "新对话",
-) {
+async function launchApplication(userData: string, workspace: string) {
   const application = await electron.launch({
     args: [projectRoot],
     cwd: projectRoot,
@@ -579,9 +575,7 @@ async function launchApplication(
   });
   const main = await findWindow(application, "CharaMate");
   const character = await findWindow(application, "CharaMate Character");
-  await expect(
-    main.getByRole("heading", { name: expectedHeading }),
-  ).toBeVisible();
+  await expect(main.getByRole("region", { name: "Chats" })).toBeVisible();
   return { application, character, main, stderr };
 }
 
@@ -801,7 +795,7 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
     await application.close();
     application = undefined;
     expectCleanApplicationShutdown(first.stderr);
-    const second = await launchApplication(userData, workspace, "E2E 对话标题");
+    const second = await launchApplication(userData, workspace);
     application = second.application;
     await expect(second.main.getByText("文件任务完成")).toBeVisible();
     expect(provider.bodies).toHaveLength(requestCount);
@@ -846,7 +840,7 @@ test("keeps two text replies inside the bound proactive Chat without reopening M
     expectCleanApplicationShutdown(setup.stderr);
 
     const seeded = seedJourneyFollowUp(userData, providerProfileId);
-    const launched = await launchApplication(userData, workspace, "论文随聊");
+    const launched = await launchApplication(userData, workspace);
     application = launched.application;
     const queued = await launched.main.evaluate(
       ({ automationId }) =>
@@ -947,7 +941,9 @@ test("keeps two text replies inside the bound proactive Chat without reopening M
     await conversation.getByRole("button", { name: "打开完整 Chat" }).click();
     const reopenedMain = await findWindow(launched.application, "CharaMate");
     await expect(
-      reopenedMain.getByRole("heading", { name: "论文随聊" }),
+      reopenedMain
+        .getByRole("region", { name: "会话列表" })
+        .getByRole("button", { name: "论文随聊" }),
     ).toBeVisible();
     await expect(
       reopenedMain.getByRole("button", { name: /已处理/u }),

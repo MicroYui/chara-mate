@@ -495,8 +495,16 @@ describe("application shell", () => {
     const { markRendererReady } = renderApp({ seeded: true });
 
     expect(
-      await screen.findByRole("heading", { name: chatFixture.title }),
+      await within(
+        await screen.findByRole("region", { name: "会话列表" }),
+      ).findByRole("button", { name: chatFixture.title }),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "更多会话操作" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /归档会话|恢复会话/u }),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("foundation-status")).toHaveTextContent(
       "Electron 43.2.0",
     );
@@ -534,7 +542,7 @@ describe("application shell", () => {
 
   it("hands desktop pet visibility to Territory only while that page is active", async () => {
     const { setTerritoryActive } = renderApp();
-    await screen.findByRole("heading", { name: "新对话" });
+    await screen.findByRole("region", { name: "Chats" });
     await waitFor(() => {
       expect(setTerritoryActive).toHaveBeenLastCalledWith({ active: false });
     });
@@ -633,9 +641,9 @@ describe("application shell", () => {
     );
   });
 
-  it("opens Automations and starts its one-page form from the header", async () => {
+  it("opens Automations and starts its one-page form from the page", async () => {
     const { automationList } = renderApp({ modelAvailable: true });
-    await screen.findByRole("heading", { name: "新对话" });
+    await screen.findByRole("region", { name: "Chats" });
 
     fireEvent.click(screen.getByRole("button", { name: "Automations" }));
 
@@ -643,8 +651,8 @@ describe("application shell", () => {
       await screen.findByRole("heading", { name: "按时提醒，也按时完成" }),
     ).toBeVisible();
     expect(automationList).toHaveBeenCalledOnce();
-    const createButtons = screen.getAllByRole("button", { name: "新建任务" });
-    fireEvent.click(createButtons[0]!);
+    const createButton = screen.getByRole("button", { name: "新建任务" });
+    fireEvent.click(createButton);
 
     const form = screen.getByRole("region", { name: "新建定时任务" });
     expect(within(form).getByLabelText("模型")).toHaveTextContent(
@@ -655,13 +663,13 @@ describe("application shell", () => {
 
   it("routes Character menu requests to Chat or Character settings", async () => {
     const { openMain } = renderApp();
-    await screen.findByRole("heading", { name: "新对话" });
+    await screen.findByRole("region", { name: "Chats" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByRole("heading", { name: "界面背景" })).toBeVisible();
 
     act(() => openMain("chat"));
-    expect(screen.getByRole("heading", { name: "新对话" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Chats" })).toBeVisible();
 
     act(() => openMain("character"));
     expect(screen.getByRole("heading", { name: "桌面角色" })).toBeVisible();
@@ -669,7 +677,7 @@ describe("application shell", () => {
 
   it("keeps New Chat as a right-side draft until the first send", async () => {
     const { create } = renderApp();
-    await screen.findByRole("heading", { name: "新对话" });
+    await screen.findByRole("region", { name: "Chats" });
 
     fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
     expect(create).not.toHaveBeenCalled();
@@ -696,7 +704,9 @@ describe("application shell", () => {
 
   it("ends the active Voice session before opening a new Chat draft", async () => {
     const { emitVoiceChanged, voiceEnd } = renderApp({ seeded: true });
-    await screen.findByRole("heading", { name: chatFixture.title });
+    const chatButton = await within(
+      await screen.findByRole("region", { name: "会话列表" }),
+    ).findByRole("button", { name: chatFixture.title });
     act(() =>
       emitVoiceChanged({
         assistantTranscript: "",
@@ -729,9 +739,7 @@ describe("application shell", () => {
         sessionId: "20000000-0000-4000-8000-000000000001",
       }),
     );
-    expect(
-      screen.getByRole("heading", { name: chatFixture.title }),
-    ).toBeVisible();
+    expect(chatButton).toHaveAttribute("data-active", "true");
 
     act(() => {
       finishEnd?.({ ok: true, value: null });
@@ -755,7 +763,10 @@ describe("application shell", () => {
     const { emitVoiceChanged } = renderApp({
       initialChats: [voiceChat, otherChat],
     });
-    await screen.findByRole("heading", { name: voiceChat.title });
+    const chatList = await screen.findByRole("region", {
+      name: "会话列表",
+    });
+    await within(chatList).findByRole("button", { name: voiceChat.title });
     act(() =>
       emitVoiceChanged({
         assistantTranscript: "",
@@ -781,8 +792,8 @@ describe("application shell", () => {
     );
 
     expect(
-      await screen.findByRole("heading", { name: otherChat.title }),
-    ).toBeVisible();
+      within(chatList).getByRole("button", { name: otherChat.title }),
+    ).toHaveAttribute("data-active", "true");
     expect(screen.getByText("原 Voice Chat")).toBeVisible();
     act(() =>
       emitVoiceChanged({
@@ -800,8 +811,8 @@ describe("application shell", () => {
       }),
     );
     expect(
-      await screen.findByRole("heading", { name: otherChat.title }),
-    ).toBeVisible();
+      within(chatList).getByRole("button", { name: otherChat.title }),
+    ).toHaveAttribute("data-active", "true");
   });
 
   it("opens a new draft in Recent even when Archived is selected", async () => {
@@ -816,12 +827,17 @@ describe("application shell", () => {
       status: "archived",
     };
     const { create } = renderApp({ initialChats: [activeChat, archivedChat] });
-    await screen.findByRole("heading", { name: activeChat.title });
+    await within(
+      await screen.findByRole("region", { name: "会话列表" }),
+    ).findByRole("button", { name: activeChat.title });
 
     fireEvent.click(screen.getByRole("button", { name: "已归档" }));
     expect(
-      await screen.findByRole("heading", { name: archivedChat.title }),
-    ).toBeVisible();
+      await within(screen.getByRole("region", { name: "会话列表" })).findByRole(
+        "button",
+        { name: archivedChat.title },
+      ),
+    ).toHaveAttribute("data-active", "true");
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索会话" }), {
       target: { value: "不会匹配新对话" },
     });
@@ -840,7 +856,9 @@ describe("application shell", () => {
         { name: "新对话" },
       ),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "新对话" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "今天想从哪里开始？" }),
+    ).toBeVisible();
   });
 
   it("persists on first send, uses the first message fallback, then accepts the AI title", async () => {
@@ -848,7 +866,9 @@ describe("application shell", () => {
       initialChats: [chatFixture],
       modelAvailable: true,
     });
-    await screen.findByRole("heading", { name: chatFixture.title });
+    await within(
+      await screen.findByRole("region", { name: "会话列表" }),
+    ).findByRole("button", { name: chatFixture.title });
     await screen.findByRole("button", { name: "gpt-chat" });
 
     fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
@@ -881,7 +901,10 @@ describe("application shell", () => {
     );
 
     expect(
-      await screen.findByRole("heading", { name: "北京周末行程规划" }),
+      await within(screen.getByRole("region", { name: "会话列表" })).findByRole(
+        "button",
+        { name: "北京周末行程规划" },
+      ),
     ).toBeVisible();
   });
 
@@ -892,7 +915,9 @@ describe("application shell", () => {
       title: "右键会话",
     };
     renderApp({ initialChats: [chatFixture, contextChat] });
-    await screen.findByRole("heading", { name: chatFixture.title });
+    await within(
+      await screen.findByRole("region", { name: "会话列表" }),
+    ).findByRole("button", { name: chatFixture.title });
 
     const chatButton = within(
       screen.getByRole("region", { name: "会话列表" }),
@@ -908,14 +933,16 @@ describe("application shell", () => {
     expect(within(menu).getByRole("menuitem", { name: "删除" })).toBeVisible();
 
     fireEvent.click(within(menu).getByRole("menuitem", { name: "重命名" }));
-    expect(
-      await screen.findByRole("textbox", { name: "会话标题" }),
-    ).toHaveValue(contextChat.title);
+    const titleInput = await screen.findByRole("textbox", {
+      name: "会话标题",
+    });
+    expect(titleInput).toHaveValue(contextChat.title);
+    expect(titleInput.closest("section")).toHaveAccessibleName("会话列表");
   });
 
   it("switches the user-selected background without changing the page tree", async () => {
     renderApp();
-    await screen.findByRole("heading", { name: "新对话" });
+    await screen.findByRole("region", { name: "Chats" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("radio", { name: /暖灰/u }));
@@ -934,7 +961,7 @@ describe("application shell", () => {
 
   it("opens the integrated Provider settings from Models", async () => {
     const { listProfiles } = renderApp();
-    await screen.findByRole("heading", { name: "新对话" });
+    await screen.findByRole("region", { name: "Chats" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Models" }));
@@ -965,7 +992,7 @@ describe("application shell", () => {
       },
     );
     const { create, voiceStart } = renderApp({ modelAvailable: true });
-    await screen.findByRole("heading", { name: "新对话" });
+    await screen.findByRole("region", { name: "Chats" });
 
     fireEvent.click(screen.getByRole("button", { name: "开始语音对话" }));
 

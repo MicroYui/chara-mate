@@ -239,6 +239,23 @@
   color: var(--accent);
 }
 
+.chatTitleInput {
+  width: 100%;
+  min-height: 31px;
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border));
+  border-radius: 8px;
+  outline: 0;
+  padding: 5px 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.chatTitleInput:focus {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
 .emptySearch {
   margin: 10px 8px;
   color: var(--text-secondary);
@@ -322,19 +339,6 @@
   display: grid;
 }
 
-.pageHeader {
-  position: relative;
-  z-index: 3;
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid var(--border);
-  padding: 0 14px;
-  background: color-mix(in srgb, var(--canvas) 92%, transparent);
-  -webkit-app-region: drag;
-}
-
 .sharedPresenceHint {
   display: flex;
   min-width: 0;
@@ -395,80 +399,26 @@
   color: var(--text-primary);
 }
 
-.pageHeader h1 {
-  overflow: hidden;
-  margin: 0;
-  font-size: 13px;
-  font-weight: 590;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.titleInput {
-  width: min(360px, 60vw);
-  height: 27px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  outline: 0;
-  padding: 0 7px;
-  background: var(--surface);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  -webkit-app-region: no-drag;
-}
-
-.titleInput:focus {
-  box-shadow: 0 0 0 2px var(--focus-ring);
-}
-
-.headerActions {
-  display: flex;
-  gap: 2px;
-  margin-left: auto;
-  -webkit-app-region: no-drag;
-}
-
-.headerActions button,
 .mobileSidebarButton {
-  display: grid;
+  position: absolute;
+  z-index: 6;
+  top: 10px;
+  left: 10px;
+  display: none;
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 0;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: transparent;
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  box-shadow: 0 5px 18px rgba(30, 37, 43, 0.08);
   color: var(--text-secondary);
   cursor: pointer;
-  -webkit-app-region: no-drag;
 }
 
-.headerActions .automationCreateButton {
-  display: inline-flex;
-  width: auto;
-  min-width: 84px;
-  gap: 5px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
-  background: var(--accent);
-  color: #fff;
-  font-size: 10.5px;
-  font-weight: 570;
-}
-
-.headerActions .automationCreateButton:hover {
-  background: color-mix(in srgb, var(--accent) 90%, #000);
-  color: #fff;
-}
-
-.headerActions button:hover,
 .mobileSidebarButton:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
-}
-
-.mobileSidebarButton {
-  display: none;
 }
 
 .contextMenuAnchor {
@@ -521,7 +471,7 @@
 .errorBanner {
   position: absolute;
   z-index: 8;
-  top: 52px;
+  top: 10px;
   left: 50%;
   display: flex;
   max-width: min(560px, calc(100% - 32px));
@@ -538,7 +488,7 @@
 }
 
 .topChrome:has(.sharedPresenceHint) + .errorBanner {
-  top: 88px;
+  top: 46px;
 }
 
 .errorBanner button {
@@ -808,6 +758,10 @@
 
   .mobileSidebarButton {
     display: grid;
+  }
+
+  .shell:has(.sidebar:not([data-collapsed])) .mobileSidebarButton {
+    display: none;
   }
 
   .settingsPage {

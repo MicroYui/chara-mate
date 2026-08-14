@@ -266,7 +266,7 @@ userData/
 
 ### 4.1 多会话
 
-支持新建、重命名、置顶、搜索、归档、恢复和删除 Chat。每个 Chat 独立保存：
+支持新建、重命名、置顶、搜索、归档、恢复和删除 Chat。会话标题与全部生命周期动作只由左侧 Chat 列表拥有：通过会话项菜单重命名、置顶、归档、恢复或删除，重命名在该行内完成；主内容不再重复会话标题或动作 Header。每个 Chat 独立保存：
 
 - 消息与附件；
 - 语音转写与 Turn 元数据；用户主动上传的音频仍作为普通附件处理；
@@ -1031,7 +1031,7 @@ Settings 提供：
 | Reminder | 到时发送一句通知/气泡，可选语音 |
 | Agent Task | 到时创建普通 Chat Run，使用保存的目标、Model、Persona、Tool 范围和权限模式 |
 
-支持一次、每天、每周和 Cron 表达式；可暂停、编辑、立即试跑、查看下次时间与历史结果。
+支持一次、每天、每周和 Cron 表达式；可暂停、编辑、立即试跑、查看下次时间与历史结果。“新建任务”是 Automations 页面列表页头中的持久入口，不由跨页面 App Shell 承载，空列表也不重复第二个创建按钮。
 
 Schedule 契约使用以下唯一表示：一次任务保存 UTC `runAt`；每天和每周保存本地时刻及显式 IANA 时区；Cron 保存显式 IANA 时区和 POSIX 五段调度表达式，不接受第六段 shell command。持久化的 UTC `nextRunAt` 是列表与唤醒检查的投影，`scheduledFor` 是一次计划触发的稳定 occurrence identity；编辑任务会递增 revision，历史运行保留当时的完整定义快照，不能被后续编辑改写。计时器只负责唤醒检查，不是真源。
 
@@ -1941,7 +1941,7 @@ flowchart TD
 
 可并行工作：React UI 使用冻结 fixtures；SQLite/IPC 实现事件真源；Provider/Secret Adapter 独立实现。共享 Contract/Schema 由一个 integration owner 串行修改。
 
-- 主窗口、融合标题栏、单侧栏、六个一级页面骨架、窗口尺寸/位置与侧栏恢复；
+- 主窗口、融合窗口标题栏、单侧栏、无重复 Page Header 的六个一级页面骨架、窗口尺寸/位置与侧栏恢复；
 - Chat/Message/Attachment/Run/RunItem 初始 Schema、领域 Repository、多会话管理、首次发送落库、首条消息兜底/AI 摘要标题和 append-first event replay；
 - Composer 的 Chat/Agent、Model、三档权限、附件、Mic/Voice/Send/Stop 位置与 reducer；
 - React 消息列表、TanStack Virtual、自动跟随/回到最新、空状态与响应式布局；

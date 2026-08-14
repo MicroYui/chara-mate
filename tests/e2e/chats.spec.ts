@@ -135,7 +135,7 @@ test("manages real Chats and restores product state after an Electron restart", 
   const provider = await startFakeProvider();
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
 
-  const launchApplication = async (expectedHeading = "新对话") => {
+  const launchApplication = async () => {
     const launched = await electron.launch({
       args: [projectRoot],
       cwd: projectRoot,
@@ -145,9 +145,7 @@ test("manages real Chats and restores product state after an Electron restart", 
       },
     });
     const page = await launched.firstWindow();
-    await expect(
-      page.getByRole("heading", { name: expectedHeading }),
-    ).toBeVisible();
+    await expect(page.getByRole("region", { name: "Chats" })).toBeVisible();
     return { launched, page };
   };
 
@@ -201,7 +199,9 @@ test("manages real Chats and restores product state after an Electron restart", 
     await expect(
       page.getByRole("button", { exact: true, name: "新对话" }),
     ).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "新对话" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "今天想从哪里开始？" }),
+    ).toBeVisible();
     const composer = page.getByRole("textbox", { name: "消息" });
     await composer.fill("帮我规划北京周末行程");
     await page.getByRole("button", { name: "发送" }).click();
@@ -213,19 +213,23 @@ test("manages real Chats and restores product state after an Electron restart", 
     ).toBeVisible();
     await expect(page.getByText("行程规划已记录")).toBeVisible();
     provider.releaseFirstTitle();
-    await expect(
-      page.getByRole("heading", { name: "北京周末行程规划" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "更多会话操作" }).click();
+    const generatedChat = page.getByRole("button", {
+      exact: true,
+      name: "北京周末行程规划",
+    });
+    await expect(generatedChat).toBeVisible();
+    await generatedChat.click({ button: "right" });
     await page.getByRole("menuitem", { name: "重命名" }).click();
     const titleInput = page.getByRole("textbox", { name: "会话标题" });
     await titleInput.fill("Phase 1 真实会话");
     await titleInput.press("Enter");
-    await expect(
-      page.getByRole("heading", { name: "Phase 1 真实会话" }),
-    ).toBeVisible();
+    const renamedChat = page.getByRole("button", {
+      exact: true,
+      name: "Phase 1 真实会话",
+    });
+    await expect(renamedChat).toBeVisible();
 
-    await page.getByRole("button", { name: "更多会话操作" }).click();
+    await renamedChat.click({ button: "right" });
     await page.getByRole("menuitem", { name: "置顶" }).click();
     await expect(page.getByLabel("已置顶")).toBeVisible();
 
@@ -235,7 +239,9 @@ test("manages real Chats and restores product state after an Electron restart", 
     ).toHaveCount(0);
     await composer.fill("临时会话测试");
     await page.getByRole("button", { name: "发送" }).click();
-    await expect(page.getByRole("heading", { name: "临时会话" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { exact: true, name: "临时会话" }),
+    ).toBeVisible();
 
     const search = page.getByRole("searchbox", { name: "搜索会话" });
     await search.focus();
@@ -265,10 +271,13 @@ test("manages real Chats and restores product state after an Electron restart", 
     await page.getByRole("menuitem", { name: "归档" }).click();
     await expect(page.getByText("没有匹配的会话")).toBeVisible();
     await page.getByRole("button", { name: "已归档" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Phase 1 真实会话" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "恢复会话" }).click();
+    const archivedChat = page.getByRole("button", {
+      exact: true,
+      name: /Phase 1 真实会话/u,
+    });
+    await expect(archivedChat).toBeVisible();
+    await archivedChat.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "恢复" }).click();
     await expect(page.getByRole("button", { name: "最近" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -303,10 +312,10 @@ test("manages real Chats and restores product state after an Electron restart", 
 
     await application.close();
     application = undefined;
-    const second = await launchApplication("Phase 1 真实会话");
+    const second = await launchApplication();
     application = second.launched;
     await expect(
-      second.page.getByRole("heading", { name: "Phase 1 真实会话" }),
+      second.page.getByRole("region", { name: "Chats" }),
     ).toBeVisible();
     await expect(
       second.page.getByRole("button", { name: "展开侧栏" }),

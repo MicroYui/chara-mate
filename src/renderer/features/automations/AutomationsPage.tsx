@@ -720,7 +720,20 @@ export function AutomationsPage({
                 Run，过程、批准与结果保持可追溯。
               </p>
             </div>
-            {items.length > 0 ? <strong>{items.length} 个任务</strong> : null}
+            <div className={styles["listHeaderActions"]}>
+              {items.length > 0 ? <strong>{items.length} 个任务</strong> : null}
+              <button
+                className={styles["createButton"]}
+                type="button"
+                onClick={() => {
+                  setActionError(undefined);
+                  setPanel({ kind: "create" });
+                }}
+              >
+                <Plus aria-hidden="true" size={14} />
+                新建任务
+              </button>
+            </div>
           </header>
 
           {notice ? (
@@ -774,17 +787,6 @@ export function AutomationsPage({
               </span>
               <h3>还没有定时任务</h3>
               <p>创建一次提醒，或让 CharaMate 在指定时间运行一个目标。</p>
-              <button
-                className={styles["primaryButton"]}
-                type="button"
-                onClick={() => {
-                  setActionError(undefined);
-                  setPanel({ kind: "create" });
-                }}
-              >
-                <Plus aria-hidden="true" size={15} />
-                新建任务
-              </button>
             </div>
           ) : (
             <div className={styles["cardList"]} aria-label="定时任务列表">

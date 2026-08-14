@@ -4,9 +4,9 @@
 
 ## 当前里程碑
 
-**Phase 6 — Done（自由领地、桌宠、菜单栏在场与无感陪伴主路径已收口）**
+**Phase 7 — Implementing（内容层级收口已完成，整体验收继续）**
 
-Phase 0–4 已完成。Phase 5 的 Automations、Multi-agent、Self-evolution、无感同行/共处与全新主动话题邀请均已完成单一路径生产实现；Phase 6 已完成 24 px 原子空间、2.5D 深度、高密度起始房、完整生成/编辑/删除生命周期，以及 Memory/Activity 生活化联动。
+Phase 0–6 已完成。Phase 7 首个体验收口包已移除主内容重复 Page Header：Chats 会话管理统一归左侧会话项，Automations 的“新建任务”固定归页面列表页头，窄屏侧栏入口不占常驻布局高度。
 
 无感陪伴保留内部 Journey/Together Session、全局唯一活跃态、Home Chat 自动归属、稀疏节点、一次约定跟进和共同记忆，但不要求用户管理这些名词。Activity 触发的全新话题先进入隐藏 provisional Chat；20 秒内首个文字或气泡 Voice 回复才把同一 Chat 转正，超时、关闭、开场失败或重启会删除临时 Chat、Run 与消息。已有 Chat/Journey 的续接保持正式历史。
 
@@ -20,11 +20,13 @@ Phase 0–4 已完成。Phase 5 的 Automations、Multi-agent、Self-evolution�
 - [x] Character Window 同时支持 Territory 场景交接和独立主动对话跟随窗口，不复制桌宠或遮挡交互。
 - [x] macOS 菜单栏使用单实例 18 px Template 图标，以自然语言投影桌宠、Voice 与 Activity 状态并复用现有领域控制。
 - [x] 合并后的 Schema v14、typed IPC、Renderer、离线、Build、Electron E2E 与 package/smoke 全链重新通过。
+- [x] Chats 主内容无重复标题/操作框，重命名、置顶、归档、恢复和删除都从左侧完成；Automations 页面内只有一个持久“新建任务”入口。
 
 ## 工作包状态
 
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
+| `P7-CONTENT-HIERARCHY` | `main` | `done` | 移除跨页面 Page Header；Chats 行内重命名与左侧完整生命周期菜单、Automations 页面内创建入口和窄屏侧栏浮动入口完成 |
 | `P6-APP-TRAY-PRESENCE` | `main` | `done` | 18 px Template 图标、自然状态菜单、单实例激活与现有 Pet/Voice/Activity 控制完成单一路径接入 |
 | `P5/6-COMPANIONSHIP-TERRITORY-INTEGRATION` | `main` | `done` | Schema v14、Pet IPC、Character Window 生命周期与两条桌面旅程完成单一路径集成 |
 | `P5-PROACTIVE-INVITATION` | `main` | `done` | 全新话题使用隐藏 provisional Chat；首个回复转正，20 秒超时/关闭/失败/重启清理 |
@@ -51,6 +53,7 @@ Phase 0–4 已完成。Phase 5 的 Automations、Multi-agent、Self-evolution�
 
 ## 最近绿色验证
 
+- 2026-08-14 内容层级收口：`npm run check:fast`、`npm run test:focused`（336/336）、`npm run build` 与完整 Electron E2E（22/22）通过；Chats/Automations 实际窗口截图复核无重复顶部框，页面内创建入口和左侧会话菜单可用。
 - 2026-08-14 菜单栏在场入口：`npm run verify:phase0` 完整通过（contract 100、focused/component 336、integration 170，共 606 项；Electron E2E 22/22），production build、开发态 smoke、macOS arm64 package 与 packaged smoke 均通过；两种 smoke 均确认 `singleInstance=true`、`trayReady=true`，实际重复启动在约 0.28 秒内退出并复用现有实例。
 - 2026-08-14 无感陪伴与自由领地合并：`npm run verify:phase0` 完整通过（contract 100、focused/component 331、integration 170，共 601 项；Electron E2E 22/22），production build、开发态 smoke、macOS arm64 package 与 packaged smoke 均通过；仅保留 2 条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示。
 - 2026-08-14 无感陪伴分支：`npm run verify:phase0` 通过（contract 98、focused/component 329、integration 163，Electron E2E 23/23），production build、开发态 smoke、macOS arm64 package 与 packaged smoke 均通过。

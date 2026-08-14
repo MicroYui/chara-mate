@@ -1,7 +1,7 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 Done；Phase 5 Automations Done；Phase 6 Done
-> 日期：2026-08-13
+> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 Done；Phase 5 Automations Done；Phase 6 Done；Phase 7 Implementing
+> 日期：2026-08-14
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
 本文件记录里程碑依赖、工作包边界和验收，不记录逐命令历史。Phase 编号表示产品集成与验收顺序，不要求所有开发工作全局串行；只有共享契约、Schema、IPC 和同一可变资源的写入必须串行。
@@ -159,7 +159,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ### 工作包
 
-- `P1-APP-SHELL`：主窗口、融合标题栏、侧栏、六个一级页面占位、窗口状态恢复。
+- `P1-APP-SHELL`：主窗口、融合窗口标题栏、侧栏、无重复 Page Header 的六个一级页面占位、窗口状态恢复。
 - `P1-CHAT-DATA`：Chat/Message/Attachment/Run/RunItem 初始 Schema、领域 Repository、append-first 事件和重放。
 - `P1-CHAT-SERVICE`：多会话创建、重命名、置顶、搜索、归档、恢复、删除、首次发送后落库、首条消息兜底/AI 摘要标题和同 Chat Turn 串行。
 - `P1-CHAT-UI`：消息列表、空状态、用户/助手消息、附件、Composer 模式/模型/权限位置。
@@ -376,6 +376,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ### 工作包
 
+- `P7-CONTENT-HIERARCHY`：移除主内容重复 Page Header；Chats 会话动作归左侧会话项，Automations 创建入口归页面列表页头，窄屏侧栏入口不占布局高度。
 - 六个一级页面、Character Window、Tray、Managed Browser 和 Dev Dashboard 的完整旅程；
 - 多会话并发、崩溃恢复、取消、审批、资源引用、获胜存储/索引和 asset 长时观察；
 - Provider 自动发现与手填、Chat/Realtime/Image、MCP、Computer Use 和生图 Live 验证；

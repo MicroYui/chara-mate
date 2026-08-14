@@ -71,7 +71,14 @@
   line-height: 1.55;
 }
 
-.listHeader > strong {
+.listHeaderActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.listHeaderActions > strong {
   flex: 0 0 auto;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -80,6 +87,28 @@
   color: var(--text-secondary);
   font-size: 10.5px;
   font-weight: 570;
+}
+
+.createButton {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 580;
+  cursor: pointer;
+}
+
+.createButton:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 90%, #000);
 }
 
 .notice,
@@ -377,8 +406,7 @@
 
 .cardActions .runNowButton,
 .detailActions .primaryButton,
-.formActions .primaryButton,
-.emptyState .primaryButton {
+.formActions .primaryButton {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
   background: var(--accent);
   color: #fff;
@@ -386,8 +414,7 @@
 
 .cardActions .runNowButton:hover:not(:disabled),
 .detailActions .primaryButton:hover:not(:disabled),
-.formActions .primaryButton:hover:not(:disabled),
-.emptyState .primaryButton:hover:not(:disabled) {
+.formActions .primaryButton:hover:not(:disabled) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 90%, #000);
   color: #fff;
@@ -1001,7 +1028,7 @@
     align-items: start;
   }
 
-  .listHeader > strong {
+  .listHeaderActions > strong {
     display: none;
   }
 

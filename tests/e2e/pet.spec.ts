@@ -117,7 +117,7 @@ async function launchApplication(userDataDirectory: string) {
   });
   const main = await findWindow(application, "CharaMate");
   const character = await findWindow(application, "CharaMate Character");
-  await expect(main.getByRole("heading", { name: "新对话" })).toBeVisible();
+  await expect(main.getByRole("region", { name: "Chats" })).toBeVisible();
   return { application, character, main };
 }
 
@@ -171,9 +171,6 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
     await expect(first.character.getByRole("alert")).toHaveCount(0);
 
     await first.main.getByRole("button", { name: "Territory" }).click();
-    await expect(
-      first.main.getByRole("heading", { name: "Territory" }),
-    ).toBeVisible();
     await expect(
       first.main.getByTestId("territory-world-canvas"),
     ).toHaveAttribute("data-pet-render-ready", "true");
@@ -328,7 +325,7 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
 
     await first.main.getByRole("button", { name: "Chats" }).click();
     await expect(
-      first.main.getByRole("heading", { name: "新对话" }),
+      first.main.getByRole("region", { name: "Chats" }),
     ).toBeVisible();
     await expect
       .poll(() =>
@@ -504,7 +501,7 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
 
     await second.main.getByRole("button", { name: "Territory" }).click();
     await expect(
-      second.main.getByRole("heading", { name: "Territory" }),
+      second.main.getByTestId("territory-world-canvas"),
     ).toBeVisible();
     await expect
       .poll(() =>
@@ -545,7 +542,7 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
       .dblclick();
     const reopenedMain = await findWindow(application, "CharaMate");
     await expect(
-      reopenedMain.getByRole("heading", { name: "新对话" }),
+      reopenedMain.getByRole("region", { name: "Chats" }),
     ).toBeVisible();
     await expect
       .poll(() =>

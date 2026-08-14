@@ -27,7 +27,7 @@ test("runs and restores Automations through the typed desktop boundary", async (
       },
     });
     const page = await launched.firstWindow();
-    await expect(page.getByRole("heading", { name: "新对话" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Chats" })).toBeVisible();
     return { launched, page };
   };
 

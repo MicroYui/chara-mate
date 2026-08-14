@@ -7,7 +7,6 @@ import {
   CalendarClock,
   ChevronLeft,
   ChevronRight,
-  CircleEllipsis,
   HeartHandshake,
   Map,
   MessageCircle,
@@ -15,7 +14,6 @@ import {
   Pencil,
   Pin,
   PinOff,
-  Plus,
   Search,
   Settings,
   SquarePen,
@@ -157,12 +155,6 @@ interface SidebarButtonProps {
   readonly onClick: () => void;
 }
 
-interface ChatRenameRequest {
-  readonly chatId: string;
-  readonly requestId: number;
-  readonly title: string;
-}
-
 interface ChatActionMenuItemsProps {
   readonly chat: Chat;
   readonly includeArchive: boolean;
@@ -263,7 +255,7 @@ function Sidebar({
   onChatArchive,
   onChatCreate,
   onChatDelete,
-  onChatRenameRequest,
+  onChatRename,
   onChatRestore,
   onChatSetPinned,
   state,
@@ -275,16 +267,18 @@ function Sidebar({
   | "onChatArchive"
   | "onChatCreate"
   | "onChatDelete"
+  | "onChatRename"
   | "onChatRestore"
   | "onChatSetPinned"
   | "state"
-> & {
-  readonly onChatRenameRequest: (chat: Chat) => void;
-}) {
+>) {
   const chats = chatDomain.chats;
   const collapsed = state.sidebarCollapsed;
+  const renameCancelled = useRef(false);
   const contextMenuRestoreFocus = useRef(true);
   const contextMenuSource = useRef<HTMLButtonElement | null>(null);
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
   const [contextMenu, setContextMenu] = useState<{
     readonly chat: Chat;
     readonly left: number;
@@ -301,6 +295,25 @@ function Sidebar({
     contextMenuRestoreFocus.current = true;
     contextMenuSource.current = source;
     setContextMenu({ chat, left, top });
+  };
+
+  const beginChatRename = (chat: Chat) => {
+    renameCancelled.current = false;
+    setEditingChatId(chat.id);
+    setTitleDraft(chat.title);
+  };
+
+  const commitChatRename = (chat: Chat) => {
+    if (renameCancelled.current) {
+      renameCancelled.current = false;
+      setEditingChatId(null);
+      return;
+    }
+    const title = titleDraft.trim();
+    if (title && title !== chat.title) {
+      onChatRename(chat.id, title);
+    }
+    setEditingChatId(null);
   };
 
   return (
@@ -406,45 +419,70 @@ function Sidebar({
             </button>
           </div>
           <div className={styles["chatLinks"]}>
-            {chats.map((record) => (
-              <button
-                key={record.id}
-                type="button"
-                aria-haspopup="menu"
-                data-active={record.id === state.activeChatId || undefined}
-                onClick={() =>
-                  dispatch({ chatId: record.id, type: "chat.selected" })
-                }
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  openContextMenu(
-                    record,
-                    event.clientX,
-                    event.clientY,
-                    event.currentTarget,
-                  );
-                }}
-                onKeyDown={(event) => {
-                  if (
-                    event.key !== "ContextMenu" &&
-                    !(event.shiftKey && event.key === "F10")
-                  ) {
-                    return;
+            {chats.map((record) =>
+              editingChatId === record.id ? (
+                <input
+                  key={record.id}
+                  autoFocus
+                  aria-label="会话标题"
+                  className={styles["chatTitleInput"]}
+                  value={titleDraft}
+                  onBlur={() => commitChatRename(record)}
+                  onChange={(event) => setTitleDraft(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitChatRename(record);
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      renameCancelled.current = true;
+                      setEditingChatId(null);
+                    }
+                  }}
+                />
+              ) : (
+                <button
+                  key={record.id}
+                  type="button"
+                  aria-haspopup="menu"
+                  data-active={record.id === state.activeChatId || undefined}
+                  onClick={() =>
+                    dispatch({ chatId: record.id, type: "chat.selected" })
                   }
-                  event.preventDefault();
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  openContextMenu(
-                    record,
-                    bounds.left + 16,
-                    bounds.bottom - 4,
-                    event.currentTarget,
-                  );
-                }}
-              >
-                <span>{record.title}</span>
-                {record.pinnedAt ? <Pin aria-label="已置顶" size={11} /> : null}
-              </button>
-            ))}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    openContextMenu(
+                      record,
+                      event.clientX,
+                      event.clientY,
+                      event.currentTarget,
+                    );
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key !== "ContextMenu" &&
+                      !(event.shiftKey && event.key === "F10")
+                    ) {
+                      return;
+                    }
+                    event.preventDefault();
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    openContextMenu(
+                      record,
+                      bounds.left + 16,
+                      bounds.bottom - 4,
+                      event.currentTarget,
+                    );
+                  }}
+                >
+                  <span>{record.title}</span>
+                  {record.pinnedAt ? (
+                    <Pin aria-label="已置顶" size={11} />
+                  ) : null}
+                </button>
+              ),
+            )}
             {chats.length === 0 ? (
               <p className={styles["emptySearch"]}>
                 {chatDomain.status === "loading"
@@ -502,7 +540,7 @@ function Sidebar({
                 onChatDelete={onChatDelete}
                 onChatRenameRequest={(chat) => {
                   contextMenuRestoreFocus.current = false;
-                  onChatRenameRequest(chat);
+                  beginChatRename(chat);
                 }}
                 onChatRestore={onChatRestore}
                 onChatSetPinned={onChatSetPinned}
@@ -546,149 +584,6 @@ function Sidebar({
         </div>
       </div>
     </aside>
-  );
-}
-
-function PageHeader({
-  activeChat,
-  chatDomain,
-  dispatch,
-  onChatArchive,
-  onChatDelete,
-  onChatRename,
-  onChatRenameRequest,
-  onChatRestore,
-  onChatSetPinned,
-  onCreateAutomation,
-  renameRequest,
-  state,
-}: Pick<
-  AppShellProps,
-  | "activeChat"
-  | "chatDomain"
-  | "dispatch"
-  | "onChatArchive"
-  | "onChatDelete"
-  | "onChatRename"
-  | "onChatRestore"
-  | "onChatSetPinned"
-  | "state"
-> & {
-  readonly onChatRenameRequest: (chat: Chat) => void;
-  readonly onCreateAutomation: () => void;
-  readonly renameRequest: ChatRenameRequest | null;
-}) {
-  const [editingChatId, setEditingChatId] = useState<string | null>(
-    renameRequest?.chatId ?? null,
-  );
-  const [titleDraft, setTitleDraft] = useState(renameRequest?.title ?? "");
-  const activeRecord =
-    activeChat?.record ??
-    chatDomain.chats.find(({ id }) => id === state.activeChatId);
-  const editingTitle = editingChatId === activeRecord?.id;
-
-  const commitTitle = () => {
-    const title = titleDraft.trim();
-    if (activeRecord && title && title !== activeRecord.title) {
-      onChatRename(activeRecord.id, title);
-    }
-    setEditingChatId(null);
-  };
-
-  const title =
-    state.activePage === "chats"
-      ? (activeRecord?.title ?? "新对话")
-      : state.activePage === "settings"
-        ? "Settings"
-        : placeholderCopy[state.activePage].title;
-
-  return (
-    <header className={styles["pageHeader"]}>
-      <button
-        className={styles["mobileSidebarButton"]}
-        type="button"
-        aria-label="切换侧栏"
-        onClick={() => dispatch({ type: "sidebar.toggled" })}
-      >
-        <PanelLeft aria-hidden="true" size={18} />
-      </button>
-      {editingTitle && activeRecord ? (
-        <input
-          autoFocus
-          className={styles["titleInput"]}
-          aria-label="会话标题"
-          value={titleDraft}
-          onBlur={commitTitle}
-          onChange={(event) => setTitleDraft(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") commitTitle();
-            if (event.key === "Escape") {
-              setTitleDraft(activeRecord.title);
-              setEditingChatId(null);
-            }
-          }}
-        />
-      ) : (
-        <h1>{title}</h1>
-      )}
-      {state.activePage === "chats" && activeRecord ? (
-        <div className={styles["headerActions"]}>
-          <button
-            type="button"
-            aria-label={
-              activeRecord.status === "archived" ? "恢复会话" : "归档会话"
-            }
-            onClick={() =>
-              activeRecord.status === "archived"
-                ? onChatRestore(activeRecord.id)
-                : onChatArchive(activeRecord.id)
-            }
-          >
-            {activeRecord.status === "archived" ? (
-              <ArchiveRestore aria-hidden="true" size={16} />
-            ) : (
-              <Archive aria-hidden="true" size={16} />
-            )}
-          </button>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button type="button" aria-label="更多会话操作">
-                <CircleEllipsis aria-hidden="true" size={17} />
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                align="end"
-                className={styles["headerMenu"]}
-                sideOffset={6}
-              >
-                <ChatActionMenuItems
-                  chat={activeRecord}
-                  includeArchive={false}
-                  onChatArchive={onChatArchive}
-                  onChatDelete={onChatDelete}
-                  onChatRenameRequest={onChatRenameRequest}
-                  onChatRestore={onChatRestore}
-                  onChatSetPinned={onChatSetPinned}
-                />
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-        </div>
-      ) : null}
-      {state.activePage === "automations" ? (
-        <div className={styles["headerActions"]}>
-          <button
-            className={styles["automationCreateButton"]}
-            type="button"
-            onClick={onCreateAutomation}
-          >
-            <Plus aria-hidden="true" size={14} />
-            新建任务
-          </button>
-        </div>
-      ) : null}
-    </header>
   );
 }
 
@@ -944,18 +839,13 @@ export function AppShell({
   voiceStore,
   voiceError,
 }: AppShellProps) {
-  const [renameRequest, setRenameRequest] = useState<ChatRenameRequest | null>(
-    null,
-  );
   const [activityTarget, setActivityTarget] = useState<{
     readonly episodeId: string;
   } | null>(null);
-  const [automationCreateToken, setAutomationCreateToken] = useState(0);
   const [memoryTargetId, setMemoryTargetId] = useState<string | null>(null);
   const [territoryTargetId, setTerritoryTargetId] = useState<string | null>(
     null,
   );
-  const renameRequestSequence = useRef(0);
 
   const focusComposer = () => {
     window.setTimeout(() => {
@@ -971,17 +861,6 @@ export function AppShell({
       type: "draft.changed",
     });
     focusComposer();
-  };
-  const requestChatRename = (chat: Chat) => {
-    if (state.activeChatId !== chat.id) {
-      dispatch({ chatId: chat.id, type: "chat.selected" });
-    }
-    renameRequestSequence.current += 1;
-    setRenameRequest({
-      chatId: chat.id,
-      requestId: renameRequestSequence.current,
-      title: chat.title,
-    });
   };
   const openMemorySource = (source: MemorySource) => {
     if (source.type === "activity") {
@@ -1024,30 +903,21 @@ export function AppShell({
         onChatArchive={onChatArchive}
         onChatCreate={onChatCreate}
         onChatDelete={onChatDelete}
-        onChatRenameRequest={requestChatRename}
+        onChatRename={onChatRename}
         onChatRestore={onChatRestore}
         onChatSetPinned={onChatSetPinned}
         state={state}
       />
       <main className={styles["main"]}>
+        <button
+          className={styles["mobileSidebarButton"]}
+          type="button"
+          aria-label="切换侧栏"
+          onClick={() => dispatch({ type: "sidebar.toggled" })}
+        >
+          <PanelLeft aria-hidden="true" size={18} />
+        </button>
         <div className={styles["topChrome"]}>
-          <PageHeader
-            key={renameRequest?.requestId ?? 0}
-            activeChat={activeChat}
-            chatDomain={chatDomain}
-            dispatch={dispatch}
-            onChatArchive={onChatArchive}
-            onChatDelete={onChatDelete}
-            onChatRename={onChatRename}
-            onChatRenameRequest={requestChatRename}
-            onChatRestore={onChatRestore}
-            onChatSetPinned={onChatSetPinned}
-            onCreateAutomation={() =>
-              setAutomationCreateToken((token) => token + 1)
-            }
-            renameRequest={renameRequest}
-            state={state}
-          />
           <SharedPresenceHint
             dispatch={dispatch}
             journeySnapshot={journeySnapshot}
@@ -1141,7 +1011,6 @@ export function AppShell({
             />
           ) : state.activePage === "automations" ? (
             <AutomationsPage
-              createRequestToken={automationCreateToken}
               models={chatDomain.models.map((model) => ({
                 label: `${model.displayName} · ${model.provider.profileName}`,
                 modelId: model.provider.modelId,

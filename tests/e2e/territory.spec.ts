@@ -37,13 +37,12 @@ async function launch(userDataDirectory: string) {
     },
   });
   const page = await findMainWindow(application);
-  await expect(page.getByRole("heading", { name: "新对话" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Chats" })).toBeVisible();
   return { application, page };
 }
 
 async function openTerritory(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Territory" }).click();
-  await expect(page.getByRole("heading", { name: "Territory" })).toBeVisible();
   await expect(page.getByTestId("territory-world-canvas")).toBeVisible();
 }
 

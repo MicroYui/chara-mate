@@ -54,7 +54,7 @@ test("persists Provider metadata while keeping the API Key encrypted and write-o
       },
     });
     const page = await application.firstWindow();
-    await expect(page.getByRole("heading", { name: "新对话" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Chats" })).toBeVisible();
     return { application, page };
   }
 

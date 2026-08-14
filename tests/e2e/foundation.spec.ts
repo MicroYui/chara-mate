@@ -94,7 +94,9 @@ test("launches through the typed preload boundary", async () => {
       visibleWindows: 0,
     });
     await expect(
-      page.getByRole("heading", { name: chatFixture.title }),
+      page
+        .getByRole("region", { name: "会话列表" })
+        .getByRole("button", { name: chatFixture.title }),
     ).toBeVisible();
     const chatNavigation = page.getByRole("region", { name: "会话列表" });
     const settingsButton = page.getByRole("button", { name: "Settings" });
@@ -678,7 +680,9 @@ description: Verify editing, saving, and permanent deletion through Settings.
 
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: chatFixture.title }),
+      page
+        .getByRole("region", { name: "会话列表" })
+        .getByRole("button", { name: chatFixture.title }),
     ).toBeVisible();
     await expect(page.getByText(messageFixture.content)).toBeVisible();
     await page.getByRole("button", { name: "Settings" }).click();

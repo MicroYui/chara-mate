@@ -33,13 +33,13 @@ test("operates a real Reminder from the Automations page and restores it", async
     const first = await launch();
     application = first.launched;
     const page = first.page;
-    await expect(page.getByRole("heading", { name: "新对话" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Chats" })).toBeVisible();
 
     await page.getByRole("button", { name: "Automations" }).click();
     await expect(
       page.getByRole("heading", { name: "按时提醒，也按时完成" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "新建任务" }).first().click();
+    await page.getByRole("button", { name: "新建任务" }).click();
 
     const form = page.getByRole("region", { name: "新建定时任务" });
     await expect(form).toBeVisible();
