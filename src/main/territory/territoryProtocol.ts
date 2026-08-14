@@ -4,18 +4,15 @@ import { pathToFileURL } from "node:url";
 import {
   TERRITORY_ASSET_FILE_NAME,
   TERRITORY_ASSET_SCHEME,
-  TERRITORY_CANDIDATE_FILE_NAME,
 } from "../../shared/pure/territoryAsset";
-import type { TerritoryAssetStore } from "./territoryAssetStore";
-import type { TerritoryCandidateStore } from "./territoryCandidateStore";
-import type { TerritoryRepository } from "./territoryRepository";
+import type { TerritoryWorldAssetStore } from "./territoryWorldAssetStore";
+import type { TerritoryWorldRepository } from "./territoryWorldRepository";
 
 const ASSET_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 
 export function registerTerritoryProtocol(
-  repository: TerritoryRepository,
-  assets: TerritoryAssetStore,
-  candidates: TerritoryCandidateStore,
+  repository: TerritoryWorldRepository,
+  assets: TerritoryWorldAssetStore,
 ): () => void {
   protocol.handle(TERRITORY_ASSET_SCHEME, async (request) => {
     try {
@@ -32,28 +29,14 @@ export function registerTerritoryProtocol(
         if (!ASSET_ID_PATTERN.test(assetId)) {
           return new Response("Not found", { status: 404 });
         }
-        const record = repository.getAsset(assetId);
-        if (!record) return new Response("Not found", { status: 404 });
-        const assetPath = await assets.resolveAssetPath(record);
+        const record = repository.getStoredAsset(assetId);
+        if (!record || record.asset.origin === "packaged") {
+          return new Response("Not found", { status: 404 });
+        }
+        const assetPath = await assets.resolve(record);
         return net.fetch(pathToFileURL(assetPath).toString());
       }
-      if (
-        url.host !== "candidate" ||
-        segments.length !== 2 ||
-        segments[1] !== TERRITORY_CANDIDATE_FILE_NAME
-      ) {
-        return new Response("Not found", { status: 404 });
-      }
-      const candidateId = decodeURIComponent(segments[0] ?? "");
-      const candidate = repository.getImageCandidate(candidateId);
-      if (
-        !candidate ||
-        (candidate.status !== "ready" && candidate.status !== "accepted")
-      ) {
-        return new Response("Not found", { status: 404 });
-      }
-      const candidatePath = await candidates.resolve(candidate.id);
-      return net.fetch(pathToFileURL(candidatePath).toString());
+      return new Response("Not found", { status: 404 });
     } catch {
       return new Response("Not found", { status: 404 });
     }

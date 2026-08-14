@@ -16,7 +16,7 @@ import type {
   ActivityEpisode,
   ActivitySnapshot,
 } from "../../../shared/contracts/activity";
-import type { TerritoryApi } from "../../../shared/contracts/territory";
+import type { TerritoryWorldApi } from "../../../shared/contracts/territoryWorld";
 import { activityAssetUrl } from "../../../shared/pure/activityAsset";
 import styles from "./ActivityPage.module.css";
 
@@ -62,7 +62,7 @@ interface ActivityPageProps {
   readonly focusEpisodeId?: string;
   readonly onFocusConsumed?: () => void;
   readonly onOpenTerritory?: (candidateId: string) => void;
-  readonly territoryApi?: Pick<TerritoryApi, "createSourceCandidate">;
+  readonly territoryApi?: Pick<TerritoryWorldApi, "createSourceCandidate">;
 }
 
 const emptyEpisodes: readonly ActivityEpisode[] = [];

@@ -12,7 +12,7 @@ import type { RunEventsApi } from "./ipc";
 import type { SettingsApi } from "./settings";
 import type { PetManagementApi } from "./pet";
 import type { ProviderApi } from "./provider";
-import type { TerritoryApi } from "./territory";
+import type { TerritoryWorldApi } from "./territoryWorld";
 import type { MemoryApi } from "./memory";
 import type { VoiceApi } from "./voice";
 
@@ -38,7 +38,7 @@ export interface DesktopApi {
   pet: PetManagementApi;
   provider: ProviderApi;
   settings: SettingsApi;
-  territory: TerritoryApi;
+  territory: TerritoryWorldApi;
   voice: VoiceApi;
 }
 

@@ -32,7 +32,10 @@ import {
   FIXTURE_TIMESTAMPS,
   runFixture,
 } from "../../../tests/fixtures/foundationContracts";
-import { emptyTerritorySnapshot } from "../../../tests/fixtures/territory";
+import {
+  starterTerritorySnapshot,
+  starterTerritoryZoneView,
+} from "../../../tests/fixtures/territoryWorld";
 import { App } from "./App";
 
 const CREATED_CHAT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -104,6 +107,7 @@ function renderApp({
     );
   }
   const markRendererReady = vi.fn();
+  const setTerritoryActive = vi.fn();
   const listProfiles = vi.fn().mockResolvedValue({
     ok: true,
     value: modelAvailable
@@ -334,6 +338,7 @@ function renderApp({
       select: vi.fn(),
       setAnimationSpeed: vi.fn(),
       setScale: vi.fn(),
+      setTerritoryActive,
       subscribeChanged: vi.fn(
         (listener: (snapshot: PetLibrarySnapshot) => void) => {
           petLibraryListener = listener;
@@ -366,30 +371,25 @@ function renderApp({
       subscribe: () => () => undefined,
     },
     territory: {
-      collectItem: vi.fn().mockResolvedValue({
-        ok: true,
-        value: emptyTerritorySnapshot,
-      }),
-      confirmImageCandidate: vi.fn(),
+      applyCandidate: vi.fn(),
+      cancelCandidate: vi.fn(),
+      commitChangeSet: vi.fn(),
+      createCandidate: vi.fn(),
       createSourceCandidate: vi.fn(),
-      editImageCandidate: vi.fn(),
-      generateImageCandidate: vi.fn(),
+      editCandidate: vi.fn(),
+      enterZone: vi.fn(),
       getSnapshot: vi.fn().mockResolvedValue({
         ok: true,
-        value: emptyTerritorySnapshot,
+        value: starterTerritorySnapshot,
+      }),
+      getZoneView: vi.fn().mockResolvedValue({
+        ok: true,
+        value: starterTerritoryZoneView,
       }),
       movePet: vi.fn(),
-      placeItem: vi.fn().mockResolvedValue({
-        ok: true,
-        value: emptyTerritorySnapshot,
-      }),
-      retryImageCandidate: vi.fn(),
-      selectScene: vi.fn().mockResolvedValue({
-        ok: true,
-        value: emptyTerritorySnapshot,
-      }),
-      selectItemVersion: vi.fn(),
-      setItemPinned: vi.fn(),
+      purgeInstance: vi.fn(),
+      restoreRevision: vi.fn(),
+      subscribeChanged: vi.fn(() => () => undefined),
     },
     settings: {
       getSnapshot: vi.fn().mockResolvedValue({
@@ -462,6 +462,7 @@ function renderApp({
       petLibraryListener?.(petLibrary);
     },
     start,
+    setTerritoryActive,
     voiceEnd,
     voiceStart,
   };
@@ -507,6 +508,27 @@ describe("application shell", () => {
     expect(
       screen.queryByRole("img", { name: "Columbinya 桌宠缩略图" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("hands desktop pet visibility to Territory only while that page is active", async () => {
+    const { setTerritoryActive } = renderApp();
+    await screen.findByRole("heading", { name: "新对话" });
+    await waitFor(() => {
+      expect(setTerritoryActive).toHaveBeenLastCalledWith({ active: false });
+    });
+
+    const navigation = screen.getByRole("navigation", { name: "主要页面" });
+    fireEvent.click(
+      within(navigation).getByRole("button", { name: "Territory" }),
+    );
+    await waitFor(() => {
+      expect(setTerritoryActive).toHaveBeenLastCalledWith({ active: true });
+    });
+
+    fireEvent.click(within(navigation).getByRole("button", { name: "Memory" }));
+    await waitFor(() => {
+      expect(setTerritoryActive).toHaveBeenLastCalledWith({ active: false });
+    });
   });
 
   it("opens Automations and starts its one-page form from the header", async () => {

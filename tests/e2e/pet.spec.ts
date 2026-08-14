@@ -111,6 +111,7 @@ async function launchApplication(userDataDirectory: string) {
     cwd: projectRoot,
     env: {
       ...process.env,
+      CHARAMATE_TEST_BACKGROUND: "0",
       CHARAMATE_USER_DATA_DIR: userDataDirectory,
     },
   });
@@ -170,72 +171,175 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
     await expect(first.character.getByRole("alert")).toHaveCount(0);
 
     await first.main.getByRole("button", { name: "Territory" }).click();
-    await first.main.getByRole("button", { name: /林间小屋/u }).click();
-    await expect(first.main.getByTestId("territory-canvas")).toHaveAttribute(
-      "data-pet-render-ready",
-      "true",
-    );
+    await expect(
+      first.main.getByRole("heading", { name: "Territory" }),
+    ).toBeVisible();
+    await expect(
+      first.main.getByTestId("territory-world-canvas"),
+    ).toHaveAttribute("data-pet-render-ready", "true");
     await expect(first.main.getByRole("alert")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        application!.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows().find(
+            (candidate) => candidate.getTitle() === "CharaMate Character",
+          );
+          return window?.isVisible() ?? null;
+        }),
+      )
+      .toBe(false);
 
-    const territoryCanvas = first.main
-      .getByTestId("territory-canvas")
-      .locator("canvas");
-    const territoryBox = await territoryCanvas.boundingBox();
-    if (!territoryBox) throw new Error("Territory canvas has no bounds");
-    const territoryScale = Math.min(
-      territoryBox.width / 768,
-      territoryBox.height / 480,
-    );
-    const territoryOffsetX = (territoryBox.width - 768 * territoryScale) / 2;
-    const territoryOffsetY = (territoryBox.height - 480 * territoryScale) / 2;
-    const territoryPosition = (x: number, y: number) => ({
-      x: territoryOffsetX + (x + 0.5) * 48 * territoryScale,
-      y: territoryOffsetY + (y + 0.5) * 48 * territoryScale,
+    const territoryWorldHost = first.main.getByTestId("territory-world-canvas");
+    const territoryCanvas = territoryWorldHost.locator("canvas");
+    const territoryPosition = async (x: number, y: number) => {
+      const box = await territoryCanvas.boundingBox();
+      if (!box) throw new Error("Territory canvas has no bounds");
+      const zoom = Number(
+        await territoryCanvas.getAttribute("data-world-zoom"),
+      );
+      const [panX = 0, panY = 0] = (
+        (await territoryCanvas.getAttribute("data-world-pan")) ?? "0,0"
+      )
+        .split(",")
+        .map(Number);
+      return {
+        x: (box.width - 1152 * zoom) / 2 + panX + (x + 0.5) * 24 * zoom,
+        y: (box.height - 720 * zoom) / 2 + panY + (y + 0.5) * 24 * zoom,
+      };
+    };
+    const petBeforeLeftClick = await territoryCanvas.evaluate((canvas) => ({
+      movementId: canvas.dataset["petMovementId"],
+      x: Number(canvas.dataset["petGridX"]),
+      y: Number(canvas.dataset["petGridY"]),
+    }));
+    const persistedPetBeforeLeftClick = await first.main.evaluate(async () => {
+      const response = await window.charaMate.territory.getSnapshot();
+      return response.ok ? response.value.pet : null;
     });
-    await territoryCanvas.click({ position: territoryPosition(2, 8) });
+    await territoryCanvas.click({
+      position: await territoryPosition(15, 16),
+    });
+    await expect(
+      first.main.getByText("旧星苔大地毯", { exact: true }),
+    ).toBeVisible();
+    expect(
+      await territoryCanvas.evaluate((canvas) => ({
+        movementId: canvas.dataset["petMovementId"],
+        x: Number(canvas.dataset["petGridX"]),
+        y: Number(canvas.dataset["petGridY"]),
+      })),
+    ).toEqual(petBeforeLeftClick);
+    await expect
+      .poll(() =>
+        first.main.evaluate(async () => {
+          const response = await window.charaMate.territory.getSnapshot();
+          return response.ok ? response.value.pet : null;
+        }),
+      )
+      .toEqual(persistedPetBeforeLeftClick);
+    await expect(first.main.getByRole("alert")).toHaveCount(0);
+    await territoryCanvas.click({
+      button: "right",
+      position: await territoryPosition(15, 18),
+    });
+    await expect(
+      first.main.getByRole("button", { name: "关闭侧栏" }),
+    ).toHaveCount(0);
     await expect
       .poll(async () => {
         const movementId = await territoryCanvas.getAttribute(
           "data-pet-movement-id",
         );
         const x = Number(await territoryCanvas.getAttribute("data-pet-grid-x"));
-        return movementId !== "idle" && x > 2.5 && x < 7.5;
+        return movementId !== "idle" && x > 16 && x < 27.5;
       })
       .toBe(true);
     await expect
       .poll(() => territoryCanvas.getAttribute("data-pet-facing"))
       .toBe("left");
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-animation"))
+      .toBe("running-left");
     const beforeReroute = await territoryCanvas.evaluate((canvas) => ({
+      controllerMounts: Number(canvas.dataset["petControllerMounts"]),
       movementId: canvas.dataset["petMovementId"],
       x: Number(canvas.dataset["petGridX"]),
       y: Number(canvas.dataset["petGridY"]),
     }));
-    await territoryCanvas.click({ position: territoryPosition(13, 7) });
+    await territoryCanvas.click({
+      button: "right",
+      position: await territoryPosition(27, 14),
+    });
     await expect
       .poll(() => territoryCanvas.getAttribute("data-pet-movement-id"))
-      .not.toBe(beforeReroute.movementId);
-    await expect
-      .poll(() => territoryCanvas.getAttribute("data-pet-facing"))
-      .toBe("right");
+      .toBe(String(Number(beforeReroute.movementId) + 1));
     const afterReroute = await territoryCanvas.evaluate((canvas) => ({
+      controllerMounts: Number(canvas.dataset["petControllerMounts"]),
       x: Number(canvas.dataset["petGridX"]),
       y: Number(canvas.dataset["petGridY"]),
     }));
+    expect(afterReroute.controllerMounts).toBe(beforeReroute.controllerMounts);
     expect(
       Math.abs(afterReroute.x - beforeReroute.x) +
         Math.abs(afterReroute.y - beforeReroute.y),
-    ).toBeLessThan(1);
+    ).toBeLessThan(3);
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-animation"))
+      .toBe("running-right");
+    await expect(territoryWorldHost).toHaveAttribute(
+      "data-pet-render-ready",
+      "true",
+    );
     await expect
       .poll(() => territoryCanvas.getAttribute("data-pet-movement-id"))
+      .toBe("idle");
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-animation"))
       .toBe("idle");
     await expect
       .poll(() =>
         first.main.evaluate(async () => {
           const response = await window.charaMate.territory.getSnapshot();
-          return response.ok ? response.value.activeScene?.pet : null;
+          return response.ok ? response.value.pet : null;
         }),
       )
-      .toMatchObject({ x: 13, y: 7 });
+      .toMatchObject({ point: { x: 27, y: 14 } });
+
+    await territoryCanvas.click({
+      button: "right",
+      position: await territoryPosition(27, 18),
+    });
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-movement-id"))
+      .not.toBe("idle");
+    await expect
+      .poll(async () => {
+        const facing = await territoryCanvas.getAttribute("data-pet-facing");
+        const row = await territoryCanvas.getAttribute("data-pet-texture-row");
+        return `${facing}:${row}`;
+      })
+      .toMatch(/^(?:left:2|right:1)$/u);
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-movement-id"))
+      .toBe("idle");
+    await expect
+      .poll(() => territoryCanvas.getAttribute("data-pet-texture-row"))
+      .toBe("0");
+
+    await first.main.getByRole("button", { name: "Chats" }).click();
+    await expect(
+      first.main.getByRole("heading", { name: "新对话" }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        application!.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows().find(
+            (candidate) => candidate.getTitle() === "CharaMate Character",
+          );
+          return window?.isVisible() ?? null;
+        }),
+      )
+      .toBe(true);
 
     const windowFlags = await application.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows().find(
@@ -398,6 +502,21 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
     expect(Math.abs(restoredBounds.x - savedBounds.x)).toBeLessThanOrEqual(2);
     expect(Math.abs(restoredBounds.y - savedBounds.y)).toBeLessThanOrEqual(2);
 
+    await second.main.getByRole("button", { name: "Territory" }).click();
+    await expect(
+      second.main.getByRole("heading", { name: "Territory" }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        application!.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows().find(
+            (candidate) => candidate.getTitle() === "CharaMate Character",
+          );
+          return window?.isVisible() ?? null;
+        }),
+      )
+      .toBe(false);
+
     await application.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows().find(
         (candidate) => candidate.getTitle() === "CharaMate",
@@ -410,6 +529,16 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
         Promise.all(application!.windows().map((window) => window.title())),
       )
       .not.toContain("CharaMate");
+    await expect
+      .poll(() =>
+        application!.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows().find(
+            (candidate) => candidate.getTitle() === "CharaMate Character",
+          );
+          return window?.isVisible() ?? null;
+        }),
+      )
+      .toBe(true);
 
     await second.character
       .getByRole("button", { name: "Linnea 桌宠" })

@@ -13,6 +13,7 @@ import {
   PetLibrarySnapshotSchema,
   PetScaleRequestSchema,
   PetSelectRequestSchema,
+  PetTerritoryPresenceRequestSchema,
 } from "../../shared/schemas/pet";
 import { parseSchema } from "../../shared/schemas/validation";
 import type { CharacterWindowController } from "./characterWindowController";
@@ -206,6 +207,11 @@ export function registerPetIpc(
     parseSchema(PetEmptyRequestSchema, input);
     onCharacterReady?.();
   });
+  ipcMain.on(PET_CHANNELS.setTerritoryActive, (event, input) => {
+    requireMain(event.sender);
+    const request = parseSchema(PetTerritoryPresenceRequestSchema, input);
+    character.setTerritoryActive(request.active);
+  });
 
   return () => {
     unsubscribe();
@@ -227,6 +233,7 @@ export function registerPetIpc(
       PET_CHANNELS.focusApproval,
       PET_CHANNELS.showContextMenu,
       PET_CHANNELS.characterReady,
+      PET_CHANNELS.setTerritoryActive,
     ]) {
       ipcMain.removeAllListeners(channel);
     }

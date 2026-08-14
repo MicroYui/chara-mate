@@ -28,6 +28,7 @@ import type {
   PetSelectRequestSchema,
   PetSpriteVersionSchema,
   PetStoredStateSchema,
+  PetTerritoryPresenceRequestSchema,
 } from "../schemas/pet";
 
 export const PET_CHANNELS = {
@@ -46,6 +47,7 @@ export const PET_CHANNELS = {
   select: "pet.library.select",
   setAnimationSpeed: "pet.library.setAnimationSpeed",
   setScale: "pet.library.setScale",
+  setTerritoryActive: "pet.character.setTerritoryActive",
   showContextMenu: "pet.character.showContextMenu",
 } as const;
 
@@ -67,6 +69,9 @@ export type PetScaleRequest = Static<typeof PetScaleRequestSchema>;
 export type PetDragPoint = Static<typeof PetDragPointSchema>;
 export type PetDragResult = Static<typeof PetDragResultSchema>;
 export type PetStoredState = Static<typeof PetStoredStateSchema>;
+export type PetTerritoryPresenceRequest = Static<
+  typeof PetTerritoryPresenceRequestSchema
+>;
 export type PetLibraryResponse = Static<typeof PetLibraryResponseSchema>;
 export type PetImportResponse = Static<typeof PetImportResponseSchema>;
 
@@ -78,6 +83,7 @@ export interface PetManagementApi {
     request: PetAnimationSpeedRequest,
   ): Promise<PetLibraryResponse>;
   setScale(request: PetScaleRequest): Promise<PetLibraryResponse>;
+  setTerritoryActive(request: PetTerritoryPresenceRequest): void;
   subscribeChanged(
     listener: (snapshot: PetLibrarySnapshot) => void,
   ): () => void;

@@ -1,16 +1,29 @@
 import {
   Archive,
-  BookOpen,
+  Box,
+  Brush,
+  Copy,
+  Eye,
+  EyeOff,
   FlipHorizontal2,
-  Grid3X3,
+  Group,
+  Hammer,
+  Heart,
   History,
-  ImagePlus,
-  Map,
+  Layers3,
+  Lock,
+  LockOpen,
+  Map as MapIcon,
   PackageOpen,
-  Pin,
-  PinOff,
+  Pencil,
+  Redo2,
   RotateCw,
+  Search,
   Sparkles,
+  Trash2,
+  Undo2,
+  Ungroup,
+  WandSparkles,
   X,
 } from "lucide-react";
 import {
@@ -21,187 +34,256 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 
 import type { PetDescriptor } from "../../../shared/contracts/pet";
-import type { ProviderApi } from "../../../shared/contracts/provider";
 import type {
-  TerritoryApi,
-  TerritoryItem,
-  TerritoryItemCandidate,
-  TerritoryPoint,
+  ProviderApi,
+  ProviderProfile,
+} from "../../../shared/contracts/provider";
+import type {
+  TerritoryCandidateIntent,
+  TerritoryChangeCandidate,
+  TerritoryDefinition,
+  TerritoryGridPoint,
+  TerritoryInstance,
+  TerritoryLayer,
+  TerritoryPetState,
   TerritoryRotation,
-  TerritorySceneTarget,
-  TerritorySceneId,
-  TerritorySceneSummary,
-  TerritorySnapshot,
-} from "../../../shared/contracts/territory";
-import { territoryAssetUrl } from "../../../shared/pure/territoryAsset";
-import styles from "./TerritoryPage.module.css";
-import { TerritoryImagePanel } from "./TerritoryImagePanel";
-import type { TerritoryItemTransform as ItemTransform } from "./territoryItemLayer";
+  TerritoryWorldApi,
+  TerritoryWorldMutation,
+  TerritoryWorldSnapshot,
+  TerritoryZoneView,
+} from "../../../shared/contracts/territoryWorld";
+import {
+  blockedTerritoryWorldCells,
+  findTerritoryWorldPath,
+} from "../../../shared/pure/territoryWorldGrid";
+import styles from "./TerritoryWorldPage.module.css";
+import type { TerritoryWorldPreviewAction } from "./PixiTerritoryWorldCanvas";
 import type {
-  RenderedPetPosition,
-  TerritoryMovement,
-} from "./territoryPetLayer";
+  TerritoryWorldMovement,
+  TerritoryWorldRenderedPetPosition,
+} from "./territoryWorldPetLayer";
 
-const PixiTerritoryCanvas = lazy(async () => {
-  const module = await import("./PixiTerritoryCanvas");
-  return { default: module.PixiTerritoryCanvas };
+const PixiTerritoryWorldCanvas = lazy(async () => {
+  const module = await import("./PixiTerritoryWorldCanvas");
+  return { default: module.PixiTerritoryWorldCanvas };
 });
+
+const layers: readonly TerritoryLayer[] = [
+  "terrain",
+  "underlay",
+  "structure",
+  "object",
+  "attachment",
+  "foreground",
+  "effect",
+];
+
+const layerLabels: Record<TerritoryLayer, string> = {
+  attachment: "挂接",
+  effect: "光效",
+  foreground: "前景",
+  object: "物件",
+  structure: "结构",
+  terrain: "地形",
+  underlay: "铺装",
+};
+
+const emptyPreviewActions: ReadonlyMap<string, TerritoryWorldPreviewAction> =
+  new Map();
+
+type Panel = "create" | "history" | "inspector" | "library" | "map" | null;
 
 interface TerritoryPageProps {
   readonly activePet: PetDescriptor | undefined;
   readonly animationSpeed: number;
-  readonly api?: TerritoryApi;
+  readonly api?: TerritoryWorldApi;
   readonly focusCandidateId?: string;
   readonly onFocusConsumed?: () => void;
   readonly onOpenMemorySource?: (memoryId: string) => void;
   readonly providerApi?: Pick<ProviderApi, "listProfiles">;
 }
 
+function definitionKey(value: {
+  readonly id: string;
+  readonly revision: number;
+}): string {
+  return `${value.id}@${String(value.revision)}`;
+}
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+function id(): string {
+  return crypto.randomUUID();
+}
+
 function dateLabel(timestamp: string): string {
   return new Intl.DateTimeFormat("zh-CN", {
     day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
     month: "short",
-    year: "numeric",
   }).format(new Date(timestamp));
 }
 
-function scenePreviewStyle(scene: TerritorySceneSummary): CSSProperties {
-  return {
-    "--scene-accent": scene.palette.accent,
-    "--scene-floor": scene.palette.floor,
-    "--scene-shadow": scene.palette.shadow,
-    "--scene-sky": scene.palette.sky,
-    "--scene-wall": scene.palette.wall,
-  } as CSSProperties;
+function candidateStatusLabel(
+  status: TerritoryChangeCandidate["status"],
+): string {
+  const labels: Record<TerritoryChangeCandidate["status"], string> = {
+    applied: "已应用",
+    cancelled: "已取消",
+    draft: "待生成",
+    failed: "生成失败",
+    generating: "正在生成",
+    ready: "可预览",
+    stale: "需要重新生成",
+  };
+  return labels[status];
 }
 
-function ScenePreview({ scene }: { readonly scene: TerritorySceneSummary }) {
-  return (
-    <span className={styles["scenePreview"]} style={scenePreviewStyle(scene)}>
-      <i />
-      <i />
-      <i />
-      <i />
-      <i />
-    </span>
-  );
+function petBehaviorLabel(behavior: TerritoryPetState["behavior"]): string {
+  const labels: Record<TerritoryPetState["behavior"], string> = {
+    idle: "正在它身边安静停留",
+    observing: "正在好奇地观察它",
+    sitting: "正在这里坐下休息",
+    sleeping: "正在这里安心睡觉",
+    walking: "正在向它走近",
+  };
+  return labels[behavior];
 }
 
-function ScenePicker({
-  activeSceneId,
-  busy,
-  onClose,
-  onSelect,
-  scenes,
-}: {
-  readonly activeSceneId: TerritorySceneId | null;
-  readonly busy: boolean;
-  readonly onClose?: () => void;
-  readonly onSelect: (sceneId: TerritorySceneId) => void;
-  readonly scenes: readonly TerritorySceneSummary[];
-}) {
+function findDefinition(
+  definitions: readonly TerritoryDefinition[],
+  instance: TerritoryInstance | null | undefined,
+): TerritoryDefinition | null {
+  if (!instance) return null;
   return (
-    <section
-      className={styles["scenePicker"]}
-      aria-labelledby="territory-first-title"
-    >
-      {onClose ? (
-        <button
-          className={styles["closePicker"]}
-          type="button"
-          aria-label="关闭场景选择"
-          onClick={onClose}
-        >
-          <X aria-hidden="true" size={17} />
-        </button>
-      ) : null}
-      <p className={styles["eyebrow"]}>Choose a place</p>
-      <h2 id="territory-first-title">
-        {activeSceneId ? "换一个地方看看" : "先选一处想停留的地方"}
-      </h2>
-      <p className={styles["pickerLead"]}>
-        四个场景都已保存在本地，选择后立刻出现；之后的故事会慢慢为这里添上新的东西。
-      </p>
-      <div className={styles["sceneGrid"]}>
-        {scenes.map((scene) => (
-          <button
-            key={scene.id}
-            className={styles["sceneCard"]}
-            data-active={scene.id === activeSceneId || undefined}
-            disabled={busy}
-            type="button"
-            onClick={() => onSelect(scene.id)}
-          >
-            <ScenePreview scene={scene} />
-            <span className={styles["sceneCardCopy"]}>
-              <strong>{scene.name}</strong>
-              <small>{scene.description}</small>
-              <em>{scene.poem}</em>
-            </span>
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function findItem(snapshot: TerritorySnapshot, itemId: string | null) {
-  if (!itemId) return null;
-  return (
-    snapshot.activeScene?.placements.find(({ id }) => id === itemId) ??
-    snapshot.collection.find(({ id }) => id === itemId) ??
-    null
+    definitions.find(
+      (definition) =>
+        definition.id === instance.definition.id &&
+        definition.revision === instance.definition.revision,
+    ) ?? null
   );
 }
 
 function nextRotation(
-  item: TerritoryItem,
-  rotation: TerritoryRotation,
+  definition: TerritoryDefinition,
+  current: TerritoryRotation,
 ): TerritoryRotation {
-  const rotations = item.manifest.transforms.rotations;
-  const index = rotations.indexOf(rotation);
-  return rotations[(index + 1) % rotations.length] ?? 0;
-}
-
-function visualKey(item: TerritoryItem): string {
-  const source = item.manifest.visual.source;
-  return source.kind === "builtin" ? source.key : "generated-asset";
-}
-
-function itemKindLabel(item: TerritoryItem): string {
-  if (item.target.kind === "collection") return "收藏库物件";
-  return item.manifest.placement.mode === "surface" ? "桌面小物" : "场景物件";
-}
-
-function itemFormationTimestamp(item: TerritoryItem): string {
-  return item.versions.reduce(
-    (earliest, version) =>
-      version.createdAt < earliest ? version.createdAt : earliest,
-    item.versions[0]?.createdAt ?? item.updatedAt,
+  const index = definition.transforms.rotations.indexOf(current);
+  return (
+    definition.transforms.rotations[
+      (index + 1) % definition.transforms.rotations.length
+    ] ?? 0
   );
 }
 
-function ItemSwatch({ item }: { readonly item: TerritoryItem }) {
-  const source = item.manifest.visual.source;
+function allRelatedInstanceIds(
+  view: TerritoryZoneView,
+  roots: ReadonlySet<string>,
+): Set<string> {
+  const result = new Set(roots);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const instance of view.instances) {
+      if (
+        instance.placement.kind === "attachment" &&
+        result.has(instance.placement.parentInstanceId) &&
+        !result.has(instance.id)
+      ) {
+        result.add(instance.id);
+        changed = true;
+      }
+    }
+  }
+  return result;
+}
+
+function candidatePreview(
+  base: TerritoryZoneView,
+  candidate: TerritoryChangeCandidate | undefined,
+): {
+  readonly actions: ReadonlyMap<string, TerritoryWorldPreviewAction>;
+  readonly view: TerritoryZoneView;
+} {
+  if (!candidate?.changeSet || candidate.status !== "ready") {
+    return { actions: new Map(), view: base };
+  }
+  const definitions = new Map(
+    base.definitions.map((definition) => [
+      definitionKey(definition),
+      definition,
+    ]),
+  );
+  const instances = new Map(
+    base.instances.map((instance) => [instance.id, instance]),
+  );
+  let zone = base.zone;
+  for (const mutation of candidate.changeSet.mutations) {
+    if (mutation.kind === "definition.put") {
+      definitions.set(definitionKey(mutation.definition), mutation.definition);
+    } else if (
+      mutation.kind === "instance.put" &&
+      mutation.instance.status === "active" &&
+      mutation.instance.placement.kind !== "collection" &&
+      mutation.instance.placement.zoneId === base.zone.id
+    ) {
+      instances.set(mutation.instance.id, mutation.instance);
+    } else if (mutation.kind === "instance.remove") {
+      // Keep removed entities visible so the red deletion preview remains inspectable.
+    } else if (
+      mutation.kind === "zone.put" &&
+      mutation.zone.id === base.zone.id
+    ) {
+      zone = mutation.zone;
+    }
+  }
+  const actions = new Map<string, TerritoryWorldPreviewAction>();
+  for (const group of candidate.previewGroups) {
+    for (const instanceId of group.instanceIds) {
+      actions.set(instanceId, { action: group.action, label: group.label });
+    }
+  }
+  return {
+    actions,
+    view: {
+      ...base,
+      definitions: [...definitions.values()],
+      instances: [...instances.values()],
+      zone,
+    },
+  };
+}
+
+function ImageProfileSelect({
+  onChange,
+  profiles,
+  value,
+}: {
+  readonly onChange: (value: string | null) => void;
+  readonly profiles: readonly ProviderProfile[];
+  readonly value: string | null;
+}) {
   return (
-    <span
-      className={styles["itemSwatch"]}
-      data-kind={visualKey(item)}
-      data-placement={item.manifest.placement.mode}
-      data-source={source.kind}
-    >
-      {source.kind === "asset" ? (
-        <img
-          alt=""
-          aria-hidden="true"
-          src={territoryAssetUrl(source.assetId)}
-        />
-      ) : null}
-    </span>
+    <label className={styles["field"]}>
+      <span>图片 Provider</span>
+      <select
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value || null)}
+      >
+        <option value="">自动选择已配置的图片模型</option>
+        {profiles.map((profile) => (
+          <option key={profile.id} value={profile.id}>
+            {profile.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -212,58 +294,136 @@ export function TerritoryPage({
   focusCandidateId,
   onFocusConsumed,
   onOpenMemorySource,
-  providerApi,
+  providerApi = window.charaMate.provider,
 }: TerritoryPageProps) {
-  const [snapshot, setSnapshot] = useState<TerritorySnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<"edit" | "explore">("explore");
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [scenePickerOpen, setScenePickerOpen] = useState(false);
-  const [imagePanelOpen, setImagePanelOpen] = useState(
-    Boolean(focusCandidateId),
-  );
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [selectedItemCandidateId, setSelectedItemCandidateId] = useState<
+  const [snapshot, setSnapshot] = useState<TerritoryWorldSnapshot | null>(null);
+  const [view, setView] = useState<TerritoryZoneView | null>(null);
+  const [mode, setMode] = useState<"build" | "explore">("explore");
+  const [panel, setPanel] = useState<Panel>(focusCandidateId ? "create" : null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedCollectionId, setSelectedCollectionId] = useState<
     string | null
-  >(focusCandidateId ?? null);
-  const [selectedTransform, setSelectedTransform] = useState<ItemTransform>({
-    flipped: false,
-    rotation: 0,
-  });
-  const [movement, setMovement] = useState<TerritoryMovement | null>(null);
+  >(null);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(
+    focusCandidateId ?? null,
+  );
+  const [visibleLayers, setVisibleLayers] = useState<Set<TerritoryLayer>>(
+    new Set(layers),
+  );
+  const [search, setSearch] = useState("");
+  const [showTrash, setShowTrash] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [movement, setMovement] = useState<TerritoryWorldMovement | null>(null);
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
+  const [prompt, setPrompt] = useState("");
+  const [candidateIntent, setCandidateIntent] =
+    useState<TerritoryCandidateIntent>("item");
+  const [providerProfiles, setProviderProfiles] = useState<ProviderProfile[]>(
+    [],
+  );
+  const [providerProfileId, setProviderProfileId] = useState<string | null>(
+    null,
+  );
+  const [candidateInstruction, setCandidateInstruction] = useState("");
+  const [previewSide, setPreviewSide] = useState<"after" | "before">("after");
+  const [revealSource, setRevealSource] = useState<{
+    readonly label: string;
+    readonly occurredAt: string;
+  } | null>(null);
+  const [excludedChangeIds, setExcludedChangeIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [editingDefinition, setEditingDefinition] = useState(false);
+  const [storyCardExpanded, setStoryCardExpanded] = useState(false);
+  const [definitionName, setDefinitionName] = useState("");
+  const [definitionDescription, setDefinitionDescription] = useState("");
+  const loadSequence = useRef(0);
+  const movementSequence = useRef(0);
   const busyRef = useRef(false);
-  const movementSequenceRef = useRef(0);
-  const renderedPetPositionRef = useRef<RenderedPetPosition | null>(null);
+  const petMoveInFlight = useRef(false);
+  const pendingPetMove = useRef<TerritoryGridPoint | null>(null);
+  const drainPetMovesRef = useRef<() => void>(() => undefined);
+  const renderedPetPosition = useRef<TerritoryWorldRenderedPetPosition | null>(
+    null,
+  );
+  const snapshotRef = useRef<TerritoryWorldSnapshot | null>(null);
+  const viewRef = useRef<TerritoryZoneView | null>(null);
+
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  const loadView = useCallback(
+    async (nextSnapshot: TerritoryWorldSnapshot) => {
+      const sequence = ++loadSequence.current;
+      const response = await api.getZoneView({
+        revisionId: nextSnapshot.world.currentRevision.id,
+        zoneId: nextSnapshot.world.activeZoneId,
+      });
+      if (sequence !== loadSequence.current) return false;
+      if (!response.ok) {
+        setError(response.error.message);
+        return false;
+      }
+      setView(response.value);
+      renderedPetPosition.current = response.value.pet
+        ? { ...response.value.pet.point }
+        : null;
+      return true;
+    },
+    [api],
+  );
+
+  const installSnapshot = useCallback(
+    async (nextSnapshot: TerritoryWorldSnapshot, reload = true) => {
+      setSnapshot(nextSnapshot);
+      if (reload) await loadView(nextSnapshot);
+    },
+    [loadView],
+  );
 
   useEffect(() => {
     let active = true;
     void api
       .getSnapshot()
-      .then((response) => {
+      .then(async (response) => {
         if (!active) return;
-        if (response.ok) {
-          setSnapshot(response.value);
-          const pet = response.value.activeScene?.pet;
-          renderedPetPositionRef.current = pet ? { x: pet.x, y: pet.y } : null;
-        } else setError(response.error.message);
+        if (!response.ok) {
+          setError(response.error.message);
+          return;
+        }
+        setSnapshot(response.value);
+        await loadView(response.value);
       })
       .catch(() => {
-        if (active) setError("无法读取领地，请重试。");
+        if (active) setError("无法读取领地 World，请重试。");
       });
+    void providerApi.listProfiles().then((response) => {
+      if (!active || !response.ok) return;
+      setProviderProfiles(response.value);
+      const configured = response.value.find(
+        (profile) => "imageModel" in profile && profile.imageModel,
+      );
+      if (configured) setProviderProfileId(configured.id);
+    });
     return () => {
       active = false;
     };
-  }, [api]);
+  }, [api, loadView, providerApi]);
 
-  const selectedItem = useMemo(
-    () => (snapshot ? findItem(snapshot, selectedItemId) : null),
-    [selectedItemId, snapshot],
-  );
-  const selectedItemCandidate = useMemo<TerritoryItemCandidate | undefined>(
+  useEffect(
     () =>
-      snapshot?.itemCandidates.find(({ id }) => id === selectedItemCandidateId),
-    [selectedItemCandidateId, snapshot?.itemCandidates],
+      api.subscribeChanged((nextSnapshot) => {
+        setSnapshot(nextSnapshot);
+        void loadView(nextSnapshot);
+      }),
+    [api, loadView],
   );
 
   useEffect(() => {
@@ -271,632 +431,2037 @@ export function TerritoryPage({
     onFocusConsumed?.();
   }, [focusCandidateId, onFocusConsumed, snapshot]);
 
-  const selectItem = useCallback(
-    (itemId: string | null) => {
-      setSelectedItemId(itemId);
-      if (!snapshot || !itemId) return;
-      const item = findItem(snapshot, itemId);
-      if (item) {
-        setSelectedTransform({
-          flipped: item.flipped,
-          rotation: item.rotation,
-        });
-        if (
-          item.target.kind === "collection" &&
-          item.manifest.placement.mode === "surface"
-        ) {
-          setDrawerOpen(false);
-        }
-      }
-    },
-    [snapshot],
+  const selectedInstances = useMemo(
+    () =>
+      (view?.instances ?? []).filter(({ id: instanceId }) =>
+        selectedIds.has(instanceId),
+      ),
+    [selectedIds, view?.instances],
   );
+  const primaryInstance = selectedInstances[0] ?? null;
+  const primaryDefinition = useMemo(
+    () => findDefinition(snapshot?.definitions ?? [], primaryInstance),
+    [primaryInstance, snapshot?.definitions],
+  );
+  const selectedCollectionInstance = useMemo(
+    () =>
+      snapshot?.collection.find(
+        ({ id: instanceId }) => instanceId === selectedCollectionId,
+      ) ?? null,
+    [selectedCollectionId, snapshot?.collection],
+  );
+  const selectedCandidate = useMemo(
+    () =>
+      snapshot?.candidates.find(
+        ({ id: candidateId }) => candidateId === selectedCandidateId,
+      ),
+    [selectedCandidateId, snapshot?.candidates],
+  );
+  const preview = useMemo(
+    () => (view ? candidatePreview(view, selectedCandidate) : null),
+    [selectedCandidate, view],
+  );
+  const showingCandidatePreview =
+    selectedCandidate?.status === "ready" && previewSide === "after";
 
-  const selectScene = async (sceneId: TerritorySceneId) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await api.selectScene({ sceneId });
-      if (response.ok) {
-        setSnapshot(response.value);
-        const pet = response.value.activeScene?.pet;
-        renderedPetPositionRef.current = pet ? { x: pet.x, y: pet.y } : null;
-        setScenePickerOpen(false);
-        setSelectedItemId(null);
-        setMovement(null);
-      } else {
-        setError(response.error.message);
-      }
-    } catch {
-      setError("无法打开这个场景，请重试。");
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
-
-  const movePet = useCallback(
-    (point: TerritoryPoint) => {
-      const activeScene = snapshot?.activeScene;
-      if (!activeScene || busyRef.current) return;
-      const visualStart = renderedPetPositionRef.current ?? {
-        x: activeScene.pet.x,
-        y: activeScene.pet.y,
-      };
-      const from = {
-        x: Math.max(
-          0,
-          Math.min(activeScene.definition.width - 1, Math.round(visualStart.x)),
-        ),
-        y: Math.max(
-          0,
-          Math.min(
-            activeScene.definition.height - 1,
-            Math.round(visualStart.y),
-          ),
-        ),
-      };
+  const commit = useCallback(
+    async (label: string, mutations: readonly TerritoryWorldMutation[]) => {
+      if (!snapshot || mutations.length === 0 || busyRef.current) return false;
       busyRef.current = true;
       setBusy(true);
       setError(null);
-      void api
-        .movePet({ from, sceneId: activeScene.definition.id, ...point })
-        .then((response) => {
-          if (!response.ok) {
-            setError(response.error.message);
-            return;
-          }
-          const first = response.value.path[0];
-          const path =
-            first &&
-            (Math.abs(first.x - visualStart.x) > 0.001 ||
-              Math.abs(first.y - visualStart.y) > 0.001)
-              ? response.value.path.length > 1
-                ? [visualStart, ...response.value.path.slice(1)]
-                : [visualStart, first]
-              : response.value.path;
-          setSnapshot(response.value.snapshot);
-          if (path.length <= 1) {
-            setMovement(null);
-            return;
-          }
-          const id = movementSequenceRef.current + 1;
-          movementSequenceRef.current = id;
-          setMovement({ id, path });
-        })
-        .catch(() => setError("桌宠暂时走不到那里。"))
-        .finally(() => {
-          busyRef.current = false;
-          setBusy(false);
-        });
-    },
-    [api, snapshot?.activeScene],
-  );
-
-  const trackPetPosition = useCallback((position: RenderedPetPosition) => {
-    renderedPetPositionRef.current = { x: position.x, y: position.y };
-  }, []);
-
-  const placeItem = useCallback(
-    async (
-      item: TerritoryItem,
-      target: TerritorySceneTarget,
-      transform: ItemTransform,
-    ): Promise<boolean> => {
-      const sceneId = snapshot?.activeScene?.definition.id;
-      if (!sceneId || busyRef.current) return false;
-      busyRef.current = true;
-      setBusy(true);
-      setError(null);
+      const baseRevisionId = snapshot.world.currentRevision.id;
       try {
-        const response = await api.placeItem({
-          flipped: transform.flipped,
-          itemId: item.id,
-          rotation: transform.rotation,
-          target,
+        const response = await api.commitChangeSet({
+          changeSet: {
+            baseRevisionId,
+            id: id(),
+            label,
+            mutations: [...mutations],
+          },
         });
         if (!response.ok) {
           setError(response.error.message);
           return false;
         }
-        setSnapshot(response.value);
-        setSelectedItemId(item.id);
-        setSelectedTransform(transform);
+        setUndoStack((current) => [...current, baseRevisionId]);
+        setRedoStack([]);
+        await installSnapshot(response.value);
         return true;
       } catch {
-        setError("无法保存这次布置，请重试。");
+        setError("领地修改没有保存，请重试。");
         return false;
       } finally {
         busyRef.current = false;
         setBusy(false);
       }
     },
-    [api, snapshot?.activeScene?.definition.id],
+    [api, installSnapshot, snapshot],
   );
 
-  const collectItem = async (item: TerritoryItem) => {
-    const sceneId = snapshot?.activeScene?.definition.id;
-    if (!sceneId || busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await api.collectItem({ itemId: item.id, sceneId });
-      if (response.ok) {
-        setSnapshot(response.value);
-        setSelectedItemId(item.id);
-        setDrawerOpen(true);
-      } else {
-        setError(response.error.message);
+  const selectInstance = useCallback(
+    (instanceId: string | null, additive: boolean) => {
+      setSelectedCollectionId(null);
+      setStoryCardExpanded(false);
+      if (!instanceId) {
+        setSelectedIds((current) => (current.size === 0 ? current : new Set()));
+        setPanel((current) => (current === "inspector" ? null : current));
+        return;
       }
-    } catch {
-      setError("无法收回这个物件，请重试。");
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
-
-  const setItemPinned = async (item: TerritoryItem) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await api.setItemPinned({
-        itemId: item.id,
-        pinned: !item.pinned,
+      setSelectedIds((current) => {
+        if (!additive) return new Set([instanceId]);
+        const next = new Set(current);
+        if (next.has(instanceId)) next.delete(instanceId);
+        else next.add(instanceId);
+        return next;
       });
-      if (response.ok) setSnapshot(response.value);
-      else setError(response.error.message);
-    } catch {
-      setError("无法更新物件置顶状态，请重试。");
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+      setPanel("inspector");
+    },
+    [],
+  );
 
-  const selectItemVersion = async (itemId: string, revision: number) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
+  const moveInstance = useCallback(
+    async (instance: TerritoryInstance, point: TerritoryGridPoint) => {
+      if (!view || instance.placement.kind !== "zone") return false;
+      const roots = selectedIds.has(instance.id)
+        ? selectedIds
+        : new Set([instance.id]);
+      const group = instance.groupId
+        ? view.groups.find(({ id: groupId }) => groupId === instance.groupId)
+        : undefined;
+      const movingIds = new Set(group?.instanceIds ?? roots);
+      const delta = {
+        x: point.x - instance.placement.point.x,
+        y: point.y - instance.placement.point.y,
+      };
+      const timestamp = now();
+      const mutations: TerritoryWorldMutation[] = [];
+      for (const candidate of view.instances) {
+        if (!movingIds.has(candidate.id) || candidate.placement.kind !== "zone")
+          continue;
+        mutations.push({
+          changeId: id(),
+          instance: {
+            ...candidate,
+            placement: {
+              ...candidate.placement,
+              point: {
+                x: candidate.placement.point.x + delta.x,
+                y: candidate.placement.point.y + delta.y,
+              },
+            },
+            updatedAt: timestamp,
+          },
+          kind: "instance.put",
+        });
+      }
+      return commit(
+        mutations.length > 1 ? "移动一组领地物件" : "移动领地物件",
+        mutations,
+      );
+    },
+    [commit, selectedIds, view],
+  );
+
+  const placeCollection = useCallback(
+    async (point: TerritoryGridPoint) => {
+      if (!snapshot || !view || !selectedCollectionInstance) return false;
+      const definition = findDefinition(
+        snapshot.definitions,
+        selectedCollectionInstance,
+      );
+      if (!definition) return false;
+      let placement: TerritoryInstance["placement"];
+      if (definition.placement.mode === "attachment") {
+        const definitions = new Map(
+          view.definitions.map((candidate) => [
+            definitionKey(candidate),
+            candidate,
+          ]),
+        );
+        const supports = view.instances
+          .flatMap((candidate) => {
+            const supportDefinition = definitions.get(
+              definitionKey(candidate.definition),
+            );
+            if (!supportDefinition || candidate.placement.kind !== "zone")
+              return [];
+            return supportDefinition.anchors
+              .filter((anchor) =>
+                definition.placement.mode === "attachment"
+                  ? definition.placement.allowedAnchors.includes(anchor.kind)
+                  : false,
+              )
+              .map((anchor) => ({ anchor, candidate }));
+          })
+          .sort((left, right) => {
+            const leftPoint =
+              left.candidate.placement.kind === "zone"
+                ? left.candidate.placement.point
+                : point;
+            const rightPoint =
+              right.candidate.placement.kind === "zone"
+                ? right.candidate.placement.point
+                : point;
+            const leftDistance =
+              Math.abs(leftPoint.x - point.x) + Math.abs(leftPoint.y - point.y);
+            const rightDistance =
+              Math.abs(rightPoint.x - point.x) +
+              Math.abs(rightPoint.y - point.y);
+            return leftDistance - rightDistance;
+          });
+        const target = supports[0];
+        if (!target) {
+          setError("当前区域没有适合这个挂接物件的支撑点。");
+          return false;
+        }
+        placement = {
+          anchorId: target.anchor.id,
+          flipped: false,
+          kind: "attachment",
+          offsetPx: { x: 0, y: 0 },
+          parentInstanceId: target.candidate.id,
+          rotation: 0,
+          zoneId: view.zone.id,
+        };
+      } else {
+        placement = {
+          flipped: false,
+          kind: "zone",
+          offsetPx: { x: 0, y: 0 },
+          point,
+          rotation: definition.transforms.rotations[0] ?? 0,
+          zoneId: view.zone.id,
+        };
+      }
+      const timestamp = now();
+      const mutations: TerritoryWorldMutation[] = [];
+      if (definition.layer === "terrain") {
+        for (const existing of view.instances) {
+          const existingDefinition = findDefinition(view.definitions, existing);
+          if (
+            existingDefinition?.layer === "terrain" &&
+            existing.placement.kind === "zone" &&
+            existing.placement.point.x === point.x &&
+            existing.placement.point.y === point.y
+          ) {
+            mutations.push({
+              changeId: id(),
+              instance: {
+                ...existing,
+                placement: { kind: "collection" },
+                updatedAt: timestamp,
+              },
+              kind: "instance.put",
+            });
+          }
+        }
+      }
+      mutations.push({
+        changeId: id(),
+        instance: {
+          ...selectedCollectionInstance,
+          placement,
+          updatedAt: timestamp,
+        },
+        kind: "instance.put",
+      });
+      const accepted = await commit(`放置「${definition.name}」`, mutations);
+      if (accepted) {
+        setSelectedCollectionId(null);
+        setSelectedIds(new Set([selectedCollectionInstance.id]));
+        setPanel("inspector");
+      }
+      return accepted;
+    },
+    [commit, selectedCollectionInstance, snapshot, view],
+  );
+
+  const drainPetMoves = useCallback(() => {
+    if (petMoveInFlight.current) return;
+    petMoveInFlight.current = true;
+    void (async () => {
+      try {
+        while (pendingPetMove.current) {
+          const point = pendingPetMove.current;
+          pendingPetMove.current = null;
+          const currentSnapshot = snapshotRef.current;
+          const currentView = viewRef.current;
+          if (!currentSnapshot || !currentView?.pet) continue;
+          const response = await api.movePet({
+            from: currentSnapshot.pet.point,
+            to: point,
+            zoneId: currentView.zone.id,
+          });
+          if (!response.ok) {
+            setError(response.error.message);
+            continue;
+          }
+
+          const serverSnapshot = response.value.snapshot;
+          const nextSnapshot = snapshotRef.current
+            ? { ...snapshotRef.current, pet: serverSnapshot.pet }
+            : serverSnapshot;
+          const renderedFrom = {
+            ...(renderedPetPosition.current ?? currentSnapshot.pet.point),
+          };
+          const renderedCell = {
+            x: Math.max(
+              0,
+              Math.min(
+                currentView.zone.bounds.width - 1,
+                Math.round(renderedFrom.x),
+              ),
+            ),
+            y: Math.max(
+              0,
+              Math.min(
+                currentView.zone.bounds.height - 1,
+                Math.round(renderedFrom.y),
+              ),
+            ),
+          };
+          const destination = response.value.path.at(-1) ?? renderedCell;
+          const reroutedPath = findTerritoryWorldPath(
+            currentView.zone,
+            renderedCell,
+            destination,
+            blockedTerritoryWorldCells(currentView),
+          );
+          const pathFromRenderedPosition = reroutedPath ?? response.value.path;
+          const nextPath =
+            pathFromRenderedPosition.length > 1
+              ? [renderedFrom, ...pathFromRenderedPosition.slice(1)]
+              : [renderedFrom, destination];
+          movementSequence.current += 1;
+          setMovement({
+            id: movementSequence.current,
+            path: nextPath,
+          });
+          // Start the visual movement before publishing the persisted
+          // destination. If React ever commits these updates separately, the
+          // controller must not settle at the server endpoint in an idle frame
+          // before it receives the path.
+          snapshotRef.current = nextSnapshot;
+          setSnapshot(nextSnapshot);
+        }
+      } catch {
+        setError("桌宠暂时走不到那里。");
+      } finally {
+        petMoveInFlight.current = false;
+        if (pendingPetMove.current) {
+          queueMicrotask(() => drainPetMovesRef.current());
+        }
+      }
+    })();
+  }, [api]);
+
+  useEffect(() => {
+    drainPetMovesRef.current = drainPetMoves;
+  }, [drainPetMoves]);
+
+  const movePet = useCallback((point: TerritoryGridPoint) => {
+    pendingPetMove.current = point;
     setError(null);
-    try {
-      const response = await api.selectItemVersion({ itemId, revision });
-      if (response.ok) setSnapshot(response.value);
-      else setError(response.error.message);
-    } catch {
-      setError("无法切换这个物件版本，请重试。");
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
-
-  const openItemCandidate = (candidate: TerritoryItemCandidate) => {
-    setSelectedItemCandidateId(candidate.id);
-    setDrawerOpen(false);
-    setImagePanelOpen(true);
-  };
-
-  const transformSelected = (transform: ItemTransform) => {
-    if (!selectedItem) return;
-    setSelectedTransform(transform);
-    if (selectedItem.target.kind !== "collection") {
-      void placeItem(selectedItem, selectedItem.target, transform);
-    }
-  };
-
-  const completeMovement = useCallback((id: number) => {
-    setMovement((current) => {
-      if (current?.id !== id) return current;
-      return null;
-    });
+    drainPetMovesRef.current();
   }, []);
 
-  if (!snapshot) {
-    return (
-      <section className={styles["loadingPage"]} aria-live="polite">
-        {error ? <p role="alert">{error}</p> : <p>正在打开领地…</p>}
-      </section>
+  const completeMovement = useCallback((movementId: number) => {
+    if (movementSequence.current !== movementId) return;
+    setMovement((current) => (current?.id === movementId ? null : current));
+  }, []);
+
+  const updateSelected = useCallback(
+    async (
+      label: string,
+      update: (
+        instance: TerritoryInstance,
+        timestamp: string,
+      ) => TerritoryInstance,
+    ) => {
+      if (!view || selectedIds.size === 0) return false;
+      const timestamp = now();
+      return commit(
+        label,
+        view.instances
+          .filter(({ id: instanceId }) => selectedIds.has(instanceId))
+          .map((instance) => ({
+            changeId: id(),
+            instance: update(instance, timestamp),
+            kind: "instance.put" as const,
+          })),
+      );
+    },
+    [commit, selectedIds, view],
+  );
+
+  const collectSelected = useCallback(async () => {
+    if (!view || selectedIds.size === 0) return;
+    const related = allRelatedInstanceIds(view, selectedIds);
+    const accepted = await updateSelected(
+      "收回领地物件",
+      (instance, timestamp) =>
+        related.has(instance.id)
+          ? {
+              ...instance,
+              placement: { kind: "collection" },
+              updatedAt: timestamp,
+            }
+          : instance,
     );
+    if (accepted) {
+      setSelectedIds(new Set());
+      setPanel("library");
+    }
+  }, [selectedIds, updateSelected, view]);
+
+  const trashSelected = useCallback(async () => {
+    if (!view || selectedIds.size === 0) return;
+    const related = allRelatedInstanceIds(view, selectedIds);
+    const timestamp = now();
+    const accepted = await commit(
+      "移入领地回收站",
+      view.instances
+        .filter(({ id: instanceId }) => related.has(instanceId))
+        .map((instance) => ({
+          changeId: id(),
+          instance: {
+            ...instance,
+            status: "trashed" as const,
+            trashedAt: timestamp,
+            updatedAt: timestamp,
+          },
+          kind: "instance.put" as const,
+        })),
+    );
+    if (accepted) {
+      setSelectedIds(new Set());
+      setPanel("library");
+      setShowTrash(true);
+    }
+  }, [commit, selectedIds, view]);
+
+  const recoverInstance = useCallback(
+    async (instance: TerritoryInstance) => {
+      const timestamp = now();
+      const accepted = await commit(`恢复领地物件`, [
+        {
+          changeId: id(),
+          instance: {
+            ...instance,
+            placement: { kind: "collection" },
+            status: "active",
+            trashedAt: null,
+            updatedAt: timestamp,
+          },
+          kind: "instance.put",
+        },
+      ]);
+      if (accepted) setShowTrash(false);
+    },
+    [commit],
+  );
+
+  const purgeInstance = useCallback(
+    async (instance: TerritoryInstance) => {
+      if (busyRef.current) return;
+      busyRef.current = true;
+      setBusy(true);
+      const previousRevision = snapshot?.world.currentRevision.id;
+      try {
+        const response = await api.purgeInstance({ instanceId: instance.id });
+        if (!response.ok) {
+          setError(response.error.message);
+          return;
+        }
+        if (previousRevision)
+          setUndoStack((current) => [...current, previousRevision]);
+        setRedoStack([]);
+        await installSnapshot(response.value);
+      } catch {
+        setError("无法永久删除这个物件。");
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
+      }
+    },
+    [api, installSnapshot, snapshot?.world.currentRevision.id],
+  );
+
+  const duplicateSelected = useCallback(async () => {
+    if (!primaryInstance || !primaryDefinition) return;
+    const timestamp = now();
+    const duplicate: TerritoryInstance = {
+      ...primaryInstance,
+      createdAt: timestamp,
+      favorite: false,
+      groupId: null,
+      id: id(),
+      locked: false,
+      placement: { kind: "collection" },
+      sources: [],
+      updatedAt: timestamp,
+    };
+    const accepted = await commit(`复制「${primaryDefinition.name}」`, [
+      { changeId: id(), instance: duplicate, kind: "instance.put" },
+    ]);
+    if (accepted) {
+      setSelectedIds(new Set());
+      setSelectedCollectionId(duplicate.id);
+      setPanel("library");
+    }
+  }, [commit, primaryDefinition, primaryInstance]);
+
+  const createGroup = useCallback(async () => {
+    if (!view || selectedInstances.length < 2) return;
+    const timestamp = now();
+    const groupId = id();
+    const instanceIds = selectedInstances.map(
+      ({ id: instanceId }) => instanceId,
+    );
+    await commit("组合领地物件", [
+      ...selectedInstances.map((instance) => ({
+        changeId: id(),
+        instance: { ...instance, groupId, updatedAt: timestamp },
+        kind: "instance.put" as const,
+      })),
+      {
+        changeId: id(),
+        group: {
+          createdAt: timestamp,
+          id: groupId,
+          instanceIds,
+          locked: false,
+          name: `组合 ${String(view.groups.length + 1)}`,
+          template: false,
+          updatedAt: timestamp,
+          zoneId: view.zone.id,
+        },
+        kind: "group.put",
+      },
+    ]);
+  }, [commit, selectedInstances, view]);
+
+  const ungroupSelected = useCallback(async () => {
+    if (!view) return;
+    const groupIds = new Set(
+      selectedInstances.flatMap(({ groupId }) => (groupId ? [groupId] : [])),
+    );
+    if (groupIds.size === 0) return;
+    const timestamp = now();
+    await commit("取消领地物件组合", [
+      ...view.instances
+        .filter(({ groupId }) => groupId && groupIds.has(groupId))
+        .map((instance) => ({
+          changeId: id(),
+          instance: { ...instance, groupId: null, updatedAt: timestamp },
+          kind: "instance.put" as const,
+        })),
+      ...[...groupIds].map((groupId) => ({
+        changeId: id(),
+        groupId,
+        kind: "group.remove" as const,
+      })),
+    ]);
+  }, [commit, selectedInstances, view]);
+
+  const saveDefinition = useCallback(async () => {
+    if (!snapshot || !primaryInstance || !primaryDefinition) return;
+    const timestamp = now();
+    const latestRevision = Math.max(
+      ...snapshot.definitions
+        .filter(({ id: definitionId }) => definitionId === primaryDefinition.id)
+        .map(({ revision }) => revision),
+    );
+    const definition: TerritoryDefinition = {
+      ...primaryDefinition,
+      createdAt: timestamp,
+      description:
+        definitionDescription.trim() || primaryDefinition.description,
+      name: definitionName.trim() || primaryDefinition.name,
+      revision: latestRevision + 1,
+    };
+    const accepted = await commit(`编辑「${primaryDefinition.name}」`, [
+      { changeId: id(), definition, kind: "definition.put" },
+      ...selectedInstances
+        .filter(
+          ({ definition: reference }) =>
+            reference.id === primaryDefinition.id &&
+            reference.revision === primaryDefinition.revision,
+        )
+        .map((instance) => ({
+          changeId: id(),
+          instance: {
+            ...instance,
+            definition: { id: definition.id, revision: definition.revision },
+            updatedAt: timestamp,
+          },
+          kind: "instance.put" as const,
+        })),
+    ]);
+    if (accepted) setEditingDefinition(false);
+  }, [
+    commit,
+    definitionDescription,
+    definitionName,
+    primaryDefinition,
+    primaryInstance,
+    selectedInstances,
+    snapshot,
+  ]);
+
+  const selectDefinitionRevision = useCallback(
+    async (revision: number) => {
+      if (!primaryInstance || !primaryDefinition) return;
+      await updateSelected("切换物件版本", (instance, timestamp) =>
+        instance.definition.id === primaryDefinition.id
+          ? {
+              ...instance,
+              definition: { id: primaryDefinition.id, revision },
+              updatedAt: timestamp,
+            }
+          : instance,
+      );
+    },
+    [primaryDefinition, primaryInstance, updateSelected],
+  );
+
+  const restoreFromStack = useCallback(
+    async (direction: "redo" | "undo") => {
+      if (!snapshot || busyRef.current) return;
+      const source = direction === "undo" ? undoStack : redoStack;
+      const target = source.at(-1);
+      if (!target) return;
+      busyRef.current = true;
+      setBusy(true);
+      try {
+        const response = await api.restoreRevision({ revisionId: target });
+        if (!response.ok) {
+          setError(response.error.message);
+          return;
+        }
+        const currentRevision = snapshot.world.currentRevision.id;
+        if (direction === "undo") {
+          setUndoStack((current) => current.slice(0, -1));
+          setRedoStack((current) => [...current, currentRevision]);
+        } else {
+          setRedoStack((current) => current.slice(0, -1));
+          setUndoStack((current) => [...current, currentRevision]);
+        }
+        await installSnapshot(response.value);
+      } catch {
+        setError("无法恢复这个领地版本。");
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
+      }
+    },
+    [api, installSnapshot, redoStack, snapshot, undoStack],
+  );
+
+  const restoreRevision = useCallback(
+    async (revisionId: string) => {
+      if (!snapshot || busyRef.current) return;
+      busyRef.current = true;
+      setBusy(true);
+      const currentRevision = snapshot.world.currentRevision.id;
+      try {
+        const response = await api.restoreRevision({ revisionId });
+        if (!response.ok) {
+          setError(response.error.message);
+          return;
+        }
+        setUndoStack((current) => [...current, currentRevision]);
+        setRedoStack([]);
+        await installSnapshot(response.value);
+        setPanel(null);
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
+      }
+    },
+    [api, installSnapshot, snapshot],
+  );
+
+  const createCandidate = useCallback(async () => {
+    if (!snapshot || !view || !prompt.trim() || busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const response = await api.createCandidate({
+        baseRevisionId: snapshot.world.currentRevision.id,
+        intent:
+          candidateIntent === "selection" && selectedIds.size === 0
+            ? "item"
+            : candidateIntent,
+        lockedInstanceIds: view.instances
+          .filter(({ locked }) => locked)
+          .map(({ id: instanceId }) => instanceId),
+        prompt: prompt.trim(),
+        providerProfileId,
+        scope:
+          candidateIntent === "expansion"
+            ? {
+                direction: "east",
+                fromZoneId: view.zone.id,
+                kind: "expansion",
+              }
+            : candidateIntent === "selection" && selectedIds.size > 0
+              ? {
+                  instanceIds: [...selectedIds],
+                  kind: "entities",
+                  zoneId: view.zone.id,
+                }
+              : { kind: "zone", zoneId: view.zone.id },
+        sources: [],
+      });
+      if (!response.ok) {
+        setError(response.error.message);
+        return;
+      }
+      setSnapshot(response.value.snapshot);
+      setSelectedCandidateId(response.value.candidateId);
+      setPreviewSide("after");
+      setPrompt("");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [
+    api,
+    candidateIntent,
+    prompt,
+    providerProfileId,
+    selectedIds,
+    snapshot,
+    view,
+  ]);
+
+  const editCandidate = useCallback(async () => {
+    if (!selectedCandidate || !candidateInstruction.trim() || busyRef.current)
+      return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const response = await api.editCandidate({
+        candidateId: selectedCandidate.id,
+        excludedChangeIds: [...excludedChangeIds],
+        instruction: candidateInstruction.trim(),
+        lockedInstanceIds: selectedCandidate.lockedInstanceIds,
+      });
+      if (!response.ok) {
+        setError(response.error.message);
+        return;
+      }
+      setSnapshot(response.value.snapshot);
+      setCandidateInstruction("");
+      setPreviewSide("after");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [api, candidateInstruction, excludedChangeIds, selectedCandidate]);
+
+  const cancelCandidate = useCallback(async () => {
+    if (!selectedCandidate || busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const response = await api.cancelCandidate({
+        candidateId: selectedCandidate.id,
+      });
+      if (!response.ok) {
+        setError(response.error.message);
+        return;
+      }
+      setSnapshot(response.value.snapshot);
+      setSelectedCandidateId(null);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [api, selectedCandidate]);
+
+  const applyCandidate = useCallback(async () => {
+    if (!selectedCandidate || !snapshot || busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    const previousRevision = snapshot.world.currentRevision.id;
+    try {
+      const response = await api.applyCandidate({
+        candidateId: selectedCandidate.id,
+      });
+      if (!response.ok) {
+        setError(response.error.message);
+        return;
+      }
+      setUndoStack((current) => [...current, previousRevision]);
+      setRedoStack([]);
+      const source = selectedCandidate.sources[0];
+      if (source) {
+        setRevealSource({ label: source.label, occurredAt: source.occurredAt });
+      }
+      await installSnapshot(response.value.snapshot);
+      setSelectedCandidateId(null);
+      setPanel(null);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [api, installSnapshot, selectedCandidate, snapshot]);
+
+  const enterZone = useCallback(
+    async (toZoneId: string) => {
+      if (
+        !snapshot ||
+        busyRef.current ||
+        toZoneId === snapshot.world.activeZoneId
+      )
+        return;
+      busyRef.current = true;
+      setBusy(true);
+      setError(null);
+      try {
+        const response = await api.enterZone({
+          fromZoneId: snapshot.world.activeZoneId,
+          toZoneId,
+        });
+        if (!response.ok) {
+          setError(response.error.message);
+          return;
+        }
+        setSelectedIds(new Set());
+        setSelectedCollectionId(null);
+        setMovement(null);
+        await installSnapshot(response.value);
+        setPanel(null);
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
+      }
+    },
+    [api, installSnapshot, snapshot],
+  );
+
+  const filteredCollection = useMemo(() => {
+    if (!snapshot) return [];
+    const normalized = search.trim().toLocaleLowerCase();
+    return snapshot.collection.filter((instance) => {
+      const definition = findDefinition(snapshot.definitions, instance);
+      return (
+        definition &&
+        (!normalized ||
+          definition.name.toLocaleLowerCase().includes(normalized) ||
+          definition.tags.some((tag) => tag.includes(normalized)))
+      );
+    });
+  }, [search, snapshot]);
+
+  if (!snapshot || !view || !preview) {
+    return <div className={styles["loadingPage"]}>正在展开你的领地 World…</div>;
   }
 
-  const activeScene = snapshot.activeScene;
-  if (!activeScene) {
-    return (
-      <div className={styles["firstExperience"]}>
-        {error ? (
-          <div className={styles["errorBanner"]} role="alert">
-            {error}
-          </div>
-        ) : null}
-        <ScenePicker
-          activeSceneId={null}
-          busy={busy}
-          onSelect={(sceneId) => void selectScene(sceneId)}
-          scenes={snapshot.availableScenes}
-        />
-      </div>
-    );
-  }
+  const latestDefinitionRevisions = primaryDefinition
+    ? snapshot.definitions
+        .filter(({ id: definitionId }) => definitionId === primaryDefinition.id)
+        .sort((left, right) => right.revision - left.revision)
+    : [];
 
   return (
-    <section className={styles["territoryPage"]}>
-      <div className={styles["territoryToolbar"]}>
-        <div className={styles["sceneIdentity"]}>
-          <span
-            className={styles["sceneDot"]}
-            style={{ background: activeScene.definition.palette.accent }}
-          />
+    <section className={styles["territoryWorldPage"]}>
+      <header className={styles["worldToolbar"]}>
+        <div className={styles["worldIdentity"]}>
+          <span className={styles["worldMark"]}>
+            <MapIcon aria-hidden="true" size={17} />
+          </span>
           <span>
-            <strong>{activeScene.definition.name}</strong>
-            <small>{activeScene.definition.poem}</small>
+            <strong>{view.zone.name}</strong>
+            <small>
+              {snapshot.world.name} · Revision{" "}
+              {snapshot.world.currentRevision.sequence}
+            </small>
           </span>
         </div>
-        <div className={styles["toolbarActions"]}>
-          <div className={styles["modeSwitch"]} aria-label="领地模式">
-            <button
-              aria-pressed={mode === "explore"}
-              type="button"
-              onClick={() => setMode("explore")}
-            >
-              <Map aria-hidden="true" size={15} />
-              游览
-            </button>
-            <button
-              aria-pressed={mode === "edit"}
-              type="button"
-              onClick={() => {
-                setMode("edit");
-                setDrawerOpen(true);
-              }}
-            >
-              <Grid3X3 aria-hidden="true" size={15} />
-              布置
-            </button>
-          </div>
+        <div className={styles["modeSwitch"]} aria-label="领地模式">
           <button
-            className={styles["toolbarButton"]}
-            type="button"
-            onClick={() => setDrawerOpen((open) => !open)}
-          >
-            <PackageOpen aria-hidden="true" size={15} />
-            收藏库
-          </button>
-          <button
-            className={styles["toolbarButton"]}
+            aria-pressed={mode === "explore"}
             type="button"
             onClick={() => {
-              setDrawerOpen(false);
-              setSelectedItemCandidateId(null);
-              setImagePanelOpen((open) => !open);
+              setMode("explore");
+              setStoryCardExpanded(false);
+              setSelectedCollectionId(null);
             }}
           >
-            <ImagePlus aria-hidden="true" size={15} />
-            生成物件
+            <Eye aria-hidden="true" size={14} /> 探索
           </button>
           <button
-            className={styles["toolbarButton"]}
+            aria-pressed={mode === "build"}
             type="button"
-            onClick={() => setScenePickerOpen(true)}
+            onClick={() => {
+              setMode("build");
+              setStoryCardExpanded(false);
+            }}
           >
-            <Sparkles aria-hidden="true" size={15} />
-            换场景
+            <Hammer aria-hidden="true" size={14} /> 建造
           </button>
         </div>
-      </div>
+        <div className={styles["toolbarActions"]}>
+          <button
+            aria-label="撤销"
+            disabled={busy || undoStack.length === 0}
+            type="button"
+            onClick={() => void restoreFromStack("undo")}
+          >
+            <Undo2 aria-hidden="true" size={15} />
+          </button>
+          <button
+            aria-label="重做"
+            disabled={busy || redoStack.length === 0}
+            type="button"
+            onClick={() => void restoreFromStack("redo")}
+          >
+            <Redo2 aria-hidden="true" size={15} />
+          </button>
+          <button
+            aria-label="版本历史"
+            data-active={panel === "history" || undefined}
+            type="button"
+            onClick={() => setPanel(panel === "history" ? null : "history")}
+          >
+            <History aria-hidden="true" size={15} />
+          </button>
+          <button
+            className={styles["createButton"]}
+            data-active={panel === "create" || undefined}
+            type="button"
+            onClick={() => setPanel(panel === "create" ? null : "create")}
+          >
+            <Sparkles aria-hidden="true" size={14} /> AI 创作
+          </button>
+        </div>
+      </header>
 
-      <div className={styles["sceneStage"]}>
+      <div className={styles["worldWorkspace"]}>
         <Suspense
           fallback={
-            <div className={styles["canvasLoading"]}>正在铺开像素场景…</div>
+            <div className={styles["canvasLoading"]}>正在点亮领地…</div>
           }
         >
-          <PixiTerritoryCanvas
+          <PixiTerritoryWorldCanvas
             activePet={activePet}
             animationSpeed={animationSpeed}
+            assets={snapshot.assets}
             mode={mode}
             movement={movement}
-            onItemSelect={selectItem}
-            onMoveRequest={movePet}
+            onInstanceMove={moveInstance}
             onMovementComplete={completeMovement}
-            onPetPositionChange={trackPetPosition}
-            onPlaceRequest={placeItem}
-            scene={activeScene}
-            selectedItem={selectedItem}
-            selectedTransform={selectedTransform}
+            onPetMove={movePet}
+            onPetPositionChange={(position) => {
+              renderedPetPosition.current = position;
+            }}
+            onPlaceCollection={placeCollection}
+            onSelectionChange={selectInstance}
+            petState={snapshot.pet}
+            previewActions={
+              showingCandidatePreview ? preview.actions : emptyPreviewActions
+            }
+            selectedCollectionInstance={selectedCollectionInstance}
+            selectedInstanceIds={selectedIds}
+            view={showingCandidatePreview ? preview.view : view}
+            visibleLayers={visibleLayers}
           />
         </Suspense>
 
-        {!activePet ? (
-          <div className={styles["petHint"]}>
-            导入并选择桌宠后，它会出现在这束光的位置。
+        <div className={styles["ambientBadge"]}>
+          <Sparkles aria-hidden="true" size={12} />
+          {view.style.seasonTone} · {view.style.timeTone}
+        </div>
+
+        <nav className={styles["toolRail"]} aria-label="领地工具">
+          <button
+            aria-label="物件库"
+            data-active={panel === "library" || undefined}
+            type="button"
+            onClick={() => {
+              setPanel(panel === "library" ? null : "library");
+              setMode("build");
+            }}
+          >
+            <PackageOpen aria-hidden="true" size={17} />
+          </button>
+          <div className={styles["layerPopover"]}>
+            <button aria-label="图层" type="button">
+              <Layers3 aria-hidden="true" size={17} />
+            </button>
+            <div className={styles["layerMenu"]}>
+              <strong>显示图层</strong>
+              {layers.map((layer) => (
+                <button
+                  key={layer}
+                  aria-pressed={visibleLayers.has(layer)}
+                  type="button"
+                  onClick={() =>
+                    setVisibleLayers((current) => {
+                      const next = new Set(current);
+                      if (next.has(layer)) next.delete(layer);
+                      else next.add(layer);
+                      return next;
+                    })
+                  }
+                >
+                  {visibleLayers.has(layer) ? (
+                    <Eye aria-hidden="true" size={13} />
+                  ) : (
+                    <EyeOff aria-hidden="true" size={13} />
+                  )}
+                  {layerLabels[layer]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            aria-label="选择工具"
+            data-active={selectedIds.size > 0 || undefined}
+            type="button"
+            onClick={() => {
+              setMode("build");
+              setStoryCardExpanded(false);
+              setSelectedCollectionId(null);
+            }}
+          >
+            <Box aria-hidden="true" size={17} />
+          </button>
+          <button
+            aria-label="世界地图"
+            disabled={snapshot.world.zones.length === 1}
+            type="button"
+            onClick={() => setPanel("map")}
+          >
+            <MapIcon aria-hidden="true" size={17} />
+          </button>
+        </nav>
+
+        {selectedCandidate?.status === "ready" ? (
+          <div className={styles["previewBanner"]}>
+            <WandSparkles aria-hidden="true" size={15} />
+            <span>
+              <strong>正在预览 AI 变更</strong>
+              <small>
+                绿色新增、黄色移动或替换、红色删除；应用前不会改动 World。
+              </small>
+            </span>
+            <div className={styles["previewSwitch"]} aria-label="预览对照">
+              <button
+                aria-pressed={previewSide === "before"}
+                type="button"
+                onClick={() => setPreviewSide("before")}
+              >
+                修改前
+              </button>
+              <button
+                aria-pressed={previewSide === "after"}
+                type="button"
+                onClick={() => setPreviewSide("after")}
+              >
+                修改后
+              </button>
+            </div>
+            <button
+              disabled={busy}
+              type="button"
+              onClick={() => void applyCandidate()}
+            >
+              应用到领地
+            </button>
           </div>
         ) : null}
 
-        {selectedItem ? (
-          <article className={styles["itemDetail"]}>
+        {mode === "build" ? (
+          <div className={styles["buildDock"]}>
             <button
+              className={styles["dockLibraryButton"]}
               type="button"
-              aria-label="关闭物件详情"
-              onClick={() => selectItem(null)}
+              onClick={() => setPanel("library")}
             >
-              <X aria-hidden="true" size={14} />
+              <PackageOpen aria-hidden="true" size={16} />
+              <span>
+                <strong>物件库</strong>
+                <small>{snapshot.collection.length} 件 · 无数量上限</small>
+              </span>
             </button>
-            <p>{itemKindLabel(selectedItem)}</p>
-            <h3>{selectedItem.manifest.name}</h3>
-            <span>{selectedItem.manifest.description}</span>
-            <div className={styles["itemMeta"]}>
-              <small>
-                {selectedItem.manifest.visual.source.kind === "builtin"
-                  ? "CharaMate 内置"
-                  : "图片资产生成"}
-              </small>
-              {selectedItem.manifest.placement.mode === "surface" ? (
-                <small>适用于桌面插槽</small>
-              ) : selectedItem.manifest.surfaceSlots.length > 0 ? (
-                <small>
-                  {selectedItem.manifest.surfaceSlots.length} 个桌面插槽
-                </small>
-              ) : (
-                <small>
-                  {selectedItem.manifest.placement.plane === "underlay"
-                    ? "可踩踏覆盖物"
-                    : "脚点碰撞物件"}
-                </small>
-              )}
-              <small>
-                形成于 {dateLabel(itemFormationTimestamp(selectedItem))}
-              </small>
-            </div>
-            {selectedItem.sources.length ? (
-              <section className={styles["itemSources"]}>
-                {selectedItem.sources.map((source) => (
-                  <div key={`${source.kind}:${source.id}`}>
-                    <span>
-                      <small>
-                        {source.kind === "memory"
-                          ? "Memory 来源"
-                          : "Activity 趋势"}
-                        {" · "}
-                        {dateLabel(source.occurredAt)}
-                      </small>
-                      <strong>{source.label}</strong>
-                    </span>
-                    {source.kind === "memory" && onOpenMemorySource ? (
-                      <button
-                        type="button"
-                        onClick={() => onOpenMemorySource(source.id)}
-                      >
-                        <BookOpen aria-hidden="true" size={12} />在 Memory
-                        中查看
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
-              </section>
-            ) : null}
-            <div className={styles["itemActions"]}>
-              <button
-                disabled={busy}
-                type="button"
-                onClick={() => void setItemPinned(selectedItem)}
-              >
-                {selectedItem.pinned ? (
-                  <PinOff aria-hidden="true" size={14} />
-                ) : (
-                  <Pin aria-hidden="true" size={14} />
-                )}
-                {selectedItem.pinned ? "取消置顶" : "置顶"}
-              </button>
-              {selectedItem.versions.length > 1 ? (
-                <label className={styles["itemVersion"]}>
-                  <History aria-hidden="true" size={13} />
-                  <span>版本</span>
-                  <select
-                    aria-label="物件版本"
-                    disabled={busy}
-                    value={selectedItem.manifest.revision}
-                    onChange={(event) =>
-                      void selectItemVersion(
-                        selectedItem.id,
-                        Number(event.currentTarget.value),
-                      )
+            <div className={styles["quickItems"]}>
+              {snapshot.collection.slice(0, 6).map((instance) => {
+                const definition = findDefinition(
+                  snapshot.definitions,
+                  instance,
+                );
+                if (!definition) return null;
+                return (
+                  <button
+                    key={instance.id}
+                    data-selected={
+                      instance.id === selectedCollectionId || undefined
                     }
+                    title={definition.name}
+                    type="button"
+                    onClick={() => {
+                      setSelectedCollectionId(
+                        selectedCollectionId === instance.id
+                          ? null
+                          : instance.id,
+                      );
+                      setSelectedIds(new Set());
+                    }}
                   >
-                    {selectedItem.versions.map((version) => (
-                      <option key={version.revision} value={version.revision}>
-                        v{version.revision} · {dateLabel(version.createdAt)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              {mode === "edit" ? (
-                <>
-                  {selectedItem.manifest.transforms.rotations.length > 1 ? (
-                    <button
-                      disabled={busy}
-                      type="button"
-                      onClick={() =>
-                        transformSelected({
-                          ...selectedTransform,
-                          rotation: nextRotation(
-                            selectedItem,
-                            selectedTransform.rotation,
-                          ),
-                        })
-                      }
-                    >
-                      <RotateCw aria-hidden="true" size={14} />
-                      旋转
-                    </button>
-                  ) : null}
-                  {selectedItem.manifest.transforms.flippable ? (
-                    <button
-                      disabled={busy}
-                      type="button"
-                      onClick={() =>
-                        transformSelected({
-                          ...selectedTransform,
-                          flipped: !selectedTransform.flipped,
-                        })
-                      }
-                    >
-                      <FlipHorizontal2 aria-hidden="true" size={14} />
-                      翻转
-                    </button>
-                  ) : null}
-                  {selectedItem.target.kind !== "collection" ? (
-                    <button
-                      disabled={busy}
-                      type="button"
-                      onClick={() => void collectItem(selectedItem)}
-                    >
-                      <Archive aria-hidden="true" size={14} />
-                      收回
-                    </button>
-                  ) : (
-                    <span>
-                      {selectedItem.manifest.placement.mode === "surface"
-                        ? "点击场景中发光的桌面插槽"
-                        : "选择高亮网格即可放入场景"}
-                    </span>
-                  )}
-                </>
-              ) : null}
+                    <span data-layer={definition.layer} />
+                    <small>{definition.name}</small>
+                  </button>
+                );
+              })}
             </div>
-          </article>
-        ) : null}
+            <button
+              className={styles["dockCreateButton"]}
+              type="button"
+              onClick={() => setPanel("create")}
+            >
+              <Sparkles aria-hidden="true" size={16} /> 生成
+            </button>
+          </div>
+        ) : (
+          <div className={styles["exploreHint"]}>
+            右键任意位置让桌宠走动，左键只查看物件故事
+          </div>
+        )}
 
-        {imagePanelOpen ? (
-          <TerritoryImagePanel
-            api={api}
-            candidates={snapshot.imageCandidates}
-            {...(selectedItemCandidate
-              ? { itemCandidate: selectedItemCandidate }
-              : {})}
-            onAccepted={() => {
-              setImagePanelOpen(false);
-              setSelectedItemCandidateId(null);
-              setMode("edit");
-              setDrawerOpen(true);
-            }}
-            onClose={() => {
-              setImagePanelOpen(false);
-              setSelectedItemCandidateId(null);
-            }}
-            onSnapshot={setSnapshot}
-            providerApi={providerApi ?? window.charaMate.provider}
-            sceneId={activeScene.definition.id}
-          />
-        ) : null}
-
-        {drawerOpen ? (
-          <aside className={styles["collectionDrawer"]} aria-label="领地收藏库">
+        {panel ? (
+          <aside
+            aria-label={
+              panel === "inspector" && mode === "explore"
+                ? "物件故事卡"
+                : "领地侧栏"
+            }
+            className={`${styles["sidePanel"]}${
+              panel === "inspector" && mode === "explore"
+                ? ` ${styles["exploreStoryCard"]}`
+                : ""
+            }`}
+            data-expanded={
+              panel === "inspector" && mode === "explore"
+                ? storyCardExpanded
+                : undefined
+            }
+            data-presentation={
+              panel === "inspector" && mode === "explore" ? "compact" : "full"
+            }
+          >
             <header>
               <span>
-                <strong>收藏库</strong>
-                <small>
-                  场景 {activeScene.placements.length}/{activeScene.capacity} ·
-                  超出后最早且未置顶的物件会自动收回
-                </small>
+                {panel === "library" ? (
+                  <PackageOpen aria-hidden="true" size={16} />
+                ) : null}
+                {panel === "inspector" ? (
+                  <Brush aria-hidden="true" size={16} />
+                ) : null}
+                {panel === "create" ? (
+                  <Sparkles aria-hidden="true" size={16} />
+                ) : null}
+                {panel === "history" ? (
+                  <History aria-hidden="true" size={16} />
+                ) : null}
+                {panel === "map" ? (
+                  <MapIcon aria-hidden="true" size={16} />
+                ) : null}
+                <strong>
+                  {panel === "library"
+                    ? "物件库"
+                    : panel === "inspector"
+                      ? mode === "explore"
+                        ? "物件故事"
+                        : "物件检查器"
+                      : panel === "create"
+                        ? "AI 创作台"
+                        : panel === "map"
+                          ? "World 地图"
+                          : "World 历史"}
+                </strong>
               </span>
               <button
+                aria-label={
+                  panel === "inspector" && mode === "explore"
+                    ? "关闭故事卡"
+                    : "关闭侧栏"
+                }
                 type="button"
-                aria-label="关闭收藏库"
-                onClick={() => setDrawerOpen(false)}
+                onClick={() => {
+                  setPanel(null);
+                  setStoryCardExpanded(false);
+                }}
               >
                 <X aria-hidden="true" size={16} />
               </button>
             </header>
-            {snapshot.itemCandidates.length ? (
-              <section>
-                <h3>记忆候选</h3>
-                <div className={styles["itemList"]}>
-                  {snapshot.itemCandidates.map((candidate) => (
-                    <button
-                      key={candidate.id}
-                      type="button"
-                      onClick={() => openItemCandidate(candidate)}
-                    >
-                      <span className={styles["memoryCandidateSwatch"]}>
-                        <BookOpen aria-hidden="true" size={17} />
-                      </span>
-                      <span>
-                        <strong>{candidate.name}</strong>
-                        <small>
-                          {candidate.status === "materialized"
-                            ? "已有物件 · 生成新版本"
-                            : "等待生成"}
-                          {" · "}
-                          {candidate.sources[0]?.label}
-                        </small>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-            <section>
-              <h3>场景中</h3>
-              <div className={styles["itemList"]}>
-                {activeScene.placements.map((item) => (
+
+            {panel === "library" ? (
+              <div className={styles["libraryPanel"]}>
+                <label className={styles["searchField"]}>
+                  <Search aria-hidden="true" size={14} />
+                  <input
+                    aria-label="搜索物件"
+                    placeholder="搜索名称或标签"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+                </label>
+                <div className={styles["libraryTabs"]}>
                   <button
-                    key={item.id}
-                    data-selected={item.id === selectedItemId || undefined}
+                    aria-pressed={!showTrash}
                     type="button"
-                    onClick={() => selectItem(item.id)}
+                    onClick={() => setShowTrash(false)}
                   >
-                    <ItemSwatch item={item} />
+                    收藏库 {snapshot.collection.length}
+                  </button>
+                  <button
+                    aria-pressed={showTrash}
+                    type="button"
+                    onClick={() => setShowTrash(true)}
+                  >
+                    回收站 {snapshot.trash.length}
+                  </button>
+                </div>
+                {!showTrash ? (
+                  filteredCollection.length ? (
+                    <div className={styles["libraryGrid"]}>
+                      {filteredCollection.map((instance) => {
+                        const definition = findDefinition(
+                          snapshot.definitions,
+                          instance,
+                        );
+                        if (!definition) return null;
+                        return (
+                          <button
+                            key={instance.id}
+                            data-selected={
+                              instance.id === selectedCollectionId || undefined
+                            }
+                            type="button"
+                            onClick={() => {
+                              setSelectedCollectionId(instance.id);
+                              setSelectedIds(new Set());
+                              setMode("build");
+                            }}
+                          >
+                            <span
+                              className={styles["librarySwatch"]}
+                              data-layer={definition.layer}
+                            >
+                              {instance.favorite ? (
+                                <Heart aria-hidden="true" size={11} />
+                              ) : null}
+                            </span>
+                            <strong>{definition.name}</strong>
+                            <small>
+                              {layerLabels[definition.layer]} · v
+                              {definition.revision}
+                            </small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className={styles["emptyState"]}>
+                      没有符合条件的收藏物件。
+                    </p>
+                  )
+                ) : snapshot.trash.length ? (
+                  <div className={styles["trashList"]}>
+                    {snapshot.trash.map((instance) => {
+                      const definition = findDefinition(
+                        snapshot.definitions,
+                        instance,
+                      );
+                      if (!definition) return null;
+                      return (
+                        <article key={instance.id}>
+                          <span
+                            className={styles["librarySwatch"]}
+                            data-layer={definition.layer}
+                          />
+                          <span>
+                            <strong>{definition.name}</strong>
+                            <small>
+                              {instance.trashedAt
+                                ? dateLabel(instance.trashedAt)
+                                : "刚刚删除"}
+                            </small>
+                          </span>
+                          <button
+                            disabled={busy}
+                            type="button"
+                            onClick={() => void recoverInstance(instance)}
+                          >
+                            恢复
+                          </button>
+                          <button
+                            className={styles["dangerButton"]}
+                            disabled={busy}
+                            type="button"
+                            onClick={() => void purgeInstance(instance)}
+                          >
+                            永久删除
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className={styles["emptyState"]}>回收站是空的。</p>
+                )}
+                {selectedCollectionInstance ? (
+                  <div className={styles["placementTip"]}>
+                    <Box aria-hidden="true" size={15} />
                     <span>
-                      <strong>{item.manifest.name}</strong>
+                      已拿起「
+                      {
+                        findDefinition(
+                          snapshot.definitions,
+                          selectedCollectionInstance,
+                        )?.name
+                      }
+                      」
                       <small>
-                        {item.manifest.placement.mode === "surface"
-                          ? "桌面小物 · 点击查看"
-                          : item.manifest.surfaceSlots.length > 0
-                            ? `${String(item.manifest.surfaceSlots.length)} 个桌面插槽`
-                            : item.manifest.description}
+                        点击画布放置；挂接物件会吸附到最近的兼容锚点。
                       </small>
                     </span>
-                  </button>
-                ))}
+                  </div>
+                ) : null}
               </div>
-            </section>
-            <section>
-              <h3>已收回</h3>
-              {snapshot.collection.length ? (
-                <div className={styles["itemList"]}>
-                  {snapshot.collection.map((item) => (
-                    <button
-                      key={item.id}
-                      data-selected={item.id === selectedItemId || undefined}
-                      type="button"
-                      onClick={() => selectItem(item.id)}
-                    >
-                      <ItemSwatch item={item} />
+            ) : null}
+
+            {panel === "inspector" ? (
+              primaryInstance && primaryDefinition ? (
+                mode === "explore" ? (
+                  <div className={styles["exploreStoryContent"]}>
+                    <div className={styles["exploreStoryHeading"]}>
                       <span>
-                        <strong>{item.manifest.name}</strong>
-                        <small>
-                          {item.manifest.placement.mode === "surface"
-                            ? "小插件 · 选择后点击桌面插槽"
-                            : "选择后点击场景中的高亮网格"}
-                        </small>
+                        <Eye aria-hidden="true" size={12} />
+                        {layerLabels[primaryDefinition.layer]}
                       </span>
+                      <strong>{primaryDefinition.name}</strong>
+                      <p>{primaryDefinition.description}</p>
+                    </div>
+                    <div
+                      aria-label="物件摘要"
+                      className={styles["exploreStorySummary"]}
+                    >
+                      <span>
+                        <small>互动</small>
+                        <strong>
+                          {petBehaviorLabel(snapshot.pet.behavior)}
+                        </strong>
+                      </span>
+                      <span>
+                        <small>来源</small>
+                        <strong>
+                          {primaryInstance.sources.length
+                            ? "记忆 / 活动"
+                            : "领地创作"}
+                        </strong>
+                      </span>
+                    </div>
+                    {storyCardExpanded ? (
+                      <div className={styles["exploreStoryDetails"]}>
+                        <div className={styles["propertyList"]}>
+                          <span>
+                            <small>图层</small>
+                            <strong>
+                              {layerLabels[primaryDefinition.layer]}
+                            </strong>
+                          </span>
+                          <span>
+                            <small>定义版本</small>
+                            <strong>v{primaryDefinition.revision}</strong>
+                          </span>
+                          <span>
+                            <small>位置</small>
+                            <strong>
+                              {primaryInstance.placement.kind === "zone"
+                                ? `${String(primaryInstance.placement.point.x)}, ${String(primaryInstance.placement.point.y)}`
+                                : primaryInstance.placement.kind ===
+                                    "attachment"
+                                  ? "挂接"
+                                  : "收藏库"}
+                            </strong>
+                          </span>
+                          <span>
+                            <small>查看方式</small>
+                            <strong>左键故事 · 右键移动</strong>
+                          </span>
+                        </div>
+                        {primaryInstance.sources.length ? (
+                          <section className={styles["sourceList"]}>
+                            <h3>形成它的故事</h3>
+                            {primaryInstance.sources.map((source) => (
+                              <button
+                                key={`${source.kind}:${source.id}`}
+                                type="button"
+                                onClick={() => {
+                                  if (source.kind === "memory")
+                                    onOpenMemorySource?.(source.id);
+                                }}
+                              >
+                                <strong>{source.label}</strong>
+                                <small>
+                                  {source.kind === "memory"
+                                    ? "打开记忆"
+                                    : "活动摘要"}{" "}
+                                  · {dateLabel(source.occurredAt)}
+                                </small>
+                              </button>
+                            ))}
+                          </section>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div className={styles["exploreStoryActions"]}>
+                      <button
+                        aria-expanded={storyCardExpanded}
+                        type="button"
+                        onClick={() =>
+                          setStoryCardExpanded((expanded) => !expanded)
+                        }
+                      >
+                        {storyCardExpanded ? "收起详情" : "展开详情"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode("build");
+                          setStoryCardExpanded(false);
+                        }}
+                      >
+                        <Pencil aria-hidden="true" size={12} />
+                        进入建造编辑
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={styles["inspectorPanel"]}>
+                    <div
+                      className={styles["inspectorHero"]}
+                      data-layer={primaryDefinition.layer}
+                    >
+                      <span>{layerLabels[primaryDefinition.layer]}</span>
+                      <strong>
+                        {selectedInstances.length > 1
+                          ? `${String(selectedInstances.length)} 件已选择`
+                          : primaryDefinition.name}
+                      </strong>
+                      <small>{primaryDefinition.description}</small>
+                    </div>
+                    {editingDefinition ? (
+                      <div className={styles["editDefinition"]}>
+                        <label className={styles["field"]}>
+                          <span>名称</span>
+                          <input
+                            value={definitionName}
+                            onChange={(event) =>
+                              setDefinitionName(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label className={styles["field"]}>
+                          <span>描述</span>
+                          <textarea
+                            rows={4}
+                            value={definitionDescription}
+                            onChange={(event) =>
+                              setDefinitionDescription(event.target.value)
+                            }
+                          />
+                        </label>
+                        <div className={styles["formActions"]}>
+                          <button
+                            type="button"
+                            onClick={() => setEditingDefinition(false)}
+                          >
+                            取消
+                          </button>
+                          <button
+                            disabled={busy}
+                            type="button"
+                            onClick={() => void saveDefinition()}
+                          >
+                            保存新版本
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className={styles["propertyList"]}>
+                          <span>
+                            <small>图层</small>
+                            <strong>
+                              {layerLabels[primaryDefinition.layer]}
+                            </strong>
+                          </span>
+                          <span>
+                            <small>定义版本</small>
+                            <strong>v{primaryDefinition.revision}</strong>
+                          </span>
+                          <span>
+                            <small>位置</small>
+                            <strong>
+                              {primaryInstance.placement.kind === "zone"
+                                ? `${String(primaryInstance.placement.point.x)}, ${String(primaryInstance.placement.point.y)}`
+                                : primaryInstance.placement.kind ===
+                                    "attachment"
+                                  ? "挂接"
+                                  : "收藏库"}
+                            </strong>
+                          </span>
+                          <span>
+                            <small>来源</small>
+                            <strong>
+                              {primaryInstance.sources.length
+                                ? "记忆 / 活动"
+                                : "领地创作"}
+                            </strong>
+                          </span>
+                        </div>
+                        {mode === "build" ? (
+                          <>
+                            <div className={styles["inspectorActions"]}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDefinitionName(primaryDefinition.name);
+                                  setDefinitionDescription(
+                                    primaryDefinition.description,
+                                  );
+                                  setEditingDefinition(true);
+                                }}
+                              >
+                                <Pencil aria-hidden="true" size={13} /> 编辑
+                              </button>
+                              <button
+                                disabled={busy}
+                                type="button"
+                                onClick={() =>
+                                  void updateSelected(
+                                    primaryInstance.locked
+                                      ? "解锁物件"
+                                      : "锁定物件",
+                                    (instance, timestamp) => ({
+                                      ...instance,
+                                      locked: !primaryInstance.locked,
+                                      updatedAt: timestamp,
+                                    }),
+                                  )
+                                }
+                              >
+                                {primaryInstance.locked ? (
+                                  <LockOpen aria-hidden="true" size={13} />
+                                ) : (
+                                  <Lock aria-hidden="true" size={13} />
+                                )}
+                                {primaryInstance.locked ? "解锁" : "锁定"}
+                              </button>
+                              <button
+                                disabled={busy}
+                                type="button"
+                                onClick={() =>
+                                  void updateSelected(
+                                    primaryInstance.favorite
+                                      ? "取消收藏"
+                                      : "收藏物件",
+                                    (instance, timestamp) => ({
+                                      ...instance,
+                                      favorite: !primaryInstance.favorite,
+                                      updatedAt: timestamp,
+                                    }),
+                                  )
+                                }
+                              >
+                                <Heart aria-hidden="true" size={13} /> 收藏
+                              </button>
+                              {primaryDefinition.transforms.rotations.length >
+                              1 ? (
+                                <button
+                                  disabled={busy}
+                                  type="button"
+                                  onClick={() =>
+                                    void updateSelected(
+                                      "旋转领地物件",
+                                      (instance, timestamp) =>
+                                        instance.placement.kind === "collection"
+                                          ? instance
+                                          : {
+                                              ...instance,
+                                              placement: {
+                                                ...instance.placement,
+                                                rotation: nextRotation(
+                                                  primaryDefinition,
+                                                  instance.placement.rotation,
+                                                ),
+                                              },
+                                              updatedAt: timestamp,
+                                            },
+                                    )
+                                  }
+                                >
+                                  <RotateCw aria-hidden="true" size={13} /> 旋转
+                                </button>
+                              ) : null}
+                              {primaryDefinition.transforms.flippable ? (
+                                <button
+                                  disabled={busy}
+                                  type="button"
+                                  onClick={() =>
+                                    void updateSelected(
+                                      "翻转领地物件",
+                                      (instance, timestamp) =>
+                                        instance.placement.kind === "collection"
+                                          ? instance
+                                          : {
+                                              ...instance,
+                                              placement: {
+                                                ...instance.placement,
+                                                flipped:
+                                                  !instance.placement.flipped,
+                                              },
+                                              updatedAt: timestamp,
+                                            },
+                                    )
+                                  }
+                                >
+                                  <FlipHorizontal2
+                                    aria-hidden="true"
+                                    size={13}
+                                  />{" "}
+                                  翻转
+                                </button>
+                              ) : null}
+                              <button
+                                disabled={busy}
+                                type="button"
+                                onClick={() => void duplicateSelected()}
+                              >
+                                <Copy aria-hidden="true" size={13} /> 复制
+                              </button>
+                              {selectedInstances.length > 1 &&
+                              selectedInstances.every(
+                                ({ groupId }) => !groupId,
+                              ) ? (
+                                <button
+                                  disabled={busy}
+                                  type="button"
+                                  onClick={() => void createGroup()}
+                                >
+                                  <Group aria-hidden="true" size={13} /> 组合
+                                </button>
+                              ) : null}
+                              {selectedInstances.some(
+                                ({ groupId }) => groupId,
+                              ) ? (
+                                <button
+                                  disabled={busy}
+                                  type="button"
+                                  onClick={() => void ungroupSelected()}
+                                >
+                                  <Ungroup aria-hidden="true" size={13} />{" "}
+                                  取消组合
+                                </button>
+                              ) : null}
+                              <button
+                                disabled={busy}
+                                type="button"
+                                onClick={() => void collectSelected()}
+                              >
+                                <Archive aria-hidden="true" size={13} /> 收回
+                              </button>
+                              <button
+                                className={styles["dangerButton"]}
+                                disabled={busy}
+                                type="button"
+                                onClick={() => void trashSelected()}
+                              >
+                                <Trash2 aria-hidden="true" size={13} /> 删除
+                              </button>
+                            </div>
+                            {latestDefinitionRevisions.length > 1 ? (
+                              <label className={styles["field"]}>
+                                <span>切换 Definition 版本</span>
+                                <select
+                                  value={primaryDefinition.revision}
+                                  onChange={(event) =>
+                                    void selectDefinitionRevision(
+                                      Number(event.target.value),
+                                    )
+                                  }
+                                >
+                                  {latestDefinitionRevisions.map(
+                                    (definition) => (
+                                      <option
+                                        key={definition.revision}
+                                        value={definition.revision}
+                                      >
+                                        v{definition.revision} ·{" "}
+                                        {dateLabel(definition.createdAt)}
+                                      </option>
+                                    ),
+                                  )}
+                                </select>
+                              </label>
+                            ) : null}
+                          </>
+                        ) : (
+                          <div className={styles["scopeNote"]}>
+                            <Eye aria-hidden="true" size={13} />
+                            <span>
+                              {petBehaviorLabel(snapshot.pet.behavior)}
+                              <small>
+                                探索时只展示故事和互动；进入建造后才能修改世界。
+                              </small>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setMode("build")}
+                            >
+                              进入建造编辑
+                            </button>
+                          </div>
+                        )}
+                        {primaryInstance.sources.length ? (
+                          <section className={styles["sourceList"]}>
+                            <h3>形成它的故事</h3>
+                            {primaryInstance.sources.map((source) => (
+                              <button
+                                key={`${source.kind}:${source.id}`}
+                                type="button"
+                                onClick={() => {
+                                  if (source.kind === "memory")
+                                    onOpenMemorySource?.(source.id);
+                                }}
+                              >
+                                <strong>{source.label}</strong>
+                                <small>
+                                  {source.kind === "memory"
+                                    ? "打开记忆"
+                                    : "活动摘要"}{" "}
+                                  · {dateLabel(source.occurredAt)}
+                                </small>
+                              </button>
+                            ))}
+                          </section>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                )
+              ) : (
+                <p className={styles["emptyState"]}>
+                  在建造模式中选择一个或多个实体。
+                </p>
+              )
+            ) : null}
+
+            {panel === "create" ? (
+              <div className={styles["createPanel"]}>
+                <div className={styles["createIntro"]}>
+                  <WandSparkles aria-hidden="true" size={19} />
+                  <span>
+                    <strong>描述你想看到的变化</strong>
+                    <small>
+                      可生成单件物品、重绘当前选择、完整生成整片区域，或继续扩建新的
+                      Zone。
+                    </small>
+                  </span>
+                </div>
+                <label className={styles["field"]}>
+                  <span>创作指令</span>
+                  <textarea
+                    rows={5}
+                    placeholder="例如：把窗边改成雨夜植物角，保留书桌和桌灯，增加层次丰富的前景叶片与暖色反光。"
+                    value={prompt}
+                    onChange={(event) => setPrompt(event.target.value)}
+                  />
+                </label>
+                <div className={styles["creationKinds"]} aria-label="创作类型">
+                  {(
+                    [
+                      ["item", "新物件"],
+                      ["selection", "重绘选择"],
+                      ["zone", "改造区域"],
+                      ["expansion", "扩建 Zone"],
+                    ] as const
+                  ).map(([intent, label]) => (
+                    <button
+                      key={intent}
+                      aria-pressed={candidateIntent === intent}
+                      disabled={
+                        intent === "selection" && selectedIds.size === 0
+                      }
+                      type="button"
+                      onClick={() => setCandidateIntent(intent)}
+                    >
+                      {label}
                     </button>
                   ))}
                 </div>
-              ) : (
-                <p className={styles["emptyCollection"]}>
-                  收回的物件会完整保存在这里。
+                <ImageProfileSelect
+                  onChange={setProviderProfileId}
+                  profiles={providerProfiles.filter(
+                    (profile) => "imageModel" in profile,
+                  )}
+                  value={providerProfileId}
+                />
+                <div className={styles["scopeNote"]}>
+                  <Lock aria-hidden="true" size={13} />
+                  {candidateIntent === "selection" && selectedIds.size > 0
+                    ? `只重绘当前选择的 ${String(selectedIds.size)} 件实体；锁定内容不会改变。`
+                    : candidateIntent === "item"
+                      ? "生成一个可继续编辑、复制和组合的新物件，并先在当前区域预览。"
+                      : candidateIntent === "expansion"
+                        ? `从「${view.zone.name}」向东扩建一个相连的新 Zone。`
+                        : `为「${view.zone.name}」生成完整环境与 20 类独立可编辑陈设；锁定内容不会改变。`}
+                </div>
+                <button
+                  className={styles["primaryAction"]}
+                  disabled={busy || !prompt.trim()}
+                  type="button"
+                  onClick={() => void createCandidate()}
+                >
+                  <Sparkles aria-hidden="true" size={14} /> 生成可审阅预览
+                </button>
+                {snapshot.candidates.length ? (
+                  <section className={styles["candidateList"]}>
+                    <h3>创作记录</h3>
+                    {snapshot.candidates.map((candidate) => (
+                      <button
+                        key={candidate.id}
+                        data-selected={
+                          candidate.id === selectedCandidateId || undefined
+                        }
+                        type="button"
+                        onClick={() => {
+                          setSelectedCandidateId(candidate.id);
+                          setExcludedChangeIds(new Set());
+                          setPreviewSide("after");
+                        }}
+                      >
+                        <span data-status={candidate.status} />
+                        <span>
+                          <strong>{candidate.prompt}</strong>
+                          <small>
+                            {candidateStatusLabel(candidate.status)} ·{" "}
+                            {dateLabel(candidate.updatedAt)}
+                          </small>
+                        </span>
+                      </button>
+                    ))}
+                  </section>
+                ) : null}
+                {selectedCandidate ? (
+                  <section className={styles["candidateDetail"]}>
+                    <header>
+                      <span>
+                        <strong>
+                          {candidateStatusLabel(selectedCandidate.status)}
+                        </strong>
+                        <small>
+                          {selectedCandidate.previewGroups.length
+                            ? `${String(selectedCandidate.previewGroups.length)} 组可审阅变更`
+                            : "尚未产生 World 变更"}
+                        </small>
+                      </span>
+                    </header>
+                    {selectedCandidate.previewGroups.map((group, index) => {
+                      const excluded = group.changeIds.every((changeId) =>
+                        excludedChangeIds.has(changeId),
+                      );
+                      return (
+                        <div
+                          key={`${group.label}:${String(index)}`}
+                          className={styles["previewGroup"]}
+                          data-action={group.action}
+                          data-excluded={excluded || undefined}
+                        >
+                          <span />
+                          <strong>{group.label}</strong>
+                          <small>{group.instanceIds.length} 件实体</small>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExcludedChangeIds((current) => {
+                                const next = new Set(current);
+                                for (const changeId of group.changeIds) {
+                                  if (excluded) next.delete(changeId);
+                                  else next.add(changeId);
+                                }
+                                return next;
+                              })
+                            }
+                          >
+                            {excluded ? "恢复" : "排除"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {selectedCandidate.error ? (
+                      <p className={styles["candidateError"]}>
+                        {selectedCandidate.error.message}
+                      </p>
+                    ) : null}
+                    {selectedCandidate.status !== "applied" &&
+                    selectedCandidate.status !== "cancelled" ? (
+                      <>
+                        <label className={styles["field"]}>
+                          <span>继续修改这版预览</span>
+                          <textarea
+                            rows={3}
+                            placeholder="例如：保留灯光，把植物减少一半。"
+                            value={candidateInstruction}
+                            onChange={(event) =>
+                              setCandidateInstruction(event.target.value)
+                            }
+                          />
+                        </label>
+                        <div className={styles["formActions"]}>
+                          <button
+                            disabled={busy}
+                            type="button"
+                            onClick={() => void cancelCandidate()}
+                          >
+                            取消预览
+                          </button>
+                          <button
+                            disabled={busy || !candidateInstruction.trim()}
+                            type="button"
+                            onClick={() => void editCandidate()}
+                          >
+                            重新生成
+                          </button>
+                          {selectedCandidate.status === "ready" ? (
+                            <button
+                              disabled={busy}
+                              type="button"
+                              onClick={() => void applyCandidate()}
+                            >
+                              应用
+                            </button>
+                          ) : null}
+                        </div>
+                      </>
+                    ) : null}
+                  </section>
+                ) : null}
+              </div>
+            ) : null}
+
+            {panel === "history" ? (
+              <div className={styles["historyPanel"]}>
+                <p>
+                  每次手动布置和 AI 应用都会保存不可变版本。恢复历史会创建新
+                  Revision，不会抹掉原记录。
                 </p>
-              )}
-            </section>
+                <div className={styles["historyList"]}>
+                  {[...snapshot.revisions].reverse().map((revision) => (
+                    <article
+                      key={revision.id}
+                      data-current={
+                        revision.id === snapshot.world.currentRevision.id ||
+                        undefined
+                      }
+                    >
+                      <span>
+                        <strong>{revision.label}</strong>
+                        <small>
+                          {dateLabel(revision.createdAt)} · {revision.reason}
+                        </small>
+                      </span>
+                      {revision.id === snapshot.world.currentRevision.id ? (
+                        <em>当前</em>
+                      ) : (
+                        <button
+                          disabled={busy}
+                          type="button"
+                          onClick={() => void restoreRevision(revision.id)}
+                        >
+                          恢复
+                        </button>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {panel === "map" ? (
+              <div className={styles["historyPanel"]}>
+                <p>
+                  每个 Zone 都是同一 World
+                  的一部分。相连区域可直接进入，桌宠会从连接点继续生活。
+                </p>
+                <div className={styles["historyList"]}>
+                  {snapshot.world.zones
+                    .filter(({ status }) => status === "active")
+                    .map((zone) => {
+                      const current = zone.id === snapshot.world.activeZoneId;
+                      const connected = snapshot.world.connections.some(
+                        (connection) =>
+                          (connection.fromZoneId ===
+                            snapshot.world.activeZoneId &&
+                            connection.toZoneId === zone.id) ||
+                          (connection.toZoneId ===
+                            snapshot.world.activeZoneId &&
+                            connection.fromZoneId === zone.id),
+                      );
+                      return (
+                        <article
+                          key={zone.id}
+                          data-current={current || undefined}
+                        >
+                          <span>
+                            <strong>{zone.name}</strong>
+                            <small>
+                              {zone.kind} · {String(zone.bounds.width)} ×{" "}
+                              {String(zone.bounds.height)} 格
+                            </small>
+                          </span>
+                          {current ? (
+                            <em>当前</em>
+                          ) : (
+                            <button
+                              disabled={busy || !connected}
+                              type="button"
+                              onClick={() => void enterZone(zone.id)}
+                            >
+                              {connected ? "进入" : "未连接"}
+                            </button>
+                          )}
+                        </article>
+                      );
+                    })}
+                </div>
+              </div>
+            ) : null}
           </aside>
+        ) : null}
+
+        {revealSource ? (
+          <div className={styles["memoryReveal"]} role="status">
+            <span className={styles["memoryRevealGlow"]} />
+            <Sparkles aria-hidden="true" size={18} />
+            <span>
+              <strong>一段共同经历落进了领地</strong>
+              <small>
+                {revealSource.label} · {dateLabel(revealSource.occurredAt)}
+              </small>
+            </span>
+            <button type="button" onClick={() => setRevealSource(null)}>
+              跳过演出
+            </button>
+          </div>
         ) : null}
 
         {error ? (
@@ -908,18 +2473,6 @@ export function TerritoryPage({
           </div>
         ) : null}
       </div>
-
-      {scenePickerOpen ? (
-        <div className={styles["pickerOverlay"]}>
-          <ScenePicker
-            activeSceneId={activeScene.definition.id}
-            busy={busy}
-            onClose={() => setScenePickerOpen(false)}
-            onSelect={(sceneId) => void selectScene(sceneId)}
-            scenes={snapshot.availableScenes}
-          />
-        </div>
-      ) : null}
     </section>
   );
 }

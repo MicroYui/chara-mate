@@ -7,8 +7,42 @@ import { ProviderError } from "./providerError";
 const GENERATION_SUFFIX = "/images/generations";
 
 export interface TerritoryImageProvider {
-  edit(image: Buffer, prompt: string, signal?: AbortSignal): Promise<Buffer>;
-  generate(prompt: string, signal?: AbortSignal): Promise<Buffer>;
+  edit(
+    image: Buffer,
+    prompt: string,
+    options?: TerritoryImageRenderOptions | AbortSignal,
+    signal?: AbortSignal,
+  ): Promise<Buffer>;
+  generate(
+    prompt: string,
+    options?: TerritoryImageRenderOptions | AbortSignal,
+    signal?: AbortSignal,
+  ): Promise<Buffer>;
+}
+
+export interface TerritoryImageRenderOptions {
+  readonly background: "opaque";
+  readonly quality: "high" | "low" | "medium";
+  readonly size: string;
+}
+
+const defaultRenderOptions: TerritoryImageRenderOptions = {
+  background: "opaque",
+  quality: "medium",
+  size: "1024x1024",
+};
+
+function renderArguments(
+  options: TerritoryImageRenderOptions | AbortSignal | undefined,
+  signal: AbortSignal | undefined,
+): {
+  readonly options: TerritoryImageRenderOptions;
+  readonly signal: AbortSignal | undefined;
+} {
+  if (options && "aborted" in options) {
+    return { options: defaultRenderOptions, signal: options };
+  }
+  return { options: options ?? defaultRenderOptions, signal };
 }
 
 function imageClientConfiguration(profile: ProviderProfileDraft): {
@@ -113,17 +147,25 @@ export class AzureTerritoryImageProvider implements TerritoryImageProvider {
     this.#model = configuration.model;
   }
 
-  async generate(prompt: string, signal?: AbortSignal): Promise<Buffer> {
+  async generate(
+    prompt: string,
+    optionsOrSignal?: TerritoryImageRenderOptions | AbortSignal,
+    requestedSignal?: AbortSignal,
+  ): Promise<Buffer> {
+    const { options, signal } = renderArguments(
+      optionsOrSignal,
+      requestedSignal,
+    );
     try {
       const response = await this.#client.images.generate(
         {
-          background: "opaque",
+          background: options.background,
           model: this.#model,
           n: 1,
           output_format: "png",
           prompt,
-          quality: "medium",
-          size: "1024x1024",
+          quality: options.quality,
+          size: options.size,
         },
         signal ? { signal } : undefined,
       );
@@ -139,20 +181,24 @@ export class AzureTerritoryImageProvider implements TerritoryImageProvider {
   async edit(
     image: Buffer,
     prompt: string,
-    signal?: AbortSignal,
+    optionsOrSignal?: TerritoryImageRenderOptions | AbortSignal,
+    requestedSignal?: AbortSignal,
   ): Promise<Buffer> {
+    const { options, signal } = renderArguments(
+      optionsOrSignal,
+      requestedSignal,
+    );
     try {
       const response = await this.#client.images.edit(
         {
-          background: "opaque",
+          background: options.background,
           image: await toFile(image, "candidate.png", { type: "image/png" }),
-          input_fidelity: "high",
           model: this.#model,
           n: 1,
           output_format: "png",
           prompt,
-          quality: "medium",
-          size: "1024x1024",
+          quality: options.quality,
+          size: options.size,
         },
         signal ? { signal } : undefined,
       );

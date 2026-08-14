@@ -121,6 +121,11 @@ export const PetAnimationSpeedRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const PetTerritoryPresenceRequestSchema = Type.Object(
+  { active: Type.Boolean() },
+  { additionalProperties: false },
+);
+
 export const PetDragPointSchema = Type.Object(
   {
     screenX: Type.Number({ maximum: 1_000_000, minimum: -1_000_000 }),

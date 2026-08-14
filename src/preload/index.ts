@@ -100,6 +100,7 @@ import {
   type PetManagementApi,
   type PetScaleRequest,
   type PetSelectRequest,
+  type PetTerritoryPresenceRequest,
 } from "../shared/contracts/pet";
 import {
   type ProviderApi,
@@ -110,19 +111,20 @@ import {
   type ProviderTestConnectionRequest,
 } from "../shared/contracts/provider";
 import {
-  type TerritoryApi,
-  type TerritoryCollectItemRequest,
-  type TerritoryCreateSourceCandidateRequest,
-  type TerritoryEditImageRequest,
-  type TerritoryGenerateImageRequest,
-  type TerritoryImageCandidateIdRequest,
-  TERRITORY_CHANNELS,
-  type TerritoryMovePetRequest,
-  type TerritoryPlaceItemRequest,
-  type TerritorySelectSceneRequest,
-  type TerritorySelectItemVersionRequest,
-  type TerritorySetItemPinnedRequest,
-} from "../shared/contracts/territory";
+  TERRITORY_WORLD_CHANNELS,
+  type TerritoryCandidateIdRequest as TerritoryWorldCandidateIdRequest,
+  type TerritoryCommitChangeSetRequest as TerritoryWorldCommitChangeSetRequest,
+  type TerritoryCreateChangeCandidateRequest as TerritoryWorldCreateChangeCandidateRequest,
+  type TerritoryCreateSourceCandidateRequest as TerritoryWorldCreateSourceCandidateRequest,
+  type TerritoryEditChangeCandidateRequest as TerritoryWorldEditChangeCandidateRequest,
+  type TerritoryEnterZoneRequest as TerritoryWorldEnterZoneRequest,
+  type TerritoryGetZoneViewRequest as TerritoryWorldGetZoneViewRequest,
+  type TerritoryMovePetRequest as TerritoryWorldMovePetRequest,
+  type TerritoryPurgeInstanceRequest as TerritoryWorldPurgeInstanceRequest,
+  type TerritoryRestoreRevisionRequest as TerritoryWorldRestoreRevisionRequest,
+  type TerritoryWorldApi,
+  type TerritoryWorldSnapshot,
+} from "../shared/contracts/territoryWorld";
 import {
   ChatCreateRequestSchema,
   ChatDataSnapshotRequestSchema,
@@ -239,6 +241,7 @@ import {
   PetMainNavigationSchema,
   PetScaleRequestSchema,
   PetSelectRequestSchema,
+  PetTerritoryPresenceRequestSchema,
 } from "../shared/schemas/pet";
 import {
   ProviderDeleteProfileRequestSchema,
@@ -252,21 +255,22 @@ import {
   ProviderTestConnectionResponseSchema,
 } from "../shared/schemas/provider";
 import {
-  TerritoryCollectItemRequestSchema,
-  TerritoryCreateSourceCandidateRequestSchema,
-  TerritoryEditImageRequestSchema,
-  TerritoryGenerateImageRequestSchema,
-  TerritoryImageCandidateIdRequestSchema,
-  TerritoryImageMutationResponseSchema,
-  TerritoryMovePetRequestSchema,
-  TerritoryMoveResponseSchema,
-  TerritoryPlaceItemRequestSchema,
-  TerritorySelectSceneRequestSchema,
-  TerritorySelectItemVersionRequestSchema,
-  TerritorySetItemPinnedRequestSchema,
-  TerritorySnapshotResponseSchema,
-  TerritorySourceCandidateMutationResponseSchema,
-} from "../shared/schemas/territory";
+  TerritoryCandidateIdRequestSchema as TerritoryWorldCandidateIdRequestSchema,
+  TerritoryCandidateMutationResponseSchema as TerritoryWorldCandidateMutationResponseSchema,
+  TerritoryCommitChangeSetRequestSchema as TerritoryWorldCommitChangeSetRequestSchema,
+  TerritoryCreateChangeCandidateRequestSchema as TerritoryWorldCreateChangeCandidateRequestSchema,
+  TerritoryCreateSourceCandidateRequestSchema as TerritoryWorldCreateSourceCandidateRequestSchema,
+  TerritoryEditChangeCandidateRequestSchema as TerritoryWorldEditChangeCandidateRequestSchema,
+  TerritoryEnterZoneRequestSchema as TerritoryWorldEnterZoneRequestSchema,
+  TerritoryGetZoneViewRequestSchema as TerritoryWorldGetZoneViewRequestSchema,
+  TerritoryMovePetRequestSchema as TerritoryWorldMovePetRequestSchema,
+  TerritoryMovePetResponseSchema as TerritoryWorldMovePetResponseSchema,
+  TerritoryPurgeInstanceRequestSchema as TerritoryWorldPurgeInstanceRequestSchema,
+  TerritoryRestoreRevisionRequestSchema as TerritoryWorldRestoreRevisionRequestSchema,
+  TerritoryWorldSnapshotResponseSchema,
+  TerritoryWorldSnapshotSchema,
+  TerritoryZoneViewResponseSchema as TerritoryWorldZoneViewResponseSchema,
+} from "../shared/schemas/territoryWorld";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
 import { createVoiceApi } from "./voiceApi";
 
@@ -868,6 +872,15 @@ const petApi: PetManagementApi = Object.freeze({
         parseSchemaWithoutCodeGeneration(PetScaleRequestSchema, input),
       ),
     ),
+  setTerritoryActive: (input: PetTerritoryPresenceRequest) => {
+    ipcRenderer.send(
+      PET_CHANNELS.setTerritoryActive,
+      parseSchemaWithoutCodeGeneration(
+        PetTerritoryPresenceRequestSchema,
+        input,
+      ),
+    );
+  },
   subscribeChanged: (listener: (snapshot: PetLibrarySnapshot) => void) => {
     const wrappedListener = (
       _event: Electron.IpcRendererEvent,
@@ -894,130 +907,152 @@ const petApi: PetManagementApi = Object.freeze({
   },
 });
 
-const territoryApi: TerritoryApi = Object.freeze({
-  collectItem: async (input: TerritoryCollectItemRequest) =>
+const territoryWorldApi: TerritoryWorldApi = Object.freeze({
+  applyCandidate: async (input: TerritoryWorldCandidateIdRequest) =>
     parseSchemaWithoutCodeGeneration(
-      TerritorySnapshotResponseSchema,
+      TerritoryWorldCandidateMutationResponseSchema,
       await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.collectItem,
+        TERRITORY_WORLD_CHANNELS.applyCandidate,
         parseSchemaWithoutCodeGeneration(
-          TerritoryCollectItemRequestSchema,
+          TerritoryWorldCandidateIdRequestSchema,
           input,
         ),
       ),
     ),
-  confirmImageCandidate: async (input: TerritoryImageCandidateIdRequest) =>
+  cancelCandidate: async (input: TerritoryWorldCandidateIdRequest) =>
     parseSchemaWithoutCodeGeneration(
-      TerritoryImageMutationResponseSchema,
+      TerritoryWorldCandidateMutationResponseSchema,
       await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.confirmImageCandidate,
+        TERRITORY_WORLD_CHANNELS.cancelCandidate,
         parseSchemaWithoutCodeGeneration(
-          TerritoryImageCandidateIdRequestSchema,
+          TerritoryWorldCandidateIdRequestSchema,
           input,
         ),
       ),
     ),
-  createSourceCandidate: async (input: TerritoryCreateSourceCandidateRequest) =>
+  commitChangeSet: async (input: TerritoryWorldCommitChangeSetRequest) =>
     parseSchemaWithoutCodeGeneration(
-      TerritorySourceCandidateMutationResponseSchema,
+      TerritoryWorldSnapshotResponseSchema,
       await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.createSourceCandidate,
+        TERRITORY_WORLD_CHANNELS.commitChangeSet,
         parseSchemaWithoutCodeGeneration(
-          TerritoryCreateSourceCandidateRequestSchema,
+          TerritoryWorldCommitChangeSetRequestSchema,
           input,
         ),
       ),
     ),
-  editImageCandidate: async (input: TerritoryEditImageRequest) =>
+  createCandidate: async (input: TerritoryWorldCreateChangeCandidateRequest) =>
     parseSchemaWithoutCodeGeneration(
-      TerritoryImageMutationResponseSchema,
+      TerritoryWorldCandidateMutationResponseSchema,
       await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.editImageCandidate,
+        TERRITORY_WORLD_CHANNELS.createCandidate,
         parseSchemaWithoutCodeGeneration(
-          TerritoryEditImageRequestSchema,
+          TerritoryWorldCreateChangeCandidateRequestSchema,
           input,
         ),
       ),
     ),
-  generateImageCandidate: async (input: TerritoryGenerateImageRequest) =>
+  createSourceCandidate: async (
+    input: TerritoryWorldCreateSourceCandidateRequest,
+  ) =>
     parseSchemaWithoutCodeGeneration(
-      TerritoryImageMutationResponseSchema,
+      TerritoryWorldCandidateMutationResponseSchema,
       await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.generateImageCandidate,
+        TERRITORY_WORLD_CHANNELS.createSourceCandidate,
         parseSchemaWithoutCodeGeneration(
-          TerritoryGenerateImageRequestSchema,
+          TerritoryWorldCreateSourceCandidateRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  editCandidate: async (input: TerritoryWorldEditChangeCandidateRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritoryWorldCandidateMutationResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_WORLD_CHANNELS.editCandidate,
+        parseSchemaWithoutCodeGeneration(
+          TerritoryWorldEditChangeCandidateRequestSchema,
+          input,
+        ),
+      ),
+    ),
+  enterZone: async (input: TerritoryWorldEnterZoneRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      TerritoryWorldSnapshotResponseSchema,
+      await ipcRenderer.invoke(
+        TERRITORY_WORLD_CHANNELS.enterZone,
+        parseSchemaWithoutCodeGeneration(
+          TerritoryWorldEnterZoneRequestSchema,
           input,
         ),
       ),
     ),
   getSnapshot: async () =>
     parseSchemaWithoutCodeGeneration(
-      TerritorySnapshotResponseSchema,
-      await ipcRenderer.invoke(TERRITORY_CHANNELS.getSnapshot, {}),
+      TerritoryWorldSnapshotResponseSchema,
+      await ipcRenderer.invoke(TERRITORY_WORLD_CHANNELS.getSnapshot, {}),
     ),
-  movePet: async (input: TerritoryMovePetRequest) =>
+  getZoneView: async (input: TerritoryWorldGetZoneViewRequest) =>
     parseSchemaWithoutCodeGeneration(
-      TerritoryMoveResponseSchema,
+      TerritoryWorldZoneViewResponseSchema,
       await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.movePet,
-        parseSchemaWithoutCodeGeneration(TerritoryMovePetRequestSchema, input),
-      ),
-    ),
-  placeItem: async (input: TerritoryPlaceItemRequest) =>
-    parseSchemaWithoutCodeGeneration(
-      TerritorySnapshotResponseSchema,
-      await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.placeItem,
+        TERRITORY_WORLD_CHANNELS.getZoneView,
         parseSchemaWithoutCodeGeneration(
-          TerritoryPlaceItemRequestSchema,
+          TerritoryWorldGetZoneViewRequestSchema,
           input,
         ),
       ),
     ),
-  retryImageCandidate: async (input: TerritoryImageCandidateIdRequest) =>
+  movePet: async (input: TerritoryWorldMovePetRequest) =>
     parseSchemaWithoutCodeGeneration(
-      TerritoryImageMutationResponseSchema,
+      TerritoryWorldMovePetResponseSchema,
       await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.retryImageCandidate,
+        TERRITORY_WORLD_CHANNELS.movePet,
         parseSchemaWithoutCodeGeneration(
-          TerritoryImageCandidateIdRequestSchema,
+          TerritoryWorldMovePetRequestSchema,
           input,
         ),
       ),
     ),
-  selectScene: async (input: TerritorySelectSceneRequest) =>
+  purgeInstance: async (input: TerritoryWorldPurgeInstanceRequest) =>
     parseSchemaWithoutCodeGeneration(
-      TerritorySnapshotResponseSchema,
+      TerritoryWorldSnapshotResponseSchema,
       await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.selectScene,
+        TERRITORY_WORLD_CHANNELS.purgeInstance,
         parseSchemaWithoutCodeGeneration(
-          TerritorySelectSceneRequestSchema,
+          TerritoryWorldPurgeInstanceRequestSchema,
           input,
         ),
       ),
     ),
-  selectItemVersion: async (input: TerritorySelectItemVersionRequest) =>
+  restoreRevision: async (input: TerritoryWorldRestoreRevisionRequest) =>
     parseSchemaWithoutCodeGeneration(
-      TerritorySnapshotResponseSchema,
+      TerritoryWorldSnapshotResponseSchema,
       await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.selectItemVersion,
+        TERRITORY_WORLD_CHANNELS.restoreRevision,
         parseSchemaWithoutCodeGeneration(
-          TerritorySelectItemVersionRequestSchema,
+          TerritoryWorldRestoreRevisionRequestSchema,
           input,
         ),
       ),
     ),
-  setItemPinned: async (input: TerritorySetItemPinnedRequest) =>
-    parseSchemaWithoutCodeGeneration(
-      TerritorySnapshotResponseSchema,
-      await ipcRenderer.invoke(
-        TERRITORY_CHANNELS.setItemPinned,
-        parseSchemaWithoutCodeGeneration(
-          TerritorySetItemPinnedRequestSchema,
-          input,
-        ),
-      ),
-    ),
+  subscribeChanged: (listener: (snapshot: TerritoryWorldSnapshot) => void) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown,
+    ) => {
+      listener(
+        parseSchemaWithoutCodeGeneration(TerritoryWorldSnapshotSchema, payload),
+      );
+    };
+    ipcRenderer.on(TERRITORY_WORLD_CHANNELS.snapshotChanged, wrappedListener);
+    return () => {
+      ipcRenderer.off(
+        TERRITORY_WORLD_CHANNELS.snapshotChanged,
+        wrappedListener,
+      );
+    };
+  },
 });
 
 const memoryApi: MemoryApi = Object.freeze({
@@ -1212,7 +1247,7 @@ const desktopApi: CharaMateApi = Object.freeze({
   provider: providerApi,
   runEvents: runEventsApi,
   settings: settingsApi,
-  territory: territoryApi,
+  territory: territoryWorldApi,
   voice: voiceApi,
 });
 

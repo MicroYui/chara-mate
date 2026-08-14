@@ -13,8 +13,6 @@ import { openApplicationDatabase } from "../../src/main/db/database";
 import { LexicalRetrievalPipeline } from "../../src/main/memory/lexicalRetrievalPipeline";
 import { MemoryRepository } from "../../src/main/memory/memoryRepository";
 import { MemoryService } from "../../src/main/memory/memoryService";
-import { getTerritoryScene } from "../../src/main/territory/catalog";
-import { TerritoryRepository } from "../../src/main/territory/territoryRepository";
 import type { ActivityEvent } from "../../src/shared/contracts/activity";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { FakeClock } from "../fixtures/fakeClock";
@@ -58,10 +56,6 @@ test("uses Memory and Activity through the typed desktop boundary", async () => 
       clock,
     );
     const activity = new ActivityRepository(database);
-    new TerritoryRepository(database).selectScene(
-      getTerritoryScene("forest-cabin"),
-      now,
-    );
     activity.initialize(now);
     const screenshotId = randomUUID();
     const screenshotStorageKey = `${screenshotId}.png`;
@@ -201,15 +195,17 @@ test("uses Memory and Activity through the typed desktop boundary", async () => 
     await page.getByRole("button", { name: "Memory" }).click();
     await page.getByRole("button", { name: /用户偏爱安静且有插座/u }).click();
     await page.getByRole("button", { name: "放入领地" }).click();
-    await expect(page.getByText("来自记忆收藏候选")).toBeVisible();
-    await expect(page.getByLabel("名称")).toHaveValue("喜欢的事");
+    await expect(
+      page.getByRole("heading", { name: "Territory" }),
+    ).toBeVisible();
+    await expect(page.getByText(/喜欢的事/u).first()).toBeVisible();
     const territoryResponse = await page.evaluate(() =>
       window.charaMate.territory.getSnapshot(),
     );
     expect(territoryResponse).toMatchObject({
       ok: true,
       value: {
-        itemCandidates: [
+        candidates: [
           {
             sources: [
               {
@@ -217,7 +213,7 @@ test("uses Memory and Activity through the typed desktop boundary", async () => 
                 label: "用户偏爱安静且有插座的咖啡馆。",
               },
             ],
-            status: "pending",
+            status: "failed",
           },
         ],
       },

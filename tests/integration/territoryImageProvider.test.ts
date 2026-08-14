@@ -97,6 +97,6 @@ describe("Azure Territory Image SDK adapter", () => {
       'name="image"; filename="candidate.png"',
     );
     expect(requests[1]?.body).toContain("edit object");
-    expect(requests[1]?.body).toContain("high");
+    expect(requests[1]?.body).not.toContain('name="input_fidelity"');
   });
 });

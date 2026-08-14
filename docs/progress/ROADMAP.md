@@ -1,7 +1,7 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 Done
-> 日期：2026-08-11
+> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 Done；Phase 5 Automations Done；Phase 6 Done
+> 日期：2026-08-13
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
 本文件记录里程碑依赖、工作包边界和验收，不记录逐命令历史。Phase 编号表示产品集成与验收顺序，不要求所有开发工作全局串行；只有共享契约、Schema、IPC 和同一可变资源的写入必须串行。
@@ -59,7 +59,8 @@ flowchart TD
     SE["自进化<br/>仅晋级后"]
 
     PET["P6-PET<br/>桌宠窗口 / 气泡 / 导入"]
-    TERR["P6-TERRITORY<br/>场景 / 记忆物件 / 生图"]
+    TD["Territory Decisions<br/>SCENE-GENERATION / WORLD-PERFORMANCE"]
+    TERR["P6-TERRITORY<br/>World / Zone / 建造 / AI 创作"]
     P6["Phase 6<br/>桌宠与领地集成"]
     P7["Phase 7<br/>整体体验收口"]
 
@@ -97,9 +98,10 @@ flowchart TD
 
     P1 --> PET
     P2 --> PET
-    MEM --> TERR
-    ACT --> TERR
-    PR --> TERR
+    MEM --> TD
+    ACT --> TD
+    PR --> TD
+    TD --> TERR
     PET --> P6
     TERR --> P6
 
@@ -120,7 +122,7 @@ flowchart TD
 2. **Wave 1 — Phase 1 并行（已完成）**：UI fixture、持久化/IPC、Provider/Secret 三条所有权不重叠的路径并行，随后由一个集成 owner 收口 Chats。
 3. **Wave 2 — Phase 2 主干（已完成）**：后继 H2–H6、source-derived Discovery 与 Cache 的选择已重写为唯一 Agent Runtime、Tool/Approval、Local/Browser/Computer/MCP/Skills、可观测性和固定 Cache On 生产路径。H7 W2 Quality 300/300 valid；机械失败、产品 amendment 与专用 H7 Timing 100 的 scope closure 原样保留，不声称 timing Gate 通过。完整 offline、Electron E2E、build、package 和开发/打包 smoke 已通过。
 4. **Wave 3 — 多支线并行**：Agent 主干稳定后，Memory 研究、Voice Contract/实验、Automation 基础、桌宠基础与 Multi-agent 实验可并行；Memory 的语义/检索/UI、基础自动形成与跨 Chat 精确更新均已完成，其他支线仍按独立所有权推进，候选代码只在隔离 worktree。
-5. **Wave 4 — 长期理解支线**：Memory 自动形成闭环与 Activity 完成后，主动聊天、Self-evolution 实验和 Territory 记忆物件可按各自 Gate 与所有权边界推进。
+5. **Wave 4 — 长期理解与领地支线**：Memory 自动形成闭环与 Activity 完成后，主动聊天、Self-evolution 实验和 Territory 沙盒的设计/Decision 可按各自 Gate 与所有权边界推进；Territory 共享合同由单一 integration owner 串行冻结，World runtime、Renderer fixture 和 AI 生成研究随后按所有权拆分。
 6. **Wave 5 — 全产品收口**：只集成已通过 Gate 的路径，运行完整离线、打包、E2E 和明确要求的 Live 检查。
 
 ## Phase 0 — 工程基线与稳定契约
@@ -316,30 +318,54 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## Phase 6 — 桌宠与领地
 
+> 里程碑状态：Done（2026-08-13）。空间粒度、统一 2.5D 深度、高密度起始房、类型化生成物与探索态左右键交互均已通过最终离线、E2E、打包、Live 与实机视觉验收。
+
 ### 依赖
 
 - 桌宠基础窗口和 Pet 导入可在 Phase 1 后并行开发；状态与审批投影依赖 Phase 2；
-- Memory 物件依赖 Phase 3，Activity 趋势候选依赖 Activity；
-- Image Generation/Edit 共用一套 deployment 配置，依赖 Provider Adapter 和真实 Azure Contract Test。
+- Memory 物件依赖 Phase 3，Activity 趋势候选依赖 Activity；二者只向 Territory 提供来源快照，不拥有 World 表；
+- Image Generation/Edit 共用一套 deployment 配置，依赖 Provider Adapter 和真实 Azure Contract Test；
+- `P6-TERRITORY-SANDBOX-DESIGN` 已冻结可扩建 World/Zone 与多层组合的产品/UI 方向，旧固定场景原型不再是生产路径；
+- `TERRITORY-SCENE-GENERATION` 已选择结构化 compiler + 每个实际 Definition 一张视觉 + 原子 Asset Pack；`TERRITORY-WORLD-PERFORMANCE` 已选择活动 Zone + 直接 scene tree + Pixi Assets cache。两项都不产生普通用户设置或并行 runtime 模式。
 
 ### 工作包
 
-- `P6-PET-WINDOW`：透明常驻窗口、自由拖动、多显示器、位置/尺寸/朝向恢复、托盘和 earcon。
-- `P6-PET-RUNTIME`：PixiJS sprite runtime、CompanionState 动画、气泡和 Voice envelope 联动。
-- `P6-PET-IMPORT`：Codex v1/v2 校验、复制安装、自有目录和缺失 look row 降级；发布包内置 Columbinya v2 与 Linnea v1，首次启动沿同一路径幂等复制且不覆盖同 ID 用户资产。
-- `P6-TERRITORY-BASE`：基础像素场景、图层、nav grid、角色移动、布置和收藏库。
-- `P6-TERRITORY-ITEM-MANIFEST`：2.5D 深度锚点、地面平面、占用/碰撞 mask、单层承载插槽、附件关系与结构化 authoring 校验；接收已落盘图片和 manifest，完成归一化 asset、不可变 definition/item、受控 URL 与 Renderer 投影；该包只拥有 Territory 安装入口，不自行分叉 Agent Runtime。
-- `P6-TERRITORY-MEMORY`：Memory/Activity candidate、来源追溯、容量回收、版本与 pin；容量由 `TERRITORY-CAPACITY` 一次冻结为 12，不形成产品模式。
-- `P6-TERRITORY-IMAGE`：同一 deployment 的 Generation/Edit 路由、统一 style prompt、去背景、候选确认和失败恢复；注册一个延迟发现的内建 `territory.generate_item` Tool，模型只必填名称、含义和视觉意图，活动场景/Provider 由宿主解析，可选结构参数由 Territory 编译为同一 manifest；接受后调用唯一的 Territory asset + manifest 领域入口，不另建资产存储路径。
+- `P6-PET-WINDOW`（已完成）：透明常驻窗口、自由拖动、多显示器、位置/尺寸/朝向恢复、托盘和 earcon。
+- `P6-PET-RUNTIME`（已完成）：PixiJS sprite runtime、CompanionState 动画、气泡和 Voice envelope 联动。
+- `P6-PET-IMPORT`（已完成）：Codex v1/v2 校验、复制安装、自有目录和缺失 look row 降级；发布包内置 Columbinya v2 与 Linnea v1，首次启动沿同一路径幂等复制且不覆盖同 ID 用户资产。
+- `P6-TERRITORY-SANDBOX-DESIGN`（已完成）：产品 §10、UI §11.1、Phase DAG 与 Decision 状态已改为固定视角但可扩建的单一 2.5D Territory World、相连 Zone、多层组合、游览/布置、AI Preview、完整物件生命周期和无全局物件数量上限。
+- `P6-TERRITORY-WORLD-CONTRACT`（已完成）：World/Zone/World Revision、Style Profile/Asset Pack、Entity Definition/Instance、组合/锚点、来源、Change Candidate、删除恢复、typed IPC/Preload 与数据库 Schema 已冻结；旧 scene/capacity 合同、Adapter 和行为回归已删除。
+- `P6-TERRITORY-WORLD-RUNTIME`（已完成）：Main Repository/Service 与 PixiJS runtime 实现 terrain/underlay/structure/object/attachment/foreground/effect 七层、镜头、活动 Zone 直接树投影、寻路、碰撞、遮挡、组合、Revision 提交和恢复；桌宠只消费同一个 World projection。
+- `P6-TERRITORY-BUILD-UI`（已完成）：游览/布置工作区、收藏与搜索、直接放置与拖动、多选、移动/复制、组合/拆分、锁定、删除/恢复、Undo/Redo、检查器和可访问控制只消费 typed Preload；探索态右键移动到 24 px 原子落点，左键选择/互动，underlay 可同时踩踏与点击。
+- `P6-TERRITORY-AI-CREATION`（已完成）：统一 Image Adapter 与 Territory compiler 可生成/编辑单物件、选区、完整 Zone、扩建和 Style Profile；所有结果进入同一种 Preview/change set，确认前不改当前 World。
+- `P6-TERRITORY-MEMORY-LIVING`（已完成）：Memory/Activity 来源、稳定记忆物件身份和版本已接入新 Entity 合同；时间/季节氛围、类型化物件能力、桌宠上下文行为和可跳过的记忆形成演出完成，不增加经济或养成数值。
+- `P6-TERRITORY-SPATIAL-DEPTH`（已完成）：以 24 px 整数原子单位承载细粒度家具、碰撞和寻路，以 48 px 宏格承载地形/结构；Definition 显式声明 depth mode，桌宠、家具、可遮挡结构及其附件使用共享脚底 Y 排序，背景与前景保持确定层级。
+- `P6-TERRITORY-RICH-ROOM`（已完成）：随包起始蓝图为 48 × 30 原子格、403 个 Zone 实例的可平移高密度生活房，包含多个用途角落、附件、使用痕迹、灯光/前景与可重复验证的前后遮挡样例；所有内容仍是普通可编辑 Definition/Instance/Group。
+
+### 包边界与验证
+
+- `P6-TERRITORY-SANDBOX-DESIGN` 只修改产品/UI/研究/进度 Markdown；以格式检查、链接/Decision 引用审计、旧假设搜索和人工阅读作为验证，不运行或改变生产数据。
+- `P6-TERRITORY-WORLD-CONTRACT` 是 shared Schema、typed IPC/Preload 和 Territory 数据边界的唯一 integration owner。它必须提供 World/change 正反例 contract test、Repository 原子 Revision/冲突/删除恢复 integration test，并删除旧 scene/capacity Schema、常量、fixture 和回归；Memory、Activity、Provider 与 Pet 只消费冻结合同，不并行编辑这些文件。
+- `P6-TERRITORY-WORLD-RUNTIME` 拥有纯几何/组合/寻路 focused test、活动 Zone projection 与 asset 生命周期 integration test，以及镜头、遮挡、视口离开/返回和重启恢复的 Electron E2E。`TERRITORY-WORLD-PERFORMANCE` 的 runner、失败策略、截图和原始结果已删除或按 hash 记录，只保留胜者产品回归。
+- `P6-TERRITORY-BUILD-UI` 只使用冻结 fixture 开发 React 工作区，覆盖工具状态、Undo/Redo、检查器、组合、删除恢复、AI Preview diff、键盘与 reduced motion 的 component test；真实 Main 接入和跨重启旅程由 Territory integration owner 完成。
+- `P6-TERRITORY-AI-CREATION` 的确定性测试注入 Image/Compiler adapter，覆盖锁定内容、base Revision 冲突、取消、失败、重试、Asset Pack 原子安装与回滚；真实 GPT Image 只进入显式 live/benchmark。`TERRITORY-SCENE-GENERATION` 的失败 Arms、prompt/processor、临时依赖、素材和设置在胜者重写前全部删除。
+- `P6-TERRITORY-MEMORY-LIVING` 覆盖 Memory/Activity 来源幂等、上游删除后快照保留、Definition Revision、桌宠能力与环境投影；用户可见 E2E 从 Memory 形成物件、放入组合、编辑版本、删除/恢复并重启，确认不会反写或删除 Memory。
+- 整个 Phase 6 的非目标是第一人称/3D 体素、物理引擎、挖矿/锻造/战斗、经济/收益、关系等级、无限开放世界、任意生成脚本和用户可调渲染/生成参数。
 
 ### 验收
 
 - 桌宠跨重启与显示器变化保持可见和位置语义，v1/v2 动画正确；
 - Approval 气泡、Voice 状态和 Chat Run 使用同一真源；
-- 首次领地无需等待生图即可完整显示，移动/放置/追溯/收回确定性；
-- 角色、地面物件和附件按结构化 manifest 确定碰撞、遮挡与承载关系，父物件变换和重启不会破坏附件；
-- 生图失败不损坏场景，超过容量只回收藏库，不删除 Memory 或资产版本。
-- Agent 可经统一 Run/Tool/Approval 路径生成持久化候选；Tool 不绕过用户确认，默认结构和显式尺寸、占地、锚点、插槽都能恢复为同一 manifest。
+- 首次领地无需等待生图即可完整显示，起始地形、结构、背景和物件均可编辑、删除和恢复；
+- 用户可以扩建相连 Zone，并用地形、结构、家具、附件、组合和效果形成明显不同但风格统一的结果；
+- 角色、地形、结构、物件和多层附件按同一个结构化 World contract 确定碰撞、遮挡、承载与寻路，父子变换、视口离开和重启不破坏关系；
+- 大 Zone 默认以接近素材原生比例显示局部，布置时可见原子格与宏格；起始房在默认视口和继续平移后都保持高密度、连贯且可编辑；
+- 探索态右键只负责移动、左键只负责选择/查看且绝不触发寻路；右键点击地毯等 underlay 能走到该原子落点，左键点击同一物件仍能查看故事且不产生不可达错误，连续右键从桌宠当前渲染位置平滑改道，画布不弹出系统菜单；
+- 桌宠与物件按共享脚底 Y 深度在前后两侧产生相反遮挡顺序，并绕过 collision cells；不能使用角色固定高层伪装 2.5D；
+- 物件名称/故事、外观、版本、结构、收藏、组合、删除和恢复形成完整生命周期；删除 Territory 内容不删除 Memory/Activity 来源；
+- AI 可经统一 Run/Tool/Approval 与 Preview 生成单物件、套装、选区和扩建候选；锁定内容不变，失败或取消不损坏当前 World Revision；
+- 不存在固定场景、全局物件数量常量、超限自动收回、旧 Territory Adapter、双 Renderer、生成算法设置或经典模式；
+- 目标窗口和硬件上的真实大型组合世界通过 `TERRITORY-WORLD-PERFORMANCE` 获胜路径滚动、缩放、活动 Zone 重建、恢复和 packaged E2E，视口外内容不丢失。
 
 ## Phase 7 — 整体体验收口
 

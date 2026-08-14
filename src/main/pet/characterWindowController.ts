@@ -24,6 +24,8 @@ interface DragState {
 export class CharacterWindowController {
   private window: BrowserWindow | null = null;
   private drag: DragState | undefined;
+  private mainWindowVisible = false;
+  private territoryActive = false;
 
   constructor(
     private readonly service: PetService,
@@ -33,6 +35,26 @@ export class CharacterWindowController {
 
   getWindow(): BrowserWindow | null {
     return this.window;
+  }
+
+  private reconcileVisibility(): void {
+    const window = this.window;
+    if (!window || window.isDestroyed() || !this.revealOnReady) return;
+    if (this.mainWindowVisible && this.territoryActive) {
+      if (window.isVisible()) window.hide();
+      return;
+    }
+    if (!window.isVisible()) window.showInactive();
+  }
+
+  setMainWindowVisible(visible: boolean): void {
+    this.mainWindowVisible = visible;
+    this.reconcileVisibility();
+  }
+
+  setTerritoryActive(active: boolean): void {
+    this.territoryActive = active;
+    this.reconcileVisibility();
   }
 
   private senderIsCharacter(sender: Electron.WebContents): boolean {
@@ -103,7 +125,7 @@ export class CharacterWindowController {
     this.window = window;
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     window.once("ready-to-show", () => {
-      if (this.revealOnReady) window.showInactive();
+      this.reconcileVisibility();
     });
     window.on("close", () => this.persistPlacement());
     window.on("closed", () => {

@@ -67,6 +67,7 @@ function createApi(initial: PetLibrarySnapshot) {
     select,
     setAnimationSpeed,
     setScale,
+    setTerritoryActive: vi.fn(),
     subscribeChanged: () => () => undefined,
     subscribeOpenMain: () => () => undefined,
   };
