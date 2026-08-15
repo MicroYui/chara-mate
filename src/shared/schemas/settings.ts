@@ -68,6 +68,40 @@ export const SettingsEmptyRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const DataUsageCategoryIdSchema = Type.Union([
+  Type.Literal("database"),
+  Type.Literal("artifacts"),
+  Type.Literal("browser"),
+  Type.Literal("activity"),
+  Type.Literal("territory"),
+  Type.Literal("pets"),
+  Type.Literal("skills"),
+  Type.Literal("application"),
+]);
+
+export const DataUsageCategorySchema = Type.Object(
+  {
+    byteLength: Type.Integer({ minimum: 0 }),
+    id: DataUsageCategoryIdSchema,
+    label: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const DataSettingsSnapshotSchema = Type.Object(
+  {
+    categories: Type.Array(DataUsageCategorySchema),
+    dataDirectory: NonBlankStringSchema,
+    totalByteLength: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+
+export const DataActionResultSchema = Type.Object(
+  { message: NonBlankStringSchema },
+  { additionalProperties: false },
+);
+
 export const AgentSettingsSaveRequestSchema = Type.Object(
   { agent: AgentSettingsSchema },
   { additionalProperties: false },
@@ -108,4 +142,10 @@ export const VoiceSettingsSaveResponseSchema =
   operationResponse(VoiceSettingsSchema);
 export const BrowserActionResponseSchema = operationResponse(
   BrowserActionResultSchema,
+);
+export const DataSettingsSnapshotResponseSchema = operationResponse(
+  DataSettingsSnapshotSchema,
+);
+export const DataActionResponseSchema = operationResponse(
+  DataActionResultSchema,
 );

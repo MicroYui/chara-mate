@@ -23,10 +23,17 @@ import styles from "./App.module.css";
 import { AppShell } from "./AppShell";
 import {
   readBackgroundScheme,
+  readCustomBackgroundColors,
   readSidebarCollapsed,
+  readThemePreference,
+  resolveThemePreference,
   writeBackgroundScheme,
+  writeCustomBackgroundColors,
   writeSidebarCollapsed,
+  writeThemePreference,
   type BackgroundScheme,
+  type CustomBackgroundColors,
+  type ThemePreference,
 } from "./appearance";
 
 type FoundationState =
@@ -38,6 +45,7 @@ export function App() {
   const [foundation, setFoundation] = useState<FoundationState>({
     status: "loading",
   });
+  const [foundationLoadAttempt, setFoundationLoadAttempt] = useState(0);
   const [uiState, dispatch] = useReducer(chatsUiReducer, undefined, () => ({
     ...initialChatsUiState,
     sidebarCollapsed: readSidebarCollapsed(window.localStorage),
@@ -45,14 +53,25 @@ export function App() {
   const [backgroundScheme, setBackgroundScheme] = useState<BackgroundScheme>(
     () => readBackgroundScheme(window.localStorage),
   );
+  const [customBackgroundColors, setCustomBackgroundColors] =
+    useState<CustomBackgroundColors>(() =>
+      readCustomBackgroundColors(window.localStorage),
+    );
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
+    readThemePreference(window.localStorage),
+  );
+  const [systemPrefersDark, setSystemPrefersDark] = useState(
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches,
+  );
   const [petLibrary, setPetLibrary] = useState<PetLibrarySnapshot | null>(null);
   const [journeySnapshot, setJourneySnapshot] = useState<JourneySnapshot>({
     journeys: [],
     sessions: [],
   });
   const [journeyError, setJourneyError] = useState<string | null>(null);
-  const [openCharacterSettingsToken, setOpenCharacterSettingsToken] =
-    useState(0);
+  const [settingsSectionTarget, setSettingsSectionTarget] = useState<
+    "appearance" | "character" | "models"
+  >("appearance");
   const [approvalNavigation, setApprovalNavigation] =
     useState<ApprovalNavigationTarget | null>(null);
   const focusedApprovalId = useRef<string | undefined>(undefined);
@@ -144,7 +163,7 @@ export function App() {
           type: "page.selected",
         });
         if (target === "character") {
-          setOpenCharacterSettingsToken((token) => token + 1);
+          setSettingsSectionTarget("character");
         }
       }),
     [],
@@ -225,7 +244,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [foundationLoadAttempt]);
 
   useEffect(() => {
     if (foundation.status === "ready") {
@@ -238,6 +257,40 @@ export function App() {
     document.documentElement.dataset["backgroundScheme"] = backgroundScheme;
     writeBackgroundScheme(window.localStorage, backgroundScheme);
   }, [backgroundScheme]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const values: ReadonlyArray<[string, string]> = [
+      ["--custom-accent", customBackgroundColors.accent],
+      ["--custom-canvas", customBackgroundColors.canvas],
+      ["--custom-sidebar", customBackgroundColors.sidebar],
+      ["--custom-surface", customBackgroundColors.surface],
+    ];
+    for (const [property, value] of values) {
+      if (backgroundScheme === "custom")
+        root.style.setProperty(property, value);
+      else root.style.removeProperty(property);
+    }
+    writeCustomBackgroundColors(window.localStorage, customBackgroundColors);
+  }, [backgroundScheme, customBackgroundColors]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = (event: MediaQueryListEvent) =>
+      setSystemPrefersDark(event.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  const resolvedTheme = resolveThemePreference(
+    themePreference,
+    systemPrefersDark,
+  );
+
+  useEffect(() => {
+    document.documentElement.dataset["theme"] = resolvedTheme;
+    writeThemePreference(window.localStorage, themePreference);
+  }, [resolvedTheme, themePreference]);
 
   useEffect(() => {
     writeSidebarCollapsed(window.localStorage, uiState.sidebarCollapsed);
@@ -340,6 +393,15 @@ export function App() {
         <p className={styles["error"]} role="alert">
           {foundation.message}
         </p>
+        <button
+          type="button"
+          onClick={() => {
+            setFoundation({ status: "loading" });
+            setFoundationLoadAttempt((attempt) => attempt + 1);
+          }}
+        >
+          重试启动
+        </button>
       </main>
     );
   }
@@ -440,6 +502,8 @@ export function App() {
       activePet={activePet}
       petAnimationSpeed={petLibrary?.animationSpeed ?? 0.75}
       backgroundScheme={backgroundScheme}
+      customBackgroundColors={customBackgroundColors}
+      themePreference={themePreference}
       chatDomain={chatDomain}
       dispatch={dispatch}
       foundation={foundation.snapshot}
@@ -489,6 +553,13 @@ export function App() {
       onClearJourneyError={() => setJourneyError(null)}
       state={uiState}
       onBackgroundSchemeChange={setBackgroundScheme}
+      onCustomBackgroundColorsChange={setCustomBackgroundColors}
+      onThemePreferenceChange={setThemePreference}
+      onConfigureModels={() => {
+        setSettingsSectionTarget("models");
+        dispatch({ page: "settings", type: "page.selected" });
+      }}
+      onSettingsOpen={() => setSettingsSectionTarget("appearance")}
       onProvidersChanged={() => void chatStore.refreshModels()}
       onAgentSettingsChanged={(settings) =>
         dispatch({
@@ -518,7 +589,7 @@ export function App() {
       onVoicePausedChange={(paused) => void voiceStore.setPaused(paused)}
       onVoiceRetry={() => void startVoice(true)}
       onVoiceStart={() => void startVoice()}
-      openCharacterSettingsToken={openCharacterSettingsToken}
+      settingsSectionTarget={settingsSectionTarget}
       voiceSnapshot={voice.snapshot}
       voiceStore={voiceStore}
       voiceError={voice.error}

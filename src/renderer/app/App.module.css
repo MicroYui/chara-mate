@@ -39,6 +39,17 @@
   text-align: center;
 }
 
+.startup button {
+  min-height: 34px;
+  justify-self: center;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 5px 12px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
 @keyframes spin {
   to {
     rotate: 360deg;

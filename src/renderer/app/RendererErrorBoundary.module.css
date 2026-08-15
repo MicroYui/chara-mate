@@ -1,0 +1,83 @@
+.recovery {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  padding: 32px;
+  background: var(--canvas);
+  color: var(--text-primary);
+}
+
+.recovery > div {
+  width: min(520px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  background: var(--surface);
+  box-shadow: var(--composer-shadow);
+}
+
+.recovery p,
+.recovery h1,
+.recovery span {
+  margin: 0;
+}
+
+.recovery p {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.recovery h1 {
+  margin: 7px 0 8px;
+  font-size: 22px;
+  letter-spacing: -0.025em;
+}
+
+.recovery span {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.recovery details {
+  margin-top: 18px;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.recovery code {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--danger);
+  font-family: var(--font-mono);
+}
+
+.recovery nav {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.recovery button {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 11px;
+  background: var(--surface);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.recovery button:last-child {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}

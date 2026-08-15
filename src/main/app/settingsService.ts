@@ -1,9 +1,11 @@
-import { stat } from "node:fs/promises";
+import { lstat, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type {
   AgentSettings,
   BrowserComputerSettings,
+  DataSettingsSnapshot,
+  DataUsageCategoryId,
   SettingsSnapshot,
   VoiceSettings,
   VoiceSettingsConfig,
@@ -18,6 +20,43 @@ export interface ComputerPermissionReader {
   readMicrophone(): VoiceSettings["microphone"];
 }
 
+const DATA_CATEGORIES = [
+  { id: "database", label: "对话与应用数据库" },
+  { id: "artifacts", label: "文件与运行产物" },
+  { id: "browser", label: "受管浏览器资料" },
+  { id: "activity", label: "Activity 记录与截图" },
+  { id: "territory", label: "领地场景与生成素材" },
+  { id: "pets", label: "桌宠资源" },
+  { id: "skills", label: "Skills" },
+  { id: "application", label: "应用配置与缓存" },
+] as const satisfies readonly {
+  readonly id: DataUsageCategoryId;
+  readonly label: string;
+}[];
+
+function categoryForEntry(name: string): DataUsageCategoryId {
+  if (/^charamate\.sqlite(?:-(?:shm|wal))?$/u.test(name)) return "database";
+  if (name === "artifacts") return "artifacts";
+  if (name === "browser") return "browser";
+  if (name === "activity") return "activity";
+  if (name === "territory") return "territory";
+  if (name === "pets") return "pets";
+  if (name === "skills") return "skills";
+  return "application";
+}
+
+async function byteLengthOf(target: string): Promise<number> {
+  const metadata = await lstat(target).catch(() => undefined);
+  if (!metadata || metadata.isSymbolicLink()) return 0;
+  if (metadata.isFile()) return metadata.size;
+  if (!metadata.isDirectory()) return 0;
+  const entries = await readdir(target).catch(() => []);
+  const sizes = await Promise.all(
+    entries.map((entry) => byteLengthOf(path.join(target, entry))),
+  );
+  return sizes.reduce((total, size) => total + size, 0);
+}
+
 export class SettingsService {
   constructor(
     private readonly repository: SettingsRepository,
@@ -27,6 +66,8 @@ export class SettingsService {
     private readonly onWorkingDirectoryChanged: (
       directory: string,
     ) => Promise<void>,
+    private readonly dataDirectory: string,
+    private readonly openPath: (target: string) => Promise<string>,
   ) {}
 
   getAgent(): AgentSettings {
@@ -48,6 +89,41 @@ export class SettingsService {
       },
       voice: this.getVoice(),
     };
+  }
+
+  async getDataSnapshot(): Promise<DataSettingsSnapshot> {
+    const byteLengths = new Map<DataUsageCategoryId, number>(
+      DATA_CATEGORIES.map(({ id }) => [id, 0]),
+    );
+    const entries = await readdir(this.dataDirectory).catch(() => []);
+    await Promise.all(
+      entries.map(async (entry) => {
+        const id = categoryForEntry(entry);
+        const byteLength = await byteLengthOf(
+          path.join(this.dataDirectory, entry),
+        );
+        byteLengths.set(id, (byteLengths.get(id) ?? 0) + byteLength);
+      }),
+    );
+    const categories = DATA_CATEGORIES.map(({ id, label }) => ({
+      byteLength: byteLengths.get(id) ?? 0,
+      id,
+      label,
+    }));
+    return {
+      categories,
+      dataDirectory: this.dataDirectory,
+      totalByteLength: categories.reduce(
+        (total, category) => total + category.byteLength,
+        0,
+      ),
+    };
+  }
+
+  async openDataDirectory(): Promise<{ message: string }> {
+    const error = await this.openPath(this.dataDirectory);
+    if (error) throw new Error(error);
+    return { message: "数据目录已在 Finder 中打开。" };
   }
 
   async saveAgent(settings: AgentSettings): Promise<AgentSettings> {

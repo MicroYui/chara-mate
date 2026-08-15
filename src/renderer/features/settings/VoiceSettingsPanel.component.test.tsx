@@ -27,6 +27,7 @@ describe("Voice Settings panel", () => {
         }),
       );
     const settingsApi = {
+      getDataSnapshot: vi.fn(),
       getSnapshot: vi.fn().mockResolvedValue({
         ok: true,
         value: {
@@ -51,6 +52,7 @@ describe("Voice Settings panel", () => {
         },
       }),
       importBrowserCookies: vi.fn(),
+      openDataDirectory: vi.fn(),
       openManagedBrowser: vi.fn(),
       saveAgent: vi.fn(),
       saveVoice,

@@ -60,13 +60,23 @@ describe("Phase 2 Agent Settings", () => {
     const root = await temporaryDirectory("chara-mate-settings-");
     const firstWorkspace = path.join(root, "first");
     const secondWorkspace = path.join(root, "second");
+    const dataDirectory = path.join(root, "user-data");
     await Promise.all([
       mkdir(firstWorkspace, { recursive: true }),
       mkdir(secondWorkspace, { recursive: true }),
+      mkdir(path.join(dataDirectory, "activity"), { recursive: true }),
+      mkdir(path.join(dataDirectory, "territory"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(path.join(dataDirectory, "charamate.sqlite"), "db!"),
+      writeFile(path.join(dataDirectory, "activity", "capture.png"), "shot"),
+      writeFile(path.join(dataDirectory, "territory", "room.png"), "scene"),
+      writeFile(path.join(dataDirectory, "settings.json"), "{}"),
     ]);
     const database = openApplicationDatabase(path.join(root, "app.sqlite"));
     const repository = new SettingsRepository(database, firstWorkspace);
     const refreshed: string[] = [];
+    const openedPaths: string[] = [];
     let browserOpened = 0;
     const browser = {
       importCookies: () => Promise.resolve(3),
@@ -89,6 +99,11 @@ describe("Phase 2 Agent Settings", () => {
       (directory) => {
         refreshed.push(directory);
         return Promise.resolve();
+      },
+      dataDirectory,
+      (target) => {
+        openedPaths.push(target);
+        return Promise.resolve("");
       },
     );
 
@@ -132,6 +147,24 @@ describe("Phase 2 Agent Settings", () => {
       message: "受管浏览器已打开。",
     });
     expect(browserOpened).toBe(1);
+    await expect(service.openDataDirectory()).resolves.toEqual({
+      message: "数据目录已在 Finder 中打开。",
+    });
+    expect(openedPaths).toEqual([dataDirectory]);
+    await expect(service.getDataSnapshot()).resolves.toMatchObject({
+      categories: [
+        { byteLength: 3, id: "database" },
+        { byteLength: 0, id: "artifacts" },
+        { byteLength: 0, id: "browser" },
+        { byteLength: 4, id: "activity" },
+        { byteLength: 5, id: "territory" },
+        { byteLength: 0, id: "pets" },
+        { byteLength: 0, id: "skills" },
+        { byteLength: 2, id: "application" },
+      ],
+      dataDirectory,
+      totalByteLength: 14,
+    });
     await expect(
       service.importBrowserCookies(path.join(root, "cookies.json")),
     ).resolves.toMatchObject({ importedCookies: 3 });

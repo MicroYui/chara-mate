@@ -1,9 +1,42 @@
 import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
+import { MakerDMG } from "@electron-forge/maker-dmg";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import type { ForgeConfig } from "@electron-forge/shared-types";
+import { execFile, type ExecFileException } from "node:child_process";
+import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright-core";
+
+type DmgDetachCallback = (error: ExecFileException | null) => void;
+
+interface AppDmgHdiutil {
+  detach(mountPath: string, callback: DmgDetachCallback): void;
+}
+
+function installDmgDetachFallback(): void {
+  if (process.platform !== "darwin") return;
+
+  const require = createRequire(import.meta.url);
+  const hdiutil = require("appdmg/lib/hdiutil.js") as AppDmgHdiutil;
+  hdiutil.detach = (mountPath, callback) => {
+    execFile("hdiutil", ["detach", mountPath], (error) => {
+      if (!error || error.code !== 16 || !mountPath.startsWith("/Volumes/")) {
+        callback(error);
+        return;
+      }
+
+      // appdmg@0.6.6 only retries code 16. Endpoint DLP scanners can dissent
+      // forever after every file handle has closed, so force only the temporary
+      // volume created by this DMG maker and leave the scanner itself untouched.
+      execFile("hdiutil", ["detach", "-force", mountPath], (forceError) => {
+        callback(forceError);
+      });
+    });
+  };
+}
+
+installDmgDetachFallback();
 
 function chromiumRevisionDirectory(): string | undefined {
   let current = path.dirname(chromium.executablePath());
@@ -17,10 +50,22 @@ function chromiumRevisionDirectory(): string | undefined {
 const chromiumDirectory = chromiumRevisionDirectory();
 const defaultPetsDirectory = path.resolve("resources/default-pets");
 const trayDirectory = path.resolve("resources/tray");
+const appIconPath = path.resolve("resources/CharaMate.icns");
+const signingIdentity = process.env["CHARAMATE_MACOS_SIGN_IDENTITY"]?.trim();
+const notarizationKeychainProfile =
+  process.env["CHARAMATE_NOTARIZE_KEYCHAIN_PROFILE"]?.trim();
+const notarizationKeychain = process.env["CHARAMATE_NOTARIZE_KEYCHAIN"]?.trim();
+
+if (notarizationKeychainProfile && !signingIdentity) {
+  throw new Error(
+    "CHARAMATE_NOTARIZE_KEYCHAIN_PROFILE requires CHARAMATE_MACOS_SIGN_IDENTITY.",
+  );
+}
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    icon: appIconPath,
     executableName: "CharaMate",
     extraResource: [
       defaultPetsDirectory,
@@ -30,6 +75,15 @@ const config: ForgeConfig = {
         : []),
     ],
     appBundleId: "com.charamate.desktop",
+    ...(signingIdentity ? { osxSign: { identity: signingIdentity } } : {}),
+    ...(notarizationKeychainProfile
+      ? {
+          osxNotarize: {
+            keychainProfile: notarizationKeychainProfile,
+            ...(notarizationKeychain ? { keychain: notarizationKeychain } : {}),
+          },
+        }
+      : {}),
     ignore: (filePath) => {
       if (!filePath) {
         return false;
@@ -51,7 +105,15 @@ const config: ForgeConfig = {
     },
   },
   rebuildConfig: {},
-  makers: [],
+  makers: [
+    new MakerDMG({
+      format: "ULFO",
+      icon: appIconPath,
+      name: "CharaMate",
+      overwrite: true,
+      title: "CharaMate",
+    }),
+  ],
   plugins: [
     new AutoUnpackNativesPlugin({}),
     new VitePlugin({

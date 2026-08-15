@@ -6,6 +6,11 @@ import type {
   AgentSettingsSchema,
   BrowserActionResponseSchema,
   BrowserComputerSettingsSchema,
+  DataActionResponseSchema,
+  DataSettingsSnapshotResponseSchema,
+  DataSettingsSnapshotSchema,
+  DataUsageCategoryIdSchema,
+  DataUsageCategorySchema,
   SettingsSnapshotResponseSchema,
   SettingsSnapshotSchema,
   VoiceSettingsConfigSchema,
@@ -15,8 +20,10 @@ import type {
 } from "../schemas/settings";
 
 export const SETTINGS_CHANNELS = {
+  getDataSnapshot: "settings.data.getSnapshot",
   getSnapshot: "settings.getSnapshot",
   importBrowserCookies: "settings.browser.importCookies",
+  openDataDirectory: "settings.data.openDirectory",
   openManagedBrowser: "settings.browser.open",
   saveAgent: "settings.agent.save",
   saveVoice: "settings.voice.save",
@@ -26,6 +33,13 @@ export type AgentSettings = Static<typeof AgentSettingsSchema>;
 export type BrowserComputerSettings = Static<
   typeof BrowserComputerSettingsSchema
 >;
+export type DataUsageCategoryId = Static<typeof DataUsageCategoryIdSchema>;
+export type DataUsageCategory = Static<typeof DataUsageCategorySchema>;
+export type DataSettingsSnapshot = Static<typeof DataSettingsSnapshotSchema>;
+export type DataSettingsSnapshotResponse = Static<
+  typeof DataSettingsSnapshotResponseSchema
+>;
+export type DataActionResponse = Static<typeof DataActionResponseSchema>;
 export type SettingsSnapshot = Static<typeof SettingsSnapshotSchema>;
 export type VoiceSettingsConfig = Static<typeof VoiceSettingsConfigSchema>;
 export type VoiceSettings = Static<typeof VoiceSettingsSchema>;
@@ -47,9 +61,11 @@ export type VoiceSettingsSaveResponse = Static<
 >;
 
 export interface SettingsApi {
+  getDataSnapshot(): Promise<DataSettingsSnapshotResponse>;
   getSnapshot(): Promise<SettingsSnapshotResponse>;
   importBrowserCookies(): Promise<BrowserActionResponse>;
   openManagedBrowser(): Promise<BrowserActionResponse>;
+  openDataDirectory(): Promise<DataActionResponse>;
   saveAgent(
     request: AgentSettingsSaveRequest,
   ): Promise<AgentSettingsSaveResponse>;

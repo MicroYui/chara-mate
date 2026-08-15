@@ -204,6 +204,8 @@ describe("Phase 2 runtime observability", () => {
       const body = await response.text();
       expect(body).toContain('"toolName":"file.write"');
       expect(body).toContain('"voice":');
+      expect(body).toContain('"product":');
+      expect(body).toContain('"sqliteAllocatedBytes":0');
       expect(body).not.toContain('"type":"model"');
     } finally {
       await dashboard.close();

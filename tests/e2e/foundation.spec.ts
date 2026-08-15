@@ -267,8 +267,10 @@ test("launches through the typed preload boundary", async () => {
       ],
       runEventKeys: ["replay", "subscribe"],
       settingsKeys: [
+        "getDataSnapshot",
         "getSnapshot",
         "importBrowserCookies",
+        "openDataDirectory",
         "openManagedBrowser",
         "saveAgent",
         "saveVoice",
@@ -666,6 +668,40 @@ description: Verify editing, saving, and permanent deletion through Settings.
         },
       },
     });
+    await page.getByRole("button", { exact: true, name: "Appearance" }).click();
+    await page
+      .getByRole("group", { name: "明暗主题" })
+      .getByRole("radio", { name: /^深色/u })
+      .click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect(page.locator('input[name="background-scheme"]')).toHaveCount(
+      4,
+    );
+    await page.getByRole("radio", { name: /自定义/u }).click();
+    await page.getByLabel("画布颜色").fill("#102938");
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-background-scheme",
+      "custom",
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          getComputedStyle(document.documentElement)
+            .getPropertyValue("--custom-canvas")
+            .trim(),
+        ),
+      )
+      .toBe("#102938");
+    await page.getByRole("button", { exact: true, name: "Data" }).click();
+    await expect(page.getByRole("heading", { name: "本地数据" })).toBeVisible();
+    await expect(page.getByText("对话与应用数据库")).toBeVisible();
+    const dataSnapshot = await page.evaluate(() =>
+      window.charaMate.settings.getDataSnapshot(),
+    );
+    expect(dataSnapshot).toMatchObject({
+      ok: true,
+      value: { dataDirectory: userDataDirectory },
+    });
     await page.getByRole("button", { name: "Chats" }).click();
 
     const invalidRequest = await page.evaluate(async () => {
@@ -679,6 +715,20 @@ description: Verify editing, saving, and permanent deletion through Settings.
     expect(invalidRequest).toMatch(/chatId|pattern/u);
 
     await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-background-scheme",
+      "custom",
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          getComputedStyle(document.documentElement)
+            .getPropertyValue("--custom-canvas")
+            .trim(),
+        ),
+      )
+      .toBe("#102938");
     await expect(
       page
         .getByRole("region", { name: "会话列表" })

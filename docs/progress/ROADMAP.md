@@ -1,6 +1,6 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 Done；Phase 5 Automations Done；Phase 6 Done；Phase 7 Implementing
+> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 Done；Phase 5 Automations Done；Phase 6 Done；Phase 7 Done
 > 日期：2026-08-14
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
@@ -373,6 +373,8 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - 目标窗口和硬件上的真实大型组合世界通过 `TERRITORY-WORLD-PERFORMANCE` 获胜路径滚动、缩放、活动 Zone 重建、恢复和 packaged E2E，视口外内容不丢失。
 
 ## Phase 7 — 整体体验收口
+
+> 里程碑状态：Done（2026-08-14）。六页与系统窗口、首次配置、Renderer 恢复、主题/自定义背景、Data、开发观测、唯一 Forge DMG 路径以及最终离线/Live/E2E/打包审计均已完成；未提供 Apple 发布凭据与 Image Live 专用环境变量的项目按原因单独报告，不冒充通过。
 
 ### 工作包
 

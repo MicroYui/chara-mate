@@ -6,6 +6,7 @@ import { CHAT_CHANNELS, CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { EXTENSION_CHANNELS } from "../shared/contracts/extensions";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { PET_CHANNELS } from "../shared/contracts/pet";
+import { SETTINGS_CHANNELS } from "../shared/contracts/settings";
 import { TERRITORY_WORLD_CHANNELS } from "../shared/contracts/territoryWorld";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
 import {
@@ -73,6 +74,30 @@ beforeEach(() => {
 });
 
 describe("Phase 1 typed preload data boundary", () => {
+  it("validates Data settings snapshots before exposing them", async () => {
+    const snapshot = {
+      categories: [
+        { byteLength: 1024, id: "database", label: "对话与应用数据库" },
+      ],
+      dataDirectory: "/tmp/chara-mate-data",
+      totalByteLength: 1024,
+    } as const;
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(SETTINGS_CHANNELS.getDataSnapshot);
+        expect(input).toEqual({});
+        return Promise.resolve({ ok: true, value: snapshot });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(api.settings.getDataSnapshot()).resolves.toEqual({
+      ok: true,
+      value: snapshot,
+    });
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
   it("validates permanent Skill deletion on both sides", async () => {
     electron.ipcRenderer.invoke.mockImplementation(
       (channel: string, input: unknown) => {

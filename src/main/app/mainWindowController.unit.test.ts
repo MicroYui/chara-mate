@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { BrowserWindow } from "electron";
+import type { BrowserWindow, RenderProcessGoneDetails } from "electron";
 
 import { MainWindowController } from "./mainWindowController";
+
+type RendererGoneListener = (
+  event: unknown,
+  details: RenderProcessGoneDetails,
+) => void;
 
 class FakeMainWindow {
   readonly hide = vi.fn(() => {
@@ -25,6 +30,7 @@ class FakeMainWindow {
   });
   private readonly webContentsValue: {
     readonly id: number;
+    on(event: string, listener: RendererGoneListener): void;
   };
   private destroyed = false;
   private minimized = false;
@@ -34,12 +40,20 @@ class FakeMainWindow {
   > = [];
   private readonly closedListeners: Array<() => void> = [];
   private readonly windowEventListeners = new Map<string, Array<() => void>>();
+  private readonly rendererGoneListeners: RendererGoneListener[] = [];
 
   constructor(id: number) {
-    this.webContentsValue = { id };
+    this.webContentsValue = {
+      id,
+      on: (event, listener) => {
+        if (event === "render-process-gone") {
+          this.rendererGoneListeners.push(listener);
+        }
+      },
+    };
   }
 
-  get webContents(): { readonly id: number } {
+  get webContents(): typeof this.webContentsValue {
     if (this.destroyed) throw new Error("Object has been destroyed");
     return this.webContentsValue;
   }
@@ -56,6 +70,12 @@ class FakeMainWindow {
     this.destroyed = true;
     this.visible = false;
     for (const listener of this.closedListeners) listener();
+  }
+
+  crash(reason: RenderProcessGoneDetails["reason"] = "crashed"): void {
+    for (const listener of this.rendererGoneListeners) {
+      listener({}, { exitCode: 1, reason });
+    }
   }
 
   isDestroyed(): boolean {
@@ -166,6 +186,28 @@ describe("MainWindowController", () => {
 
     expect(createWindow).toHaveBeenCalledTimes(2);
     expect(controller.getWindow()).toBe(asBrowserWindow(second));
+  });
+
+  it("recreates the main window once after a recoverable Renderer crash", async () => {
+    const first = new FakeMainWindow(53);
+    const second = new FakeMainWindow(54);
+    const createWindow = vi
+      .fn<() => Promise<BrowserWindow>>()
+      .mockResolvedValueOnce(asBrowserWindow(first))
+      .mockResolvedValueOnce(asBrowserWindow(second));
+    const controller = new MainWindowController(createWindow, vi.fn(), vi.fn());
+
+    controller.markRendererReady({ id: 53 });
+    await controller.open();
+    first.crash();
+    await vi.waitFor(() => expect(createWindow).toHaveBeenCalledTimes(2));
+    controller.markRendererReady({ id: 54 });
+    await vi.waitFor(() =>
+      expect(controller.getWindow()).toBe(asBrowserWindow(second)),
+    );
+
+    second.crash();
+    expect(createWindow).toHaveBeenCalledTimes(2);
   });
 
   it("closes the tracked window before releasing it during shutdown", async () => {

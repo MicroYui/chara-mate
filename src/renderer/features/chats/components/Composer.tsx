@@ -40,6 +40,7 @@ import styles from "./Composer.module.css";
 interface ComposerProps {
   readonly dispatch: Dispatch<ChatsUiAction>;
   readonly models: readonly ChatModelOption[];
+  readonly onConfigureModels?: () => void;
   readonly onSend?: () => void;
   readonly onStop?: () => void;
   readonly onVoiceStart?: () => void;
@@ -140,8 +141,25 @@ function ModePicker({
   );
 }
 
-function ModelPicker({ dispatch, models, state }: ComposerProps) {
+function ModelPicker({
+  dispatch,
+  models,
+  onConfigureModels,
+  state,
+}: ComposerProps) {
   const selected = models.find(({ id }) => id === state.modelId);
+  if (models.length === 0) {
+    return (
+      <button
+        className={styles["controlButton"]}
+        type="button"
+        onClick={onConfigureModels}
+      >
+        <Bot aria-hidden="true" size={14} />
+        <span>配置模型</span>
+      </button>
+    );
+  }
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -350,7 +368,12 @@ function AttachmentPicker({ dispatch }: Pick<ComposerProps, "dispatch">) {
   );
 }
 
-function MoreControls({ dispatch, models, state }: ComposerProps) {
+function MoreControls({
+  dispatch,
+  models,
+  onConfigureModels,
+  state,
+}: ComposerProps) {
   const selectedModel = models.find(({ id }) => id === state.modelId);
   return (
     <Popover.Root>
@@ -370,6 +393,13 @@ function MoreControls({ dispatch, models, state }: ComposerProps) {
           align="start"
         >
           <p>模型</p>
+          {models.length === 0 ? (
+            <Popover.Close asChild>
+              <button type="button" onClick={onConfigureModels}>
+                前往 Models 配置
+              </button>
+            </Popover.Close>
+          ) : null}
           {models.map((model) => (
             <button
               key={model.id}
@@ -424,6 +454,7 @@ export function Composer({
   models,
   onSend,
   onStop,
+  onConfigureModels = () => undefined,
   onVoiceStart,
   runtimeEnabled = true,
   state,
@@ -531,22 +562,36 @@ export function Composer({
           <AttachmentPicker dispatch={dispatch} />
           <ModePicker dispatch={dispatch} state={state} />
           <span className={styles["secondaryControl"]}>
-            <ModelPicker dispatch={dispatch} models={models} state={state} />
+            <ModelPicker
+              dispatch={dispatch}
+              models={models}
+              onConfigureModels={onConfigureModels}
+              state={state}
+            />
           </span>
           {state.mode === "agent" ? (
             <span className={styles["secondaryControl"]}>
               <ApprovalPicker dispatch={dispatch} state={state} />
             </span>
           ) : null}
-          <MoreControls dispatch={dispatch} models={models} state={state} />
+          <MoreControls
+            dispatch={dispatch}
+            models={models}
+            onConfigureModels={onConfigureModels}
+            state={state}
+          />
         </div>
         <div className={styles["rightControls"]}>
           <button
             className={styles["iconButton"]}
             type="button"
             aria-label="录入语音"
-            disabled={state.composerPhase !== "idle"}
-            title="使用 Voice 设置中的输入方式"
+            disabled={state.composerPhase !== "idle" || !runtimeEnabled}
+            title={
+              runtimeEnabled
+                ? "使用 Voice 设置中的输入方式"
+                : "请先在 Models 中配置可用模型"
+            }
             onClick={onVoiceStart}
           >
             <Mic aria-hidden="true" size={16} />
@@ -619,7 +664,12 @@ export function Composer({
               className={styles["primaryButton"]}
               type="button"
               aria-label="开始语音对话"
-              title="使用 Voice 设置中的输入方式"
+              disabled={!runtimeEnabled}
+              title={
+                runtimeEnabled
+                  ? "使用 Voice 设置中的输入方式"
+                  : "请先在 Models 中配置可用模型"
+              }
               onClick={onVoiceStart}
             >
               <VoiceGlyph />

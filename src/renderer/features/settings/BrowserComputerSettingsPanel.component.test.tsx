@@ -43,8 +43,10 @@ function createApi() {
       value: { message: "受管浏览器已打开。" },
     });
   const api: SettingsApi = {
+    getDataSnapshot: vi.fn(),
     getSnapshot,
     importBrowserCookies: vi.fn(),
+    openDataDirectory: vi.fn(),
     openManagedBrowser,
     saveAgent: vi.fn(),
     saveVoice: vi.fn(),

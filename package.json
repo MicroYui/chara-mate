@@ -20,6 +20,7 @@
     "start": "electron-forge start",
     "build": "node scripts/build.mjs",
     "package": "npm run browser:install && electron-forge package",
+    "make": "npm run browser:install && electron-forge make",
     "smoke:dev": "node scripts/smoke-electron.mjs dev",
     "smoke:package": "node scripts/smoke-electron.mjs packaged",
     "typecheck": "tsc --noEmit",
@@ -69,6 +70,7 @@
   },
   "devDependencies": {
     "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-dmg": "7.11.2",
     "@electron-forge/plugin-auto-unpack-natives": "7.11.2",
     "@electron-forge/plugin-vite": "7.11.2",
     "@electron-forge/shared-types": "7.11.2",

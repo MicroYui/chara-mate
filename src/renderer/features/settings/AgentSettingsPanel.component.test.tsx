@@ -24,6 +24,7 @@ function createApi() {
       Promise.resolve({ ok: true, value: next }),
     );
   const api: SettingsApi = {
+    getDataSnapshot: vi.fn(),
     getSnapshot: vi.fn().mockResolvedValue({
       ok: true,
       value: {
@@ -44,6 +45,7 @@ function createApi() {
       },
     }),
     importBrowserCookies: vi.fn(),
+    openDataDirectory: vi.fn(),
     openManagedBrowser: vi.fn(),
     saveAgent,
     saveVoice: vi.fn(),

@@ -1297,7 +1297,7 @@ API Key 使用 Electron async `safeStorage`（`encryptStringAsync` / `decryptStr
 | Skills | 用户/项目 Skill 的名称与描述、编辑、启停、Pin、归档、恢复和删除；不展示版本历史或成长候选历史 |
 | MCP | Server、传输、环境、工具列表、测试与启停 |
 | Activity | 开关、暂停状态、占用与立即清理；采集/蒸馏内部频率不做用户档位 |
-| Data | 数据目录、资源占用和清理 |
+| Data | 读取真实数据目录与分类占用、在 Finder 中打开；清理只复用 Activity 已蒸馏原始事件/截图和孤立 Activity 资产边界，不删除 Chat、Memory、Territory 或 Settings |
 
 研发 metrics、Harness 步数、召回阈值、RRF 常数、reranker topK 等不放进 Settings。
 

@@ -5,6 +5,8 @@ import {
   AgentSettingsSaveRequestSchema,
   AgentSettingsSaveResponseSchema,
   BrowserActionResponseSchema,
+  DataActionResponseSchema,
+  DataSettingsSnapshotResponseSchema,
   SettingsEmptyRequestSchema,
   SettingsSnapshotResponseSchema,
   VoiceSettingsSaveRequestSchema,
@@ -34,6 +36,34 @@ export function registerSettingsIpc(
       });
     } catch (error) {
       return parseSchema(SettingsSnapshotResponseSchema, {
+        error: appError(error),
+        ok: false,
+      });
+    }
+  });
+  ipcMain.handle(SETTINGS_CHANNELS.getDataSnapshot, async (_event, input) => {
+    try {
+      parseSchema(SettingsEmptyRequestSchema, input);
+      return parseSchema(DataSettingsSnapshotResponseSchema, {
+        ok: true,
+        value: await service.getDataSnapshot(),
+      });
+    } catch (error) {
+      return parseSchema(DataSettingsSnapshotResponseSchema, {
+        error: appError(error),
+        ok: false,
+      });
+    }
+  });
+  ipcMain.handle(SETTINGS_CHANNELS.openDataDirectory, async (_event, input) => {
+    try {
+      parseSchema(SettingsEmptyRequestSchema, input);
+      return parseSchema(DataActionResponseSchema, {
+        ok: true,
+        value: await service.openDataDirectory(),
+      });
+    } catch (error) {
+      return parseSchema(DataActionResponseSchema, {
         error: appError(error),
         ok: false,
       });

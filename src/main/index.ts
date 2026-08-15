@@ -88,6 +88,7 @@ import {
 import { createAppLogger } from "./observability/logger";
 import { DevDashboard } from "./observability/devDashboard";
 import { RuntimeObservability } from "./observability/runtimeObservability";
+import { ProductMetrics } from "./observability/productMetrics";
 import { registerExtensionIpc } from "./extensions/extensionIpc";
 import { McpRepository } from "./extensions/mcpRepository";
 import { McpService } from "./extensions/mcpService";
@@ -447,7 +448,11 @@ async function startApplication(): Promise<void> {
   });
   if (!app.isPackaged && process.env["CHARAMATE_DEV_DASHBOARD"] !== "0") {
     voiceMetrics = new VoiceMetrics();
-    devDashboard = new DevDashboard(runtimeObservability, voiceMetrics);
+    devDashboard = new DevDashboard(
+      runtimeObservability,
+      voiceMetrics,
+      new ProductMetrics(applicationDatabase),
+    );
     logger.info("DEV_DASHBOARD_READY", {
       url: await devDashboard.start(),
     });
@@ -685,6 +690,8 @@ async function startApplication(): Promise<void> {
     },
     clock,
     (directory) => skillService.setWorkspaceDirectory(directory),
+    userDataPath,
+    (target) => shell.openPath(target),
   );
   registerLocalTools(toolRegistry, {
     artifacts: artifactStore,

@@ -42,6 +42,7 @@ import { CharacterSettingsPanel } from "../features/settings/CharacterSettingsPa
 import { AgentSettingsPanel } from "../features/settings/AgentSettingsPanel";
 import { BrowserComputerSettingsPanel } from "../features/settings/BrowserComputerSettingsPanel";
 import { ActivitySettingsPanel } from "../features/settings/ActivitySettingsPanel";
+import { DataSettingsPanel } from "../features/settings/DataSettingsPanel";
 import { McpSettingsPanel } from "../features/settings/McpSettingsPanel";
 import { SkillsSettingsPanel } from "../features/settings/SkillsSettingsPanel";
 import { VoiceSettingsPanel } from "../features/settings/VoiceSettingsPanel";
@@ -57,7 +58,14 @@ import type {
   PrimaryPageId,
 } from "../features/chats/types";
 import mikaPetImage from "../assets/mika-pet.svg";
-import { backgroundSchemes, type BackgroundScheme } from "./appearance";
+import {
+  backgroundSchemes,
+  defaultCustomBackgroundColors,
+  themePreferences,
+  type BackgroundScheme,
+  type CustomBackgroundColors,
+  type ThemePreference,
+} from "./appearance";
 import styles from "./AppShell.module.css";
 
 const pageItems = [
@@ -77,33 +85,12 @@ const currentPersona = {
   label: "Mika",
 } as const;
 
-const placeholderCopy = {
-  activity: {
-    description: "在这里回顾应用活动，并决定哪些内容值得保留。",
-    eyebrow: "Phase 3",
-    title: "Activity",
-  },
-  automations: {
-    description: "定时任务会沿用与手动对话相同的 Chat 与 Run。",
-    eyebrow: "Phase 5",
-    title: "Automations",
-  },
-  memory: {
-    description: "管理长期记忆、来源与可撤销的内容变化。",
-    eyebrow: "Phase 3",
-    title: "Memory",
-  },
-  territory: {
-    description: "角色、记忆物件与场景会在后续阶段汇聚到这里。",
-    eyebrow: "Phase 6",
-    title: "Territory",
-  },
-} as const;
-
 interface AppShellProps {
   readonly activeChat: ChatView | undefined;
   readonly activePet: PetDescriptor | undefined;
   readonly backgroundScheme: BackgroundScheme;
+  readonly customBackgroundColors: CustomBackgroundColors;
+  readonly themePreference: ThemePreference;
   readonly chatDomain: ChatDomainState;
   readonly dispatch: Dispatch<ChatsUiAction>;
   readonly foundation: FoundationSnapshot;
@@ -119,8 +106,14 @@ interface AppShellProps {
   readonly onClearJourneyError: () => void;
   readonly onClearVoiceError: () => void;
   readonly onBackgroundSchemeChange: (scheme: BackgroundScheme) => void;
+  readonly onCustomBackgroundColorsChange: (
+    colors: CustomBackgroundColors,
+  ) => void;
+  readonly onThemePreferenceChange: (theme: ThemePreference) => void;
   readonly onAgentSettingsChanged: (settings: AgentSettings) => void;
+  readonly onConfigureModels: () => void;
   readonly onProvidersChanged: () => void;
+  readonly onSettingsOpen: () => void;
   readonly onResolveApproval: (
     approvalId: string,
     decision: "approved" | "rejected",
@@ -138,9 +131,9 @@ interface AppShellProps {
   readonly onVoicePausedChange: (paused: boolean) => void;
   readonly onVoiceRetry: () => void;
   readonly onVoiceStart: () => void;
-  readonly openCharacterSettingsToken: number;
   readonly petAnimationSpeed: number;
   readonly state: ChatsUiState;
+  readonly settingsSectionTarget: "appearance" | "character" | "models";
   readonly voiceSnapshot: VoiceSessionSnapshot | null;
   readonly voiceStore: VoiceStore;
   readonly voiceError: VoiceUiState["error"];
@@ -258,6 +251,7 @@ function Sidebar({
   onChatRename,
   onChatRestore,
   onChatSetPinned,
+  onSettingsOpen,
   state,
 }: Pick<
   AppShellProps,
@@ -270,6 +264,7 @@ function Sidebar({
   | "onChatRename"
   | "onChatRestore"
   | "onChatSetPinned"
+  | "onSettingsOpen"
   | "state"
 >) {
   const chats = chatDomain.chats;
@@ -563,9 +558,10 @@ function Sidebar({
             collapsed={collapsed}
             icon={Settings}
             label="Settings"
-            onClick={() =>
-              dispatch({ page: "settings", type: "page.selected" })
-            }
+            onClick={() => {
+              onSettingsOpen();
+              dispatch({ page: "settings", type: "page.selected" });
+            }}
           >
             <span>Settings</span>
           </SidebarButton>
@@ -629,35 +625,28 @@ function SharedPresenceHint({
   );
 }
 
-function PlaceholderPage({
-  page,
-}: {
-  readonly page: keyof typeof placeholderCopy;
-}) {
-  const copy = placeholderCopy[page];
-  return (
-    <section className={styles["placeholderPage"]}>
-      <p>{copy.eyebrow}</p>
-      <h2>{copy.title}</h2>
-      <span>{copy.description}</span>
-    </section>
-  );
-}
-
 function SettingsPage({
   backgroundScheme,
+  customBackgroundColors,
   onAgentSettingsChanged,
   onBackgroundSchemeChange,
+  onCustomBackgroundColorsChange,
+  onThemePreferenceChange,
   onProvidersChanged,
-  openCharacterSettingsToken,
+  settingsSectionTarget,
+  themePreference,
   voiceStore,
 }: Pick<
   AppShellProps,
   | "backgroundScheme"
+  | "customBackgroundColors"
   | "onAgentSettingsChanged"
   | "onBackgroundSchemeChange"
+  | "onCustomBackgroundColorsChange"
+  | "onThemePreferenceChange"
   | "onProvidersChanged"
-  | "openCharacterSettingsToken"
+  | "settingsSectionTarget"
+  | "themePreference"
   | "voiceStore"
 >) {
   const [activeSection, setActiveSection] = useState<
@@ -666,11 +655,12 @@ function SettingsPage({
     | "appearance"
     | "browser-computer"
     | "character"
+    | "data"
     | "mcp"
     | "models"
     | "skills"
     | "voice"
-  >(openCharacterSettingsToken > 0 ? "character" : "appearance");
+  >(settingsSectionTarget);
 
   return (
     <div className={styles["settingsPage"]}>
@@ -740,7 +730,11 @@ function SettingsPage({
         >
           Activity
         </button>
-        <button type="button" disabled>
+        <button
+          type="button"
+          aria-current={activeSection === "data" ? "page" : undefined}
+          onClick={() => setActiveSection("data")}
+        >
           Data
         </button>
       </aside>
@@ -750,8 +744,27 @@ function SettingsPage({
             <p className={styles["settingsEyebrow"]}>Appearance</p>
             <h2>界面背景</h2>
             <p className={styles["settingsDescription"]}>
-              选择更适合当前环境的背景。内容层级与交互保持不变。
+              选择明暗主题与背景气质。设置会保留，并可随系统外观自动切换。
             </p>
+            <fieldset className={styles["themePicker"]}>
+              <legend>明暗主题</legend>
+              {themePreferences.map((theme) => (
+                <label
+                  key={theme.id}
+                  data-selected={themePreference === theme.id || undefined}
+                >
+                  <input
+                    type="radio"
+                    name="color-theme"
+                    value={theme.id}
+                    checked={themePreference === theme.id}
+                    onChange={() => onThemePreferenceChange(theme.id)}
+                  />
+                  <strong>{theme.label}</strong>
+                  <small>{theme.description}</small>
+                </label>
+              ))}
+            </fieldset>
             <fieldset className={styles["schemePicker"]}>
               <legend>背景方案</legend>
               {backgroundSchemes.map((scheme) => (
@@ -770,14 +783,65 @@ function SettingsPage({
                     className={styles["schemePreview"]}
                     data-scheme={scheme.id}
                   >
-                    <i />
-                    <i />
+                    <i
+                      style={
+                        scheme.id === "custom"
+                          ? { backgroundColor: customBackgroundColors.sidebar }
+                          : undefined
+                      }
+                    />
+                    <i
+                      style={
+                        scheme.id === "custom"
+                          ? { backgroundColor: customBackgroundColors.canvas }
+                          : undefined
+                      }
+                    />
                   </span>
                   <strong>{scheme.label}</strong>
                   <small>{scheme.description}</small>
                 </label>
               ))}
             </fieldset>
+            {backgroundScheme === "custom" ? (
+              <fieldset className={styles["customColors"]}>
+                <legend>自定义颜色</legend>
+                {(
+                  [
+                    ["canvas", "画布"],
+                    ["sidebar", "侧栏"],
+                    ["surface", "内容面"],
+                    ["accent", "强调色"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key}>
+                    <span>{label}</span>
+                    <input
+                      aria-label={`${label}颜色`}
+                      type="color"
+                      value={customBackgroundColors[key]}
+                      onChange={(event) =>
+                        onCustomBackgroundColorsChange({
+                          ...customBackgroundColors,
+                          [key]: event.currentTarget.value,
+                        })
+                      }
+                    />
+                    <code>{customBackgroundColors[key]}</code>
+                  </label>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    onCustomBackgroundColorsChange(
+                      defaultCustomBackgroundColors,
+                    )
+                  }
+                >
+                  恢复默认颜色
+                </button>
+              </fieldset>
+            ) : null}
           </section>
         ) : activeSection === "character" ? (
           <CharacterSettingsPanel />
@@ -793,6 +857,8 @@ function SettingsPage({
           <SkillsSettingsPanel />
         ) : activeSection === "mcp" ? (
           <McpSettingsPanel />
+        ) : activeSection === "data" ? (
+          <DataSettingsPanel />
         ) : (
           <ActivitySettingsPanel />
         )}
@@ -805,6 +871,8 @@ export function AppShell({
   activeChat,
   activePet,
   backgroundScheme,
+  customBackgroundColors,
+  themePreference,
   chatDomain,
   dispatch,
   foundation,
@@ -820,8 +888,12 @@ export function AppShell({
   onClearJourneyError,
   onClearVoiceError,
   onBackgroundSchemeChange,
+  onCustomBackgroundColorsChange,
+  onThemePreferenceChange,
   onAgentSettingsChanged,
+  onConfigureModels,
   onProvidersChanged,
+  onSettingsOpen,
   onResolveApproval,
   onResolveUserInput,
   onRunResume,
@@ -832,9 +904,9 @@ export function AppShell({
   onVoicePausedChange,
   onVoiceRetry,
   onVoiceStart,
-  openCharacterSettingsToken,
   petAnimationSpeed,
   state,
+  settingsSectionTarget,
   voiceSnapshot,
   voiceStore,
   voiceError,
@@ -906,6 +978,7 @@ export function AppShell({
         onChatRename={onChatRename}
         onChatRestore={onChatRestore}
         onChatSetPinned={onChatSetPinned}
+        onSettingsOpen={onSettingsOpen}
         state={state}
       />
       <main className={styles["main"]}>
@@ -959,6 +1032,7 @@ export function AppShell({
               activeChat={activeChat}
               dispatch={dispatch}
               models={chatDomain.models}
+              onConfigureModels={onConfigureModels}
               onResumeRun={onRunResume}
               onResolveApproval={onResolveApproval}
               onResolveUserInput={onResolveUserInput}
@@ -976,12 +1050,16 @@ export function AppShell({
             />
           ) : state.activePage === "settings" ? (
             <SettingsPage
-              key={openCharacterSettingsToken}
+              key={settingsSectionTarget}
               backgroundScheme={backgroundScheme}
+              customBackgroundColors={customBackgroundColors}
+              themePreference={themePreference}
               onAgentSettingsChanged={onAgentSettingsChanged}
               onBackgroundSchemeChange={onBackgroundSchemeChange}
+              onCustomBackgroundColorsChange={onCustomBackgroundColorsChange}
+              onThemePreferenceChange={onThemePreferenceChange}
               onProvidersChanged={onProvidersChanged}
-              openCharacterSettingsToken={openCharacterSettingsToken}
+              settingsSectionTarget={settingsSectionTarget}
               voiceStore={voiceStore}
             />
           ) : state.activePage === "territory" ? (
@@ -1009,7 +1087,7 @@ export function AppShell({
               onFocusConsumed={consumeActivityTarget}
               onOpenTerritory={openTerritoryCandidate}
             />
-          ) : state.activePage === "automations" ? (
+          ) : (
             <AutomationsPage
               models={chatDomain.models.map((model) => ({
                 label: `${model.displayName} · ${model.provider.profileName}`,
@@ -1025,8 +1103,6 @@ export function AppShell({
                 })
               }
             />
-          ) : (
-            <PlaceholderPage page={state.activePage} />
           )}
         </div>
         <span

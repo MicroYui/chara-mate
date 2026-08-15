@@ -239,6 +239,8 @@ import {
   AgentSettingsSaveRequestSchema,
   AgentSettingsSaveResponseSchema,
   BrowserActionResponseSchema,
+  DataActionResponseSchema,
+  DataSettingsSnapshotResponseSchema,
   SettingsSnapshotResponseSchema,
   VoiceSettingsSaveRequestSchema,
   VoiceSettingsSaveResponseSchema,
@@ -776,6 +778,11 @@ const runEventsApi: RunEventsApi = Object.freeze({
 });
 
 const settingsApi: SettingsApi = Object.freeze({
+  getDataSnapshot: async () =>
+    parseSchemaWithoutCodeGeneration(
+      DataSettingsSnapshotResponseSchema,
+      await ipcRenderer.invoke(SETTINGS_CHANNELS.getDataSnapshot, {}),
+    ),
   getSnapshot: async () =>
     parseSchemaWithoutCodeGeneration(
       SettingsSnapshotResponseSchema,
@@ -790,6 +797,11 @@ const settingsApi: SettingsApi = Object.freeze({
     parseSchemaWithoutCodeGeneration(
       BrowserActionResponseSchema,
       await ipcRenderer.invoke(SETTINGS_CHANNELS.openManagedBrowser, {}),
+    ),
+  openDataDirectory: async () =>
+    parseSchemaWithoutCodeGeneration(
+      DataActionResponseSchema,
+      await ipcRenderer.invoke(SETTINGS_CHANNELS.openDataDirectory, {}),
     ),
   saveAgent: async (input: AgentSettingsSaveRequest) =>
     parseSchemaWithoutCodeGeneration(

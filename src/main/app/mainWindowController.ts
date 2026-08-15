@@ -1,6 +1,7 @@
 import type { BrowserWindow, WebContents } from "electron";
 
 import type { PetMainTarget } from "../../shared/contracts/pet";
+import { shouldRecoverRenderer } from "./rendererRecovery";
 
 export type MainWindowTarget = PetMainTarget;
 
@@ -21,6 +22,7 @@ export class MainWindowController {
   private creation: Promise<BrowserWindow> | undefined;
   private readyState: RendererReadyState | undefined;
   private readonly earlyReadySenders = new Set<number>();
+  private rendererRecoveryAttempted = false;
 
   constructor(
     private readonly createWindow: () => Promise<BrowserWindow>,
@@ -145,6 +147,18 @@ export class MainWindowController {
       if (this.readyState === readyState) this.readyState = undefined;
       this.earlyReadySenders.delete(webContentsId);
       readyState.resolve();
+    });
+    window.webContents.on("render-process-gone", (_event, details) => {
+      if (
+        this.rendererRecoveryAttempted ||
+        !shouldRecoverRenderer(details.reason) ||
+        window.isDestroyed()
+      ) {
+        return;
+      }
+      this.rendererRecoveryAttempted = true;
+      window.destroy();
+      void this.open().catch(() => undefined);
     });
     return window;
   }

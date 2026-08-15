@@ -69,6 +69,15 @@ afterEach(() => {
   cleanup();
   document.documentElement.removeAttribute("data-foundation-ready");
   document.documentElement.removeAttribute("data-background-scheme");
+  document.documentElement.removeAttribute("data-theme");
+  for (const property of [
+    "--custom-accent",
+    "--custom-canvas",
+    "--custom-sidebar",
+    "--custom-surface",
+  ]) {
+    document.documentElement.style.removeProperty(property);
+  }
   window.localStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -414,6 +423,20 @@ function renderApp({
       subscribeChanged: vi.fn(() => () => undefined),
     },
     settings: {
+      getDataSnapshot: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          categories: [
+            {
+              byteLength: 4096,
+              id: "database",
+              label: "对话与应用数据库",
+            },
+          ],
+          dataDirectory: "/tmp/chara-mate",
+          totalByteLength: 4096,
+        },
+      }),
       getSnapshot: vi.fn().mockResolvedValue({
         ok: true,
         value: {
@@ -438,6 +461,7 @@ function renderApp({
         },
       }),
       importBrowserCookies: vi.fn(),
+      openDataDirectory: vi.fn(),
       openManagedBrowser: vi.fn(),
       saveAgent: vi.fn(),
       saveVoice: vi.fn(),
@@ -945,6 +969,12 @@ describe("application shell", () => {
     await screen.findByRole("region", { name: "Chats" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "明暗主题" })).getByRole(
+        "radio",
+        { name: /^深色/u },
+      ),
+    );
     fireEvent.click(screen.getByRole("radio", { name: /暖灰/u }));
 
     await waitFor(() => {
@@ -956,7 +986,49 @@ describe("application shell", () => {
     expect(window.localStorage.getItem("chara-mate.background-scheme")).toBe(
       "warm",
     );
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(window.localStorage.getItem("chara-mate.theme")).toBe("dark");
     expect(screen.getByRole("heading", { name: "界面背景" })).toBeVisible();
+  });
+
+  it("lets the user create and persist a custom background palette", async () => {
+    renderApp();
+    await screen.findByRole("region", { name: "Chats" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("radio", { name: /自定义/u }));
+    fireEvent.change(screen.getByLabelText("画布颜色"), {
+      target: { value: "#123456" },
+    });
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveStyle({
+        "--custom-canvas": "#123456",
+      });
+    });
+    expect(window.localStorage.getItem("chara-mate.background-scheme")).toBe(
+      "custom",
+    );
+    expect(
+      JSON.parse(
+        window.localStorage.getItem("chara-mate.custom-background") ?? "{}",
+      ),
+    ).toMatchObject({ canvas: "#123456" });
+    expect(screen.getByRole("button", { name: "恢复默认颜色" })).toBeVisible();
+  });
+
+  it("opens the Data settings page with real usage information", async () => {
+    renderApp();
+    await screen.findByRole("region", { name: "Chats" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Data" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "本地数据" }),
+    ).toBeVisible();
+    expect(screen.getAllByText("4.0 KB")).toHaveLength(2);
+    expect(screen.getByText("/tmp/chara-mate")).toBeVisible();
   });
 
   it("opens the integrated Provider settings from Models", async () => {
@@ -970,6 +1042,20 @@ describe("application shell", () => {
       await screen.findByRole("heading", { name: "Provider 与模型" }),
     ).toBeVisible();
     expect(screen.getByText("还没有 Provider。")).toBeVisible();
+    expect(listProfiles).toHaveBeenCalled();
+  });
+
+  it("guides a first-time user from Chats to model configuration", async () => {
+    const { listProfiles } = renderApp();
+    await screen.findByRole("region", { name: "Chats" });
+
+    expect(screen.getByRole("region", { name: "配置模型" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "录入语音" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "前往 Models" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Provider 与模型" }),
+    ).toBeVisible();
     expect(listProfiles).toHaveBeenCalled();
   });
 

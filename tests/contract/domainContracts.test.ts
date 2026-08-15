@@ -32,6 +32,10 @@ import { RUN_EVENT_CHANNELS } from "../../src/shared/contracts/ipc";
 import { ProviderSnapshotSchema } from "../../src/shared/schemas/provider";
 import { TimestampSchema } from "../../src/shared/schemas/primitives";
 import {
+  DataSettingsSnapshotResponseSchema,
+  DataSettingsSnapshotSchema,
+} from "../../src/shared/schemas/settings";
+import {
   ApprovalSchema,
   AppErrorSchema,
   ArtifactReferenceSchema,
@@ -58,6 +62,15 @@ import {
 } from "../fixtures/foundationContracts";
 
 const parsers = [parseSchema, parseSchemaWithoutCodeGeneration] as const;
+
+const dataSettingsSnapshot = {
+  categories: [
+    { byteLength: 4096, id: "database", label: "对话与应用数据库" },
+    { byteLength: 2048, id: "territory", label: "领地场景与生成素材" },
+  ],
+  dataDirectory: "/Users/example/Library/Application Support/CharaMate",
+  totalByteLength: 6144,
+} as const;
 
 const validCases: readonly [string, TSchema, unknown][] = [
   ["Chat", ChatSchema, chatFixture],
@@ -118,6 +131,12 @@ const validCases: readonly [string, TSchema, unknown][] = [
     { ok: true, value: chatDataSnapshotFixture },
   ],
   ["Provider snapshot", ProviderSnapshotSchema, providerSnapshotFixture],
+  ["Data settings snapshot", DataSettingsSnapshotSchema, dataSettingsSnapshot],
+  [
+    "Data settings response",
+    DataSettingsSnapshotResponseSchema,
+    { ok: true, value: dataSettingsSnapshot },
+  ],
   ["Run", RunSchema, runFixture],
   ["Run item", RunItemSchema, runItemFixture],
   ["Artifact reference", ArtifactReferenceSchema, artifactFixture],

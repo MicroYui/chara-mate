@@ -19,6 +19,7 @@ interface ChatsPageProps {
   readonly activeChat: ChatView | undefined;
   readonly dispatch: Dispatch<ChatsUiAction>;
   readonly models: readonly ChatModelOption[];
+  readonly onConfigureModels: () => void;
   readonly onResumeRun: (runId: string) => void;
   readonly onResolveApproval: (
     approvalId: string,
@@ -60,11 +61,28 @@ export function activeRunForChat(chat: ChatView | undefined) {
     : undefined;
 }
 
-function EmptyChat({ dispatch }: Pick<ChatsPageProps, "dispatch">) {
+function EmptyChat({
+  dispatch,
+  onConfigureModels,
+  runtimeEnabled,
+}: Pick<ChatsPageProps, "dispatch" | "onConfigureModels" | "runtimeEnabled">) {
   return (
     <div className={styles["empty"]}>
       <p>晚上好</p>
       <h2>今天想从哪里开始？</h2>
+      {!runtimeEnabled ? (
+        <section className={styles["setupCallout"]} aria-label="配置模型">
+          <div>
+            <strong>先连接一个模型</strong>
+            <span>
+              配置 OpenAI 或 Azure Provider 后，就可以开始聊天与语音。
+            </span>
+          </div>
+          <button type="button" onClick={onConfigureModels}>
+            前往 Models
+          </button>
+        </section>
+      ) : null}
       <div aria-label="建议问题">
         {suggestions.map((suggestion) => (
           <button
@@ -86,6 +104,7 @@ export function ChatsPage({
   activeChat,
   dispatch,
   models,
+  onConfigureModels,
   onResumeRun,
   onResolveApproval,
   onResolveUserInput,
@@ -119,7 +138,11 @@ export function ChatsPage({
             state={state}
           />
         ) : (
-          <EmptyChat dispatch={dispatch} />
+          <EmptyChat
+            dispatch={dispatch}
+            onConfigureModels={onConfigureModels}
+            runtimeEnabled={runtimeEnabled}
+          />
         )}
       </div>
       <div className={styles["composerDock"]}>
@@ -143,6 +166,7 @@ export function ChatsPage({
             <Composer
               dispatch={dispatch}
               models={models}
+              onConfigureModels={onConfigureModels}
               onSend={onSend}
               onStop={onStop}
               onVoiceStart={onVoiceStart}

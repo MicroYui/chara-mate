@@ -23,6 +23,7 @@ npm run test:integration  # domain and boundary integration tests
 npm run verify:offline    # complete deterministic offline verification
 npm run build             # Main/Preload/Renderer production build
 npm run package           # Electron Forge package
+npm run make              # Electron Forge macOS DMG installer
 npm run test:e2e          # Playwright Electron E2E
 npm run verify:phase0     # complete Phase 0 acceptance chain
 npm run test:live         # explicit live suite (not part of offline regression)

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chatsFixture } from "../fixtures";
 import { chatsFixtureUiReducer, initialChatsFixtureUiState } from "../state";
 import type { ChatsFixtureUiState } from "../types";
+import type { ChatModelOption } from "../types";
 import { Composer } from "./Composer";
 
 beforeEach(() => {
@@ -20,11 +21,15 @@ afterEach(() => {
 
 function ComposerHarness({
   initial,
+  models = chatsFixture.models,
+  onConfigureModels,
   onSend,
   onStop,
   onVoiceStart,
 }: {
   readonly initial?: Partial<ChatsFixtureUiState>;
+  readonly models?: readonly ChatModelOption[];
+  readonly onConfigureModels?: () => void;
   readonly onSend?: () => void;
   readonly onStop?: () => void;
   readonly onVoiceStart?: () => void;
@@ -36,16 +41,36 @@ function ComposerHarness({
   return (
     <Composer
       dispatch={dispatch}
-      models={chatsFixture.models}
+      models={models}
+      {...(onConfigureModels ? { onConfigureModels } : {})}
       {...(onSend ? { onSend } : {})}
       {...(onStop ? { onStop } : {})}
       {...(onVoiceStart ? { onVoiceStart } : {})}
+      runtimeEnabled={models.length > 0}
       state={state}
     />
   );
 }
 
 describe("Composer", () => {
+  it("routes missing-model controls to configuration and disables Voice", () => {
+    const onConfigureModels = vi.fn();
+    const onVoiceStart = vi.fn();
+    render(
+      <ComposerHarness
+        models={[]}
+        onConfigureModels={onConfigureModels}
+        onVoiceStart={onVoiceStart}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "配置模型" }));
+    expect(onConfigureModels).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "录入语音" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "开始语音对话" })).toBeDisabled();
+    expect(onVoiceStart).not.toHaveBeenCalled();
+  });
+
   it("requires an explicit choice when several Provider models are available", async () => {
     render(<ComposerHarness />);
 
