@@ -133,7 +133,7 @@ CharaMate 复用这种信息密度和层级，但不复制品牌颜色、图标�
 - Lucide 提供通用 outline 图标；Voice waveform、角色、领地和产品专用语义图标使用自有 SVG/Pixi asset。
 - TanStack Virtual 负责消息、Memory、Activity 等长列表；靠近底部、动态行高、焦点和滚动锚点由 CharaMate adapter 统一处理。
 - 消息使用 `react-markdown` + remark/rehype pipeline，GFM、CJK 紧邻标点/正文的强调与删除线、math、KaTeX、允许列表、链接策略和复制源集中配置；兼容解析不改写源 Markdown，Shiki 与 Mermaid 只在出现对应 block 时懒加载。
-- PixiJS 只在 Character Window 和 Territory canvas 内运行；React 管理页面/浮层/可访问控件，PixiJS 管理 atlas、sprite、场景层、pointer 和动画 tick，二者不重复保存业务状态。
+- PixiJS 只在 Character Window 和 Territory canvas 内运行；React 管理页面/浮层/可访问控件，PixiJS 管理 atlas、sprite、场景层、pointer 和动画 tick，二者不重复保存业务状态。Character Window 关闭默认 display-rate `requestAnimationFrame`，以 15 FPS 定时器显式推进应用私有 ticker，窗口不可见时停止；同一 atlas 和动画/朝向 frame texture 在桌宠生命周期内复用，状态切换不得反复销毁、重建或接入全局 shared ticker。15 FPS 是针对当前最短 120 ms atlas 帧、最高 1.5 倍播放速度与真实进程 CPU 复核后的产品启发式，不提供普通用户调节项。
 - UI component test 使用 Vitest + Testing Library；跨 Electron 窗口、Preload、重启和拖动使用 Playwright Electron。Voice 真实打断、音频和图像生成另列 Live 验收。
 
 ---

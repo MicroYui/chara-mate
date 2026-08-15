@@ -4,8 +4,8 @@ import { redactText } from "../../shared/pure/redaction";
 import type { AppLogger } from "../observability/logger";
 import type {
   ActiveApplication,
-  ActiveApplicationProbe,
-} from "./activeApplicationProbe";
+  ActiveApplicationSource,
+} from "./activeApplicationSource";
 import type { ForegroundActivityObserver } from "./activityObservation";
 import type { ActivityService } from "./activityService";
 import type {
@@ -13,7 +13,7 @@ import type {
   ActivitySystemSource,
 } from "./activitySystemSource";
 
-const SAMPLE_INTERVAL_MS = 15_000;
+const IDLE_SAMPLE_INTERVAL_MS = 15_000;
 const SCREENSHOT_INTERVAL_MS = 15 * 60_000;
 
 export interface ManagedBrowserActivity {
@@ -75,17 +75,20 @@ export class ActivityCaptureCoordinator {
   #activeApplication: OpenEvent | undefined;
   #agentUiActions = new Map<string, string>();
   #browserKey: string | undefined;
-  #cancel = new AbortController();
+  #currentApplication: ActiveApplication | undefined;
   #idle = false;
-  #interval: ReturnType<typeof setInterval> | undefined;
+  #idleInterval: ReturnType<typeof setInterval> | undefined;
   #lastScreenshotAt: number | undefined;
   #queue: Promise<void> = Promise.resolve();
+  #screenshotTasks = new Set<Promise<void>>();
+  #started = false;
+  #stopApplicationSubscription: (() => Promise<void>) | undefined;
   #stopPauseSubscription: (() => void) | undefined;
   #stopSystemSubscription: (() => void) | undefined;
 
   constructor(
     private readonly activity: ActivityService,
-    private readonly applications: ActiveApplicationProbe,
+    private readonly applications: ActiveApplicationSource,
     private readonly system: ActivitySystemSource,
     private readonly clock: Clock,
     private readonly logger: AppLogger,
@@ -93,38 +96,52 @@ export class ActivityCaptureCoordinator {
   ) {}
 
   start(): void {
-    if (this.#interval) return;
+    if (this.#started) return;
+    this.#started = true;
     this.#stopPauseSubscription = this.activity.onPauseChanged((paused) => {
-      void this.#enqueue(async () => {
+      void this.#enqueue(() => {
         if (paused) this.#closeOpenEvents();
-        else await this.#sample();
+        else this.#refreshSystemState();
       });
     });
     this.#stopSystemSubscription = this.system.subscribe((boundary) => {
       void this.#enqueue(() => this.#handleSystemBoundary(boundary));
     });
-    this.#interval = setInterval(
-      () => void this.#enqueue(() => this.#sample()),
-      SAMPLE_INTERVAL_MS,
+    this.#stopApplicationSubscription = this.applications.subscribe(
+      (application) => {
+        this.#currentApplication = application;
+        void this.#enqueue(() => this.#applyCurrentApplication());
+      },
+      (error) => {
+        this.logger.warn("ACTIVITY_ACTIVE_APP_SOURCE_ERROR", { error });
+      },
     );
-    this.#interval.unref?.();
-    void this.#enqueue(() => this.#sample());
+    this.#idleInterval = setInterval(
+      () => void this.#enqueue(() => this.#refreshSystemState()),
+      IDLE_SAMPLE_INTERVAL_MS,
+    );
+    this.#idleInterval.unref?.();
+    void this.#enqueue(() => this.#refreshSystemState());
   }
 
   async stop(): Promise<void> {
-    if (this.#interval) clearInterval(this.#interval);
-    this.#interval = undefined;
+    this.#started = false;
+    if (this.#idleInterval) clearInterval(this.#idleInterval);
+    this.#idleInterval = undefined;
     this.#stopPauseSubscription?.();
     this.#stopPauseSubscription = undefined;
     this.#stopSystemSubscription?.();
     this.#stopSystemSubscription = undefined;
-    this.#cancel.abort();
+    const stopApplicationSubscription = this.#stopApplicationSubscription;
+    this.#stopApplicationSubscription = undefined;
+    await stopApplicationSubscription?.();
     await this.#queue;
+    await Promise.all(this.#screenshotTasks);
     this.#closeOpenEvents();
   }
 
   observeBrowser(input: ManagedBrowserActivity): Promise<void> {
-    return this.#enqueue(async () => {
+    return this.#enqueue(() => {
       if (this.activity.isPaused() || this.#idle) return;
       const details = browserDetails(input);
       const actor = this.#actor();
@@ -132,7 +149,7 @@ export class ActivityCaptureCoordinator {
       if (this.#browserKey === key) return;
       this.#browserKey = key;
       this.activity.recordEvent(details, actor);
-      await this.#captureScreenshot(actor);
+      this.#captureScreenshot(actor);
     });
   }
 
@@ -145,9 +162,9 @@ export class ActivityCaptureCoordinator {
     }
     if (event.type === "item.completed") {
       if (this.#agentUiActions.has(event.item.id)) {
-        void this.#enqueue(async () => {
+        void this.#enqueue(() => {
           this.#agentUiActions.delete(event.item.id);
-          await this.#splitForActorChange();
+          this.#splitForActorChange();
         });
       }
       return;
@@ -181,11 +198,11 @@ export class ActivityCaptureCoordinator {
         envelope.occurredAt,
       );
       if ([...this.#agentUiActions.values()].includes(event.run.id)) {
-        void this.#enqueue(async () => {
+        void this.#enqueue(() => {
           for (const [itemId, runId] of this.#agentUiActions) {
             if (runId === event.run.id) this.#agentUiActions.delete(itemId);
           }
-          await this.#splitForActorChange();
+          this.#splitForActorChange();
         });
       }
     }
@@ -195,25 +212,22 @@ export class ActivityCaptureCoordinator {
     return this.#agentUiActions.size > 0 ? "agent" : "user";
   }
 
-  async #sample(): Promise<void> {
+  #refreshSystemState(): void {
     if (this.activity.isPaused()) {
       this.#closeOpenEvents();
       return;
     }
     const idle = this.system.isIdle();
     if (idle !== this.#idle) {
-      await this.#handleSystemBoundary(idle ? "inactive" : "active");
+      this.#handleSystemBoundary(idle ? "inactive" : "active");
     }
     if (this.#idle) return;
-    let current: ActiveApplication | undefined;
-    try {
-      current = await this.applications.read(this.#cancel.signal);
-    } catch (error) {
-      if (!this.#cancel.signal.aborted) {
-        this.logger.warn("ACTIVITY_ACTIVE_APP_READ_ERROR", { error });
-      }
-      return;
-    }
+    this.#applyCurrentApplication();
+  }
+
+  #applyCurrentApplication(): void {
+    if (this.activity.isPaused() || this.#idle) return;
+    const current = this.#currentApplication;
     if (!current) return;
     const actor = this.#actor();
     const key = `${actor}:${current.appId ?? current.appName}:${current.windowTitle ?? ""}`;
@@ -248,10 +262,10 @@ export class ActivityCaptureCoordinator {
         });
       }
     }
-    if (id) await this.#captureScreenshot(actor);
+    if (id) this.#captureScreenshot(actor);
   }
 
-  async #handleSystemBoundary(boundary: ActivitySystemBoundary): Promise<void> {
+  #handleSystemBoundary(boundary: ActivitySystemBoundary): void {
     const nextIdle = boundary === "inactive" || this.system.isIdle();
     if (nextIdle === this.#idle) return;
     this.#idle = nextIdle;
@@ -260,14 +274,14 @@ export class ActivityCaptureCoordinator {
       { source: "idle", state: nextIdle ? "started" : "ended" },
       "system",
     );
-    if (!nextIdle) await this.#sample();
+    if (!nextIdle) this.#applyCurrentApplication();
   }
 
-  async #splitForActorChange(): Promise<void> {
+  #splitForActorChange(): void {
     const actor = this.#actor();
     if (this.#activeApplication && this.#activeApplication.actor !== actor) {
       this.#closeOpenEvents(false);
-      await this.#sample();
+      this.#applyCurrentApplication();
     }
   }
 
@@ -279,7 +293,7 @@ export class ActivityCaptureCoordinator {
     if (resetBrowserObservation) this.#browserKey = undefined;
   }
 
-  async #captureScreenshot(actor: "agent" | "user"): Promise<void> {
+  #captureScreenshot(actor: "agent" | "user"): void {
     if (actor !== "user") return;
     const capturedAt = Date.parse(this.clock.now());
     if (
@@ -289,15 +303,21 @@ export class ActivityCaptureCoordinator {
       return;
     }
     this.#lastScreenshotAt = capturedAt;
-    await this.activity.captureScreenshot(actor).catch((error: unknown) => {
-      if (this.#lastScreenshotAt === capturedAt) {
-        this.#lastScreenshotAt = undefined;
-      }
-      this.logger.warn("ACTIVITY_SCREENSHOT_ERROR", { error });
-    });
+    const task = this.activity
+      .captureScreenshot(actor)
+      .catch((error: unknown) => {
+        if (this.#lastScreenshotAt === capturedAt) {
+          this.#lastScreenshotAt = undefined;
+        }
+        this.logger.warn("ACTIVITY_SCREENSHOT_ERROR", { error });
+      })
+      .finally(() => {
+        this.#screenshotTasks.delete(task);
+      });
+    this.#screenshotTasks.add(task);
   }
 
-  #enqueue(task: () => Promise<void>): Promise<void> {
+  #enqueue(task: () => Promise<void> | void): Promise<void> {
     const queued = this.#queue.then(task, task).catch((error: unknown) => {
       this.logger.warn("ACTIVITY_CAPTURE_ERROR", { error });
     });

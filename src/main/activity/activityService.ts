@@ -301,7 +301,7 @@ export class ActivityService {
     const assetId = this.ids.generate();
     const asset = await this.assets.save(
       assetId,
-      await this.capture.capturePrimaryDisplay(),
+      await this.capture.capturePrimaryDisplay({ resolution: "logical" }),
       now,
     );
     try {

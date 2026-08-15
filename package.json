@@ -18,7 +18,8 @@
   "scripts": {
     "browser:install": "playwright install chromium",
     "start": "electron-forge start",
-    "build": "node scripts/build.mjs",
+    "build:native": "node scripts/build-native-helper.mjs",
+    "build": "npm run build:native && node scripts/build.mjs",
     "package": "npm run browser:install && electron-forge package",
     "make": "npm run browser:install && electron-forge make",
     "smoke:dev": "node scripts/smoke-electron.mjs dev",

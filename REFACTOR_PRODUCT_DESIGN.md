@@ -824,10 +824,12 @@ Memory 页面包含：
 - 前台应用变化立即结束上一段并开始下一段。
 - 同 actor、同应用和同窗口在 8 分钟内合并；不同窗口不因应用名相同而混为一段。
 - Browser 标签停留和 Active App 统一到时间线，但保留来源。
-- 前台状态每 15 秒读取一次且只在状态变化时落 event；连续 idle 60 秒、锁屏或休眠切断 Episode。
-- 截图只在用户前台状态变化时触发，且距上次成功截图至少 15 分钟；失败不阻断 metadata event，内部频率不做用户档位。
+- macOS 前台应用使用 `NSWorkspace.didActivateApplicationNotification` 事件驱动更新；启动时从 `frontmostApplication` 取得一次初始事实，当前应用激活后才通过 Accessibility 读取焦点窗口标题，并在焦点窗口或标题变化通知到达时刷新。生产路径不再周期性启动 `System Events`/AppleScript；仅保留每 15 秒一次的进程内 idle 状态采样，以在连续 idle 60 秒时切断 Episode，锁屏或休眠仍由系统事件立即切断。15 秒是 CharaMate 的 idle 边界延迟启发式，不是协议限制或普通用户设置。
+- 截图只在用户前台状态变化时触发，且距上次成功截图至少 15 分钟；Activity 使用主显示器逻辑像素尺寸获取一次 PNG，资产层直接写入同一字节并异步计算摘要，不再二次解码/编码。截图任务不占用前台 metadata event 的串行队列；失败不阻断 metadata event，内部频率不做用户档位。
 - 原图单独保存；数据库仅保存路径、尺寸、时间和摘要。
 - 先用时间、应用变化和 Idle 等确定性边界形成 Episode；Agent 操作使用独立 actor，不归因给用户，发布版不逐事件调用模型。
+
+本节于 2026-08-15 按锁定 `electron@43.2.0`、Apple AppKit/ApplicationServices 当前文档与 PixiJS `8.19.0` 复核：`NSWorkspace` 激活通知和 `frontmostApplication` 是操作系统事实源，Accessibility 只补充当前焦点窗口标题；截图逻辑尺寸来自 Electron `Display.size`，`desktopCapturer.thumbnailSize` 决定实际缩略图请求尺寸。事件订阅、idle 采样延迟和 15 分钟截图间隔属于 CharaMate 产品策略。
 
 ### 7.3 Activity 页面
 
@@ -1785,6 +1787,8 @@ Renderer 断线后传 `afterSequence` 补事件；不依赖“刚好在线”才
 - 获胜检索方案的模型计算、图片处理、OCR 和大摘要不在 Main/Renderer UI 热线程运行。
 - Markdown/KaTeX 长消息使用分块与虚拟列表。
 - Run delta 合批刷新，命令高频输出先写 artifact/ring buffer。
+- Activity 前台事实由常驻系统通知流推送，截图编码结果直接异步持久化；不得用周期性 AppleScript 子进程或重复 PNG 编码占用 Main 热路径。
+- Character Window 的 `AnimatedSprite` 使用由 15 FPS 定时器显式推进的应用私有 ticker，避免默认 display-rate `requestAnimationFrame` 持续唤醒；窗口不可见时停止推进，并复用已加载 atlas 与按动画/朝向建立的 frame texture。15 FPS 是结合当前最短 120 ms atlas 帧、最高 1.5 倍播放速度与真实进程 CPU 复核选择的 CharaMate 渲染启发式，不作为普通用户档位。
 - 领地一次投影活动 Zone，按稳定层级、直接 scene tree 与 Pixi `Assets` cache 渲染；图片与区域候选在后台生成，不能阻塞当前 Revision 的游览和布置。
 
 ### 17.3 存储维护

@@ -238,8 +238,13 @@ class FakeComputer implements ComputerAdapter {
 }
 
 class FakeCapture implements ScreenCapture {
-  capturePrimaryDisplay(): Promise<Buffer> {
-    return Promise.resolve(Buffer.from("fake-png"));
+  capturePrimaryDisplay(): ReturnType<ScreenCapture["capturePrimaryDisplay"]> {
+    return Promise.resolve({
+      bytes: Buffer.from("fake-png"),
+      height: 720,
+      mediaType: "image/png",
+      width: 1280,
+    });
   }
 }
 

@@ -91,8 +91,21 @@ on run argv
   return "clicked"
 end run`;
 
+export interface CapturedScreen {
+  readonly bytes: Buffer;
+  readonly height: number;
+  readonly mediaType: "image/png";
+  readonly width: number;
+}
+
+export interface ScreenCaptureOptions {
+  readonly resolution?: "device" | "logical";
+}
+
 export interface ScreenCapture {
-  capturePrimaryDisplay(): Promise<Buffer>;
+  capturePrimaryDisplay(
+    options?: ScreenCaptureOptions,
+  ): Promise<CapturedScreen>;
 }
 
 export interface ComputerAdapter {
@@ -416,8 +429,8 @@ export function registerComputerTools(
       const artifact = await artifacts.storeBuffer(
         context.runId,
         "computer-screenshot.png",
-        image,
-        "image/png",
+        image.bytes,
+        image.mediaType,
         "image",
       );
       return {

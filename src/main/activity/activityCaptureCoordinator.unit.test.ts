@@ -4,7 +4,10 @@ import type { ActivityEventDetails } from "../../shared/contracts/activity";
 import type { RunEventEnvelope } from "../../shared/contracts/ipc";
 import type { Clock } from "../../shared/pure/clock";
 import type { AppLogger } from "../observability/logger";
-import type { ActiveApplicationProbe } from "./activeApplicationProbe";
+import type {
+  ActiveApplication,
+  ActiveApplicationSource,
+} from "./activeApplicationSource";
 import { ActivityCaptureCoordinator } from "./activityCaptureCoordinator";
 import type { ForegroundActivityObservation } from "./activityObservation";
 import type { ActivityService } from "./activityService";
@@ -31,17 +34,20 @@ function harness() {
         readonly windowTitle?: string;
       }
     | undefined;
+  let applicationListener:
+    ((application: ActiveApplication) => void) | undefined;
   const recordEvent = vi.fn(
     (details: ActivityEventDetails, actor: "agent" | "system" | "user") => {
       recorded.push({ actor, source: details.source });
     },
   );
+  const finishEvent = vi.fn();
   const activity = {
     captureScreenshot: vi.fn((actor: string) => {
       screenshots.push(actor);
       return Promise.resolve();
     }),
-    finishEvent: vi.fn(),
+    finishEvent,
     isPaused: () => false,
     onPauseChanged: () => () => undefined,
     recordEvent,
@@ -54,8 +60,12 @@ function harness() {
     ),
   } as unknown as ActivityService;
   const applications = {
-    read: () => Promise.resolve(activeApplication),
-  } satisfies ActiveApplicationProbe;
+    subscribe(listener: (application: ActiveApplication) => void) {
+      applicationListener = listener;
+      if (activeApplication) listener(activeApplication);
+      return () => Promise.resolve();
+    },
+  } satisfies ActiveApplicationSource;
   const system = {
     isIdle: () => false,
     subscribe: () => () => undefined,
@@ -82,12 +92,14 @@ function harness() {
       logger,
       { observeForeground: (observation) => observations.push(observation) },
     ),
+    finishEvent,
     observations,
     recorded,
     recordEvent,
     screenshots,
     setActiveApplication(value: typeof activeApplication) {
       activeApplication = value;
+      if (value) applicationListener?.(value);
     },
     started,
   };
@@ -150,6 +162,23 @@ describe("ActivityCaptureCoordinator", () => {
       },
     ]);
     expect(fixture.started).toEqual([{ actor: "user", source: "active_app" }]);
+  });
+
+  it("records title changes from the event source without polling", async () => {
+    const fixture = harness();
+    fixture.setActiveApplication({ appName: "Editor", windowTitle: "one.md" });
+    fixture.coordinator.start();
+    await flushQueue();
+
+    fixture.setActiveApplication({ appName: "Editor", windowTitle: "two.md" });
+    await flushQueue();
+    await fixture.coordinator.stop();
+
+    expect(fixture.started).toEqual([
+      { actor: "user", source: "active_app" },
+      { actor: "user", source: "active_app" },
+    ]);
+    expect(fixture.finishEvent).toHaveBeenCalledWith("event-1");
   });
 
   it("captures at a user transition no more than once per 15 minutes", async () => {

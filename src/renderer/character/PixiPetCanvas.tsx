@@ -7,6 +7,7 @@ import {
   Rectangle,
   Texture,
   type FrameObject,
+  type Ticker,
 } from "pixi.js";
 import { useEffect, useRef, useState } from "react";
 
@@ -22,6 +23,8 @@ import {
 } from "./petAtlas";
 import styles from "./CharacterApp.module.css";
 
+const PET_RENDER_FPS = 15;
+
 interface PixiPetCanvasProps {
   readonly animation: PetAnimation;
   readonly animationSpeed: number;
@@ -32,19 +35,58 @@ interface PixiPetCanvasProps {
 
 interface PixiRuntime {
   readonly app: Application;
+  readonly animations: Map<string, CachedAnimation>;
+  readonly handleVisibilityChange: () => void;
   readonly host: HTMLDivElement;
+  atlasUrl: string | undefined;
+  renderTimer: number | undefined;
   sprite: AnimatedSprite | undefined;
-  textures: Texture[];
+  readonly updateAnimation: (ticker: Ticker) => void;
 }
 
-function destroyAnimation(runtime: PixiRuntime): void {
+interface CachedAnimation {
+  readonly frames: FrameObject[];
+  readonly textures: Texture[];
+}
+
+function destroySprite(runtime: PixiRuntime): void {
   if (runtime.sprite) {
     runtime.app.stage.removeChild(runtime.sprite);
     runtime.sprite.destroy();
     runtime.sprite = undefined;
   }
-  for (const texture of runtime.textures) texture.destroy(false);
-  runtime.textures = [];
+}
+
+function destroyAnimations(runtime: PixiRuntime): void {
+  for (const animation of runtime.animations.values()) {
+    for (const texture of animation.textures) texture.destroy(false);
+  }
+  runtime.animations.clear();
+}
+
+function destroyRuntime(runtime: PixiRuntime): void {
+  document.removeEventListener(
+    "visibilitychange",
+    runtime.handleVisibilityChange,
+  );
+  stopRendering(runtime);
+  runtime.app.ticker.remove(runtime.updateAnimation);
+  destroySprite(runtime);
+  destroyAnimations(runtime);
+}
+
+function startRendering(runtime: PixiRuntime): void {
+  if (runtime.renderTimer !== undefined || document.hidden) return;
+  runtime.app.ticker.update(performance.now());
+  runtime.renderTimer = window.setInterval(() => {
+    runtime.app.ticker.update(performance.now());
+  }, 1_000 / PET_RENDER_FPS);
+}
+
+function stopRendering(runtime: PixiRuntime): void {
+  if (runtime.renderTimer === undefined) return;
+  window.clearInterval(runtime.renderTimer);
+  runtime.renderTimer = undefined;
 }
 
 function fitSprite(runtime: PixiRuntime): void {
@@ -84,6 +126,7 @@ export function PixiPetCanvas({
     void app
       .init({
         antialias: false,
+        autoStart: false,
         autoDensity: true,
         backgroundAlpha: 0,
         preference: "webgl",
@@ -97,7 +140,26 @@ export function PixiPetCanvas({
           return;
         }
         host.append(app.canvas);
-        runtimeRef.current = { app, host, sprite: undefined, textures: [] };
+        const runtime: PixiRuntime = {
+          animations: new Map(),
+          app,
+          atlasUrl: undefined,
+          handleVisibilityChange: () => {
+            if (document.hidden) stopRendering(runtime);
+            else startRendering(runtime);
+          },
+          host,
+          renderTimer: undefined,
+          sprite: undefined,
+          updateAnimation: (ticker) => runtime.sprite?.update(ticker),
+        };
+        app.ticker.add(runtime.updateAnimation);
+        document.addEventListener(
+          "visibilitychange",
+          runtime.handleVisibilityChange,
+        );
+        startRendering(runtime);
+        runtimeRef.current = runtime;
         setRuntimeGeneration((generation) => generation + 1);
         resizeObserver.observe(host);
         onReady();
@@ -113,7 +175,7 @@ export function PixiPetCanvas({
       resizeObserver.disconnect();
       const runtime = runtimeRef.current;
       if (runtime?.app === app) {
-        destroyAnimation(runtime);
+        destroyRuntime(runtime);
         runtimeRef.current = null;
       }
       if (initialized) app.destroy(true, { children: true });
@@ -128,42 +190,63 @@ export function PixiPetCanvas({
     void Assets.load<Texture>(pet.spriteUrl)
       .then((atlasTexture) => {
         if (cancelled) return;
-        destroyAnimation(runtime);
+        if (runtime.atlasUrl !== pet.spriteUrl) {
+          destroySprite(runtime);
+          destroyAnimations(runtime);
+          runtime.atlasUrl = pet.spriteUrl;
+        }
         const atlasFrames = getPetAtlasFrames(
           animation,
           pet.spriteVersionNumber,
           effectiveLookAngle,
         );
-        const textures = atlasFrames.map(
-          ({ column, row }) =>
-            new Texture({
-              frame: new Rectangle(
-                column * PET_CELL_WIDTH,
-                row * PET_CELL_HEIGHT,
-                PET_CELL_WIDTH,
-                PET_CELL_HEIGHT,
-              ),
-              source: atlasTexture.source,
-            }),
-        );
-        const frames: FrameObject[] = textures.map((texture, index) => ({
-          texture,
-          time: atlasFrames[index]?.durationMs ?? 120,
-        }));
+        const animationKey = `${pet.spriteVersionNumber}:${animation}:${String(effectiveLookAngle)}`;
+        let cached = runtime.animations.get(animationKey);
+        if (!cached) {
+          const textures = atlasFrames.map(
+            ({ column, row }) =>
+              new Texture({
+                frame: new Rectangle(
+                  column * PET_CELL_WIDTH,
+                  row * PET_CELL_HEIGHT,
+                  PET_CELL_WIDTH,
+                  PET_CELL_HEIGHT,
+                ),
+                source: atlasTexture.source,
+              }),
+          );
+          cached = {
+            frames: textures.map((texture, index) => ({
+              texture,
+              time: atlasFrames[index]?.durationMs ?? 120,
+            })),
+            textures,
+          };
+          runtime.animations.set(animationKey, cached);
+        }
         const reducedMotion = window.matchMedia(
           "(prefers-reduced-motion: reduce)",
         ).matches;
-        const sprite = new AnimatedSprite({
-          animationSpeed: animationSpeedRef.current,
-          autoPlay: !reducedMotion && frames.length > 1,
-          loop: animationLoops(animation),
-          textures: frames,
-        });
-        runtime.textures = textures;
-        runtime.sprite = sprite;
-        runtime.app.stage.addChild(sprite);
+        let sprite = runtime.sprite;
+        if (!sprite) {
+          sprite = new AnimatedSprite({
+            animationSpeed: animationSpeedRef.current,
+            autoPlay: false,
+            autoUpdate: false,
+            loop: animationLoops(animation),
+            textures: cached.frames,
+          });
+          runtime.sprite = sprite;
+          runtime.app.stage.addChild(sprite);
+        } else {
+          sprite.stop();
+          sprite.textures = cached.frames;
+          sprite.animationSpeed = animationSpeedRef.current;
+          sprite.loop = animationLoops(animation);
+        }
         fitSprite(runtime);
-        if (reducedMotion || frames.length === 1) sprite.gotoAndStop(0);
+        sprite.gotoAndStop(0);
+        if (!reducedMotion && cached.frames.length > 1) sprite.play();
         setLoadError(null);
         setReadyKey(renderKey);
       })
@@ -176,7 +259,15 @@ export function PixiPetCanvas({
     return () => {
       cancelled = true;
     };
-  }, [animation, effectiveLookAngle, pet, renderKey, runtimeGeneration]);
+  }, [
+    animation,
+    effectiveLookAngle,
+    pet.id,
+    pet.spriteUrl,
+    pet.spriteVersionNumber,
+    renderKey,
+    runtimeGeneration,
+  ]);
 
   useEffect(() => {
     animationSpeedRef.current = animationSpeed;

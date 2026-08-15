@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -47,19 +48,58 @@ function harness(now = "2026-08-10T12:00:00.000Z") {
   const repository = new ActivityRepository(database);
   repository.initialize(clock.now());
   const assets = new ActivityAssetStore(path.join(root, "activity-assets"));
+  const captureCalls: unknown[] = [];
+  const captureBytes = Buffer.from("activity-screenshot-png");
   const service = new ActivityService(
     repository,
     memory,
     assets,
-    { capturePrimaryDisplay: () => Promise.resolve(Buffer.alloc(0)) },
+    {
+      capturePrimaryDisplay: (options) => {
+        captureCalls.push(options);
+        return Promise.resolve({
+          bytes: captureBytes,
+          height: 1,
+          mediaType: "image/png" as const,
+          width: 1,
+        });
+      },
+    },
     ids,
     clock,
     "Asia/Shanghai",
   );
-  return { assets, clock, database, memory, repository, root, service };
+  return {
+    assets,
+    captureBytes,
+    captureCalls,
+    clock,
+    database,
+    memory,
+    repository,
+    root,
+    service,
+  };
 }
 
 describe("Activity persistence and distillation", () => {
+  it("captures Activity screenshots at logical resolution without re-encoding", async () => {
+    const { captureBytes, captureCalls, database, root, service } = harness();
+
+    await service.captureScreenshot("user");
+
+    expect(captureCalls).toEqual([{ resolution: "logical" }]);
+    const row = database
+      .prepare(
+        "SELECT storage_key FROM activity_assets ORDER BY created_at DESC LIMIT 1",
+      )
+      .get() as { storage_key: string };
+    expect(
+      readFileSync(path.join(root, "activity-assets", row.storage_key)),
+    ).toEqual(captureBytes);
+    database.close();
+  });
+
   it("closes stale capture and maintenance work conservatively on restart", () => {
     const { clock, database, repository, service } = harness();
     const startedAt = clock.now();

@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
+import { webcrypto } from "node:crypto";
 import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { nativeImage } from "electron";
-
 import type { Timestamp } from "../../shared/contracts/primitives";
+import type { CapturedScreen } from "../computer/macosComputer";
 import type { ActivityAssetRecord } from "./activityRepository";
 
 export class ActivityAssetStore {
@@ -12,25 +11,33 @@ export class ActivityAssetStore {
 
   async save(
     id: string,
-    bytes: Buffer,
+    capture: CapturedScreen,
     createdAt: Timestamp,
   ): Promise<ActivityAssetRecord> {
-    const image = nativeImage.createFromBuffer(bytes, { scaleFactor: 1 });
-    if (image.isEmpty()) throw new Error("系统截图无法解码。");
-    const png = image.toPNG();
-    const size = image.getSize();
+    if (capture.width <= 0 || capture.height <= 0) {
+      throw new Error("系统截图尺寸无效。");
+    }
     const storageKey = `${id}.png`;
     await mkdir(this.directory, { recursive: true });
-    await writeFile(path.join(this.directory, storageKey), png, { flag: "wx" });
+    const digestTask = webcrypto.subtle.digest(
+      "SHA-256",
+      Uint8Array.from(capture.bytes),
+    );
+    const [digest] = await Promise.all([
+      digestTask,
+      writeFile(path.join(this.directory, storageKey), capture.bytes, {
+        flag: "wx",
+      }),
+    ]);
     return {
-      byteLength: png.byteLength,
+      byteLength: capture.bytes.byteLength,
       createdAt,
-      height: size.height,
+      height: capture.height,
       id,
-      mediaType: "image/png",
-      sha256: createHash("sha256").update(png).digest("hex"),
+      mediaType: capture.mediaType,
+      sha256: Buffer.from(digest).toString("hex"),
       storageKey,
-      width: size.width,
+      width: capture.width,
     };
   }
 

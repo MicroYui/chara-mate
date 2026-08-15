@@ -60,7 +60,7 @@ import { createMainWindow } from "./app/windows";
 import { registerSettingsIpc } from "./app/settingsIpc";
 import { SettingsRepository } from "./app/settingsRepository";
 import { SettingsService } from "./app/settingsService";
-import { MacOsActiveApplicationProbe } from "./activity/activeApplicationProbe";
+import { MacOsActiveApplicationSource } from "./activity/activeApplicationSource";
 import { ActivityAssetStore } from "./activity/activityAssetStore";
 import { ActivityCaptureCoordinator } from "./activity/activityCaptureCoordinator";
 import { registerActivityIpc } from "./activity/activityIpc";
@@ -645,7 +645,21 @@ async function startApplication(): Promise<void> {
   unregisterActivityIpc = registerActivityIpc(activityService);
   activityCapture = new ActivityCaptureCoordinator(
     activityService,
-    new MacOsActiveApplicationProbe(),
+    new MacOsActiveApplicationSource(
+      app.isPackaged
+        ? path.join(
+            process.resourcesPath,
+            "native-helpers",
+            "active-application-observer",
+          )
+        : path.join(
+            app.getAppPath(),
+            "resources",
+            "generated",
+            "native-helpers",
+            "active-application-observer",
+          ),
+    ),
     new ElectronActivitySystemSource(60),
     clock,
     logger,

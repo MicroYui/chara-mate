@@ -49,6 +49,10 @@ function chromiumRevisionDirectory(): string | undefined {
 
 const chromiumDirectory = chromiumRevisionDirectory();
 const defaultPetsDirectory = path.resolve("resources/default-pets");
+const nativeHelpersDirectory = path.resolve(
+  "resources/generated/native-helpers",
+);
+const nativeHelperBuildScript = path.resolve("scripts/build-native-helper.mjs");
 const trayDirectory = path.resolve("resources/tray");
 const appIconPath = path.resolve("resources/CharaMate.icns");
 const signingIdentity = process.env["CHARAMATE_MACOS_SIGN_IDENTITY"]?.trim();
@@ -62,7 +66,28 @@ if (notarizationKeychainProfile && !signingIdentity) {
   );
 }
 
+function runFile(
+  command: string,
+  arguments_: readonly string[],
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(command, [...arguments_], (error) => {
+      if (error) reject(new Error(error.message, { cause: error }));
+      else resolve();
+    });
+  });
+}
+
 const config: ForgeConfig = {
+  hooks: {
+    generateAssets: async (_forgeConfig, platform, architecture) => {
+      await runFile(process.execPath, [
+        nativeHelperBuildScript,
+        platform,
+        String(architecture),
+      ]);
+    },
+  },
   packagerConfig: {
     asar: true,
     icon: appIconPath,
@@ -70,6 +95,7 @@ const config: ForgeConfig = {
     extraResource: [
       defaultPetsDirectory,
       trayDirectory,
+      ...(process.platform === "darwin" ? [nativeHelpersDirectory] : []),
       ...(chromiumDirectory && existsSync(chromiumDirectory)
         ? [chromiumDirectory]
         : []),
