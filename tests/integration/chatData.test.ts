@@ -666,10 +666,57 @@ describe("Phase 1 Chat Data and Run event persistence", () => {
       }),
     ).toThrow(/FOREIGN KEY/u);
     chats.insertAttachment(attachmentFixture);
+    chats.recordContextUsage({
+      chatId: FIXTURE_IDS.chat,
+      inputTokens: 10,
+      modelId: "gpt-5.6",
+      requestBytes: 100,
+      updatedAt: FIXTURE_TIMESTAMPS.updated,
+    });
+    expect(
+      chats.advanceContextSnapshot({
+        boundary: {
+          createdAt: messageFixture.createdAt,
+          messageId: messageFixture.id,
+        },
+        chatId: FIXTURE_IDS.chat,
+        expectedGeneration: 0,
+        summary: "Conversation summary",
+        updatedAt: FIXTURE_TIMESTAMPS.updated,
+      }),
+    ).toMatchObject({ generation: 1 });
+    expect(
+      chats.advanceContextSnapshot({
+        boundary: {
+          createdAt: messageFixture.createdAt,
+          messageId: messageFixture.id,
+        },
+        chatId: FIXTURE_IDS.chat,
+        expectedGeneration: 0,
+        summary: "Stale summary",
+        updatedAt: FIXTURE_TIMESTAMPS.updated,
+      }),
+    ).toBeUndefined();
+    expect(
+      chats.advanceContextSnapshot({
+        boundary: {
+          createdAt: messageFixture.createdAt,
+          messageId: messageFixture.id,
+        },
+        chatId: FIXTURE_IDS.chat,
+        expectedGeneration: 1,
+        summary: "Regressed summary",
+        updatedAt: FIXTURE_TIMESTAMPS.updated,
+      }),
+    ).toBeUndefined();
+    expect(chats.getContextSnapshot(FIXTURE_IDS.chat)?.summary).toBe(
+      "Conversation summary",
+    );
 
     expect(chats.deleteChat(FIXTURE_IDS.chat)).toBe(true);
     for (const table of [
       "attachments",
+      "chat_context_snapshots",
       "messages",
       "run_events",
       "tool_artifacts",

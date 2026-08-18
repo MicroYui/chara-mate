@@ -58,6 +58,7 @@ import {
 import { detectToolCycle, semanticToolSignature } from "./loopGuard";
 import { requiresApproval, toolAllowedInExecution } from "./approvalPolicy";
 import { AgentError } from "./agentError";
+import { ChatContextService } from "./chatContextService";
 import {
   ImageInputError,
   type ImageInputProvider,
@@ -719,7 +720,7 @@ function initialCheckpoint(
   currentInput: JsonValue,
   memoryContext: JsonValue | undefined,
   recentUser: string,
-  priorMessages: readonly Message[],
+  priorContext: readonly JsonValue[],
   toolNames?: readonly string[],
   interactionEnabled = true,
   nativeWebSearchEnabled = true,
@@ -735,16 +736,7 @@ function initialCheckpoint(
       nextSteps: [],
     },
     input: [
-      ...priorMessages
-        .filter(
-          (message) =>
-            message.status === "completed" && message.content.trim().length > 0,
-        )
-        .map((message): JsonValue => ({
-          content: message.content,
-          role: message.role,
-          type: "message",
-        })),
+      ...priorContext,
       ...(memoryContext ? [memoryContext] : []),
       currentInput,
     ],
@@ -762,6 +754,7 @@ function initialCheckpoint(
 
 export class AgentRuntime {
   readonly #active = new Map<string, ActiveRun>();
+  readonly #chatContext: ChatContextService;
 
   constructor(
     private readonly chats: ChatRepository,
@@ -778,7 +771,10 @@ export class AgentRuntime {
     private readonly chatTitles?: ChatTitleGenerator,
     private readonly images?: ImageInputProvider,
     private readonly memory?: MemoryService,
-  ) {}
+    chatContext?: ChatContextService,
+  ) {
+    this.#chatContext = chatContext ?? new ChatContextService(chats, clock);
+  }
 
   async initialize(): Promise<void> {
     for (const run of this.runs.listRunsByStatus([
@@ -920,7 +916,6 @@ export class AgentRuntime {
     onRunAllocated?: (runId: string) => void,
   ): Promise<Run> {
     return this.chatTurns.runSerializedTurn(request.chatId, async () => {
-      const priorMessages = this.chats.listMessages(request.chatId);
       const limits = await modelRuntime.provider.resolveContextLimits(
         modelRuntime.snapshot.modelId,
       );
@@ -957,6 +952,45 @@ export class AgentRuntime {
           );
         }
       }
+      const modelText =
+        request.attachments.length === 0
+          ? request.content
+          : `${request.content}\n\nAttached local artifacts:\n${request.attachments
+              .map(({ displayName, kind, storageKey }) =>
+                kind === "image"
+                  ? `- ${displayName}: image pixels included in this message`
+                  : `- ${displayName}: ${storageKey}`,
+              )
+              .join("\n")}`;
+      const currentInput =
+        preparedImages.length > 0
+          ? imageMessageReference(
+              modelText,
+              imageAttachments.map(({ storageKey }) => storageKey),
+            )
+          : messageInput(modelText);
+      const memoryContext = this.memory
+        ? createMemoryContextInput(
+            this.memory.search(
+              {
+                ...(request.content.trim() ? { query: request.content } : {}),
+              },
+              "context",
+              8,
+            ),
+          )
+        : undefined;
+      const preparedContext = await this.#chatContext.prepare({
+        additionalInput: [
+          ...(memoryContext ? [memoryContext] : []),
+          currentInput,
+        ],
+        chatId: request.chatId,
+        limits,
+        modelId: modelRuntime.snapshot.modelId,
+        provider: modelRuntime.provider,
+        signal: new AbortController().signal,
+      });
       const now = this.clock.now();
       const runId = this.ids.generate();
       onRunAllocated?.(runId);
@@ -971,6 +1005,24 @@ export class AgentRuntime {
         startedAt: now,
         status: "running",
       });
+
+      if (preparedContext.compacted) {
+        const compactionItem = this.writer.startItem(
+          runId,
+          "context_compaction",
+          { scope: "chat" },
+        );
+        this.writer.completeItem(compactionItem.id, {
+          displayOutput:
+            "已整理较早会话内容，并保留当前目标、近期原文与长期记忆。",
+          output: {
+            chatContextGeneration: preparedContext.snapshot?.generation ?? 0,
+            coveredThroughMessageId:
+              preparedContext.snapshot?.coveredThroughMessageId ?? null,
+          },
+          status: "completed",
+        });
+      }
 
       if (recordTriggerMessage) {
         const userMessage = this.chats.insertMessage({
@@ -1014,35 +1066,6 @@ export class AgentRuntime {
           status: "completed",
         });
       }
-
-      const modelText =
-        request.attachments.length === 0
-          ? request.content
-          : `${request.content}\n\nAttached local artifacts:\n${request.attachments
-              .map(({ displayName, kind, storageKey }) =>
-                kind === "image"
-                  ? `- ${displayName}: image pixels included in this message`
-                  : `- ${displayName}: ${storageKey}`,
-              )
-              .join("\n")}`;
-      const currentInput =
-        preparedImages.length > 0
-          ? imageMessageReference(
-              modelText,
-              imageAttachments.map(({ storageKey }) => storageKey),
-            )
-          : messageInput(modelText);
-      const memoryContext = this.memory
-        ? createMemoryContextInput(
-            this.memory.search(
-              {
-                ...(request.content.trim() ? { query: request.content } : {}),
-              },
-              "context",
-              8,
-            ),
-          )
-        : undefined;
       const state = this.#createActiveRun(
         runId,
         modelRuntime.provider,
@@ -1051,7 +1074,7 @@ export class AgentRuntime {
           currentInput,
           memoryContext,
           request.content,
-          priorMessages,
+          preparedContext.input,
           toolNames,
           interactionEnabled,
           nativeWebSearchEnabled,
@@ -1412,6 +1435,8 @@ export class AgentRuntime {
         JSON.stringify(active.data.input),
         "utf8",
       );
+      const shouldRecordChatUsage =
+        active.data.chatContextUsageRecorded !== true;
       const turn = await this.#modelTurn(active);
       const checkpointWithoutAllowedTools = { ...active.data };
       delete checkpointWithoutAllowedTools.allowedTools;
@@ -1422,11 +1447,24 @@ export class AgentRuntime {
       active.data = {
         ...checkpointWithoutAllowedTools,
         boundaries: active.data.boundaries,
+        chatContextUsageRecorded: true,
         forcedCompactionAttempted: false,
         input: nextInput,
         lastRequestBytes: requestBytes,
         lastUsage: turn.usage,
       };
+      if (
+        shouldRecordChatUsage &&
+        !active.data.input.some(containsImageInput)
+      ) {
+        const run = this.#requireRun(active.runId);
+        this.#chatContext.recordUsage({
+          chatId: run.chatId,
+          inputTokens: turn.usage.inputTokens,
+          modelId: run.provider.modelId,
+          requestBytes,
+        });
+      }
 
       for (const searchCall of turn.toolSearchCalls) {
         const selected = this.#searchTools(
@@ -1724,7 +1762,13 @@ export class AgentRuntime {
         !active.data.forcedCompactionAttempted
       ) {
         active.data = { ...active.data, forcedCompactionAttempted: true };
-        this.#compact(active, true);
+        const durableCompactionApplied =
+          active.data.chatContextUsageRecorded !== true &&
+          active.data.lastUsage === undefined &&
+          active.data.boundaries.length === 0
+            ? await this.#compactChatContextForFirstRequest(active)
+            : false;
+        if (!durableCompactionApplied) this.#compact(active, true);
         return this.#modelTurn(active);
       }
       throw reportedError;
@@ -2442,6 +2486,64 @@ export class AgentRuntime {
       active.data.handoff,
     );
     if (compiled.compacted) this.#applyCompaction(active, compiled.input);
+  }
+
+  async #compactChatContextForFirstRequest(
+    active: ActiveRun,
+  ): Promise<boolean> {
+    const run = this.#requireRun(active.runId);
+    const currentInput = active.data.currentUserInput;
+    if (!currentInput) return false;
+    const memoryContext = active.data.input.find(isMemoryContextInput);
+    const beforeBytes = Buffer.byteLength(
+      JSON.stringify(active.data.input),
+      "utf8",
+    );
+    const projection = await this.#chatContext.prepare({
+      additionalInput: [
+        ...(memoryContext ? [memoryContext] : []),
+        currentInput,
+      ],
+      chatId: run.chatId,
+      force: true,
+      limits: active.limits,
+      modelId: run.provider.modelId,
+      provider: active.provider,
+      signal: active.abort.signal,
+    });
+    if (!projection.compacted) return false;
+
+    const withoutUsage = { ...active.data };
+    delete withoutUsage.lastRequestBytes;
+    delete withoutUsage.lastUsage;
+    active.data = {
+      ...withoutUsage,
+      input: [
+        ...projection.input,
+        ...(memoryContext ? [memoryContext] : []),
+        currentInput,
+      ],
+      recentUsers: active.data.recentUsers.slice(-1),
+    };
+    const afterBytes = Buffer.byteLength(
+      JSON.stringify(active.data.input),
+      "utf8",
+    );
+    const item = this.writer.startItem(active.runId, "context_compaction", {
+      beforeBytes,
+      scope: "chat",
+    });
+    this.writer.completeItem(item.id, {
+      displayOutput: "已整理较早会话内容，并保留当前目标与长期记忆。",
+      output: {
+        afterBytes,
+        beforeBytes,
+        chatContextGeneration: projection.snapshot?.generation ?? 0,
+      },
+      status: "completed",
+    });
+    this.#saveCheckpoint(active, "model");
+    return true;
   }
 
   #compact(active: ActiveRun, force: boolean): void {

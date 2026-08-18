@@ -1,9 +1,10 @@
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { PlanUpdate } from "../../shared/contracts/run";
+import { isChatContextSummaryInput } from "../chat/chatContext";
 import type { ModelContextLimits, ModelUsage } from "./modelProvider";
 import { isMemoryContextInput } from "./memoryContext";
 
-const COMPACTION_RATIO = 0.9;
+export const CONTEXT_COMPACTION_RATIO = 0.9;
 const CURRENT_PLAN_INPUT_PREFIX =
   "Current execution plan (authoritative latest complete snapshot):";
 
@@ -30,7 +31,9 @@ export interface CompiledContext {
   readonly requestBytes: number;
 }
 
-function resolvedInputBudget(limits: ModelContextLimits): number | undefined {
+export function resolvedInputBudget(
+  limits: ModelContextLimits,
+): number | undefined {
   if (limits.effectiveInputTokens !== undefined) {
     return limits.effectiveInputTokens;
   }
@@ -45,8 +48,18 @@ function resolvedInputBudget(limits: ModelContextLimits): number | undefined {
   return candidates.length === 0 ? undefined : Math.min(...candidates);
 }
 
-function requestBytes(items: readonly JsonValue[]): number {
+export function contextRequestBytes(items: readonly JsonValue[]): number {
   return Buffer.byteLength(JSON.stringify(items), "utf8");
+}
+
+export function estimatedInputTokens(
+  items: readonly JsonValue[],
+  measurement: { readonly inputTokens: number; readonly requestBytes: number },
+): number {
+  return (
+    (contextRequestBytes(items) / measurement.requestBytes) *
+    measurement.inputTokens
+  );
 }
 
 function record(value: JsonValue): Readonly<Record<string, JsonValue>> | null {
@@ -112,9 +125,9 @@ export class ContextCompiler {
     const usage = checkpoint.lastUsage;
     const previousBytes = checkpoint.lastRequestBytes;
     if (!budget || !usage || !previousBytes || previousBytes <= 0) return false;
-    const activeBytes = requestBytes(checkpoint.items);
+    const activeBytes = contextRequestBytes(checkpoint.items);
     const estimatedTokens = (activeBytes / previousBytes) * usage.inputTokens;
-    return estimatedTokens >= budget * COMPACTION_RATIO;
+    return estimatedTokens >= budget * CONTEXT_COMPACTION_RATIO;
   }
 
   compile(
@@ -127,7 +140,7 @@ export class ContextCompiler {
     const input = compacted
       ? this.#compact(checkpoint, handoff)
       : [...checkpoint.items];
-    return { compacted, input, requestBytes: requestBytes(input) };
+    return { compacted, input, requestBytes: contextRequestBytes(input) };
   }
 
   #compact(
@@ -151,6 +164,7 @@ export class ContextCompiler {
       `constraints: ${JSON.stringify(handoff.constraints)}`,
       `nextSteps: ${JSON.stringify(handoff.nextSteps)}`,
     ].join("\n");
+    const chatContext = checkpoint.items.find(isChatContextSummaryInput);
     const memoryContext = checkpoint.items.findLast(isMemoryContextInput);
     return [
       {
@@ -158,6 +172,7 @@ export class ContextCompiler {
         role: "developer",
         type: "message",
       },
+      ...(chatContext ? [chatContext] : []),
       ...(memoryContext ? [memoryContext] : []),
       ...latestToolBoundary(checkpoint.items),
       ...(checkpoint.currentPlan

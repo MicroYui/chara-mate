@@ -7,6 +7,7 @@ import {
   COMPANIONSHIP_UPDATE_TOOL_NAME,
   CompanionshipUpdateInputSchema,
 } from "../journey/companionshipTool";
+import { CHAT_CONTEXT_SUMMARY_PREFIX } from "../chat/chatContext";
 import { requiresApproval, toolAllowedInExecution } from "./approvalPolicy";
 import { ContextCompiler } from "./contextCompiler";
 import { createMemoryContextInput } from "./memoryContext";
@@ -246,6 +247,46 @@ describe("Phase 2 Runtime mechanics", () => {
     expect(compiled.input).toEqual([
       expect.objectContaining({ role: "developer" }),
       memoryContext,
+      current,
+    ]);
+  });
+
+  it("keeps the durable Chat summary when the active Run compacts", () => {
+    const compiler = new ContextCompiler();
+    const summary = {
+      content: `${CHAT_CONTEXT_SUMMARY_PREFIX}\nEarlier goals and decisions`,
+      role: "developer",
+      type: "message",
+    } satisfies JsonValue;
+    const current = {
+      content: "继续当前目标",
+      role: "user",
+      type: "message",
+    } satisfies JsonValue;
+
+    const compiled = compiler.compile(
+      {
+        currentUserInput: current,
+        items: [
+          summary,
+          { content: "recent raw", role: "user", type: "message" },
+          current,
+        ],
+        recentUsers: ["继续当前目标"],
+      },
+      { maxPromptTokens: 100_000 },
+      {
+        constraints: [],
+        currentProgress: [],
+        decisions: [],
+        nextSteps: [],
+      },
+      true,
+    );
+
+    expect(compiled.input).toEqual([
+      expect.objectContaining({ role: "developer" }),
+      summary,
       current,
     ]);
   });

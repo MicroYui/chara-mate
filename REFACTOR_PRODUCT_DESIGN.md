@@ -755,6 +755,17 @@ interface RetrievalPipeline {
 
 `CONTEXT-RECIPE` 已选择 `C2 PRE8 + goal-last`：每个新 Run 只执行一次当前请求的 R0 top8 检索，把带 Memory/Revision ID、时间、状态和来源的 evidence 存入 checkpoint；有界活跃上下文与结构化 handoff 在前，当前用户输入靠近末尾。模型续步、Tool continuation、恢复和 run 内 steering 不重复初始检索；压缩仍保留该 evidence 与当前/最新结构化用户输入、未完成宿主状态和最新必要 action Tool Result。
 
+跨 Run 的会话工作记忆固定为每个 Chat 一份持久 `ChatContextSnapshot`，与完整聊天记录、当前 Run checkpoint 和长期 Memory 分离：
+
+- `messages` 继续保存完整、不可因模型上下文裁剪而删除的用户可见记录；Renderer、搜索、导出和来源追溯都读取完整记录，而不是摘要投影；
+- Snapshot 保存单调递增 generation、版本化 summary、`coveredThroughMessageId`/时间水位以及最近一次真实请求的输入用量校准。水位之前的原文只由 summary 代表，水位之后的已完成消息作为近期原文；两者不得同时注入造成重复；
+- 新 Text Chat、Automation、主动对话、inline continuation 与 Voice start/reconnect 都从同一 Snapshot + 水位后近期原文编译 Chat 工作上下文。Run terminal 后删除 checkpoint 不得删除或回退 Snapshot；应用重启后继续使用同一 generation；
+- 新 Run 前只在按当前 Provider/模型解析出的有效输入预算达到既有 90% 水位时滚动更新 Snapshot。裁剪边界按最早的完整已结束 Run 推进，并保留满足预算的最长近期完整 Run 后缀；不另设固定消息条数、Run 数或模型专属窗口；
+- 摘要生成只使用当前选中的同一 Chat Provider/模型，输入为旧 summary 加即将覆盖的完整 Run 片段，输出覆盖目标、约束、完成动作、重要决定和未解决问题。成功后以比较交换方式推进水位；失败时保留旧 Snapshot 并让当前请求可重试，不伪造摘要、不静默丢弃历史；
+- Provider 在新 Run 第一次模型调用、尚未产生 Tool/Plan/assistant 边界前返回 context-limit 时，允许强制执行一次持久 Chat 滚动并重试；进入 Run 循环后的超限仍由既有 Run 内 compaction 恢复，只更新临时 checkpoint，不修改 Chat 水位。
+
+2026-08-18 来源刷新：OpenAI 官方 [Responses Compaction](https://developers.openai.com/api/docs/guides/compaction) 明确最新 compaction item 承担后续上下文状态，stateless chaining 可丢弃其之前的输入；Codex `main` commit [`f47f77a`](https://github.com/openai/codex/tree/f47f77ada6699460bf13b0b7278e710692e0ea34) 将 replacement history 持久为 `RolloutItem::Compacted`，恢复时从该 history 重建；LangChain `master` commit [`9f2d56e`](https://github.com/langchain-ai/langchain/tree/9f2d56e376ea926d334f8f99ed7c67b154c2f0bf) 的 `SummarizationMiddleware` 以 summary 替换旧 message state 并保留近期完整消息。这些来源只支持“压缩结果必须跨后续调用成为状态”的边界；90% 水位、完整 Run 边界、Snapshot Schema 与单一路径是 CharaMate 已选 Recipe 和本次正确性修复。
+
 Plan 的持久化和模型上下文分工固定如下：完整 Plan 更新仍以 `kind=plan` 的 Run Item 作为历史与 UI 投影真源；活动 checkpoint 保存从最新已完成 Plan Item 恢复出的 `currentPlan` 编译快照。普通 Tool、审批与 steering 可以更新 handoff，但不得覆盖该快照。每次压缩都在当前用户输入之前重新注入最新完整 Plan（说明、全部步骤与三态）；新 Plan 更新会替换快照并移除较早的压缩 Plan 消息，避免长上下文同时出现两个“当前计划”。这不是第二份可编辑计划状态，也不增加 Plan 表或 Renderer 状态机。
 
 `memory.search` 是 deferred Agent 能力，只在用户明确要求检查或搜索预注入范围之外的 Memory 记录时经 Tool Search 加载；它不常驻普通 Chat/Agent 上下文，也不作为自动 Recipe 的第二检索阶段。发布版不按模型、设备或用户设置维护其他顺序、动态 topK 或装配模式。

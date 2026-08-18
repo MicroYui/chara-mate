@@ -15,6 +15,12 @@ import {
 } from "../../shared/schemas/chat";
 import { parseSchema } from "../../shared/schemas/validation";
 import { sanitizeForPersistence } from "../db/persistenceBoundary";
+import {
+  CHAT_CONTEXT_FORMAT_VERSION,
+  type ChatContextBoundary,
+  type ChatContextSnapshot,
+  ChatContextSnapshotSchema,
+} from "./chatContext";
 
 interface ChatRow {
   archived_at: string | null;
@@ -49,6 +55,19 @@ interface AttachmentRow {
   message_id: string;
   sha256: string | null;
   storage_key: string;
+}
+
+interface ChatContextSnapshotRow {
+  chat_id: string;
+  covered_through_created_at: string | null;
+  covered_through_message_id: string | null;
+  format_version: number;
+  generation: number;
+  last_input_tokens: number | null;
+  last_model_id: string | null;
+  last_request_bytes: number | null;
+  summary_text: string;
+  updated_at: string;
 }
 
 export interface ChatPersistenceSnapshot {
@@ -99,6 +118,29 @@ function readAttachment(row: AttachmentRow): Attachment {
     messageId: row.message_id,
     ...(row.sha256 === null ? {} : { sha256: row.sha256 }),
     storageKey: row.storage_key,
+  });
+}
+
+function readContextSnapshot(row: ChatContextSnapshotRow): ChatContextSnapshot {
+  return parseSchema(ChatContextSnapshotSchema, {
+    chatId: row.chat_id,
+    ...(row.covered_through_created_at === null
+      ? {}
+      : { coveredThroughCreatedAt: row.covered_through_created_at }),
+    ...(row.covered_through_message_id === null
+      ? {}
+      : { coveredThroughMessageId: row.covered_through_message_id }),
+    formatVersion: row.format_version,
+    generation: row.generation,
+    ...(row.last_input_tokens === null
+      ? {}
+      : { lastInputTokens: row.last_input_tokens }),
+    ...(row.last_model_id === null ? {} : { lastModelId: row.last_model_id }),
+    ...(row.last_request_bytes === null
+      ? {}
+      : { lastRequestBytes: row.last_request_bytes }),
+    summary: row.summary_text,
+    updatedAt: row.updated_at,
   });
 }
 
@@ -344,6 +386,153 @@ export class ChatRepository {
       )
       .all(chatId) as MessageRow[];
     return rows.map(readMessage);
+  }
+
+  listContextMessages(chatId: string, after?: ChatContextBoundary): Message[] {
+    const boundaryClause = after
+      ? "AND (m.created_at > ? OR (m.created_at = ? AND m.id > ?))"
+      : "";
+    const rows = this.database
+      .prepare(
+        `SELECT m.id, m.chat_id, m.run_id, m.role, m.status, m.content,
+                m.created_at, m.updated_at
+         FROM messages AS m
+         LEFT JOIN runs AS r
+           ON r.id = m.run_id AND r.chat_id = m.chat_id
+         WHERE m.chat_id = ?
+           AND m.status = 'completed'
+           AND length(trim(m.content)) > 0
+           AND (
+             m.run_id IS NULL OR
+             r.status IN ('interrupted', 'completed', 'failed', 'cancelled')
+           )
+           ${boundaryClause}
+         ORDER BY m.created_at, m.id`,
+      )
+      .all(
+        chatId,
+        ...(after ? [after.createdAt, after.createdAt, after.messageId] : []),
+      ) as MessageRow[];
+    return rows.map(readMessage);
+  }
+
+  getContextSnapshot(chatId: string): ChatContextSnapshot | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT chat_id, generation, format_version, summary_text,
+                covered_through_message_id, covered_through_created_at,
+                last_request_bytes, last_input_tokens, last_model_id, updated_at
+         FROM chat_context_snapshots
+         WHERE chat_id = ?`,
+      )
+      .get(chatId) as ChatContextSnapshotRow | undefined;
+    return row ? readContextSnapshot(row) : undefined;
+  }
+
+  recordContextUsage(input: {
+    readonly chatId: string;
+    readonly inputTokens: number;
+    readonly modelId: string;
+    readonly requestBytes: number;
+    readonly updatedAt: string;
+  }): ChatContextSnapshot {
+    this.database
+      .prepare(
+        `INSERT INTO chat_context_snapshots (
+          chat_id, generation, format_version, summary_text,
+          covered_through_message_id, covered_through_created_at,
+          last_request_bytes, last_input_tokens, last_model_id, updated_at
+        ) VALUES (?, 0, ?, '', NULL, NULL, ?, ?, ?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET
+          last_request_bytes = excluded.last_request_bytes,
+          last_input_tokens = excluded.last_input_tokens,
+          last_model_id = excluded.last_model_id,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.chatId,
+        CHAT_CONTEXT_FORMAT_VERSION,
+        input.requestBytes,
+        input.inputTokens,
+        input.modelId,
+        input.updatedAt,
+      );
+    const saved = this.getContextSnapshot(input.chatId);
+    if (!saved) throw new Error("Chat context usage was not persisted");
+    return saved;
+  }
+
+  advanceContextSnapshot(input: {
+    readonly boundary: ChatContextBoundary;
+    readonly chatId: string;
+    readonly expectedGeneration: number;
+    readonly summary: string;
+    readonly updatedAt: string;
+  }): ChatContextSnapshot | undefined {
+    return this.database.transaction(() => {
+      const current = this.getContextSnapshot(input.chatId);
+      if ((current?.generation ?? 0) !== input.expectedGeneration) {
+        return undefined;
+      }
+      if (
+        current?.coveredThroughCreatedAt &&
+        current.coveredThroughMessageId &&
+        (input.boundary.createdAt < current.coveredThroughCreatedAt ||
+          (input.boundary.createdAt === current.coveredThroughCreatedAt &&
+            input.boundary.messageId <= current.coveredThroughMessageId))
+      ) {
+        return undefined;
+      }
+      const next = sanitizeForPersistence(ChatContextSnapshotSchema, {
+        chatId: input.chatId,
+        coveredThroughCreatedAt: input.boundary.createdAt,
+        coveredThroughMessageId: input.boundary.messageId,
+        formatVersion: CHAT_CONTEXT_FORMAT_VERSION,
+        generation: input.expectedGeneration + 1,
+        ...(current?.lastInputTokens === undefined
+          ? {}
+          : { lastInputTokens: current.lastInputTokens }),
+        ...(current?.lastModelId === undefined
+          ? {}
+          : { lastModelId: current.lastModelId }),
+        ...(current?.lastRequestBytes === undefined
+          ? {}
+          : { lastRequestBytes: current.lastRequestBytes }),
+        summary: input.summary,
+        updatedAt: input.updatedAt,
+      });
+      this.database
+        .prepare(
+          `INSERT INTO chat_context_snapshots (
+            chat_id, generation, format_version, summary_text,
+            covered_through_message_id, covered_through_created_at,
+            last_request_bytes, last_input_tokens, last_model_id, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(chat_id) DO UPDATE SET
+            generation = excluded.generation,
+            format_version = excluded.format_version,
+            summary_text = excluded.summary_text,
+            covered_through_message_id = excluded.covered_through_message_id,
+            covered_through_created_at = excluded.covered_through_created_at,
+            last_request_bytes = excluded.last_request_bytes,
+            last_input_tokens = excluded.last_input_tokens,
+            last_model_id = excluded.last_model_id,
+            updated_at = excluded.updated_at`,
+        )
+        .run(
+          next.chatId,
+          next.generation,
+          next.formatVersion,
+          next.summary,
+          next.coveredThroughMessageId,
+          next.coveredThroughCreatedAt,
+          next.lastRequestBytes ?? null,
+          next.lastInputTokens ?? null,
+          next.lastModelId ?? null,
+          next.updatedAt,
+        );
+      return next;
+    })();
   }
 
   listRunMessages(runId: string): Message[] {

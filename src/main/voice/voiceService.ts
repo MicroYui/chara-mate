@@ -44,11 +44,13 @@ import {
 } from "../agent/approvalPolicy";
 import { AgentError } from "../agent/agentError";
 import { realtimeAgentInstructions } from "../agent/agentInstructions";
+import { ChatContextService } from "../agent/chatContextService";
 import { createMemoryContextInput } from "../agent/memoryContext";
 import type { RunRepository } from "../agent/runRepository";
 import type { RunEventWriter } from "../agent/runEventWriter";
 import type { SettingsRepository } from "../app/settingsRepository";
 import type { ChatRepository } from "../chat/chatRepository";
+import { CHAT_CONTEXT_SUMMARY_PREFIX } from "../chat/chatContext";
 import type { ChatService } from "../chat/chatService";
 import type { ChatTitleGenerator } from "../chat/chatTitleService";
 import type { MemoryService } from "../memory/memoryService";
@@ -77,8 +79,10 @@ interface PreparedRealtimeTools {
 }
 
 interface PreparedVoiceConfiguration {
+  readonly chatContextSummary?: string;
   readonly configured: VoiceSettingsConfig;
   readonly defaultInstructions: string;
+  readonly history: readonly VoiceHistoryMessage[];
   readonly providerRuntime: RealtimeProviderRuntime;
   readonly realtimeTools: PreparedRealtimeTools;
 }
@@ -134,6 +138,7 @@ interface ActiveVoice {
   readonly assistantOutputs: Map<string, AssistantOutput>;
   audioPlaying: boolean;
   readonly chatProviderProfileId: string;
+  chatContextSummary?: string;
   configuredInstructions: string;
   defaultInstructions: string;
   readonly execution: RunExecution;
@@ -391,6 +396,7 @@ function toolItemStatus(
 
 export class VoiceService {
   #active: ActiveVoice | undefined;
+  readonly #chatContext: ChatContextService;
 
   constructor(
     private readonly repository: VoiceRepository,
@@ -413,7 +419,10 @@ export class VoiceService {
     ) => void = () => undefined,
     private readonly metrics?: VoiceMetrics,
     private readonly monotonicNow: () => number = () => performance.now(),
-  ) {}
+    chatContext?: ChatContextService,
+  ) {
+    this.#chatContext = chatContext ?? new ChatContextService(chats, clock);
+  }
 
   initialize(): void {
     const endedAt = this.clock.now();
@@ -508,6 +517,7 @@ export class VoiceService {
     const prepared = await this.#prepareStart(
       request.execution,
       request.chatId,
+      request.chatProviderProfileId,
     );
     this.#assertCanStart(request.chatId);
     return this.#activate(request, prepared);
@@ -571,8 +581,13 @@ export class VoiceService {
   async #prepareStart(
     execution: RunExecution,
     chatId?: string,
+    chatProviderProfileId?: string,
   ): Promise<PreparedVoiceStart> {
-    const prepared = await this.#prepareConfiguration(execution, chatId);
+    const prepared = await this.#prepareConfiguration(
+      execution,
+      chatId,
+      chatProviderProfileId,
+    );
     return this.#issueConfiguration(prepared);
   }
 
@@ -598,24 +613,62 @@ export class VoiceService {
   async #prepareConfiguration(
     execution: RunExecution,
     chatId?: string,
+    chatProviderProfileId?: string,
   ): Promise<PreparedVoiceConfiguration> {
     const configured = this.settings.getVoice();
     const providerRuntime = await this.providers.createRealtimeProviderRuntime(
       configured.providerProfileId,
     );
+    const contextProfileId = chatId
+      ? (chatProviderProfileId ??
+        this.#chatTitleProfileId(providerRuntime.snapshot.profileId))
+      : undefined;
+    const projection =
+      chatId && contextProfileId
+        ? await this.#prepareChatContext(chatId, contextProfileId)
+        : undefined;
+    const chatContextSummary = projection?.snapshot?.summary
+      ? `${CHAT_CONTEXT_SUMMARY_PREFIX}\n${projection.snapshot.summary}`
+      : undefined;
     const realtimeTools = prepareRealtimeTools(this.tools, execution);
     const defaultInstructions = this.#instructions(
       configured.instructions,
       execution,
       undefined,
       chatId,
+      chatContextSummary,
     );
     return {
+      ...(chatContextSummary ? { chatContextSummary } : {}),
       configured,
       defaultInstructions,
+      history: history(projection?.messages ?? []),
       providerRuntime,
       realtimeTools,
     };
+  }
+
+  async #prepareChatContext(chatId: string, profileId: string) {
+    const current = this.#chatContext.project(chatId);
+    if (
+      current.messages.length === 0 ||
+      current.snapshot?.lastInputTokens === undefined ||
+      current.snapshot.lastRequestBytes === undefined ||
+      current.snapshot.lastModelId === undefined
+    ) {
+      return current;
+    }
+    const runtime = await this.providers.createChatModelRuntime(profileId);
+    const limits = await runtime.provider.resolveContextLimits(
+      runtime.snapshot.modelId,
+    );
+    return this.#chatContext.prepare({
+      chatId,
+      limits,
+      modelId: runtime.snapshot.modelId,
+      provider: runtime.provider,
+      signal: new AbortController().signal,
+    });
   }
 
   #activate(
@@ -652,6 +705,9 @@ export class VoiceService {
       assistantOutputs: new Map(),
       audioPlaying: false,
       chatProviderProfileId: request.chatProviderProfileId,
+      ...(prepared.chatContextSummary
+        ? { chatContextSummary: prepared.chatContextSummary }
+        : {}),
       configuredInstructions: prepared.configured.instructions,
       defaultInstructions: prepared.defaultInstructions,
       execution: request.execution,
@@ -674,7 +730,7 @@ export class VoiceService {
     this.#publishSnapshot();
     return {
       ...prepared.issued,
-      history: history(this.chats.listMessages(request.chatId)),
+      history: [...prepared.history],
       inputMode: prepared.configured.inputMode,
       sessionId: id,
       voice: prepared.configured.voice,
@@ -856,11 +912,17 @@ export class VoiceService {
       const prepared = await this.#prepareConfiguration(
         active.execution,
         active.record.chatId,
+        active.chatProviderProfileId,
       );
       this.#assertResumeTarget(active);
       if (this.#canReuseConnection(active, prepared)) {
         active.configuredInstructions = prepared.configured.instructions;
         active.defaultInstructions = prepared.defaultInstructions;
+        if (prepared.chatContextSummary) {
+          active.chatContextSummary = prepared.chatContextSummary;
+        } else {
+          delete active.chatContextSummary;
+        }
         active.realtimeTools = prepared.realtimeTools;
         const requestId = this.ids.generate();
         active.refreshRequestId = requestId;
@@ -1175,6 +1237,7 @@ export class VoiceService {
     const prepared = await this.#prepareConfiguration(
       active.execution,
       active.record.chatId,
+      active.chatProviderProfileId,
     );
     const issued = await this.#issueConfiguration(prepared);
     if (!this.#sameConnectionIdentity(active, prepared)) {
@@ -1190,6 +1253,11 @@ export class VoiceService {
     }
     active.configuredInstructions = prepared.configured.instructions;
     active.defaultInstructions = prepared.defaultInstructions;
+    if (prepared.chatContextSummary) {
+      active.chatContextSummary = prepared.chatContextSummary;
+    } else {
+      delete active.chatContextSummary;
+    }
     active.realtimeTools = prepared.realtimeTools;
     const reconnecting: VoiceSessionRecord = {
       ...active.record,
@@ -1216,7 +1284,7 @@ export class VoiceService {
     this.#publishSnapshot();
     return {
       ...issued.issued,
-      history: history(this.chats.listMessages(active.record.chatId)),
+      history: [...prepared.history],
       inputMode: active.record.inputMode,
       sessionId: active.record.id,
       voice: active.record.voice,
@@ -1228,8 +1296,10 @@ export class VoiceService {
     execution: RunExecution,
     context?: string,
     chatId?: string,
+    chatContext?: string,
   ): string {
     return realtimeAgentInstructions({
+      ...(chatContext === undefined ? {} : { chatContext }),
       configured,
       execution,
       ...(context === undefined ? {} : { memoryContext: context }),
@@ -1326,6 +1396,7 @@ export class VoiceService {
       active.execution,
       evidence.content,
       active.record.chatId,
+      active.chatContextSummary,
     );
     let turn = this.repository.updateTurn({
       ...current,

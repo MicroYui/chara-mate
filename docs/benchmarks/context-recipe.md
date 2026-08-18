@@ -100,6 +100,26 @@ C2 在正确数、supported、稳定完成、输入量和尾延迟上整体最�
 
 确定性回归覆盖 Plan 快照校验、强制压缩、连续 Plan 替换，以及 `Plan → 普通 Tool → 等待输入 → 旧 checkpoint 形状 → 重启 → 压缩 → continuation`。这是已接受 Recipe 的缺陷修复，不产生新 Arm、参数、依赖或产品设置。
 
+## 2026-08-18 跨 Run 持久上下文正确性修复
+
+生产复核发现，新 Run 会把该 Chat 的全部已完成 `messages` 重新装入初始 checkpoint；既有 compaction 只改当前 Run checkpoint，而 terminal 后 checkpoint 被删除。因此长 Chat 会在每个新 Run 重放同一批旧原文，并可能重复压缩，违反本 Decision 的“有界活跃上下文”与产品设计中“带覆盖水位的版本化会话摘要”。这是实现缺陷，不是 C0–C6 的新比较问题。
+
+来源于 2026-08-18 重新冻结：
+
+- OpenAI 官方 [Responses Compaction](https://developers.openai.com/api/docs/guides/compaction) 说明最新 compaction item 携带后续窗口所需状态，stateless chaining 在追加该 item 后可丢弃更早输入；协议没有替应用决定 Chat 持久化 Schema。
+- Codex `main` commit [`f47f77ada6699460bf13b0b7278e710692e0ea34`](https://github.com/openai/codex/tree/f47f77ada6699460bf13b0b7278e710692e0ea34) 的 `replace_compacted_history` 持久化 replacement history，rollout reconstruction 从最近 replacement history 恢复，不再重新追加被覆盖历史。
+- LangChain `master` commit [`9f2d56e376ea926d334f8f99ed7c67b154c2f0bf`](https://github.com/langchain-ai/langchain/tree/9f2d56e376ea926d334f8f99ed7c67b154c2f0bf) 的 `SummarizationMiddleware` 在 model call 前用 summary 替换旧 message state 并保留近期完整消息；其默认消息数、重试数与阈值不复制到 CharaMate。
+
+修复落实为一个生产路径：
+
+- 新增 Chat 领域持久 `ChatContextSnapshot`：generation、版本化 summary、覆盖到的 message ID/时间水位、最近一次真实请求的 byte/token 校准。完整 `messages` 不裁剪，Snapshot 只负责模型投影。
+- 新 Run 的投影固定为 `Chat summary → 水位后近期完整 Run 原文 → PRE8 Memory/handoff/Plan → 当前目标`。同一消息不能同时落在 summary 覆盖范围与近期原文中。
+- 触发继续复用 `HARNESS-LOOP` 已选的 Provider 有效输入预算与 90% 水位；不新增固定“保留 N 条/N 个 Run”。更新时从最早完整 terminal Run 推进水位，并保留预算允许的最长完整 Run 后缀。
+- Text、Automation、主动对话、inline continuation 与 Voice 共用同一 Snapshot 投影；Run 内 Tool/Plan/approval/steering compaction 仍只服务活动 Run，不推进 Chat 水位。
+- 首次模型调用若真实返回 context-limit，可在尚无本轮副作用边界时强制持久滚动一次并重试；之后的超限沿用 Run 内恢复。摘要失败不覆盖旧 generation，不制造空摘要或隐藏 fallback。
+
+验收固定覆盖：跨 Run 与重启后不重复总结同一前缀；覆盖水位无跳跃/重复；UI 完整历史不变；旧 Schema 迁移；超长既有 Chat 分批启动；首请求超限与 Run 内超限边界；Voice start/reconnect 不回放已覆盖原文；Automation/主动对话复用相同路径。此 amendment 没有新 Arm、模型设置、兼容分支或常驻 experiment runner。
+
 ## 限制
 
 - live 结果只支持记录的目标 Adapter/模型，不声称所有 Provider 都有相同 Tool 主动性；生产仍使用一套可恢复 Recipe。

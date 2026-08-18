@@ -177,6 +177,13 @@ describe("foundation database", () => {
         .prepare("SELECT name FROM sqlite_master WHERE name = 'voice_sessions'")
         .get(),
     ).toEqual({ name: "voice_sessions" });
+    expect(
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name = 'chat_context_snapshots'",
+        )
+        .get(),
+    ).toEqual({ name: "chat_context_snapshots" });
     expect(database.pragma("foreign_key_check")).toEqual([]);
     database.close();
   });

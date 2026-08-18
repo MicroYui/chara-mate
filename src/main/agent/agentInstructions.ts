@@ -26,6 +26,7 @@ function executionInstructions(execution: RunExecution): string {
 }
 
 export interface RealtimeAgentInstructionsOptions {
+  readonly chatContext?: string;
   readonly configured: string;
   readonly execution: RunExecution;
   readonly memoryContext?: string;
@@ -47,6 +48,7 @@ export function realtimeAgentInstructions(
     "When the provided voice_end tool is available, call it only when the user explicitly asks to hang up or clearly ends this live call with a goodbye. After its Tool Result, say one brief natural goodbye and do not continue; CharaMate will close the connection after that audio drains.",
     options.configured.trim(),
     options.skills?.trim(),
+    options.chatContext?.trim(),
     options.memoryContext?.trim(),
   ]
     .filter(Boolean)

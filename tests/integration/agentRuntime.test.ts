@@ -152,6 +152,29 @@ function finalTurn(text = "完成"): Turn {
   ];
 }
 
+function finalTurnWithUsage(text: string, inputTokens: number): Turn {
+  return () => [
+    { delta: text, type: "text.delta" },
+    complete(`response-${text}`, inputTokens),
+  ];
+}
+
+function chatSummaryTurn(summary: string, expectedPrevious?: string): Turn {
+  return (request) => {
+    expect(request.instructions).toContain(
+      "CharaMate conversation working memory",
+    );
+    expect(request.toolNamespaces).toEqual([]);
+    if (expectedPrevious) {
+      expect(JSON.stringify(request.input)).toContain(expectedPrevious);
+    }
+    return [
+      { delta: summary, type: "text.delta" },
+      complete(`response-summary-${summary}`, 32),
+    ];
+  };
+}
+
 function childSummaryTurn(): Turn {
   return (request) => {
     const first = request.input[0];
@@ -1020,6 +1043,9 @@ describe("Agent Runtime production path", () => {
         .listRunItems(run.id)
         .some(({ kind }) => kind === "context_compaction"),
     ).toBe(true);
+    expect(
+      new ChatRepository(fixture.database).getContextSnapshot(fixture.chatId),
+    ).toMatchObject({ generation: 0 });
     fixture.database.close();
   });
 
@@ -1784,6 +1810,276 @@ describe("Agent Runtime production path", () => {
       { content: "第一轮回答", role: "assistant", type: "message" },
       { content: "第二轮问题", role: "user", type: "message" },
     ]);
+    fixture.database.close();
+  });
+
+  it("persists one Chat summary across Runs and restart without trimming UI history", async () => {
+    const limits = { effectiveInputTokens: 1_000 };
+    const fixture = await createFixture(
+      [
+        finalTurnWithUsage("第一轮回答", 1_000),
+        chatSummaryTurn("第一轮摘要：用户询问第一轮问题，助手已回答。"),
+        finalTurnWithUsage("第二轮回答", 1),
+      ],
+      undefined,
+      undefined,
+      undefined,
+      limits,
+    );
+
+    const first = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "第一轮问题",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, first.id, "completed");
+    const second = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "第二轮问题",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, second.id, "completed");
+
+    expect(fixture.provider.requests).toHaveLength(3);
+    const secondInput = JSON.stringify(fixture.provider.requests[2]?.input);
+    expect(secondInput).toContain("第一轮摘要");
+    expect(secondInput).toContain("第二轮问题");
+    expect(fixture.provider.requests[2]?.input).not.toContainEqual({
+      content: "第一轮问题",
+      role: "user",
+      type: "message",
+    });
+    expect(fixture.provider.requests[2]?.input).not.toContainEqual({
+      content: "第一轮回答",
+      role: "assistant",
+      type: "message",
+    });
+
+    const snapshot = new ChatRepository(fixture.database).getContextSnapshot(
+      fixture.chatId,
+    );
+    expect(snapshot).toMatchObject({
+      generation: 1,
+      lastInputTokens: 1,
+      summary: "第一轮摘要：用户询问第一轮问题，助手已回答。",
+    });
+
+    const restartedProvider = new ScriptedProvider(
+      [finalTurnWithUsage("第三轮回答", 1)],
+      limits,
+    );
+    const restartedRuntime = createRuntimeFor(fixture, restartedProvider);
+    await restartedRuntime.initialize();
+    const third = await restartedRuntime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "第三轮问题",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, third.id, "completed");
+
+    expect(restartedProvider.requests).toHaveLength(1);
+    const thirdInput = JSON.stringify(restartedProvider.requests[0]?.input);
+    expect(thirdInput).toContain("第一轮摘要");
+    expect(thirdInput).toContain("第二轮问题");
+    expect(thirdInput).toContain("第二轮回答");
+    expect(thirdInput).toContain("第三轮问题");
+    expect(restartedProvider.requests[0]?.input).not.toContainEqual({
+      content: "第一轮问题",
+      role: "user",
+      type: "message",
+    });
+    expect(restartedProvider.requests[0]?.input).not.toContainEqual({
+      content: "第一轮回答",
+      role: "assistant",
+      type: "message",
+    });
+
+    const messages = new ChatRepository(fixture.database).listMessages(
+      fixture.chatId,
+    );
+    expect(messages.map(({ content }) => content)).toEqual([
+      "第一轮问题",
+      "第一轮回答",
+      "第二轮问题",
+      "第二轮回答",
+      "第三轮问题",
+      "第三轮回答",
+    ]);
+    expect(
+      fixture.provider.requests.filter(({ instructions }) =>
+        instructions.includes("CharaMate conversation working memory"),
+      ),
+    ).toHaveLength(1);
+    fixture.database.close();
+  });
+
+  it("keeps the previous Snapshot and does not allocate a Run when summarization fails", async () => {
+    const fixture = await createFixture(
+      [
+        finalTurnWithUsage("已完成的旧回答", 1_000),
+        () => {
+          throw new ProviderError(
+            "PROVIDER.UNREACHABLE",
+            "summary provider unavailable",
+            true,
+          );
+        },
+      ],
+      undefined,
+      undefined,
+      undefined,
+      { effectiveInputTokens: 1_000 },
+    );
+    const first = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "已完成的旧问题",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, first.id, "completed");
+
+    await expect(
+      fixture.runtime.start({
+        attachments: [],
+        chatId: fixture.chatId,
+        content: "不应被持久化的新问题",
+        execution: { mode: "chat" },
+        providerProfileId: PROFILE_ID,
+        requestedAt: REQUESTED_AT,
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER.UNREACHABLE" });
+
+    expect(fixture.runs.getSnapshot(fixture.chatId).runs).toHaveLength(1);
+    expect(
+      new ChatRepository(fixture.database).getContextSnapshot(fixture.chatId),
+    ).toMatchObject({ generation: 0, summary: "" });
+    expect(
+      new ChatRepository(fixture.database)
+        .listMessages(fixture.chatId)
+        .map(({ content }) => content),
+    ).toEqual(["已完成的旧问题", "已完成的旧回答"]);
+    fixture.database.close();
+  });
+
+  it("turns a first-request context-limit recovery into durable Chat state", async () => {
+    const fixture = await createFixture([
+      finalTurnWithUsage("旧回答", 64),
+      finalTurnWithUsage("第二个旧回答", 64),
+      () => {
+        throw new ProviderError(
+          "PROVIDER.CONTEXT_LIMIT_EXCEEDED",
+          "context is full",
+          true,
+        );
+      },
+      chatSummaryTurn("旧对话摘要：旧问题已经得到回答。"),
+      chatSummaryTurn(
+        "旧对话摘要：两个旧问题都已经得到回答。",
+        "旧问题已经得到回答",
+      ),
+      finalTurnWithUsage("恢复后的回答", 1),
+      finalTurnWithUsage("后续回答", 1),
+    ]);
+
+    const first = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "旧问题",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, first.id, "completed");
+    const secondPrior = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "第二个旧问题",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, secondPrior.id, "completed");
+    fixture.database
+      .prepare("DELETE FROM chat_context_snapshots WHERE chat_id = ?")
+      .run(fixture.chatId);
+
+    const recovered = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "触发恢复",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, recovered.id, "completed");
+    const next = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "恢复后的下一轮",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, next.id, "completed");
+
+    expect(JSON.stringify(fixture.provider.requests[2]?.input)).toContain(
+      "旧问题",
+    );
+    expect(fixture.provider.requests[3]?.instructions).toContain(
+      "CharaMate conversation working memory",
+    );
+    expect(fixture.provider.requests[4]?.instructions).toContain(
+      "CharaMate conversation working memory",
+    );
+    const retryInput = JSON.stringify(fixture.provider.requests[5]?.input);
+    expect(retryInput).toContain("旧对话摘要");
+    expect(retryInput).toContain("触发恢复");
+    expect(fixture.provider.requests[5]?.input).not.toContainEqual({
+      content: "旧问题",
+      role: "user",
+      type: "message",
+    });
+    expect(fixture.provider.requests[5]?.input).not.toContainEqual({
+      content: "旧回答",
+      role: "assistant",
+      type: "message",
+    });
+    expect(fixture.provider.requests[5]?.input).not.toContainEqual({
+      content: "第二个旧问题",
+      role: "user",
+      type: "message",
+    });
+    expect(fixture.provider.requests[5]?.input).not.toContainEqual({
+      content: "第二个旧回答",
+      role: "assistant",
+      type: "message",
+    });
+    const nextInput = JSON.stringify(fixture.provider.requests[6]?.input);
+    expect(nextInput).toContain("旧对话摘要");
+    expect(fixture.provider.requests[6]?.input).not.toContainEqual({
+      content: "旧问题",
+      role: "user",
+      type: "message",
+    });
+    expect(
+      fixture.runs
+        .listRunItems(recovered.id)
+        .find(({ kind }) => kind === "context_compaction"),
+    ).toMatchObject({ status: "completed" });
+    expect(
+      new ChatRepository(fixture.database).getContextSnapshot(fixture.chatId),
+    ).toMatchObject({ generation: 2 });
     fixture.database.close();
   });
 

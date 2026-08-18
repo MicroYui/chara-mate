@@ -1,10 +1,12 @@
 # CharaMate 当前状态
 
-> 更新日期：2026-08-15
+> 更新日期：2026-08-18
 
 ## 当前里程碑
 
-**Phase 7 — Done（首个完整产品版本，含桌宠系统卡顿修复）**
+**Phase 7 — Done（含长会话上下文正确性修复）**
+
+`MAINT-CHAT-CONTEXT-SNAPSHOT` 已完成：Chat 完整消息继续作为界面与审计真源，Schema v15 另行持久化滚动摘要、覆盖水位和同模型实际用量标定。Text、Automation、主动对话、inline conversation 与 Voice 统一读取“摘要 + 水位后已完成原文”；Run 内执行压缩和长期 Memory 保持各自边界。新 Run 不再重放已覆盖的全量历史，也不会因 terminal checkpoint 删除而丢失跨 Run 摘要。
 
 Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations 的“新建任务”固定归页面列表页头，窄屏侧栏入口不占常驻布局高度。
 
@@ -21,7 +23,7 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 - [x] World 合同、PixiJS 深度/碰撞/寻路、完整 Candidate/Preview/change-set 与 Memory/Activity 来源快照完成。
 - [x] Character Window 同时支持 Territory 场景交接和独立主动对话跟随窗口，不复制桌宠或遮挡交互。
 - [x] macOS 菜单栏使用单实例 18 px Template 图标，以自然语言投影桌宠、Voice 与 Activity 状态并复用现有领域控制。
-- [x] 合并后的 Schema v14、typed IPC、Renderer、离线、Build、Electron E2E 与 package/smoke 全链重新通过。
+- [x] 合并后的 Schema v15、Chat Context Snapshot、typed IPC、Renderer、离线、Build、Electron E2E 与 package/smoke 全链重新通过。
 - [x] Chats 主内容无重复标题/操作框，重命名、置顶、归档、恢复和删除都从左侧完成；Automations 页面内只有一个持久“新建任务”入口。
 - [x] Appearance 的主题、自定义基础色板与深色派生均持久化；Data 使用真实 typed IPC 且不提供越界删除。
 - [x] 无模型、Foundation 加载失败、React 渲染失败与 Renderer 进程崩溃均有用户可恢复路径。
@@ -32,6 +34,7 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
+| `MAINT-CHAT-CONTEXT-SNAPSHOT` | `main` | `done` | Schema v15 持久化 Chat 级滚动摘要、覆盖水位与同模型用量标定；Text/Automation/主动对话/inline/Voice 共用投影，完整聊天记录与 Run checkpoint/长期 Memory 保持分离 |
 | `ACTIVITY/PET-PERFORMANCE` | `main` | `done` | 前台应用改为 `NSWorkspace`/Accessibility 事件通知；Activity 截图使用逻辑像素、单次编码与异步摘要；Character Window 使用私有 15 FPS ticker、不可见停帧和纹理复用 |
 | `P7-VISUAL-ACCESSIBILITY` | `main` | `done` | 同一语义 Token 树完成浅/深/跟随系统、自定义色板、深色自动派生、reduced motion、焦点和 1180×800 实图复核 |
 | `P7-FIRST-RUN-RECOVERY` | `main` | `done` | 无模型就地进入 Models；Foundation/React/Renderer 失败均使用现有主窗口与状态真源恢复 |
@@ -66,6 +69,7 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 ## 最近绿色验证
 
+- 2026-08-18 长会话上下文正确性修复：`npm run verify:offline` 通过（contract 100、focused/component 364、integration 176，共 640 项，27.6 秒）；`npm run build` 通过；Electron E2E 23/23 通过（含构建共 42.6 秒）；arm64 `npm run package` 通过（15.1 秒），`npm run smoke:package` 通过（4.4 秒），确认 `databaseRoundTrip=true`、`rendererReady=true`、`characterRendererReady=true`、`browserRoundTrip=true`。未调用真实 Provider，未运行 Live/benchmark/make。
 - 2026-08-15 桌宠系统卡顿修复：`npm run verify:offline` 通过（contract 100、focused/component 362、integration 172，共 634 项），`npm run build`、开发态 smoke、arm64 package、packaged smoke 与 Electron E2E 23/23 通过；打包产物含可执行 arm64 Activity helper。真实进程确认 helper 常驻且空闲 CPU 为 0，跨 32 秒三次采样均无 Activity `osascript` 子进程；最新 Activity 截图由 3456×2234 Retina 原图降为 1728×1117 逻辑像素、473297 bytes，桌宠透明窗口实图与连续动画帧复核正常。
 - 2026-08-15 修复前基线：`npm run verify:offline` 通过（contract 100、focused/component 358、integration 171，共 629 项），`npm run build` 通过；提交 `1213ab4`，仅保留 2 条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示。
 - 2026-08-14 Phase 7 最终收口：`npm run verify:offline` 通过（contract 100、focused/component 358、integration 171，共 629 项）；`npm run build`、开发态 smoke、arm64 package、packaged smoke、完整 Electron E2E 23/23 与 `npm run make` 通过。312 MB ULFO DMG 通过 `hdiutil verify`、挂载内容/Applications 链接与 arm64 检查；Live 为 Azure Voice 3/3、Image 1 项按缺少专用环境变量跳过，benchmark 明确 `not-applicable`。
@@ -79,6 +83,7 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 ## 当前来源快照
 
+- 2026-08-18 复核 OpenAI Compaction 指南、Codex `f47f77ada6699460bf13b0b7278e710692e0ea34` 与 LangChain `9f2d56e376ea926d334f8f99ed7c67b154c2f0bf`：成熟实现都让压缩结果替代已覆盖旧输入并成为后续上下文，而不是每个新执行重新注入全量原文。CharaMate 采用自己的 Chat 级滚动摘要与覆盖水位；既有 90% 触发比例、Provider 限额和实际 usage 标定不变，不复制外部默认消息数、重试数或固定窗口。
 - 2026-08-15 复核 Apple [`NSWorkspace.didActivateApplicationNotification`](https://developer.apple.com/documentation/appkit/nsworkspace/didactivateapplicationnotification)、[`frontmostApplication`](https://developer.apple.com/documentation/appkit/nsworkspace/frontmostapplication)、Accessibility `AXUIElementCreateApplication`/焦点窗口与标题通知；复核锁定 `electron@43.2.0` 的 [`desktopCapturer.thumbnailSize`](https://www.electronjs.org/docs/latest/api/desktop-capturer)、`Display.size/scaleFactor`、`NativeImage.toPNG/getSize`，以及锁定 `pixi.js@8.19.0` 的 [Application/Ticker](https://pixijs.com/8.x/guides/components/ticker)、`AnimatedSprite.autoUpdate=false` 与 Assets cache。操作系统/库能力与 CharaMate 的 15 秒 idle 采样、15 分钟截图、15 FPS 桌宠上限已分别记录。
 - 2026-08-14 复核锁定 `electron@43.2.0` 包内 `render-process-gone` reason 与 `forcefullyCrashRenderer`；主窗口只自动重建一次是 CharaMate 恢复策略。
 - 2026-08-14 复核锁定 `@electron-forge/maker-dmg@7.11.2`、`electron-installer-dmg@5.0.1`、`appdmg@0.6.6`、`@electron/packager` 的 `osxSign`/`osxNotarize` 与 `@electron/notarize@2.5.0` keychain profile；Microsoft Defender DLP 对临时卷的持续 code 16 dissent 只在普通卸载失败后对该 Maker 临时卷强制卸载一次。

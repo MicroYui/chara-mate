@@ -234,6 +234,7 @@ async function fixture(options?: {
     },
     snapshots,
     tools,
+    writer,
     write,
   };
 }
@@ -318,6 +319,126 @@ async function finalResponse(
 }
 
 describe("Realtime native Voice runtime", () => {
+  it("injects the durable Chat summary and only uncovered history on start and reconnect", async () => {
+    const value = await fixture();
+    const runIds = [
+      "20000000-0000-4000-8000-000000000001",
+      "20000000-0000-4000-8000-000000000002",
+    ];
+    const messageIds = [
+      "30000000-0000-4000-8000-000000000001",
+      "30000000-0000-4000-8000-000000000002",
+      "30000000-0000-4000-8000-000000000003",
+      "30000000-0000-4000-8000-000000000004",
+    ];
+    const startRun = (runId: string) =>
+      value.writer.startRun({
+        chatId: CHAT_ID,
+        createdAt: NOW,
+        execution: { mode: "chat" },
+        id: runId,
+        latestSequence: 1,
+        provider: {
+          apiStyle: "openai-compatible",
+          modelId: "gpt-5.6",
+          profileId: PROFILE_ID,
+          profileName: "Chat",
+        },
+        source: "text",
+        startedAt: NOW,
+        status: "running",
+      });
+    startRun(runIds[0]!);
+    value.chats.insertMessage({
+      chatId: CHAT_ID,
+      content: "已覆盖用户消息",
+      createdAt: NOW,
+      id: messageIds[0]!,
+      role: "user",
+      runId: runIds[0]!,
+      status: "completed",
+      updatedAt: NOW,
+    });
+    value.chats.insertMessage({
+      chatId: CHAT_ID,
+      content: "已覆盖助手消息",
+      createdAt: NOW,
+      id: messageIds[1]!,
+      role: "assistant",
+      runId: runIds[0]!,
+      status: "completed",
+      updatedAt: NOW,
+    });
+    value.writer.transition(runIds[0]!, "completed");
+    startRun(runIds[1]!);
+    value.chats.insertMessage({
+      chatId: CHAT_ID,
+      content: "近期用户消息",
+      createdAt: NOW,
+      id: messageIds[2]!,
+      role: "user",
+      runId: runIds[1]!,
+      status: "completed",
+      updatedAt: NOW,
+    });
+    value.chats.insertMessage({
+      chatId: CHAT_ID,
+      content: "近期助手消息",
+      createdAt: NOW,
+      id: messageIds[3]!,
+      role: "assistant",
+      runId: runIds[1]!,
+      status: "completed",
+      updatedAt: NOW,
+    });
+    value.writer.transition(runIds[1]!, "completed");
+    value.chats.recordContextUsage({
+      chatId: CHAT_ID,
+      inputTokens: 10,
+      modelId: "gpt-5.6",
+      requestBytes: 1_000,
+      updatedAt: NOW,
+    });
+    value.chats.advanceContextSnapshot({
+      boundary: { createdAt: NOW, messageId: messageIds[1]! },
+      chatId: CHAT_ID,
+      expectedGeneration: 0,
+      summary: "已覆盖对话的持久摘要。",
+      updatedAt: NOW,
+    });
+
+    const request = {
+      chatId: CHAT_ID,
+      chatProviderProfileId: PROFILE_ID,
+      execution: { mode: "chat" as const },
+      requestedAt: NOW,
+    };
+    const connection = await value.service.start(request);
+    expect(connection.history).toEqual([
+      { content: "近期用户消息", role: "user" },
+      { content: "近期助手消息", role: "assistant" },
+    ]);
+    expect(value.issue.mock.calls[0]?.[1].instructions).toContain(
+      "已覆盖对话的持久摘要",
+    );
+    expect(JSON.stringify(connection.history)).not.toContain("已覆盖用户消息");
+
+    await report(value.service, connection.sessionId, {
+      protocolSessionId: "protocol-context-session",
+      type: "session.ready",
+    });
+    await report(value.service, connection.sessionId, {
+      reason: "network closed",
+      type: "connection.closed",
+    });
+    const reconnected = await value.service.start(request);
+    expect(reconnected.history).toEqual(connection.history);
+    expect(value.issue.mock.calls[1]?.[1].instructions).toContain(
+      "已覆盖对话的持久摘要",
+    );
+    value.database.close();
+  });
+
   it("pauses media without closing WebRTC and refreshes instructions and tools on resume", async () => {
     const value = await fixture();
     const connection = await value.service.start({

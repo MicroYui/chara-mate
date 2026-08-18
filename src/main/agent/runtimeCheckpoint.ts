@@ -29,6 +29,7 @@ export interface PendingInputRequest {
 export interface RuntimeCheckpointState {
   readonly allowedTools?: readonly ModelAllowedTool[];
   readonly boundaries: readonly LoopBoundary[];
+  readonly chatContextUsageRecorded?: boolean;
   readonly contextLimits?: ModelContextLimits;
   readonly currentPlan?: PlanUpdate;
   readonly currentUserInput?: JsonValue;
@@ -110,6 +111,8 @@ export function decodeRuntimeCheckpoint(
     !Array.isArray(value["boundaries"]) ||
     !validContextLimits(value["contextLimits"]) ||
     !validCurrentPlan(value["currentPlan"]) ||
+    (value["chatContextUsageRecorded"] !== undefined &&
+      typeof value["chatContextUsageRecorded"] !== "boolean") ||
     (value["interactionEnabled"] !== undefined &&
       typeof value["interactionEnabled"] !== "boolean") ||
     (value["nativeWebSearchEnabled"] !== undefined &&
