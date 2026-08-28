@@ -35,8 +35,12 @@ import { redactText } from "../../shared/pure/redaction";
 import type { ChatRepository } from "../chat/chatRepository";
 import type { ChatService } from "../chat/chatService";
 import type { ChatTitleGenerator } from "../chat/chatTitleService";
+import { ACTIVITY_SEARCH_TOOL_NAME } from "../activity/activityTool";
 import type { MemoryService } from "../memory/memoryService";
-import { MEMORY_FORMATION_TOOL_NAME } from "../memory/memoryTool";
+import {
+  MEMORY_FORMATION_TOOL_NAME,
+  MEMORY_SEARCH_TOOL_NAME,
+} from "../memory/memoryTool";
 import { COMPANIONSHIP_UPDATE_TOOL_NAME } from "../journey/companionshipTool";
 import type { ChatModelRuntime } from "../providers/providerService";
 import { ProviderError, toProviderAppError } from "../providers/providerError";
@@ -419,7 +423,14 @@ function hasToolOutput(input: readonly JsonValue[], callId: string): boolean {
   );
 }
 
-function toolDisplayOutput(result: ToolResult): string {
+function toolDisplayOutput(result: ToolResult, toolName?: string): string {
+  if (
+    toolName === MEMORY_FORMATION_TOOL_NAME ||
+    toolName === MEMORY_SEARCH_TOOL_NAME ||
+    toolName === ACTIVITY_SEARCH_TOOL_NAME
+  ) {
+    return result.summary;
+  }
   return typeof result.modelContent === "string"
     ? result.modelContent
     : JSON.stringify(result.modelContent, null, 2);
@@ -970,15 +981,7 @@ export class AgentRuntime {
             )
           : messageInput(modelText);
       const memoryContext = this.memory
-        ? createMemoryContextInput(
-            this.memory.search(
-              {
-                ...(request.content.trim() ? { query: request.content } : {}),
-              },
-              "context",
-              8,
-            ),
-          )
+        ? createMemoryContextInput(this.memory.selectContext(request.content))
         : undefined;
       const preparedContext = await this.#chatContext.prepare({
         additionalInput: [
@@ -2180,7 +2183,7 @@ export class AgentRuntime {
     }
     this.writer.completeItem(item.id, {
       artifacts: result.artifacts,
-      displayOutput: toolDisplayOutput(result),
+      displayOutput: toolDisplayOutput(result, pending.name),
       ...(result.error === undefined ? {} : { error: result.error }),
       output: asJsonValue(result),
       status:

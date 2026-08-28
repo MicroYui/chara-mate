@@ -58,6 +58,7 @@ interface SourceRow {
 }
 
 interface CandidateRow {
+  accepted_memory_id: string | null;
   claim_operation: MemoryClaimOperation | null;
   claim_slot: MemoryClaimSlot | null;
   confidence: number;
@@ -87,7 +88,6 @@ interface UsageRow {
 }
 
 export interface CreateMemoryInput extends MemoryCreateRequest {
-  readonly claimSlot?: MemoryClaimSlot;
   readonly memoryId: string;
   readonly now: Timestamp;
   readonly revisionId: string;
@@ -96,6 +96,16 @@ export interface CreateMemoryInput extends MemoryCreateRequest {
 export interface ReviseMemoryInput extends MemoryReviseRequest {
   readonly now: Timestamp;
   readonly revisionId: string;
+}
+
+export interface ResolveMemoryClaimInput {
+  readonly claimSlot: MemoryClaimSlot;
+  readonly content: string;
+  readonly memoryId: string;
+  readonly now: Timestamp;
+  readonly reason: string;
+  readonly revisionId: string;
+  readonly sources: readonly MemorySource[];
 }
 
 export interface ProposeMemoryInput extends MemoryProposalInput {
@@ -127,7 +137,8 @@ const candidateSelect = `
   SELECT c.id, c.type, c.status, c.content, c.reason, c.source_ids_json,
          c.source_labels_json, c.source_type, c.confidence, c.importance,
          c.novelty, c.valid_from, c.valid_to, c.supersedes_memory_id,
-         c.created_at, c.updated_at, mcf.operation AS claim_operation,
+         c.accepted_memory_id, c.created_at, c.updated_at,
+         mcf.operation AS claim_operation,
          mcf.claim_slot
   FROM memory_candidates c
   LEFT JOIN memory_candidate_formation mcf ON mcf.candidate_id = c.id
@@ -459,6 +470,37 @@ export class MemoryRepository {
     return this.hitsFor(selections);
   }
 
+  stableClaimHits(): MemoryHit[] {
+    const selections = this.database
+      .prepare(
+        `SELECT mc.memory_id AS memoryId,
+                m.current_revision_id AS revisionId
+         FROM memory_claims mc
+         JOIN memories m ON m.id = mc.memory_id
+         WHERE m.status = 'active'
+           AND m.deleted_at IS NULL
+           AND m.type IN ('profile', 'preference')
+         ORDER BY mc.claim_slot, mc.memory_id`,
+      )
+      .all() as MemoryHitSelection[];
+    return this.hitsFor(selections);
+  }
+
+  countUnclaimedStableMemories(): number {
+    const row = this.database
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM memories m
+         LEFT JOIN memory_claims mc ON mc.memory_id = m.id
+         WHERE m.status = 'active'
+           AND m.deleted_at IS NULL
+           AND m.type IN ('profile', 'preference')
+           AND mc.memory_id IS NULL`,
+      )
+      .get() as { count: number };
+    return row.count;
+  }
+
   hitFor(
     memory: MemoryRecord,
     revisionId = memory.currentRevisionId,
@@ -488,6 +530,70 @@ export class MemoryRepository {
 
   revise(input: ReviseMemoryInput): MemoryDetail {
     return this.database.transaction(() => this.#reviseMemory(input))();
+  }
+
+  resolveClaim(input: ResolveMemoryClaimInput): MemoryDetail {
+    return this.database.transaction(() => {
+      const legacy = this.requireDetail(input.memoryId);
+      if (
+        legacy.memory.deletedAt ||
+        legacy.memory.status !== "active" ||
+        legacy.memory.claimSlot
+      ) {
+        throw new MemoryError(
+          "MEMORY.INVALID_STATE",
+          "只有当前有效且尚未绑定字段的旧记忆可以处理。",
+          false,
+        );
+      }
+      const owner = this.findDetailByClaimSlot(input.claimSlot);
+      if (!owner) {
+        this.#bindClaim(input.memoryId, input.claimSlot, input.now);
+        return this.#reviseMemory({
+          content: input.content,
+          memoryId: input.memoryId,
+          now: input.now,
+          reason: input.reason,
+          revisionId: input.revisionId,
+          sources: [...input.sources],
+        });
+      }
+      if (
+        owner.memory.deletedAt ||
+        owner.memory.status !== "active" ||
+        owner.memory.id === input.memoryId
+      ) {
+        throw new MemoryError(
+          "MEMORY.INVALID_STATE",
+          "这个稳定字段当前无法合并，请先处理已有记忆的状态。",
+          false,
+        );
+      }
+      const revised = this.#reviseMemory({
+        content: input.content,
+        memoryId: owner.memory.id,
+        now: input.now,
+        reason: input.reason,
+        revisionId: input.revisionId,
+        sources: [...input.sources],
+      });
+      const superseded = this.database
+        .prepare(
+          `UPDATE memories
+           SET status = 'superseded', superseded_by_id = ?, updated_at = ?
+           WHERE id = ? AND status = 'active' AND deleted_at IS NULL`,
+        )
+        .run(owner.memory.id, input.now, input.memoryId);
+      if (superseded.changes !== 1) {
+        throw new MemoryError(
+          "MEMORY.CONFLICT",
+          "旧记忆状态已变化，请刷新后重试。",
+          true,
+        );
+      }
+      this.#removeProfile(input.memoryId);
+      return revised;
+    })();
   }
 
   setPinned(memoryId: string, pinned: boolean, now: Timestamp): MemoryDetail {
@@ -649,6 +755,28 @@ export class MemoryRepository {
     ).map(candidateFromRow);
   }
 
+  listCandidateDecisions(options: {
+    readonly sourceType: MemorySourceType;
+    readonly type: MemoryType;
+  }): Array<{
+    readonly acceptedMemoryId?: string;
+    readonly candidate: MemoryCandidate;
+  }> {
+    const rows = this.database
+      .prepare(
+        `${candidateSelect}
+         WHERE c.source_type = ? AND c.type = ?
+         ORDER BY c.updated_at DESC, c.created_at DESC, c.id DESC`,
+      )
+      .all(options.sourceType, options.type) as CandidateRow[];
+    return rows.map((row) => ({
+      ...(row.accepted_memory_id
+        ? { acceptedMemoryId: row.accepted_memory_id }
+        : {}),
+      candidate: candidateFromRow(row),
+    }));
+  }
+
   findPendingCandidateByContent(
     content: string,
     options: {
@@ -687,14 +815,6 @@ export class MemoryRepository {
         options.operation ?? null,
       ) as CandidateRow | undefined;
     return row ? candidateFromRow(row) : undefined;
-  }
-
-  hasCandidateReason(reason: string): boolean {
-    return Boolean(
-      this.database
-        .prepare("SELECT 1 FROM memory_candidates WHERE reason = ? LIMIT 1")
-        .get(reason),
-    );
   }
 
   requireCandidate(candidateId: string): MemoryCandidate {

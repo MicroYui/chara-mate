@@ -4,6 +4,7 @@ import type { MenuItemConstructorOptions } from "electron";
 
 import type { PetCharacterSnapshot } from "../../shared/contracts/pet";
 import type { VoiceSessionSnapshot } from "../../shared/contracts/voice";
+import type { VoiceWakeSnapshot } from "../../shared/contracts/voiceWake";
 import { TrayController, trayIconPath } from "./trayController";
 
 const electron = vi.hoisted(() => {
@@ -75,6 +76,13 @@ const voiceSnapshot: VoiceSessionSnapshot = {
   voice: "coral",
 };
 
+const wakeSnapshot: VoiceWakeSnapshot = {
+  enabled: false,
+  microphone: "granted",
+  phase: "disabled",
+  phrase: "Hi Mika",
+};
+
 function latestMenuItem(label: string): MenuItemConstructorOptions {
   const call = electron.buildFromTemplate.mock.lastCall;
   const template = call?.[0];
@@ -121,13 +129,16 @@ describe("TrayController", () => {
     let activeVoice: VoiceSessionSnapshot | null = null;
     let petListener: (() => void) | undefined;
     let pauseListener: (() => void) | undefined;
+    let wakeListener: (() => void) | undefined;
     const disposePet = vi.fn();
     const disposePause = vi.fn();
+    const disposeWake = vi.fn();
     const setUserVisible = vi.fn((visible: boolean) => {
       petVisible = visible;
     });
     const setPaused = vi.fn();
     const setMuted = vi.fn(() => voiceSnapshot);
+    const setWakeEnabled = vi.fn();
     const openMainWindow = vi.fn();
     const quit = vi.fn();
     const warn = vi.fn();
@@ -158,6 +169,14 @@ describe("TrayController", () => {
         getActive: vi.fn(() => activeVoice),
         setMuted,
       },
+      wake: {
+        getSnapshot: vi.fn(() => wakeSnapshot),
+        setEnabled: setWakeEnabled,
+        subscribe: vi.fn((listener: () => void) => {
+          wakeListener = listener;
+          return disposeWake;
+        }),
+      },
     } as unknown as ConstructorParameters<typeof TrayController>[0];
     const controller = new TrayController(
       dependencies,
@@ -179,6 +198,9 @@ describe("TrayController", () => {
       "Mika 正在陪你 · 1 个桌宠",
     );
     expect(latestMenuItem("当前没有语音对话").enabled).toBe(false);
+    expect(latestMenuItem("语音唤醒未开启").enabled).toBe(false);
+    clickCheckbox(latestMenuItem("语音唤醒（Hi Mika）"), true);
+    expect(setWakeEnabled).toHaveBeenCalledWith(true);
 
     clickCheckbox(latestMenuItem("显示桌宠"), false);
     expect(setUserVisible).toHaveBeenCalledWith(false);
@@ -207,6 +229,7 @@ describe("TrayController", () => {
     const refreshCount = electron.buildFromTemplate.mock.calls.length;
     petListener?.();
     pauseListener?.();
+    wakeListener?.();
     await vi.waitFor(() =>
       expect(electron.buildFromTemplate.mock.calls.length).toBeGreaterThan(
         refreshCount,
@@ -216,6 +239,7 @@ describe("TrayController", () => {
     controller.destroy();
     expect(disposePet).toHaveBeenCalledOnce();
     expect(disposePause).toHaveBeenCalledOnce();
+    expect(disposeWake).toHaveBeenCalledOnce();
     expect(electron.trays[0]?.destroy).toHaveBeenCalledOnce();
     expect(controller.isCreated()).toBe(false);
     expect(warn).not.toHaveBeenCalled();

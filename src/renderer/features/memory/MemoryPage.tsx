@@ -86,6 +86,12 @@ const claimSlotLabel = new Map<MemoryClaimSlot, string>([
   ["preference.schedule", "时间安排"],
   ["preference.tools", "工具"],
 ]);
+const claimSlots = [...claimSlotLabel.keys()];
+
+function claimSlotsForType(type: MemoryType): readonly MemoryClaimSlot[] {
+  if (type !== "profile" && type !== "preference") return [];
+  return claimSlots.filter((slot) => slot.startsWith(`${type}.`));
+}
 
 function currentContent(hit: MemoryHit): string {
   return hit.revision.content;
@@ -143,12 +149,21 @@ export function MemoryPage({
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");
   const [draftType, setDraftType] = useState<MemoryType>("preference");
+  const [draftClaimSlot, setDraftClaimSlot] =
+    useState<MemoryClaimSlot>("preference.hobbies");
+  const [resolveClaimSlot, setResolveClaimSlot] =
+    useState<MemoryClaimSlot>("preference.hobbies");
+  const [resolveClaimOwner, setResolveClaimOwner] = useState<MemoryHit | null>(
+    null,
+  );
+  const [resolveClaimDraft, setResolveClaimDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const detailSequence = useRef(0);
   const focusedMemoryRef = useRef<string | null>(null);
   const loadSequence = useRef(0);
+  const resolveClaimSequence = useRef(0);
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
 
@@ -304,6 +319,9 @@ export function MemoryPage({
     setBusy(true);
     try {
       const response = await api.create({
+        ...(draftType === "profile" || draftType === "preference"
+          ? { claimSlot: draftClaimSlot }
+          : {}),
         confidence: 1,
         content,
         importance: 0.5,
@@ -319,6 +337,36 @@ export function MemoryPage({
       } else setError(response.error.message);
     } catch {
       setError("新记忆没有保存，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resolveLegacyClaim = async () => {
+    const content = resolveClaimDraft.trim();
+    if (!detail || !content || busy) return;
+    setBusy(true);
+    try {
+      const response = await api.resolveClaim({
+        claimSlot: resolveClaimSlot,
+        content,
+        memoryId: detail.memory.id,
+      });
+      if (response.ok) {
+        resolveClaimSequence.current += 1;
+        setSelectedId(response.value.memory.id);
+        setDetail(response.value);
+        setDraft(
+          response.value.revisions.find(
+            ({ id }) => id === response.value.memory.currentRevisionId,
+          )?.content ?? "",
+        );
+        setResolveClaimOwner(null);
+        setResolveClaimDraft("");
+        await load();
+      } else setError(response.error.message);
+    } catch {
+      setError("旧记忆字段没有更新，请重试。");
     } finally {
       setBusy(false);
     }
@@ -396,10 +444,58 @@ export function MemoryPage({
   const canAddToTerritory = Boolean(
     !historical && detail && !detail.memory.deletedAt,
   );
+  const canResolveClaim = Boolean(
+    canEdit &&
+    detail &&
+    !detail.memory.claimSlot &&
+    (detail.memory.type === "profile" || detail.memory.type === "preference"),
+  );
+
+  useEffect(() => {
+    if (!canResolveClaim || !detail || !activeRevision) {
+      resolveClaimSequence.current += 1;
+      setResolveClaimOwner(null);
+      setResolveClaimDraft("");
+      return;
+    }
+    const availableSlots = claimSlotsForType(detail.memory.type);
+    if (!availableSlots.includes(resolveClaimSlot)) {
+      setResolveClaimSlot(availableSlots[0]!);
+      return;
+    }
+    const sequence = ++resolveClaimSequence.current;
+    void api
+      .list({ claimSlot: resolveClaimSlot, status: "active" })
+      .then((response) => {
+        if (sequence !== resolveClaimSequence.current) return;
+        if (!response.ok) {
+          setError(response.error.message);
+          return;
+        }
+        const owner =
+          response.value.memories.find(
+            ({ memory }) => memory.id !== detail.memory.id,
+          ) ?? null;
+        setResolveClaimOwner(owner);
+        setResolveClaimDraft(
+          owner
+            ? `${owner.revision.content}\n${activeRevision.content}`
+            : activeRevision.content,
+        );
+      })
+      .catch(() => {
+        if (sequence === resolveClaimSequence.current)
+          setError("无法读取稳定字段的现有记忆，请重试。");
+      });
+    return () => {
+      if (sequence === resolveClaimSequence.current) {
+        resolveClaimSequence.current += 1;
+      }
+    };
+  }, [activeRevision, api, canResolveClaim, detail, resolveClaimSlot]);
 
   return (
     <section className={styles["page"]}>
-      <EvolutionCandidates allowEdit kinds={["memory", "persona_preference"]} />
       <div className={styles["toolbar"]}>
         <label className={styles["search"]}>
           <Search aria-hidden="true" size={15} />
@@ -479,377 +575,468 @@ export function MemoryPage({
             setSelectedId(null);
             setDetail(null);
             setDraft("");
+            setDraftType("preference");
+            setDraftClaimSlot("preference.hobbies");
           }}
         >
           <Plus aria-hidden="true" size={15} /> 新记忆
         </button>
       </div>
 
-      {error ? (
-        <div className={styles["error"]} role="alert">
-          {error}
-        </div>
-      ) : null}
-
-      <div className={styles["workspace"]}>
-        <aside className={styles["leftColumn"]}>
-          {snapshot?.profile.length ? (
-            <section className={styles["profile"]}>
-              <span>Profile</span>
-              {snapshot.profile.slice(0, 3).map((hit) => (
-                <button
-                  key={hit.memory.id}
-                  type="button"
-                  onClick={() => void openDetail(hit.memory.id)}
-                >
-                  {currentContent(hit)}
-                </button>
-              ))}
-            </section>
-          ) : null}
-          {!historical && snapshot?.candidates.length ? (
-            <section className={styles["candidates"]}>
-              <header>
-                <strong>待确认</strong>
-                <span>{snapshot.candidates.length}</span>
-              </header>
-              {snapshot.candidates.map((candidate) => (
-                <article key={candidate.id}>
-                  <p>{candidate.content}</p>
-                  <small>{candidate.reason}</small>
-                  {candidate.claimOperation ? (
-                    <small>
-                      处理：{claimOperationLabel.get(candidate.claimOperation)}
-                      {candidate.claimSlot
-                        ? ` · 字段：${claimSlotLabel.get(candidate.claimSlot)}`
-                        : ""}
-                      {candidate.supersedesMemoryId ? " · 更新现有记忆" : ""}
-                    </small>
-                  ) : null}
-                  <small>
-                    来源：{sourceLabel.get(candidate.sourceType)} ·{" "}
-                    {candidate.sourceLabels.join(" · ")}
-                  </small>
-                  <div>
-                    <button
-                      disabled={busy}
-                      type="button"
-                      onClick={() => void decideCandidate(candidate.id, true)}
-                    >
-                      <Check aria-hidden="true" size={13} /> 接受
-                    </button>
-                    <button
-                      disabled={busy}
-                      type="button"
-                      onClick={() => void decideCandidate(candidate.id, false)}
-                    >
-                      <X aria-hidden="true" size={13} /> 忽略
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </section>
-          ) : null}
-          <div ref={listRef} className={styles["memoryList"]}>
-            {snapshot && snapshot.memories.length === 0 ? (
-              <p className={styles["empty"]}>没有符合筛选条件的记忆。</p>
-            ) : (
-              <div
-                style={{
-                  height: virtualizer.getTotalSize(),
-                  position: "relative",
-                }}
-              >
-                {virtualizer.getVirtualItems().map((row) => {
-                  const hit = snapshot?.memories[row.index];
-                  if (!hit) return null;
-                  return (
-                    <button
-                      key={hit.memory.id}
-                      className={styles["memoryRow"]}
-                      data-selected={selectedId === hit.memory.id || undefined}
-                      type="button"
-                      style={{
-                        height: row.size,
-                        transform: `translateY(${String(row.start)}px)`,
-                      }}
-                      onClick={() => void openDetail(hit.memory.id)}
-                    >
-                      <span>
-                        <em>{typeLabel.get(hit.memory.type)}</em>
-                        {hit.memory.pinnedAt ? (
-                          <Pin aria-label="已置顶" size={12} />
-                        ) : null}
-                        {hit.memory.deletedAt ? <i>已删除</i> : null}
-                      </span>
-                      <strong>{currentContent(hit)}</strong>
-                      <small>{dateLabel(hit.memory.updatedAt)}</small>
-                      <ChevronRight aria-hidden="true" size={14} />
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+      <div className={styles["content"]}>
+        {error ? (
+          <div className={styles["error"]} role="alert">
+            {error}
           </div>
-        </aside>
+        ) : null}
 
-        <main className={styles["detail"]}>
-          {creating ? (
-            <section className={styles["editor"]}>
-              <p>New memory</p>
-              <h2>记录一件值得长期保留的事</h2>
-              <select
-                value={draftType}
-                onChange={(event) =>
-                  setDraftType(event.currentTarget.value as MemoryType)
-                }
-              >
-                {memoryTypes.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <textarea
-                autoFocus
-                aria-label="新记忆内容"
-                value={draft}
-                onChange={(event) => setDraft(event.currentTarget.value)}
-              />
-              <div>
-                <button type="button" onClick={() => setCreating(false)}>
-                  取消
-                </button>
-                <button
-                  className={styles["primaryButton"]}
-                  disabled={busy || !draft.trim()}
-                  type="button"
-                  onClick={() => void createMemory()}
-                >
-                  保存
-                </button>
-              </div>
-            </section>
-          ) : detail && activeRevision ? (
-            <>
-              <section className={styles["detailHeader"]}>
-                <div>
-                  <span>{typeLabel.get(detail.memory.type)}</span>
-                  <h2>{activeRevision.content}</h2>
-                  <p>
-                    {historical
-                      ? `截至 ${asOfDate} 的历史状态`
-                      : `更新于 ${dateLabel(detail.memory.updatedAt)}`}{" "}
-                    · {sourceLabel.get(activeRevision.sourceType)}
-                  </p>
-                </div>
-                <div className={styles["actions"]}>
+        <div
+          aria-label="Memory 工作区"
+          className={styles["workspace"]}
+          role="region"
+        >
+          <aside className={styles["leftColumn"]}>
+            {snapshot?.profile.length ? (
+              <section className={styles["profile"]}>
+                <span>Profile</span>
+                {snapshot.profile.slice(0, 3).map((hit) => (
                   <button
-                    disabled={busy || !canAddToTerritory}
+                    key={hit.memory.id}
                     type="button"
-                    title="放入领地"
-                    onClick={() => void addToTerritory()}
+                    onClick={() => void openDetail(hit.memory.id)}
                   >
-                    <MapIcon aria-hidden="true" size={15} />
-                    放入领地
+                    {currentContent(hit)}
+                  </button>
+                ))}
+              </section>
+            ) : null}
+            {!historical ? (
+              <EvolutionCandidates
+                allowEdit
+                compact
+                kinds={["memory", "persona_preference"]}
+              />
+            ) : null}
+            {!historical && snapshot?.candidates.length ? (
+              <section className={styles["candidates"]}>
+                <header>
+                  <strong>待确认</strong>
+                  <span>{snapshot.candidates.length}</span>
+                </header>
+                {snapshot.candidates.map((candidate) => (
+                  <article key={candidate.id}>
+                    <p>{candidate.content}</p>
+                    <small>{candidate.reason}</small>
+                    {candidate.claimOperation ? (
+                      <small>
+                        处理：
+                        {claimOperationLabel.get(candidate.claimOperation)}
+                        {candidate.claimSlot
+                          ? ` · 字段：${claimSlotLabel.get(candidate.claimSlot)}`
+                          : ""}
+                        {candidate.supersedesMemoryId ? " · 更新现有记忆" : ""}
+                      </small>
+                    ) : null}
+                    <small>
+                      来源：{sourceLabel.get(candidate.sourceType)} ·{" "}
+                      {candidate.sourceLabels.join(" · ")}
+                    </small>
+                    <div>
+                      <button
+                        disabled={busy}
+                        type="button"
+                        onClick={() => void decideCandidate(candidate.id, true)}
+                      >
+                        <Check aria-hidden="true" size={13} /> 接受
+                      </button>
+                      <button
+                        disabled={busy}
+                        type="button"
+                        onClick={() =>
+                          void decideCandidate(candidate.id, false)
+                        }
+                      >
+                        <X aria-hidden="true" size={13} /> 忽略
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </section>
+            ) : null}
+            <div ref={listRef} className={styles["memoryList"]}>
+              {snapshot && snapshot.memories.length === 0 ? (
+                <p className={styles["empty"]}>没有符合筛选条件的记忆。</p>
+              ) : (
+                <div
+                  style={{
+                    height: virtualizer.getTotalSize(),
+                    position: "relative",
+                  }}
+                >
+                  {virtualizer.getVirtualItems().map((row) => {
+                    const hit = snapshot?.memories[row.index];
+                    if (!hit) return null;
+                    return (
+                      <button
+                        key={hit.memory.id}
+                        className={styles["memoryRow"]}
+                        data-selected={
+                          selectedId === hit.memory.id || undefined
+                        }
+                        type="button"
+                        style={{
+                          height: row.size,
+                          transform: `translateY(${String(row.start)}px)`,
+                        }}
+                        onClick={() => void openDetail(hit.memory.id)}
+                      >
+                        <span>
+                          <em>{typeLabel.get(hit.memory.type)}</em>
+                          {hit.memory.pinnedAt ? (
+                            <Pin aria-label="已置顶" size={12} />
+                          ) : null}
+                          {hit.memory.deletedAt ? <i>已删除</i> : null}
+                        </span>
+                        <strong>{currentContent(hit)}</strong>
+                        <small>{dateLabel(hit.memory.updatedAt)}</small>
+                        <ChevronRight aria-hidden="true" size={14} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </aside>
+
+          <main className={styles["detail"]}>
+            {creating ? (
+              <section className={styles["editor"]}>
+                <p>New memory</p>
+                <h2>记录一件值得长期保留的事</h2>
+                <select
+                  aria-label="新记忆类型"
+                  value={draftType}
+                  onChange={(event) => {
+                    const nextType = event.currentTarget.value as MemoryType;
+                    setDraftType(nextType);
+                    const availableSlots = claimSlotsForType(nextType);
+                    if (availableSlots[0]) setDraftClaimSlot(availableSlots[0]);
+                  }}
+                >
+                  {memoryTypes.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+                {draftType === "profile" || draftType === "preference" ? (
+                  <select
+                    aria-label="新记忆稳定字段"
+                    value={draftClaimSlot}
+                    onChange={(event) =>
+                      setDraftClaimSlot(
+                        event.currentTarget.value as MemoryClaimSlot,
+                      )
+                    }
+                  >
+                    {claimSlotsForType(draftType).map((slot) => (
+                      <option key={slot} value={slot}>
+                        {claimSlotLabel.get(slot)}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                <textarea
+                  autoFocus
+                  aria-label="新记忆内容"
+                  value={draft}
+                  onChange={(event) => setDraft(event.currentTarget.value)}
+                />
+                <div>
+                  <button type="button" onClick={() => setCreating(false)}>
+                    取消
                   </button>
                   <button
-                    disabled={busy || !canEdit}
+                    className={styles["primaryButton"]}
+                    disabled={busy || !draft.trim()}
+                    type="button"
+                    onClick={() => void createMemory()}
+                  >
+                    保存
+                  </button>
+                </div>
+              </section>
+            ) : detail && activeRevision ? (
+              <>
+                <section className={styles["detailHeader"]}>
+                  <div>
+                    <span>{typeLabel.get(detail.memory.type)}</span>
+                    <h2>{activeRevision.content}</h2>
+                    <p>
+                      {historical
+                        ? `截至 ${asOfDate} 的历史状态`
+                        : `更新于 ${dateLabel(detail.memory.updatedAt)}`}{" "}
+                      · {sourceLabel.get(activeRevision.sourceType)}
+                    </p>
+                  </div>
+                  <div className={styles["actions"]}>
+                    <button
+                      disabled={busy || !canAddToTerritory}
+                      type="button"
+                      title="放入领地"
+                      onClick={() => void addToTerritory()}
+                    >
+                      <MapIcon aria-hidden="true" size={15} />
+                      放入领地
+                    </button>
+                    <button
+                      disabled={busy || !canEdit}
+                      type="button"
+                      onClick={() =>
+                        void mutate(() =>
+                          api.setPinned({
+                            memoryId: detail.memory.id,
+                            pinned: !detail.memory.pinnedAt,
+                          }),
+                        )
+                      }
+                    >
+                      {detail.memory.pinnedAt ? (
+                        <PinOff aria-hidden="true" size={15} />
+                      ) : (
+                        <Pin aria-hidden="true" size={15} />
+                      )}
+                      {detail.memory.pinnedAt ? "取消置顶" : "置顶"}
+                    </button>
+                    {restorable ? (
+                      <button
+                        disabled={busy || historical}
+                        type="button"
+                        onClick={() =>
+                          void mutate(() =>
+                            api.restore({ memoryId: detail.memory.id }),
+                          )
+                        }
+                      >
+                        <ArchiveRestore aria-hidden="true" size={15} />
+                        恢复
+                      </button>
+                    ) : (
+                      <button
+                        disabled={busy || historical}
+                        type="button"
+                        onClick={() =>
+                          void mutate(() =>
+                            api.archive({ memoryId: detail.memory.id }),
+                          )
+                        }
+                      >
+                        <Archive aria-hidden="true" size={15} />
+                        归档
+                      </button>
+                    )}
+                    <button
+                      className={styles["dangerButton"]}
+                      disabled={busy || historical}
+                      type="button"
+                      onClick={() => {
+                        if (!detail.memory.deletedAt)
+                          void mutate(() =>
+                            api.delete({ memoryId: detail.memory.id }),
+                          );
+                        else if (
+                          window.confirm("永久删除这条记忆及全部 Revision？")
+                        )
+                          void purgeMemory();
+                      }}
+                    >
+                      <Trash2 aria-hidden="true" size={15} />
+                      {detail.memory.deletedAt ? "永久删除" : "删除"}
+                    </button>
+                  </div>
+                </section>
+                {canResolveClaim ? (
+                  <section className={styles["editor"]}>
+                    <h3>绑定稳定字段</h3>
+                    <p className={styles["claimNote"]}>
+                      这是一条旧版未绑定记录。请选择字段并确认完整内容；系统不会自动猜测。
+                    </p>
+                    <select
+                      aria-label="旧记忆稳定字段"
+                      value={resolveClaimSlot}
+                      onChange={(event) =>
+                        setResolveClaimSlot(
+                          event.currentTarget.value as MemoryClaimSlot,
+                        )
+                      }
+                    >
+                      {claimSlotsForType(detail.memory.type).map((slot) => (
+                        <option key={slot} value={slot}>
+                          {claimSlotLabel.get(slot)}
+                        </option>
+                      ))}
+                    </select>
+                    {resolveClaimOwner ? (
+                      <div className={styles["claimComparison"]}>
+                        <div>
+                          <span>现有字段内容</span>
+                          <strong>{resolveClaimOwner.revision.content}</strong>
+                        </div>
+                        <div>
+                          <span>这条旧记忆</span>
+                          <strong>{activeRevision.content}</strong>
+                        </div>
+                      </div>
+                    ) : null}
+                    <textarea
+                      aria-label="稳定字段确认内容"
+                      value={resolveClaimDraft}
+                      onChange={(event) =>
+                        setResolveClaimDraft(event.currentTarget.value)
+                      }
+                    />
+                    <button
+                      className={styles["primaryButton"]}
+                      disabled={busy || !resolveClaimDraft.trim()}
+                      type="button"
+                      onClick={() => void resolveLegacyClaim()}
+                    >
+                      {resolveClaimOwner ? "确认合并" : "确认绑定"}
+                    </button>
+                  </section>
+                ) : null}
+                <section className={styles["editor"]}>
+                  <h3>当前内容</h3>
+                  <textarea
+                    aria-label="编辑记忆内容"
+                    disabled={!canEdit}
+                    value={draft}
+                    onChange={(event) => setDraft(event.currentTarget.value)}
+                  />
+                  <button
+                    className={styles["primaryButton"]}
+                    disabled={
+                      busy ||
+                      !canEdit ||
+                      !draft.trim() ||
+                      draft.trim() === activeRevision.content
+                    }
                     type="button"
                     onClick={() =>
                       void mutate(() =>
-                        api.setPinned({
+                        api.revise({
+                          content: draft.trim(),
                           memoryId: detail.memory.id,
-                          pinned: !detail.memory.pinnedAt,
+                          reason: "用户在 Memory 页面编辑",
+                          sources: [],
                         }),
                       )
                     }
                   >
-                    {detail.memory.pinnedAt ? (
-                      <PinOff aria-hidden="true" size={15} />
-                    ) : (
-                      <Pin aria-hidden="true" size={15} />
-                    )}
-                    {detail.memory.pinnedAt ? "取消置顶" : "置顶"}
+                    保存为新 Revision
                   </button>
-                  {restorable ? (
-                    <button
-                      disabled={busy || historical}
-                      type="button"
-                      onClick={() =>
-                        void mutate(() =>
-                          api.restore({ memoryId: detail.memory.id }),
-                        )
-                      }
-                    >
-                      <ArchiveRestore aria-hidden="true" size={15} />
-                      恢复
-                    </button>
-                  ) : (
-                    <button
-                      disabled={busy || historical}
-                      type="button"
-                      onClick={() =>
-                        void mutate(() =>
-                          api.archive({ memoryId: detail.memory.id }),
-                        )
-                      }
-                    >
-                      <Archive aria-hidden="true" size={15} />
-                      归档
-                    </button>
-                  )}
-                  <button
-                    className={styles["dangerButton"]}
-                    disabled={busy || historical}
-                    type="button"
-                    onClick={() => {
-                      if (!detail.memory.deletedAt)
-                        void mutate(() =>
-                          api.delete({ memoryId: detail.memory.id }),
-                        );
-                      else if (
-                        window.confirm("永久删除这条记忆及全部 Revision？")
-                      )
-                        void purgeMemory();
-                    }}
-                  >
-                    <Trash2 aria-hidden="true" size={15} />
-                    {detail.memory.deletedAt ? "永久删除" : "删除"}
-                  </button>
-                </div>
-              </section>
-              <section className={styles["editor"]}>
-                <h3>当前内容</h3>
-                <textarea
-                  aria-label="编辑记忆内容"
-                  disabled={!canEdit}
-                  value={draft}
-                  onChange={(event) => setDraft(event.currentTarget.value)}
-                />
-                <button
-                  className={styles["primaryButton"]}
-                  disabled={
-                    busy ||
-                    !canEdit ||
-                    !draft.trim() ||
-                    draft.trim() === activeRevision.content
-                  }
-                  type="button"
-                  onClick={() =>
-                    void mutate(() =>
-                      api.revise({
-                        content: draft.trim(),
-                        memoryId: detail.memory.id,
-                        reason: "用户在 Memory 页面编辑",
-                        sources: [],
-                      }),
-                    )
-                  }
-                >
-                  保存为新 Revision
-                </button>
-              </section>
-              <section className={styles["timeline"]}>
-                <h3>Revision 时间线</h3>
-                {detail.revisions.map((revision) => {
-                  const revisionSourceIds = new Set(revision.sourceIds);
-                  const revisionSources = detail.sources.filter(({ id }) =>
-                    revisionSourceIds.has(id),
-                  );
-                  return (
-                    <article
-                      key={revision.id}
-                      data-current={
-                        revision.id === detail.memory.currentRevisionId ||
-                        undefined
-                      }
-                    >
-                      <span />
-                      <div>
-                        <strong>{revision.content}</strong>
-                        <small>
-                          {dateLabel(revision.createdAt)} · {revision.reason} ·{" "}
-                          {sourceLabel.get(revision.sourceType)}
-                          {revisionSources.length
-                            ? ` · ${revisionSources
-                                .map(
-                                  (source) =>
-                                    source.label ?? source.referenceId,
-                                )
-                                .join("、")}`
-                            : ""}
-                        </small>
-                      </div>
-                    </article>
-                  );
-                })}
-              </section>
-              <section className={styles["sources"]}>
-                <h3>当前 Revision 来源</h3>
-                {activeSources.length ? (
-                  activeSources.map((source) => {
-                    const openable =
-                      onOpenSource &&
-                      (source.type === "activity" ||
-                        source.type === "chat" ||
-                        source.type === "voice");
-                    const content = (
-                      <>
-                        <strong>{sourceLabel.get(source.type)}</strong>
-                        <span>{source.label ?? source.referenceId}</span>
-                        {openable ? (
-                          <ChevronRight aria-hidden="true" size={13} />
-                        ) : null}
-                      </>
+                </section>
+                <section className={styles["timeline"]}>
+                  <h3>Revision 时间线</h3>
+                  {detail.revisions.map((revision) => {
+                    const revisionSourceIds = new Set(revision.sourceIds);
+                    const revisionSources = detail.sources.filter(({ id }) =>
+                      revisionSourceIds.has(id),
                     );
-                    return openable ? (
-                      <button
-                        key={source.id}
-                        aria-label={`${sourceLabel.get(source.type)} ${source.label ?? source.referenceId}`}
-                        type="button"
-                        onClick={() => onOpenSource?.(source)}
+                    return (
+                      <article
+                        key={revision.id}
+                        data-current={
+                          revision.id === detail.memory.currentRevisionId ||
+                          undefined
+                        }
                       >
-                        {content}
-                      </button>
-                    ) : (
-                      <div key={source.id}>{content}</div>
+                        <span />
+                        <div>
+                          <strong>{revision.content}</strong>
+                          <small>
+                            {dateLabel(revision.createdAt)} · {revision.reason}{" "}
+                            · {sourceLabel.get(revision.sourceType)}
+                            {revisionSources.length
+                              ? ` · ${revisionSources
+                                  .map(
+                                    (source) =>
+                                      source.label ?? source.referenceId,
+                                  )
+                                  .join("、")}`
+                              : ""}
+                          </small>
+                        </div>
+                      </article>
                     );
-                  })
-                ) : (
-                  <p>这条 Revision 由用户直接编辑。</p>
-                )}
-              </section>
-              <section className={styles["usages"]}>
-                <h3>被使用记录</h3>
-                {detail.usages.length ? (
-                  detail.usages.map((usage) => (
-                    <div key={usage.id}>
-                      <strong>
-                        {usage.consumer === "context"
-                          ? "上下文装配"
-                          : "memory.search"}
-                      </strong>
-                      <span>
-                        {dateTimeLabel(usage.usedAt)} ·{" "}
-                        {detail.revisions.find(
-                          ({ id }) => id === usage.revisionId,
-                        )?.content ?? usage.revisionId}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <p>这条记忆还没有被模型读取。</p>
-                )}
-              </section>
-            </>
-          ) : (
-            <div className={styles["detailEmpty"]}>
-              <strong>选择一条记忆</strong>
-              <span>查看当前内容、来源和历史 Revision。</span>
-            </div>
-          )}
-        </main>
+                  })}
+                </section>
+                <section className={styles["sources"]}>
+                  <h3>当前 Revision 来源</h3>
+                  {activeSources.length ? (
+                    activeSources.map((source) => {
+                      const openable =
+                        onOpenSource &&
+                        (source.type === "activity" ||
+                          source.type === "chat" ||
+                          source.type === "voice");
+                      const content = (
+                        <>
+                          <strong>{sourceLabel.get(source.type)}</strong>
+                          <span>{source.label ?? source.referenceId}</span>
+                          {openable ? (
+                            <ChevronRight aria-hidden="true" size={13} />
+                          ) : null}
+                        </>
+                      );
+                      return openable ? (
+                        <button
+                          key={source.id}
+                          aria-label={`${sourceLabel.get(source.type)} ${source.label ?? source.referenceId}`}
+                          type="button"
+                          onClick={() => onOpenSource?.(source)}
+                        >
+                          {content}
+                        </button>
+                      ) : (
+                        <div key={source.id}>{content}</div>
+                      );
+                    })
+                  ) : (
+                    <p>这条 Revision 由用户直接编辑。</p>
+                  )}
+                </section>
+                <section className={styles["usages"]}>
+                  <h3>被使用记录</h3>
+                  {detail.usages.length ? (
+                    detail.usages.map((usage) => (
+                      <div key={usage.id}>
+                        <strong>
+                          {usage.consumer === "context"
+                            ? "上下文装配"
+                            : "memory.search"}
+                        </strong>
+                        <span>
+                          {dateTimeLabel(usage.usedAt)} ·{" "}
+                          {detail.revisions.find(
+                            ({ id }) => id === usage.revisionId,
+                          )?.content ?? usage.revisionId}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <p>这条记忆还没有被模型读取。</p>
+                  )}
+                </section>
+              </>
+            ) : (
+              <div className={styles["detailEmpty"]}>
+                <strong>选择一条记忆</strong>
+                <span>查看当前内容、来源和历史 Revision。</span>
+              </div>
+            )}
+          </main>
+        </div>
       </div>
     </section>
   );

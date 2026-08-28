@@ -14,7 +14,8 @@ import type { TerritoryWorldService } from "./territoryWorldService";
 const TerritoryGenerateItemToolInputSchema = Type.Object(
   {
     description: Type.String({
-      description: "Why this object matters and what story it should preserve.",
+      description:
+        "One or two concise, poetic user-visible sentences grounded in what is actually known. Use concrete sensory imagery; do not include image prompts, model/provider terms, dimensions, internal IDs, or invent facts about the user.",
       minLength: 1,
       pattern: "\\S",
     }),
@@ -35,11 +36,6 @@ const TerritoryGenerateItemToolInputSchema = Type.Object(
 interface TerritoryToolDependencies {
   readonly candidates: Pick<TerritoryWorldCandidateService, "create">;
   readonly territory: Pick<TerritoryWorldService, "getSnapshot">;
-}
-
-function sentence(value: string): string {
-  const trimmed = value.trim();
-  return /[.!?。！？]$/u.test(trimmed) ? trimmed : `${trimmed}。`;
 }
 
 function summarizeInput(input: Readonly<Record<string, JsonValue>>): string {
@@ -84,7 +80,7 @@ export function registerTerritoryTools(
   registry.register({
     descriptor: {
       description:
-        "Generate one editable transparent 2.5D object as a Territory World candidate. The current Zone and its Style Profile are frozen automatically. The current World is never changed until the user reviews and applies the candidate in Territory.",
+        "Generate one editable transparent 2.5D object as a Territory World candidate. Supply a short user-visible name and one or two poetic, sensory story sentences separately from the visualPrompt. Keep the story faithful to known evidence; never expose prompts, model/provider terms, dimensions, or internal IDs, and never infer user preferences from observed Activity. The current Zone and its Style Profile are frozen automatically. The current World is never changed until the user reviews and applies the candidate in Territory.",
       effect: "write",
       idempotency: "non_idempotent",
       inputSchema: TerritoryGenerateItemToolInputSchema,
@@ -100,8 +96,12 @@ export function registerTerritoryTools(
       const candidateRequest: TerritoryCreateChangeCandidateRequest = {
         baseRevisionId: snapshot.world.currentRevision.id,
         intent: "item",
+        itemContent: {
+          description: request.description.trim(),
+          name: request.name.trim(),
+        },
         lockedInstanceIds: [],
-        prompt: `${request.name.trim()}：${sentence(request.description)}视觉：${request.visualPrompt.trim()}`,
+        prompt: `${request.name.trim()}：${request.visualPrompt.trim()}`,
         providerProfileId: context.providerProfileId ?? null,
         scope: { kind: "zone", zoneId: snapshot.world.activeZoneId },
         sources: [],

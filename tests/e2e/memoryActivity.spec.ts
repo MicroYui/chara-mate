@@ -7,20 +7,47 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { _electron as electron } from "playwright";
 
+import { RunRepository } from "../../src/main/agent/runRepository";
 import { ActivityRepository } from "../../src/main/activity/activityRepository";
 import { distillEpisodes } from "../../src/main/activity/activityDistillation";
+import { ChatRepository } from "../../src/main/chat/chatRepository";
 import { openApplicationDatabase } from "../../src/main/db/database";
+import { EvolutionRepository } from "../../src/main/evolution/evolutionRepository";
 import { LexicalRetrievalPipeline } from "../../src/main/memory/lexicalRetrievalPipeline";
 import { MemoryRepository } from "../../src/main/memory/memoryRepository";
 import { MemoryService } from "../../src/main/memory/memoryService";
 import type { ActivityEvent } from "../../src/shared/contracts/activity";
+import type { RunEventEnvelope } from "../../src/shared/contracts/ipc";
+import type { Run } from "../../src/shared/contracts/run";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { FakeClock } from "../fixtures/fakeClock";
+import {
+  chatFixture,
+  FIXTURE_IDS,
+  FIXTURE_TIMESTAMPS,
+  runEventEnvelopeFixture,
+  runFixture,
+} from "../fixtures/foundationContracts";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
+
+const completedRun = {
+  ...runFixture,
+  endedAt: FIXTURE_TIMESTAMPS.updated,
+  latestSequence: 2,
+  source: "voice",
+  status: "completed",
+} satisfies Run;
+
+const completedRunEnvelope = {
+  event: { run: completedRun, type: "run.completed" },
+  occurredAt: FIXTURE_TIMESTAMPS.updated,
+  sequence: 2,
+  streamId: FIXTURE_IDS.run,
+} satisfies RunEventEnvelope;
 
 function localDate(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -223,6 +250,96 @@ test("uses Memory and Activity through the typed desktop boundary", async () => 
     await expect(page.getByRole("heading", { name: "行为记录" })).toBeVisible();
     await page.getByRole("button", { name: "暂停采集" }).click();
     await expect(page.getByRole("status")).toContainText("Activity 已暂停");
+  } finally {
+    try {
+      await application?.close();
+    } finally {
+      await rm(userDataDirectory, { force: true, recursive: true });
+    }
+  }
+});
+
+test("keeps failed Voice reviews compact and dismissible in Memory", async () => {
+  const userDataDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-memory-review-layout-e2e-"),
+  );
+  let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
+
+  try {
+    const database = openApplicationDatabase(
+      path.join(userDataDirectory, "charamate.sqlite"),
+    );
+    const chats = new ChatRepository(database);
+    chats.insertChat(chatFixture);
+    const runs = new RunRepository(database);
+    runs.appendEvent({
+      ...runEventEnvelopeFixture,
+      event: {
+        run: { ...runEventEnvelopeFixture.event.run, source: "voice" },
+        type: "run.started",
+      },
+    });
+    runs.appendEvent(completedRunEnvelope);
+    const evolution = new EvolutionRepository(database);
+    evolution.createReview({
+      chatId: FIXTURE_IDS.chat,
+      completedAt: FIXTURE_TIMESTAMPS.updated,
+      createdAt: FIXTURE_TIMESTAMPS.created,
+      error: {
+        code: "PROVIDER.REQUEST_FAILED",
+        message: "Provider 请求失败，请检查配置后重试。",
+        retryable: true,
+      },
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      runId: FIXTURE_IDS.run,
+      status: "failed",
+      triggers: ["explicit_teaching"],
+      updatedAt: FIXTURE_TIMESTAMPS.updated,
+    });
+    database.close();
+
+    application = await electron.launch({
+      args: [projectRoot],
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        CHARAMATE_USER_DATA_DIR: userDataDirectory,
+      },
+    });
+    const page = await application.firstWindow();
+
+    await page.getByRole("button", { name: "Memory" }).click();
+    const candidates = page.getByRole("region", { name: "成长候选" });
+    await expect(
+      candidates.getByText("成长复盘未完成", { exact: true }),
+    ).toBeVisible();
+    await expect(candidates).toContainText("不影响现有 Memory。");
+
+    const search = page.getByLabel("搜索记忆");
+    const workspace = page.getByRole("region", { name: "Memory 工作区" });
+    const [searchBox, workspaceBox, viewport] = await Promise.all([
+      search.boundingBox(),
+      workspace.boundingBox(),
+      page.evaluate(() => ({ height: innerHeight, width: innerWidth })),
+    ]);
+    expect(searchBox).not.toBeNull();
+    expect(workspaceBox).not.toBeNull();
+    expect(searchBox!.y).toBeLessThan(viewport.height * 0.25);
+    expect(workspaceBox!.y).toBeGreaterThan(searchBox!.y);
+    expect(workspaceBox!.height).toBeGreaterThan(viewport.height * 0.5);
+    expect(workspaceBox!.y + workspaceBox!.height).toBeLessThanOrEqual(
+      viewport.height + 1,
+    );
+
+    await candidates.getByRole("button", { name: "关闭" }).click();
+    await expect(candidates).toBeHidden();
+    const reviewResponse = await page.evaluate((runId) => {
+      return window.charaMate.evolution.list({ runId });
+    }, FIXTURE_IDS.run);
+    expect(reviewResponse).toMatchObject({
+      ok: true,
+      value: { reviews: [{ runId: FIXTURE_IDS.run, status: "skipped" }] },
+    });
   } finally {
     try {
       await application?.close();

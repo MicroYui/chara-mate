@@ -413,12 +413,22 @@ export function EvolutionCandidates({
     );
   }, [candidates, compact, kindKey]);
   const failedReviews = reviews.filter(({ status }) => status === "failed");
+  const updateReview = (changed: EvolutionReview) => {
+    setReviews((current) => [
+      ...current.filter(({ id }) => id !== changed.id),
+      changed,
+    ]);
+  };
 
   if (!api || (filtered.length === 0 && failedReviews.length === 0 && !error)) {
     return null;
   }
   return (
-    <section className={styles["collection"]} aria-label="成长候选">
+    <section
+      className={styles["collection"]}
+      data-compact={compact || undefined}
+      aria-label="成长候选"
+    >
       {!compact ? (
         <header className={styles["collectionHeader"]}>
           <div>
@@ -442,18 +452,13 @@ export function EvolutionCandidates({
         </p>
       ) : null}
       {failedReviews.map((review) => (
-        <article className={styles["candidate"]} key={review.id}>
-          <header>
-            <div>
-              <small>Experience Review</small>
-              <strong>复盘失败</strong>
-            </div>
-            <span data-status="rejected">可重试</span>
-          </header>
-          <p className={styles["error"]}>
-            {review.error?.message ?? "复盘没有完成。"}
-          </p>
-          <div className={styles["actions"]}>
+        <article className={styles["reviewFailure"]} key={review.id}>
+          <div>
+            <strong>成长复盘未完成</strong>
+            <small>{review.error?.message ?? "复盘没有完成。"}</small>
+            <small>不影响现有 Memory。</small>
+          </div>
+          <div className={styles["failureActions"]}>
             <button
               disabled={retryingRunId === review.runId}
               type="button"
@@ -463,19 +468,32 @@ export function EvolutionCandidates({
                 void api
                   .retryReview({ runId: review.runId })
                   .then((response) => {
-                    if (response.ok) {
-                      setReviews((current) => [
-                        ...current.filter(({ id }) => id !== response.value.id),
-                        response.value,
-                      ]);
-                    } else setError(response.error.message);
+                    if (response.ok) updateReview(response.value);
+                    else setError(response.error.message);
                   })
                   .catch(() => setError("复盘没有重试，请稍后再试。"))
                   .finally(() => setRetryingRunId(undefined));
               }}
             >
               <RefreshCcw aria-hidden="true" size={13} />
-              重试复盘
+              重试
+            </button>
+            <button
+              disabled={retryingRunId === review.runId}
+              type="button"
+              onClick={() => {
+                setError(undefined);
+                void api
+                  .dismissReview({ runId: review.runId })
+                  .then((response) => {
+                    if (response.ok) updateReview(response.value);
+                    else setError(response.error.message);
+                  })
+                  .catch(() => setError("复盘状态没有关闭，请稍后再试。"));
+              }}
+            >
+              <X aria-hidden="true" size={13} />
+              关闭
             </button>
           </div>
         </article>

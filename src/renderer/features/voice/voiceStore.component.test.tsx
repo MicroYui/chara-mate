@@ -84,4 +84,78 @@ describe("Voice store connection startup", () => {
     await task;
     await waitFor(() => expect(stop).toHaveBeenCalled());
   });
+
+  it("uses the injected desktop-pet microphone lease instead of opening a second capture", async () => {
+    const stop = vi.fn();
+    const prepare = vi.fn().mockResolvedValue({
+      durationMs: 3,
+      stream: {
+        getTracks: () => [{ stop }],
+      } as unknown as MediaStream,
+    });
+    const quickStart = vi.fn<VoiceApi["quickStart"]>().mockResolvedValue({
+      error: {
+        code: "PROVIDER.UNREACHABLE",
+        message: "Realtime 暂时不可用。",
+        retryable: true,
+      },
+      ok: false,
+    });
+    const api = {
+      end: vi.fn(),
+      getActive: vi.fn(),
+      preview: vi.fn(),
+      quickStart,
+      report: vi.fn(),
+      setMuted: vi.fn(),
+      setPaused: vi.fn(),
+      start: vi.fn(),
+      subscribeChanged: vi.fn(),
+      subscribeCommand: vi.fn(),
+    } satisfies VoiceApi;
+    const store = new VoiceStore(api, prepare);
+
+    await store.startQuick();
+
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(quickStart).toHaveBeenCalledOnce();
+    expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(
+      quickStart.mock.invocationCallOrder[0]!,
+    );
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("marks automatic wake quick-starts without changing ordinary Voice starts", async () => {
+    const quickStart = vi.fn<VoiceApi["quickStart"]>().mockResolvedValue({
+      error: {
+        code: "PROVIDER.UNREACHABLE",
+        message: "Realtime 暂时不可用。",
+        retryable: true,
+      },
+      ok: false,
+    });
+    const api = {
+      end: vi.fn(),
+      getActive: vi.fn(),
+      preview: vi.fn(),
+      quickStart,
+      report: vi.fn(),
+      setMuted: vi.fn(),
+      setPaused: vi.fn(),
+      start: vi.fn(),
+      subscribeChanged: vi.fn(),
+      subscribeCommand: vi.fn(),
+    } satisfies VoiceApi;
+    const store = new VoiceStore(api, vi.fn().mockRejectedValue(new Error()));
+
+    await store.startWake();
+
+    expect(quickStart).toHaveBeenCalledOnce();
+    expect(quickStart.mock.calls[0]?.[0]).toMatchObject({
+      origin: "voice_wake",
+    });
+    expect(quickStart.mock.calls[0]?.[0].requestedAt).toMatch(
+      /^\d{4}-\d{2}-\d{2}T/,
+    );
+  });
 });

@@ -338,6 +338,7 @@ export class CharacterWindowController {
       transparent: true,
       ...(process.platform === "darwin" ? { type: "panel" } : {}),
       webPreferences: {
+        backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
         preload: path.join(import.meta.dirname, "character-preload.mjs"),

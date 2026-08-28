@@ -13,6 +13,7 @@ import type {
   TerritoryZone,
 } from "../../shared/contracts/territoryWorld";
 import type { TerritoryWorldSeed } from "./territoryWorldRepository";
+import { applyStarterTerritoryNarratives } from "./territoryWorldNarrative";
 
 export const STARTER_TERRITORY_ZONE_ID = "20000000-0000-4000-8000-000000000001";
 export const STARTER_TERRITORY_REVISION_ID =
@@ -310,7 +311,7 @@ export function createStarterTerritoryWorldSeed(
     },
   ];
 
-  const definitions: TerritoryDefinition[] = [
+  let definitions: TerritoryDefinition[] = [
     {
       anchors: [],
       capabilities: [],
@@ -839,6 +840,7 @@ export function createStarterTerritoryWorldSeed(
       tags: ["glow", "dust", "rain"],
     }),
   ];
+  definitions = applyStarterTerritoryNarratives(definitions);
 
   const assetSizes = new Map(
     definitions.map((definition) => [

@@ -4,11 +4,14 @@ import type { CharaMateApi } from "../shared/contracts/foundation";
 import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_CHANNELS, CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
 import { EXTENSION_CHANNELS } from "../shared/contracts/extensions";
+import { EVOLUTION_CHANNELS } from "../shared/contracts/evolution";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
+import { MEMORY_CHANNELS } from "../shared/contracts/memory";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { SETTINGS_CHANNELS } from "../shared/contracts/settings";
 import { TERRITORY_WORLD_CHANNELS } from "../shared/contracts/territoryWorld";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
+import { VOICE_WAKE_CHANNELS } from "../shared/contracts/voiceWake";
 import {
   chatDataSnapshotFixture,
   FIXTURE_IDS,
@@ -74,6 +77,97 @@ beforeEach(() => {
 });
 
 describe("Phase 1 typed preload data boundary", () => {
+  it("validates failed Experience Review dismissal on both sides", async () => {
+    const runId = FIXTURE_IDS.run;
+    const review = {
+      chatId: FIXTURE_IDS.chat,
+      completedAt: FIXTURE_TIMESTAMPS.updated,
+      createdAt: FIXTURE_TIMESTAMPS.created,
+      id: "40000000-0000-4000-8000-000000000001",
+      runId,
+      startedAt: FIXTURE_TIMESTAMPS.created,
+      status: "skipped" as const,
+      triggers: ["repeated_pattern" as const],
+      updatedAt: FIXTURE_TIMESTAMPS.updated,
+    };
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(EVOLUTION_CHANNELS.dismissReview);
+        expect(input).toEqual({ runId });
+        return Promise.resolve({ ok: true, value: review });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(api.evolution.dismissReview({ runId })).resolves.toEqual({
+      ok: true,
+      value: review,
+    });
+    await expect(
+      api.evolution.dismissReview({ runId: "not-an-id" }),
+    ).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("validates explicit legacy Memory claim resolution on both sides", async () => {
+    const memoryId = "20000000-0000-4000-8000-000000000001";
+    const revisionId = "30000000-0000-4000-8000-000000000001";
+    const detail = {
+      memory: {
+        claimSlot: "preference.hobbies" as const,
+        confidence: 1,
+        createdAt: FIXTURE_TIMESTAMPS.created,
+        currentRevisionId: revisionId,
+        id: memoryId,
+        importance: 0.8,
+        status: "active" as const,
+        type: "preference" as const,
+        updatedAt: FIXTURE_TIMESTAMPS.updated,
+      },
+      revisions: [
+        {
+          content: "用户喜欢玩 CS2。",
+          createdAt: FIXTURE_TIMESTAMPS.updated,
+          id: revisionId,
+          memoryId,
+          reason: "用户确认旧记忆字段",
+          sourceIds: [],
+          sourceType: "user_edit" as const,
+        },
+      ],
+      sources: [],
+      usages: [],
+    };
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(MEMORY_CHANNELS.resolveClaim);
+        expect(input).toEqual({
+          claimSlot: "preference.hobbies",
+          content: "用户喜欢玩 CS2。",
+          memoryId,
+        });
+        return Promise.resolve({ ok: true, value: detail });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.memory.resolveClaim({
+        claimSlot: "preference.hobbies",
+        content: "用户喜欢玩 CS2。",
+        memoryId,
+      }),
+    ).resolves.toEqual({ ok: true, value: detail });
+    await expect(
+      api.memory.resolveClaim({
+        claimSlot: "preference.hobbies",
+        content: "",
+        memoryId,
+      }),
+    ).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
   it("validates Data settings snapshots before exposing them", async () => {
     const snapshot = {
       categories: [
@@ -232,6 +326,33 @@ describe("Phase 1 typed preload data boundary", () => {
         requestedAt: "not-a-timestamp",
         sessionId,
       }),
+    ).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("validates the Main-only Voice Wake setting boundary", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(VOICE_WAKE_CHANNELS.setEnabled);
+        expect(input).toEqual({ enabled: true });
+        return Promise.resolve({
+          ok: true,
+          value: {
+            enabled: true,
+            microphone: "granted",
+            phase: "arming",
+            phrase: "Hi Mika",
+          },
+        });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.voiceWake.setEnabled({ enabled: true }),
+    ).resolves.toMatchObject({ ok: true, value: { enabled: true } });
+    await expect(
+      api.voiceWake.setEnabled({ enabled: "yes" as never }),
     ).rejects.toThrow();
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });

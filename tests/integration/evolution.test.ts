@@ -12,6 +12,7 @@ import type {
   EvolutionCandidateGenerator,
   EvolutionReplayRunner,
 } from "../../src/main/evolution/evolutionReviewer";
+import { EvolutionReviewSkippedError } from "../../src/main/evolution/evolutionReviewer";
 import { EvolutionService } from "../../src/main/evolution/evolutionService";
 import { SkillRepository } from "../../src/main/extensions/skillRepository";
 import { SkillService } from "../../src/main/extensions/skillService";
@@ -78,11 +79,13 @@ function envelope(
 function persistCompletedRun(
   chats: ChatRepository,
   runs: RunRepository,
+  source: Run["source"] = "text",
 ): RunEventEnvelope {
   chats.insertChat(chatFixture);
   const startedRun: Run = {
     ...runFixture,
     latestSequence: 1,
+    source,
     status: "running",
   };
   runs.appendEvent(envelope(1, { run: startedRun, type: "run.started" }));
@@ -411,6 +414,90 @@ describe("Self-evolution production path", () => {
     restarted.initialize();
     expect(repository.requireCandidate(skillDraft.id).status).toBe("stale");
     await restarted.shutdown();
+    database.close();
+  });
+
+  it("skips Voice Review without a Chat Model and explicitly dismisses persisted failures", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "chara-mate-evolution-"));
+    temporaryDirectories.push(root);
+    const database = openApplicationDatabase(path.join(root, "app.sqlite"));
+    const chats = new ChatRepository(database);
+    const runs = new RunRepository(database);
+    const completed = persistCompletedRun(chats, runs, "voice");
+    const clock = new FakeClock("2026-08-27T14:00:00.000Z");
+    const ids = new CryptoIdGenerator();
+    const memoryRepository = new MemoryRepository(database);
+    const memory = new MemoryService(
+      memoryRepository,
+      new LexicalRetrievalPipeline(database, memoryRepository, clock),
+      ids,
+      clock,
+    );
+    const skills = new SkillService(
+      path.join(root, "workspace", ".agents", "skills"),
+      path.join(root, "user-skills"),
+      new SkillRepository(database),
+      ids,
+      clock,
+    );
+    await skills.initialize();
+    const review = vi.fn<EvolutionCandidateGenerator["review"]>(() =>
+      Promise.reject(
+        new EvolutionReviewSkippedError(
+          "Voice Review 已跳过：未配置可用的 Chat Provider 与模型。",
+        ),
+      ),
+    );
+    const logger = { warn: vi.fn() };
+    const repository = new EvolutionRepository(database);
+    const service = new EvolutionService(
+      repository,
+      runs,
+      chats,
+      skills,
+      memory,
+      { review },
+      { replay: () => Promise.resolve({ passed: true }) },
+      ids,
+      clock,
+      logger,
+      new EvolutionEventCollector(),
+    );
+    service.initialize();
+
+    service.observeRun(completed);
+    await vi.waitFor(() =>
+      expect(repository.requireReviewByRun(FIXTURE_IDS.run).status).toBe(
+        "skipped",
+      ),
+    );
+    expect(review).toHaveBeenCalledOnce();
+    expect(logger.warn).not.toHaveBeenCalled();
+
+    repository.updateReview({
+      completedAt: clock.now(),
+      error: {
+        code: "PROVIDER.REQUEST_FAILED",
+        message: "Provider 请求失败，请检查配置后重试。",
+        retryable: true,
+      },
+      runId: FIXTURE_IDS.run,
+      status: "failed",
+      updatedAt: clock.now(),
+    });
+    expect(service.dismissReview(FIXTURE_IDS.run)).toMatchObject({
+      runId: FIXTURE_IDS.run,
+      status: "skipped",
+    });
+    expect(repository.requireReviewByRun(FIXTURE_IDS.run)).not.toHaveProperty(
+      "error",
+    );
+    expect(runs.getRun(FIXTURE_IDS.run)).toBeDefined();
+    expect(() => service.dismissReview(FIXTURE_IDS.run)).toThrow(
+      "只有失败的 Review 可以关闭",
+    );
+
+    await service.shutdown();
     database.close();
   });
 

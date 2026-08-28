@@ -5,6 +5,7 @@ import {
   app,
   BrowserWindow,
   powerMonitor,
+  session,
   shell,
   systemPreferences,
 } from "electron";
@@ -20,6 +21,7 @@ import { JOURNEY_CHANNELS } from "../shared/contracts/journey";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { TERRITORY_WORLD_CHANNELS } from "../shared/contracts/territoryWorld";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
+import { VOICE_WAKE_CHANNELS } from "../shared/contracts/voiceWake";
 import { SystemClock } from "../shared/pure/clock";
 import { CryptoIdGenerator } from "../shared/pure/id";
 import {
@@ -68,6 +70,7 @@ import { registerActivityProtocol } from "./activity/activityProtocol";
 import { ActivityRepository } from "./activity/activityRepository";
 import { ActivityService } from "./activity/activityService";
 import { ElectronActivitySystemSource } from "./activity/activitySystemSource";
+import { registerActivityTool } from "./activity/activityTool";
 import { ChatRepository } from "./chat/chatRepository";
 import { ChatService } from "./chat/chatService";
 import { ChatTitleService } from "./chat/chatTitleService";
@@ -102,7 +105,10 @@ import { LexicalRetrievalPipeline } from "./memory/lexicalRetrievalPipeline";
 import { registerMemoryIpc } from "./memory/memoryIpc";
 import { MemoryRepository } from "./memory/memoryRepository";
 import { MemoryService } from "./memory/memoryService";
-import { memoryContextTargetIds } from "./agent/memoryContext";
+import {
+  memoryContextQueryTargetIds,
+  memoryContextTargetIds,
+} from "./agent/memoryContext";
 import {
   registerMemoryFormationTool,
   registerMemoryTool,
@@ -149,11 +155,14 @@ import { VoiceRepository } from "./voice/voiceRepository";
 import { VoiceService } from "./voice/voiceService";
 import { registerVoiceTools } from "./voice/voiceTool";
 import { VoiceMetrics } from "./voice/voiceMetrics";
+import { registerVoiceWakeIpc } from "./voice/voiceWakeIpc";
+import { VoiceWakeService } from "./voice/voiceWakeService";
 
 const logger = createAppLogger();
 const backgroundTest = process.env["CHARAMATE_TEST_BACKGROUND"] === "1";
 
 registerApplicationSchemes();
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 const userDataOverride = process.env["CHARAMATE_USER_DATA_DIR"];
 if (process.env["CHARAMATE_SMOKE_TEST"] === "1") {
@@ -179,6 +188,13 @@ function getSupportedPlatform(): FoundationSnapshot["platform"] {
   return process.platform;
 }
 
+function readMicrophonePermission() {
+  if (process.platform !== "darwin") return "unavailable" as const;
+  const status = systemPreferences.getMediaAccessStatus("microphone");
+  if (status === "not-determined") return "not_determined" as const;
+  return status === "unknown" ? ("unavailable" as const) : status;
+}
+
 let mainWindowController: MainWindowController | undefined;
 let applicationDatabase: Database.Database | undefined;
 let unregisterChatIpc: (() => void) | undefined;
@@ -198,6 +214,7 @@ let unregisterPetProtocol: (() => void) | undefined;
 let unregisterTerritoryWorldIpc: (() => void) | undefined;
 let unregisterTerritoryProtocol: (() => void) | undefined;
 let unregisterVoiceIpc: (() => void) | undefined;
+let unregisterVoiceWakeIpc: (() => void) | undefined;
 let providerService: ProviderService | undefined;
 let characterWindowController: CharacterWindowController | undefined;
 let trayController: TrayController | undefined;
@@ -210,6 +227,7 @@ let managedBrowser: ManagedBrowser | undefined;
 let mcpService: McpService | undefined;
 let devDashboard: DevDashboard | undefined;
 let voiceService: VoiceService | undefined;
+let voiceWakeService: VoiceWakeService | undefined;
 let journeyService: JourneyService | undefined;
 let companionInitiativeService: CompanionInitiativeService | undefined;
 let proactiveConversationSurface: ProactiveConversationSurface | undefined;
@@ -266,11 +284,16 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterTerritoryProtocol = undefined;
     unregisterVoiceIpc?.();
     unregisterVoiceIpc = undefined;
+    unregisterVoiceWakeIpc?.();
+    unregisterVoiceWakeIpc = undefined;
+    session.defaultSession.setPermissionCheckHandler(null);
+    session.defaultSession.setPermissionRequestHandler(null);
     await automationScheduler?.stop();
     automationScheduler = undefined;
     await evolutionService?.shutdown();
     evolutionService = undefined;
     voiceService?.shutdown();
+    voiceWakeService?.shutdown();
     managedBrowser?.setActivityObserver(undefined);
     const activityStops = await Promise.allSettled([
       activityCapture?.stop() ?? Promise.resolve(),
@@ -299,6 +322,7 @@ async function stopApplicationInfrastructure(): Promise<void> {
     mcpService = undefined;
     devDashboard = undefined;
     voiceService = undefined;
+    voiceWakeService = undefined;
     journeyService = undefined;
     characterWindowController?.destroy();
     characterWindowController = undefined;
@@ -530,9 +554,22 @@ async function startApplication(): Promise<void> {
                 ),
               ]
             : [];
+      const ambiguityMemoryIds =
+        run.source === "voice"
+          ? [...(voiceService?.getMemoryContextQueryIds(runId) ?? [])]
+          : checkpoint
+            ? [
+                ...new Set(
+                  decodeRuntimeCheckpoint(checkpoint.context).input.flatMap(
+                    memoryContextQueryTargetIds,
+                  ),
+                ),
+              ]
+            : [];
       if (basis === "run_observation") {
         return {
           allowedMemoryIds,
+          ambiguityMemoryIds,
           label: `Agent Run ${run.id}`,
           referenceId: run.id,
           sourceType: "tool",
@@ -558,6 +595,7 @@ async function startApplication(): Promise<void> {
         typeof messageId === "string" ? messageId : evidenceItem.id;
       return {
         allowedMemoryIds,
+        ambiguityMemoryIds,
         label:
           evidenceItem.kind === "user_message"
             ? `用户消息 ${evidenceId}`
@@ -593,6 +631,28 @@ async function startApplication(): Promise<void> {
     applicationDatabase,
     workspaceDirectory,
   );
+  voiceWakeService = new VoiceWakeService(
+    settingsRepository,
+    {
+      read: readMicrophonePermission,
+      request: () =>
+        process.platform === "darwin"
+          ? systemPreferences.askForMediaAccess("microphone")
+          : Promise.resolve(true),
+    },
+    clock,
+    {
+      snapshot(wakeSnapshot) {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.webContents.isDestroyed()) {
+            window.webContents.send(VOICE_WAKE_CHANNELS.changed, wakeSnapshot);
+          }
+        }
+        void trayController?.refresh();
+      },
+    },
+  );
+  voiceWakeService.initialize(powerMonitor);
   const initialAgentSettings = settingsRepository.getAgent();
   const skillService = new SkillService(
     path.join(initialAgentSettings.workingDirectory, ".agents", "skills"),
@@ -638,6 +698,7 @@ async function startApplication(): Promise<void> {
     clock,
   );
   await activityService.initialize();
+  registerActivityTool(toolRegistry, activityService);
   unregisterActivityProtocol = registerActivityProtocol(
     activityRepository,
     activityAssets,
@@ -696,10 +757,7 @@ async function startApplication(): Promise<void> {
         return status === "unknown" ? "unavailable" : status;
       },
       readMicrophone: () => {
-        if (process.platform !== "darwin") return "unavailable";
-        const status = systemPreferences.getMediaAccessStatus("microphone");
-        if (status === "not-determined") return "not_determined";
-        return status === "unknown" ? "unavailable" : status;
+        return readMicrophonePermission();
       },
     },
     clock,
@@ -741,6 +799,7 @@ async function startApplication(): Promise<void> {
   territoryWorldRepository.ensureInitialized(
     createStarterTerritoryWorldSeed(clock.now()),
   );
+  territoryWorldRepository.ensurePoeticDescriptions(clock.now());
   const territoryWorldAssets = new TerritoryWorldAssetStore(
     path.join(userDataPath, "territory", "world-assets"),
     new ElectronTerritoryWorldImageNormalizer(),
@@ -1063,6 +1122,14 @@ async function startApplication(): Promise<void> {
           voiceSnapshot === null
             ? null
             : parseSchema(VoiceSessionSnapshotSchema, voiceSnapshot);
+        voiceWakeService?.setVoiceActive(
+          Boolean(
+            value &&
+            value.phase !== "paused" &&
+            value.phase !== "failed" &&
+            value.phase !== "interrupted",
+          ),
+        );
         for (const window of BrowserWindow.getAllWindows()) {
           if (!window.webContents.isDestroyed()) {
             window.webContents.send(VOICE_CHANNELS.changed, value);
@@ -1189,6 +1256,43 @@ async function startApplication(): Promise<void> {
     openMainWindow,
     !backgroundTest,
   );
+  const wakeRuntime = voiceWakeService;
+  if (!wakeRuntime) throw new Error("Voice Wake runtime was not initialized.");
+  unregisterVoiceWakeIpc = registerVoiceWakeIpc(
+    wakeRuntime,
+    () => mainWindows.getWindow(),
+    (sender) => characterWindowController?.ownsSender(sender) ?? false,
+  );
+  const ownsApplicationRenderer = (
+    sender: Electron.WebContents | null,
+  ): boolean => {
+    if (!sender) return false;
+    const mainWindow = mainWindows.getWindow();
+    return Boolean(
+      (mainWindow &&
+        !mainWindow.isDestroyed() &&
+        mainWindow.webContents.id === sender.id) ||
+      characterWindowController?.ownsSender(sender),
+    );
+  };
+  session.defaultSession.setPermissionCheckHandler(
+    (sender, permission, _requestingOrigin, details) =>
+      permission === "media" &&
+      details.mediaType === "audio" &&
+      ownsApplicationRenderer(sender),
+  );
+  session.defaultSession.setPermissionRequestHandler(
+    (sender, permission, callback, details) => {
+      const mediaTypes =
+        "mediaTypes" in details ? (details.mediaTypes ?? []) : [];
+      callback(
+        permission === "media" &&
+          ownsApplicationRenderer(sender) &&
+          mediaTypes.length > 0 &&
+          mediaTypes.every((mediaType: string) => mediaType === "audio"),
+      );
+    },
+  );
   const proactiveBubble = proactiveConversationSurfaceInstance.current();
   if (proactiveBubble) {
     characterWindowController.showProactiveBubble(proactiveBubble);
@@ -1253,7 +1357,8 @@ async function startApplication(): Promise<void> {
   const trayActivity = activityService;
   const trayCharacter = characterWindowController;
   const trayVoice = voiceService;
-  if (!trayActivity || !trayCharacter || !trayVoice) {
+  const trayWake = voiceWakeService;
+  if (!trayActivity || !trayCharacter || !trayVoice || !trayWake) {
     throw new Error("Tray dependencies were not initialized.");
   }
   trayController = new TrayController(
@@ -1265,6 +1370,7 @@ async function startApplication(): Promise<void> {
       pet: petService,
       quit: () => app.quit(),
       voice: trayVoice,
+      wake: trayWake,
     },
     {
       appPath: app.getAppPath(),
@@ -1283,6 +1389,25 @@ async function startApplication(): Promise<void> {
     const petIds = (await petService.getLibrary()).pets.map(({ id }) => id);
     const providerProfileNames =
       providerService?.listProfiles().map(({ name }) => name) ?? [];
+    const wakeAssetsDirectory = app.isPackaged
+      ? path.join(app.getAppPath(), ".vite/renderer/character_window/wake-word")
+      : path.join(app.getAppPath(), "src/renderer/character/public/wake-word");
+    const wakeAssetsReady = (
+      await Promise.all(
+        [
+          "NOTICE.md",
+          "sherpa-onnx-kws.js",
+          "sherpa-onnx-wasm-kws-main.data",
+          "sherpa-onnx-wasm-kws-main.js",
+          "sherpa-onnx-wasm-kws-main.wasm",
+        ].map((filename) =>
+          access(path.join(wakeAssetsDirectory, filename)).then(
+            () => true,
+            () => false,
+          ),
+        ),
+      )
+    ).every(Boolean);
     console.log(
       `CHARAMATE_SMOKE_RESULT ${JSON.stringify({
         backgroundTest,
@@ -1302,6 +1427,7 @@ async function startApplication(): Promise<void> {
         visibleWindowCount: BrowserWindow.getAllWindows().filter((window) =>
           window.isVisible(),
         ).length,
+        wakeAssetsReady,
       })}`,
     );
     app.quit();

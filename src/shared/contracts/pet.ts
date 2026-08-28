@@ -8,6 +8,7 @@ import type {
 } from "./agent";
 import type { Approval } from "./run";
 import type { VoiceApi } from "./voice";
+import type { VoiceWakeCharacterApi } from "./voiceWake";
 
 import type {
   CodexPetManifestSchema,
@@ -152,4 +153,5 @@ export interface CharacterWindowApi {
     listener: (bubble: ProactiveConversationBubble | null) => void,
   ): () => void;
   voice: VoiceApi;
+  voiceWake: VoiceWakeCharacterApi;
 }

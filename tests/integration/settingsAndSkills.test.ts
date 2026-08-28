@@ -175,16 +175,24 @@ describe("Phase 2 Agent Settings", () => {
         workingDirectory: path.join(root, "missing"),
       }),
     ).rejects.toThrow("工作目录不存在");
+    expect(repository.getVoiceWakeEnabled()).toBe(false);
+    expect(repository.saveVoiceWakeEnabled(true, NOW)).toBe(true);
+    repository.saveVoice(
+      { ...repository.getVoice(), instructions: "保持自然回应。" },
+      NOW,
+    );
+    expect(repository.getVoiceWakeEnabled()).toBe(true);
 
     database.close();
     const reopened = openApplicationDatabase(path.join(root, "app.sqlite"));
-    expect(new SettingsRepository(reopened, firstWorkspace).getAgent()).toEqual(
-      {
-        defaultApprovalMode: "auto_approve",
-        defaultMode: "agent",
-        workingDirectory: secondWorkspace,
-      },
-    );
+    const reopenedSettings = new SettingsRepository(reopened, firstWorkspace);
+    expect(reopenedSettings.getAgent()).toEqual({
+      defaultApprovalMode: "auto_approve",
+      defaultMode: "agent",
+      workingDirectory: secondWorkspace,
+    });
+    expect(reopenedSettings.getVoiceWakeEnabled()).toBe(true);
+    expect(reopenedSettings.getVoice().instructions).toBe("保持自然回应。");
     reopened.close();
   });
 });

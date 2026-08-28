@@ -12,6 +12,10 @@ import { SystemClock, type Clock } from "../../src/shared/pure/clock";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { AgentRuntime } from "../../src/main/agent/agentRuntime";
 import {
+  ACTIVITY_SEARCH_TOOL_NAME,
+  registerActivityTool,
+} from "../../src/main/activity/activityTool";
+import {
   COLLABORATION_DISPATCH_TOOL_NAME,
   registerCollaborationTool,
 } from "../../src/main/agent/collaborationTool";
@@ -713,7 +717,7 @@ describe("Agent Runtime production path", () => {
     fixture.database.close();
   });
 
-  it("preinjects one top-8 memory snapshot before the current question", async () => {
+  it("preinjects stable profile claims even when the raw question has no lexical match", async () => {
     const fixture = await createFixture([]);
     const clock = new SystemClock();
     const ids = new CryptoIdGenerator();
@@ -725,8 +729,9 @@ describe("Agent Runtime production path", () => {
       clock,
     );
     const created = memory.create({
+      claimSlot: "preference.hobbies",
       confidence: 1,
-      content: "技术回答先给结论，再给必要依据。",
+      content: "用户长期游玩 CS2，并关注职业选手比赛。",
       importance: 0.9,
       reason: "用户明确偏好",
       sources: [],
@@ -739,7 +744,7 @@ describe("Agent Runtime production path", () => {
     const run = await runtime.start({
       attachments: [],
       chatId: fixture.chatId,
-      content: "技术回答应该怎样组织？",
+      content: "我有什么爱好？",
       execution: { approvalMode: "full_access", mode: "agent" },
       providerProfileId: PROFILE_ID,
       requestedAt: REQUESTED_AT,
@@ -748,15 +753,17 @@ describe("Agent Runtime production path", () => {
 
     const input = provider.requests[0]?.input ?? [];
     expect(input.at(-1)).toEqual({
-      content: "技术回答应该怎样组织？",
+      content: "我有什么爱好？",
       role: "user",
       type: "message",
     });
     expect(input.at(-2)).toMatchObject({ role: "developer", type: "message" });
-    expect(JSON.stringify(input.at(-2))).toContain(created.memory.id);
-    expect(JSON.stringify(input.at(-2))).toContain(
+    expect(JSON.stringify(input.at(-2))).not.toContain(created.memory.id);
+    expect(JSON.stringify(input.at(-2))).not.toContain(
       created.memory.currentRevisionId,
     );
+    expect(JSON.stringify(input.at(-2))).toContain("preference.hobbies");
+    expect(JSON.stringify(input.at(-2))).toContain("长期游玩 CS2");
     expect(
       provider.requests[0]?.toolNamespaces
         .find(({ name }) => name === "memory")
@@ -765,6 +772,115 @@ describe("Agent Runtime production path", () => {
     expect(
       fixture.database.prepare("SELECT consumer FROM memory_usage").all(),
     ).toEqual([{ consumer: "context" }]);
+    fixture.database.close();
+  });
+
+  it("lets the current model perform one evidence-oriented R0 search for legacy records", async () => {
+    const fixture = await createFixture([
+      searchTurn("search-memory", "long-term memory personal preferences"),
+      functionTurn("call-memory", "memory.search", {
+        query: "用户喜欢 兴趣",
+        type: "preference",
+      }),
+      finalTurn("你喜欢玩 CS2。"),
+    ]);
+    const clock = new SystemClock();
+    const ids = new CryptoIdGenerator();
+    const repository = new MemoryRepository(fixture.database);
+    const memory = new MemoryService(
+      repository,
+      new LexicalRetrievalPipeline(fixture.database, repository, clock),
+      ids,
+      clock,
+    );
+    const legacy = memory.create({
+      confidence: 1,
+      content: "用户喜欢玩 CS2。",
+      importance: 0.8,
+      reason: "v5 旧数据",
+      sources: [],
+      type: "preference",
+    });
+    registerMemoryTool(fixture.tools, memory);
+    const runtime = createRuntimeFor(fixture, fixture.provider, memory);
+
+    const run = await runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "我有什么爱好？",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(JSON.stringify(fixture.provider.requests[0]?.input)).toContain(
+      "1 active legacy profile/preference record(s)",
+    );
+    expect(JSON.stringify(fixture.provider.requests[2]?.input)).not.toContain(
+      legacy.memory.id,
+    );
+    expect(JSON.stringify(fixture.provider.requests[2]?.input)).toContain(
+      "用户喜欢玩 CS2。",
+    );
+    expect(
+      fixture.runs.listRunItems(run.id).find(({ kind }) => kind === "tool_call")
+        ?.displayOutput,
+    ).toBe("找到 1 条记忆");
+    expect(memory.get(legacy.memory.id).usages).toEqual([
+      expect.objectContaining({ consumer: "tool" }),
+    ]);
+    fixture.database.close();
+  });
+
+  it("loads compact Activity recall on demand without exposing raw evidence in the Run", async () => {
+    const fixture = await createFixture([
+      searchTurn("search-activity", "software activity usage history"),
+      functionTurn("call-activity", ACTIVITY_SEARCH_TOOL_NAME, {}),
+      finalTurn("你最近经常使用 Visual Studio Code。"),
+    ]);
+    registerActivityTool(fixture.tools, {
+      search: () => ({
+        observedBehaviorOnly: true,
+        patterns: [
+          {
+            activeDays: 3,
+            episodeCount: 4,
+            firstSeenAt: "2026-08-01T01:00:00.000Z",
+            kind: "app",
+            label: "Visual Studio Code",
+            lastSeenAt: "2026-08-03T02:00:00.000Z",
+            totalMinutes: 180,
+          },
+        ],
+        periodEnd: "2026-08-04T00:00:00.000Z",
+        periodStart: "2026-08-01T00:00:00.000Z",
+      }),
+    });
+    const runtime = createRuntimeFor(fixture, fixture.provider);
+
+    const run = await runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "我最近一般在用什么软件？",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "activity")
+        ?.tools.find(({ name }) => name === ACTIVITY_SEARCH_TOOL_NAME),
+    ).toMatchObject({ deferLoading: true });
+    expect(JSON.stringify(fixture.provider.requests[2]?.input)).toContain(
+      "Visual Studio Code",
+    );
+    expect(
+      fixture.runs.listRunItems(run.id).find(({ kind }) => kind === "tool_call")
+        ?.displayOutput,
+    ).toBe("找到 1 条活动模式");
     fixture.database.close();
   });
 
@@ -842,6 +958,16 @@ describe("Agent Runtime production path", () => {
         type: "chat",
       }),
     ]);
+    expect(JSON.stringify(provider.requests[1]?.input)).not.toContain(
+      formed.memory.id,
+    );
+    expect(JSON.stringify(provider.requests[1]?.input)).not.toContain(
+      formed.memory.currentRevisionId,
+    );
+    expect(
+      fixture.runs.listRunItems(run.id).find(({ kind }) => kind === "tool_call")
+        ?.displayOutput,
+    ).toBe("已形成长期记忆");
 
     const followupProvider = new ScriptedProvider([
       finalTurn("我会继续先给结论。"),
@@ -856,7 +982,7 @@ describe("Agent Runtime production path", () => {
       requestedAt: REQUESTED_AT,
     });
     await waitForStatus(fixture, followup.id, "completed");
-    expect(JSON.stringify(followupProvider.requests[0]?.input)).toContain(
+    expect(JSON.stringify(followupProvider.requests[0]?.input)).not.toContain(
       formed.memory.id,
     );
     expect(JSON.stringify(followupProvider.requests[0]?.input)).toContain(

@@ -135,13 +135,20 @@ describe("Territory World contracts", () => {
         parse(TerritoryCreateChangeCandidateRequestSchema, {
           baseRevisionId: territoryWorldFixtureIds.revision,
           intent: "zone",
+          itemContent: {
+            description: "书页与灯影在这里围成一处安静的停靠。",
+            name: "灯下阅读角",
+          },
           lockedInstanceIds: [territoryWorldFixtureIds.deskInstance],
           prompt: "保留书桌，把附近整理成阅读角。",
           providerProfileId: territoryWorldFixtureIds.provider,
           scope: { kind: "zone", zoneId: territoryWorldFixtureIds.zone },
           sources: [],
         }),
-      ).toMatchObject({ scope: { kind: "zone" } });
+      ).toMatchObject({
+        itemContent: { name: "灯下阅读角" },
+        scope: { kind: "zone" },
+      });
     },
   );
 

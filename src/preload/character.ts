@@ -37,6 +37,7 @@ import {
 } from "../shared/schemas/pet";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
 import { createVoiceApi } from "./voiceApi";
+import { createVoiceWakeCharacterApi } from "./voiceWakeApi";
 
 const characterApi: CharacterWindowApi = Object.freeze({
   endDrag: async (input: PetDragPoint) =>
@@ -181,6 +182,7 @@ const characterApi: CharacterWindowApi = Object.freeze({
       ipcRenderer.off(PET_CHANNELS.proactiveBubbleChanged, wrappedListener);
   },
   voice: createVoiceApi(),
+  voiceWake: createVoiceWakeCharacterApi(),
 });
 
 contextBridge.exposeInMainWorld("charaMateCharacter", characterApi);

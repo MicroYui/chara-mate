@@ -22,7 +22,7 @@ CharaMate 是一个由常驻二次元桌面角色承载的个人 AI Agent。她�
 | 执行过程 | Run/Item 事件持久化；运行时展开，完成后折叠为“已处理 …” |
 | 长期记忆 | `better-sqlite3` 保存 Memory/Revision 真源；索引、图关系、向量布局和写入参数由实验一次选定，发布版只有一套实现 |
 | 检索 | 产品只依赖一个冻结的 `RetrievalPipeline`；候选、模型与参数只存在于研究设计和实验工件 |
-| 行为理解 | 原始活动 → Episode → 周期摘要 → 长期记忆/画像/领地候选 → 定期删除低价值原始数据 |
+| 行为理解 | 原始活动 → Episode → 周期摘要 → Agent 按需紧凑检索 / 跨周期待确认记忆 / 领地候选 → 定期删除低价值原始数据 |
 | 自我进化 | 触发式异步复盘；四类用户确认候选，Skill 再经过 replay；生效后只由普通 Skill 管理器管理 |
 | 实时语音 | Azure OpenAI `gpt-realtime-2.1` 全双工原生 Agent；共享客户端 Tool/Approval、上下文、Run/Item 与持久化边界 |
 | 浏览器与电脑操作 | Playwright/DOM 优先，App Action/Accessibility 次之，视觉 Computer Use 兜底 |
@@ -58,7 +58,7 @@ https://datasetannotator-openai.openai.azure.com/openai/deployments/gpt-image-2/
 2. 需要完整交流时，主面板提供多会话 ChatGPT 式聊天体验。
 3. 需要执行时，用户在输入框把 `Chat` 切为 `Agent`，并选择本轮执行权限。
 4. Agent 的每一步真实操作、命令、结果、等待确认和耗时都可见、可展开、可追溯。
-5. 聊天、语音、活动和执行结果持续形成可编辑、有来源、会更新和衰减的记忆。
+5. 聊天、语音和执行结果可形成可编辑、有来源、会更新和衰减的记忆；Activity 先保留为独立事实与摘要，Agent 可按需检索，只有跨自然周期稳定的可观察行为才进入用户确认的长期候选，不能由使用时长推断偏好或用途。
 6. 记忆与生活轨迹不只藏在列表中，还会转化为领地中的物件、场景变化和短小文字。
 7. 用户通过人格、音色、语音 instructions、Skills、MCP 和 Provider 塑造自己的 CharaMate。
 
@@ -233,7 +233,7 @@ userData/
 | `waiting_approval` | 动作摘要、允许一次、拒绝、打开详情 |
 | `proactive` | 主动问候或基于长期摘要的轻量话题；全新话题先作为短时邀请，已有对话直接续接 |
 | `automation` | 定时任务完成/失败摘要；点击打开持久化 Run |
-| `error` | 一句用户可理解的错误与打开详情 |
+| `error` | 一句用户可理解的错误与打开详情；轻量投影可显式关闭，关闭只清展示态 |
 
 `waiting_approval` 的完整事实只存一份：Chat 中的 Approval Item。气泡是它的轻量投影：
 
@@ -594,7 +594,7 @@ Agent 可在以下情况下创建或修改 Skill：
 
 `SELF-EVOLUTION` 已由 [`docs/benchmarks/self-evolution.md`](./docs/benchmarks/self-evolution.md) 定案为一条触发式异步路径。完成 Run 只有在出现用户明确纠正、明确教学、具有客观验证的成功或已持久化的重复工具模式时才排入 `ExperienceReview`；不按固定 Tool Call 数或每个 Run 调用模型。Review job 先持久化再异步执行，重启恢复 queued/running 状态，不阻塞刚完成的主回答。
 
-`ExperienceReview` 是无 Tool 权限的单次结构化候选生成器，不是第二套 Agent Runtime，也不直接写入任何领域。它复用来源 Run 的 Provider/Model，只输出四类结构化草稿：
+`ExperienceReview` 是无 Tool 权限的单次结构化候选生成器，不是第二套 Agent Runtime，也不直接写入任何领域。Text Run 复用来源 Run 的 Chat Provider/Model；Voice Run 的来源快照属于 Realtime transport，不能作为严格 Structured Outputs 的 Chat Model 使用，因此只复用来源 Run/Item/Message 证据，并通过产品既有默认选择取得一个已配置的 Chat Provider/Model。没有可用 Chat Model 时该 Voice Review 直接完成为 `skipped`，不发送错误协议请求，也不生成失败候选；兼容 Chat Model 的真实网络、认证或 Provider 失败仍保留为可重试 `failed`。Review 只输出四类结构化草稿：
 
 ```ts
 type EvolutionCandidate =
@@ -617,7 +617,7 @@ type EvolutionCandidate =
 - 后台归档可恢复，不删除用户内容；永久删除只来自 Settings 中用户对用户 Skill 的二次确认，活动 Skill 在删除事务内部先归档；
 - 候选只覆盖 Memory、Persona 偏好和 Skill，不把产品源码、系统 Prompt 或 Provider 配置变成自进化对象。
 
-用户在来源 Chat 中处理“这次学到了什么”；Memory/Persona 候选也可在 Memory 统一处理。Skills Settings 只管理已经存在的 Agent Skills，不展示成长候选历史。
+用户在来源 Chat 中处理“这次学到了什么”；Memory/Persona 候选也可在 Memory 统一处理。Memory 保持“搜索/筛选 + 列表/详情”主体，成长候选只进入左侧有界的待确认区域；Review 失败使用不改变布局的紧凑状态，允许重试或关闭。关闭只把该失败 Review 收口为 `skipped`，不删除来源 Run、候选或 Memory。Skills Settings 只管理已经存在的 Agent Skills，不展示成长候选历史。
 
 Phase 3 的 `memory.record` 与普通 Memory 候选仍负责当前 Run 中用户明确陈述的基础形成。本节不复制该路径，也不采用 Hermes 的直接写入、后台 forked Agent、固定 iteration 或自动归档日期。
 
@@ -632,7 +632,7 @@ Phase 3 的 `memory.record` 与普通 Memory 候选仍负责当前 Run 中用户
 - 让角色在聊天和语音中自然想起相关事实；
 - 支持用户查看、编辑、纠正、删除和追溯；
 - 正确处理事实更新、时间和冲突；
-- 从大量低信息 Activity 中提炼稳定偏好；
+- 让大量低信息 Activity 在独立 Episode/Digest 生命周期内保持有界，同时向 Agent 提供紧凑事实检索，并只把跨周期稳定行为送入用户确认的长期候选；
 - 在个人规模上低延迟、低写放大；
 - 任何运行环境都只使用实验冻结的同一条检索路径，不靠隐藏备用算法维持表面可用。
 
@@ -691,12 +691,13 @@ interface MemoryRevision {
 
 - 用户在当前输入中明确陈述、且预计在本轮之后仍有用的画像、偏好、项目、事件、方法或承诺，直接创建 active Memory；
 - profile/preference 必须使用产品闭集 `claimSlot` 作为稳定字段身份，Tool 不接受裸 profile/preference type；模型按语义选择字段并提交 `create/replace/append/remove`，宿主派生 Memory type 与单值/集合基数，字段名不随“喜欢 A → 喜欢 B”变化；
-- 任意更新携带的 `memoryId` 只能来自当前 Run 预注入 Memory allowlist；宿主交叉校验 ID、type、slot、active 状态和 operation，合法时在同一 Memory 上创建 Revision 并保留旧内容与来源；
-- 更新未取得本轮合法目标、同 slot create 冲突、已预载同类型字段时另一个 slot 的 create 歧义、单值字段误用 append/remove、推断更新或旧 unkeyed 数据首次绑定时，只创建带 operation/slot/target 的待确认候选；错 ID 直接失败，不创建第二条 active Memory；
+- Memory、Revision 与来源 ID 只存在于宿主私有 checkpoint、持久化和 Memory 详情追溯中，不注入模型可见证据，不要求模型复制，也不得出现在普通聊天回复；
+- profile/preference 更新由模型提交稳定 `claimSlot` 和 operation，宿主只在该字段唯一 active 目标属于当前 Run 私有 allowlist 时解析并修订同一 Memory；内部调用若显式携带 `memoryId`，仍必须交叉校验 ID、type、slot、active 状态和 operation；
+- 更新未取得本轮合法目标、同 slot create 冲突、本次 R0 真正命中的同类型字段与另一个 slot create 形成歧义、单值字段误用 append/remove、推断更新或旧 unkeyed 数据首次绑定时，只创建带 operation/slot/target 的待确认候选；错 ID 直接失败，不创建第二条 active Memory。稳定画像中的全部字段可作为合法更新目标，但仅因被有界预注入而不自动阻断其他新字段；
 - 只从语境推断出的结论和 Agent 执行观察只能创建待确认候选，不直接进入 Profile 或默认 Context；
 - 临时请求、助手自己的主张、复制资料、否定内容、凭据和未受支持结论不形成记忆；
 - 来源类型、Chat/Run reference、证据 Item 和时间由 Main 绑定，模型不能提交来源 ID；相同规范化内容、重复 Tool Call 和 checkpoint 恢复幂等，不制造第二条 Memory 或候选；
-- active Memory 在后续新 Run 通过既有 `C2-PRE8` 进入 Context，Context 同时携带宿主私有 allowlist 和模型可见的 `memoryId`/`stableClaimSlot`；候选在 Memory 页面显示 operation、字段、目标、形成原因与来源，由用户接受或忽略。接受定向更新候选时修订原 Memory，不新建 superseding Memory。
+- active Memory 在后续新 Run 通过同一 Memory Context 装配进入 Context：所有已绑定的 active profile/preference 稳定字段形成有界画像投影，当前请求另执行既有 R0 top8；两部分去重后，模型可见内容只含事实文本、类型、稳定字段、有效时间和来源数量/类型/时间跨度的紧凑摘要，宿主私有 checkpoint 另存目标 allowlist。候选在 Memory 页面显示 operation、字段、目标、形成原因与完整来源，由用户接受或忽略。接受定向更新候选时修订原 Memory，不新建 superseding Memory。
 
 `memory.record` 是产品内部持久化，不是 Agent 对外执行动作，因此不走三档执行审批；它仍作为可恢复 Run Item 记录成功或失败。稳定字段身份存入 `memory_claims`，形成候选的 operation/slot 存入 `memory_candidate_formation`；v5→v6 不猜测旧内容的字段。手动新建、编辑和纠正继续保留，但不再是形成普通 Memory 的唯一入口。Phase 4 Voice 复用同一能力并把宿主来源改为 Voice；Phase 5 仅负责异步 Experience Review、Skill/replay 与高级任务方法成长。
 
@@ -749,11 +750,11 @@ interface RetrievalPipeline {
 - 当前审批结果、最新必要 Tool Result 与本轮所需 Tool Schema 必须可见；
 - Provider Adapter 按当前 Provider、模型和协议元数据解析本 Run 的有效输入预算，Harness 只在该预算上应用已选的 90% 压缩水位；数值不得按 Model ID 写死，且必须随 checkpoint 冻结，恢复同一个 Run 时不得中途漂移；
 - Provider 既没有模型列表限额、也没有模型详情限额时不猜窗口值，保留真实 context-limit 错误后至多一次强制压缩恢复；
-- 记忆进入 Context 时带 ID、时间、Revision 和来源，不能变成无来源事实；
+- 记忆进入模型 Context 时带事实文本、类型、稳定字段、时间和有界来源摘要，不能变成无来源事实；Memory/Revision/来源 ID 与逐条 provenance 只留在宿主和 Memory 详情页；
 - 会话摘要是带覆盖水位和来源的版本化工件，能够表达目标、约束、完成动作、重要决定与未解决问题；
 - Persona、近期原文、摘要、长期记忆、Activity Digest 和 Tool 结果的具体顺序、预算、topK 与裁剪规则由 `CONTEXT-RECIPE` 实验一次选定。
 
-`CONTEXT-RECIPE` 已选择 `C2 PRE8 + goal-last`：每个新 Run 只执行一次当前请求的 R0 top8 检索，把带 Memory/Revision ID、时间、状态和来源的 evidence 存入 checkpoint；有界活跃上下文与结构化 handoff 在前，当前用户输入靠近末尾。模型续步、Tool continuation、恢复和 run 内 steering 不重复初始检索；压缩仍保留该 evidence 与当前/最新结构化用户输入、未完成宿主状态和最新必要 action Tool Result。
+`CONTEXT-RECIPE` 已选择 `C2 PRE8 + goal-last`，并在 2026-08-27 的真实缺陷修复中明确其画像边界：每个新 Run 固定装配全部已绑定且 active 的 profile/preference 稳定字段，并只执行一次当前请求的 R0 top8 检索；两部分去重后把模型可见的紧凑 evidence 与宿主私有 Memory allowlist 一起存入 checkpoint，物化给 Provider 时只发送前者。有界活跃上下文与结构化 handoff 在前，当前用户输入靠近末尾。模型续步、Tool continuation、恢复和 run 内 steering 不重复初始检索；压缩仍保留该 evidence 与当前/最新结构化用户输入、未完成宿主状态和最新必要 action Tool Result。
 
 跨 Run 的会话工作记忆固定为每个 Chat 一份持久 `ChatContextSnapshot`，与完整聊天记录、当前 Run checkpoint 和长期 Memory 分离：
 
@@ -768,7 +769,11 @@ interface RetrievalPipeline {
 
 Plan 的持久化和模型上下文分工固定如下：完整 Plan 更新仍以 `kind=plan` 的 Run Item 作为历史与 UI 投影真源；活动 checkpoint 保存从最新已完成 Plan Item 恢复出的 `currentPlan` 编译快照。普通 Tool、审批与 steering 可以更新 handoff，但不得覆盖该快照。每次压缩都在当前用户输入之前重新注入最新完整 Plan（说明、全部步骤与三态）；新 Plan 更新会替换快照并移除较早的压缩 Plan 消息，避免长上下文同时出现两个“当前计划”。这不是第二份可编辑计划状态，也不增加 Plan 表或 Renderer 状态机。
 
-`memory.search` 是 deferred Agent 能力，只在用户明确要求检查或搜索预注入范围之外的 Memory 记录时经 Tool Search 加载；它不常驻普通 Chat/Agent 上下文，也不作为自动 Recipe 的第二检索阶段。发布版不按模型、设备或用户设置维护其他顺序、动态 topK 或装配模式。
+`memory.search` 是 deferred 只读能力，不常驻普通上下文，也不成为后台自动第二检索阶段。若用户询问个人历史、偏好或“你记得什么”，而预注入画像与 R0 evidence 确实不足，当前 Chat/Agent/Voice 模型可按需加载并调用至多一次，使用面向证据的简洁改写，并可附 `type`、`claimSlot` 或 `asOf` 结构化过滤；返回仍经过同一 R0 top8，但每条只投影事实文本、类型、稳定字段、有效时间、排序和来源数量/类型/时间跨度，不展开来源 label/reference，不返回任何内部 ID。证据已经充分时不得重复，空结果也不得作为事实不存在的证明。发布版不维护同义词表、停用词规则链、第二检索器、动态 topK 或用户可见装配模式。
+
+`activity.search` 是 Activity 领域拥有的 deferred 只读能力，与 `memory.search` 分开。用户询问近期使用轨迹、跨日习惯或某个应用/网站的实际使用情况，而当前上下文没有充分证据时，Text/Voice Agent 可按需查询 Episode/Digest 的紧凑聚合；省略 query 表示查看概览，指定对象时由当前模型做简洁证据查询，不在宿主维护同义词表。返回沿用 Context evidence 的固定最多 8 条投影，只含可观察标签、活跃日期数、片段数、累计分钟和首末时间，不展开窗口原文、截图、逐条 Episode/Digest provenance 或任何内部 ID。结果只能表述“观察到的行为”，不得自动解释成喜欢、职业、目标或用途，也不自动进入普通 Memory Retrieval。
+
+旧版未绑定 `claimSlot` 的 active profile/preference 不进入稳定画像投影，且不得由迁移或模型静默猜测字段。Memory 详情为这类记录提供显式“绑定稳定字段”；若目标字段已有记录，界面同时展示两边当前内容和可编辑的合并后完整内容，用户确认后在字段 owner 上创建 Revision，并把旧记录标记为 superseded。Memory 页面手动新建 profile/preference 时必须先选择稳定字段，避免继续产生无身份记录。
 
 ### 6.9 Activity 蒸馏为记忆
 
@@ -776,12 +781,17 @@ Plan 的持久化和模型上下文分工固定如下：完整 Plan 更新仍以
 Raw events
   → Episode（连续行为片段）
   → Period Digest（一个冻结周期内的高信息摘要）
-  → Memory/Profile candidates（稳定事实与偏好）
-  → Cross-period consolidation（仅在实验选中时）
-  → Territory item candidates（可展示记忆）
+  → activity.search evidence（Agent 按需读取的紧凑可观察事实）
+  → Cross-period activity_digest candidate（跨自然周期稳定、用户确认）
+  → Proactive conversation evidence（可解释的活动事实）
+  → Territory item candidates（用户明确选择的可展示摘要）
 ```
 
-蒸馏器必须输出 evidence IDs、置信度、新颖性、有效时间和 supersedes。宿主去除密钥等敏感值、合并重复、识别冲突；琐碎或一次性行为停留在 Episode/Digest，不进入长期记忆。
+原始事件、截图和逐条 Episode 不进入普通 Memory Retrieval，也不随 `activity.search` 注入模型。Activity 保留完整 Digest/evidence 供自己的页面、来源追溯和保留清理；Agent 只获得上述有界聚合。
+
+同一用户 actor 的同一 app/domain/activity 标签只有在至少两个已完成自然周的 Weekly Digest 中都出现时，才形成 `activity_digest` 待确认候选。`2` 是“跨周期”成立所需的最小不同周期数，是 2026-08-28 用户确认的产品语义，不是协议限制或可调检索阈值。候选只陈述“多个自然周持续出现的可观察使用行为”，不累计写入不断增长的分钟数，也不推断偏好、职业、目的或人格；其来源固定为最近两个匹配 Weekly Digest，而不是展开全部 Episode。
+
+同一稳定标签只能有一个候选/长期 Memory 身份：pending 候选会用最新两个 Weekly Digest 刷新而不累加；用户拒绝后相同模式保持抑制；用户接受后，相同语义继续出现不会生成新候选或 Revision。旧版已经接受、内容为累计时长且来源膨胀的 `activity_digest` 不被静默改写；该模式再次满足跨周条件时，可产生一个指向原 Memory 的紧凑替换候选，只有用户确认才创建 Revision。新的稳定标签继续按同一规则沉淀。明确聊天/Voice 陈述仍具有更高事实优先级。
 
 ### 6.10 存储与写放大
 
@@ -858,9 +868,9 @@ Memory 页面包含：
 | --- | --- | --- |
 | 8 分钟闭合窗口 | 原始 transition event | 确定性 Episode 边界与轻量标签 |
 | 每日 | 已闭合 Episode | Daily Digest |
-| 每周 | 多日 Episode/Digest | 至少两个不同日期支持的 `activity_digest` Memory 候选 |
+| 每周 | 多日 Episode/Digest | Weekly Digest；同一标签跨至少两个已完成自然周后形成紧凑、待确认的 `activity_digest` 候选 |
 
-蒸馏采用 `ACTIVITY-DISTILLATION` 选出的无模型单路径，不从任意窗口或截图推断复杂意图，也不自动写 Profile。跨日归纳只陈述可由 app/domain、日期和时长证明的模式，先进入用户可见候选；明确聊天表达仍具有更高事实优先级。
+蒸馏继续采用 `ACTIVITY-DISTILLATION` 选出的无模型 Episode/Digest 单路径，不从任意窗口或截图推断复杂意图，也不自动写 active Memory/Profile。跨周候选只归纳可观察行为、只引用两个 Weekly Digest，并由用户确认；明确聊天表达仍是更高优先级的长期事实入口。
 
 ### 7.5 保留与定期删除
 
@@ -895,6 +905,16 @@ Activity 不是永久事件仓库。原始数据完成蒸馏后由 `ActivityRete
 - 语音结束后，用户和助手转写、工具步骤、最终回答都留在同一个 Chat。
 - 用户可回看一轮语音的文本；产品持久化转写、Run 和必要协议元数据，不长期保存原始会话音频。
 - Voice Session 的标题沿用普通 Chat 的既有链路：“语音对话”占位 → 首条用户转写兜底 → 首轮回答后的模型摘要；标题 Provider 按需惰性创建，任何一步失败都只保留上一层可读标题，不能阻断语音连接或回答。
+
+### 8.1.1 本地固定短语唤醒
+
+Settings → Voice 与 Tray 提供同一个默认关闭开关。用户开启后，常驻 Character Renderer 使用一个 AudioWorklet 和一个 Web Worker 在本机匹配固定短语 `Hi Mika`；命中前不创建 Realtime Session，不把麦克风音频发送给 Provider，也不把原始待机音频写入数据库或文件。Realtime `server_vad` 只继续负责已建立 Session 内的语音边界，不能承担待机唤醒。
+
+命中后本地 KWS 立即暂停并播放短 ready cue，然后调用桌宠既有的 wake-origin quick-start：新会话固定为 `Agent + 完全访问`，不显示或聚焦完整主窗口；若当前 Voice 只是暂停，则恢复同一 Session。ready cue 只确认“本地已经听到唤醒词”；Realtime `session.created` 或恢复后的 `session.updated` 被现有 Voice Runtime 接受后，Voice 立即进入“正在回应”，并发送一次 `conversation: "none"` 的 out-of-band 音频 response，把固定文本 `Hi Mika` 作为本次 response 的临时输入。连接欢迎语只携带用户配置的 Voice 人格/语言偏好和极短欢迎约束，不重复注入完整 Agent、Tool、Skill、Memory 或 Chat Context instructions；简体中文默认只说“我在，请说。”。该欢迎语明确表示已经可以开始说话，允许用户直接插话，但不进入默认 Realtime conversation，也不创建 Message、Run 或 Memory。只有随后到达的非空用户转写才进入既有 Voice Run。首版采用“唤醒 → 本地提示音 → Mika 连接欢迎语 → 自然对话”，不保留同一口气内唤醒词后的 pre-roll。
+
+Character Renderer 持有唯一麦克风基流：待机帧进入本地 KWS，建立 WebRTC 时只克隆该音轨并暂停 KWS，不再打开第二次采集。连接、聆听、思考、工具、审批、说话和输出播放期间均不监听唤醒词，避免角色自身声音触发；Voice 结束后重新布防。误唤醒的 10 秒无输入窗口只能从连接欢迎语完整停止、Voice 重新进入 listening 后开始；连接、生成和播放欢迎语不占用用户回答时间，任何真实用户输入立即取消该收口。10 秒是误唤醒副作用的首版产品启发式，不是协议限制。
+
+锁屏、系统休眠和应用退出释放待机麦克风、Worker 与 AudioContext；解锁或恢复后仅在持久开关仍开启时重新布防。KWS 初始化或运行失败时通过桌宠、Settings 和 Tray 投影可见错误，不建立云端 wake fallback，也不创建第二套 Voice/Run/Tool/Approval 状态机。桌宠上的 Voice 连接失败提示必须能显式关闭；关闭只清 Character Renderer 的提示，不改变真实 VoiceSession、错误记录或 `wake_enabled`，下一次连接尝试仍按正常路径重新显示结果。实现、来源、离线合成语料限制和打包资产哈希见 [`VOICE-WAKE`](./docs/benchmarks/voice-wake.md)。
 
 ### 8.2 Endpoint 与连接
 
@@ -1156,6 +1176,10 @@ GPT Image 的成本和 Edit 能力使生成成为日常建造操作，而不只�
 5. 用户可以继续用自然语言修改、排除提案中的分组或锁定更多内容；确认前不写当前 World。
 6. 确认时，结构变化、Asset Pack、来源和新的 World Revision 原子提交。失败、取消或应用中断都保留现有 Revision。
 
+每个可展示的 Territory Definition 同时拥有独立于视觉 prompt 的叙事内容：简短名称与 1–2 句诗意描述。描述应使用具体、克制的感官意象，让物件像世界中的一部分，同时忠于已知来源；不得复制生图 prompt、Weekly Digest 全文、窗口标题列表、Provider/模型术语、尺寸参数或内部 ID。Memory/Activity 来源物件可以含蓄表达它所承载的事实，但不能把“观察到使用”写成“喜欢”或虚构经历。
+
+未来的 Agent/Tool 生成必须把用户可见名称和诗意描述作为结构化内容随候选提交，图片 prompt 只负责外观。没有结构化内容的普通 UI 请求由 Territory 宿主生成同样有界的叙事 fallback，不能把原 prompt 当描述。随包起始物件与仍停留在系统首版技术/原始 prompt 描述的既有 Definition 通过一次幂等内容补全创建新的 Definition Revision，并在同一 World Revision 切换当前实例；用户已经编辑过名称或故事的后续 Revision 不被覆盖。
+
 典型请求包括：
 
 - “生成一套和当前房间一致的雨夜咖啡馆家具”；
@@ -1186,7 +1210,7 @@ Territory 只有两个用户交互状态：
 
 每个已接受物件有稳定 Item ID，并引用不可变 Definition Revision。物件详情提供：
 
-- 编辑名称和描述；
+- 编辑名称和诗意故事描述；系统生成内容默认保持 1–2 句、可展示且不泄露 prompt 或内部元数据；
 - 以当前视觉为参考继续编辑或生成新版本；
 - 比较、选择和恢复历史版本；
 - 移动到收藏库、加入/拆出组合、收藏和锁定；
@@ -1601,7 +1625,7 @@ territory → memory references / image provider / asset store
 - Provider Adapter 不读 UI 状态。
 - Tool 不直接操作 React 或窗口；窗口动作通过 App Adapter。
 - Memory 不依赖 Territory；Territory 通过 Memory ID 引用，避免循环依赖。
-- Activity 只生成候选，不直接改 Persona 或场景。
+- Activity 只发布 Episode/Digest、紧凑检索结果和待确认的跨周期行为候选；它不直接改 active Memory/Persona，也不直接改场景。
 
 ### 13.6 最小核心接口
 
@@ -1839,7 +1863,7 @@ Playwright 官方当前把 Electron automation 标为 experimental，因此 Phas
 6. Chat/Agent 中明确且耐久的用户陈述会自动形成有来源 Memory；推断和执行观察只形成候选，重复调用或重启不重复写入。
 7. Memory 编辑和明确改口产生同一 Memory ID 的 Revision；错 ID、未命中与同字段冲突只失败或进入候选，不产生 A/B 双活；旧来源仍可追溯，改口后旧事实不进入默认 Context。
 8. 发布版只加载实验选出的一个检索实现；未获胜候选的模型、依赖和配置不存在。
-9. 大量 Activity 被压缩成少量 Episode/Digest，不逐条生成长期记忆；过期原始事件、截图、OCR、索引和孤儿文件会被完整清理。
+9. 大量 Activity 被压缩成少量 Episode/Digest；Agent 可按需读取不含内部 ID/逐条来源的紧凑聚合，只有跨至少两个已完成自然周的稳定可观察行为进入用户确认候选，且来源固定为两个 Weekly Digest；过期原始事件、截图、OCR、索引和孤儿文件会被完整清理。
 10. Realtime 原生语音 Agent 可在说话时被打断；它获得与文字 Agent 相同的客户端 Tool Registry、入口权限和 Approval 规则，Tool 结果回注后继续说话，实际输入与输出转写写回同一 Chat 和 Run/Item。
 11. 用户填写 URL/Key 后模型列表加载，Key 不出现在数据库、日志和错误。
 12. Codex v1/v2 pet 文件夹导入 CharaMate 自有目录后动画正确；角色拖到任意位置并跨重启恢复。
@@ -1988,7 +2012,7 @@ flowchart TD
 - 完成 `MEMORY-FORMATION`，在 Chat/Agent 同一 Run 通过唯一 `memory.record` 路径自动创建/修订明确陈述，把推断与执行观察送入候选，并验证来源绑定、稳定字段身份、当前 Run 目标 allowlist、跨 Chat Revision、去重和 checkpoint/数据库恢复；
 - 只实现获胜的 Retrieval Pipeline、Context Recipe、索引生命周期和 `memory.search`；Graph 未晋级时没有表、文件或 UI；
 - Memory 页面完成搜索、筛选、来源、Revision、画像、候选与领地入口；
-- 完成 `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 后，实现 Active App/Browser/Screenshot/OCR metadata/Idle 采集、确定性 Episode 与获胜 Digest/候选流程；
+- 完成 `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 后，实现 Active App/Browser/Screenshot/OCR metadata/Idle 采集、确定性 Episode/Digest、`activity.search` 紧凑检索，以及跨自然周、用户确认且来源有界的 `activity_digest` 流程；
 - 实现文件、缩略图、OCR、索引引用、数据库行和 orphan asset 的一致清理；
 - 运行 LongMemEval、LoCoMo 与冻结中文集，分别报告 retrieval、answer、storage、Activity 和资源指标。
 
@@ -2064,7 +2088,7 @@ CharaMate 达到首个完整产品版本时，应满足：
 - 每个 Agent Task 在 Chat 中有持久化、可折叠的完整过程和结果。
 - Realtime 输入/输出可打断，语音转写通过同一个 Agent Runtime 使用相同模型与 Tool，并留下可回看的文本。
 - 长期记忆可编辑、可追溯、可更新、可衰减，画像能回到证据；若图关系晋级，关系也必须回到证据，否则产品中不存在图谱入口。
-- Activity 被蒸馏为高信息摘要和候选；低价值原始数据定期删除，不淹没长期记忆或无限占用磁盘。
+- Activity 被蒸馏为高信息 Episode/Digest，可由 Agent 按需检索；跨周期稳定行为只以紧凑待确认候选进入长期 Memory，同一模式不会持续堆叠文本、来源或 Revision。低价值原始数据定期删除，不淹没长期记忆或无限占用磁盘。
 - Provider URL/Key/Model 配置顺畅，Key 简单加密且不进入业务数据。
 - 领地从首次进入就完整好看且可全部改写；用户能扩建 Zone、自由组合多层内容、用 AI 生成/编辑物件与区域，并让真实记忆成为可追溯、可版本化的世界组成部分。
 - 开发者能在本地看板查询 Run、Tool、Memory、Storage、Voice 与 Image 指标，普通产品界面不被研发控制淹没。

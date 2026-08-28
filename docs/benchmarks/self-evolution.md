@@ -25,6 +25,16 @@
 
 Agent Skills 格式是协议约束；Hermes 的触发、直接写、迭代数和生命周期日期只是该提交下的当前源码行为；CharaMate 的触发信号、候选确认、replay、状态与无固定自动归档日期是本 Decision 的产品启发式。三者没有混写为同一种“硬限制”。
 
+## 2026-08-27 Voice Review 与 Memory 布局正确性修订
+
+本修订不重开 E0-E4 的触发式 Review 选型，只修正“来源 Run Provider/Model”在 Voice transport 上的错误外推，并收口其暴露出的 UI 生命周期问题。
+
+- 一手来源读取于 2026-08-27：[OpenAI `gpt-realtime` 模型页](https://developers.openai.com/api/docs/models/gpt-realtime)把 Realtime 与 Responses endpoint 分开列出，并明确该模型不支持 Structured Outputs；[Microsoft Azure Structured Outputs](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/structured-outputs)要求使用支持 JSON Schema 的合适 deployment，其当前支持列表不含 Realtime 模型。协议硬约束是 Reviewer 的严格 JSON Schema 必须交给支持 Structured Outputs 的 Chat Model；具体默认 Profile 选择和“无兼容模型则 skipped”是 CharaMate 的产品策略。
+- 当前生产数据观察到两次已完成 Voice Run 使用 Azure Realtime deployment `gpt-realtime-2.1`，随后 Experience Review 把同一 deployment 传给 Chat/Responses Structured Outputs 路径并落为 `failed`；该 Azure Profile 没有配置 Chat Model。持久错误经过归一化只保留 `PROVIDER.REQUEST_FAILED`，不能从旧记录反推出具体 HTTP status，但运行快照、调用路径与能力边界已足以证明不应发送该请求。
+- 修订后的唯一生产路径：Text Review 继续复用来源 Chat Provider/Model；Voice Review 复用来源证据，但通过现有默认选择取得一个已保存凭据和 Chat Model 的 Profile。找不到兼容 Chat Model 时完成为 `skipped`，不调用 Provider；找到后发生的真实网络、认证或 Provider 错误仍为可重试 `failed`。Voice 来源的 Skill replay 使用同一 Chat Model 选择边界。
+- Memory 页保持搜索栏在首行、列表/详情占满剩余高度。Experience Review 的 Memory/Persona 草稿进入左侧有界区域；失败 Review 是紧凑状态，可重试或显式关闭。关闭把 `failed` 改为 `skipped` 并保留来源，不引入自动过期天数或第二套错误表。
+- 回归必须同时覆盖：Voice + 无 Chat Model 不发模型请求且落为 skipped；Voice + 可用 Chat Model 使用该 Chat deployment；失败 Review 可关闭；Memory 中存在失败 Review 时工具栏仍在首行且工作区保持正高度。jsdom 的“元素存在”不能替代桌面几何断言。
+
 ## 预注册、数据与环境
 
 - 主实验 ID：`SELF-EVOLUTION-20260813-E3-V1`。

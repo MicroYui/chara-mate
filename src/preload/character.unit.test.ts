@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type CharacterWindowApi, PET_CHANNELS } from "../shared/contracts/pet";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
+import { VOICE_WAKE_CHANNELS } from "../shared/contracts/voiceWake";
 
 type IpcListener = (event: unknown, input: unknown) => void;
 
@@ -79,6 +80,7 @@ describe("Character Window typed preload boundary", () => {
         "subscribeApproval",
         "subscribeProactiveBubble",
         "voice",
+        "voiceWake",
       ].sort(),
     );
     await expect(api.getSnapshot()).resolves.toEqual(characterSnapshot);
@@ -127,6 +129,41 @@ describe("Character Window typed preload boundary", () => {
     await expect(
       api.voice.quickStart({ requestedAt: "2026-08-09T06:00:00.000Z" }),
     ).resolves.toMatchObject({ ok: true, value: { voice: "verse" } });
+  });
+
+  it("exposes the Character-only Voice Wake report boundary", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(VOICE_WAKE_CHANNELS.report);
+        expect(input).toEqual({ phase: "listening" });
+        return Promise.resolve({
+          ok: true,
+          value: {
+            enabled: true,
+            microphone: "granted",
+            phase: "listening",
+            phrase: "Hi Mika",
+          },
+        });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(api.voiceWake.report({ phase: "listening" })).resolves.toEqual(
+      {
+        ok: true,
+        value: {
+          enabled: true,
+          microphone: "granted",
+          phase: "listening",
+          phrase: "Hi Mika",
+        },
+      },
+    );
+    await expect(
+      api.voiceWake.report({ phase: "voice_active" as never }),
+    ).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });
 
   it("passes only validated Character events and removes its wrapper", async () => {

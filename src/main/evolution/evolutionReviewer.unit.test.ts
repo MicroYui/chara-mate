@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   ModelContextLimits,
@@ -9,6 +9,7 @@ import type {
   ModelRequest,
 } from "../agent/modelProvider";
 import type { ProviderService } from "../providers/providerService";
+import { ProviderError } from "../providers/providerError";
 import { CryptoIdGenerator } from "../../shared/pure/id";
 import {
   FIXTURE_IDS,
@@ -18,6 +19,7 @@ import {
   runItemFixture,
 } from "../../../tests/fixtures/foundationContracts";
 import {
+  EvolutionReviewSkippedError,
   ModelEvolutionReviewer,
   type EvolutionReviewEvidence,
 } from "./evolutionReviewer";
@@ -127,6 +129,74 @@ function evidenceWithLoadedSkill(): EvolutionReviewEvidence {
 }
 
 describe("ModelEvolutionReviewer", () => {
+  it("uses a configured Chat runtime for Voice evidence instead of the Realtime deployment", async () => {
+    const provider = new TextQueueProvider([
+      JSON.stringify({ candidates: [] }),
+    ]);
+    const createChatModelRuntime = vi.fn(() =>
+      Promise.resolve({
+        provider,
+        snapshot: { ...providerSnapshotFixture, modelId: "chat-model" },
+      }),
+    );
+    const getDefaultChatProfileId = vi.fn(() => "chat-profile");
+    const providers = {
+      createChatModelRuntime,
+      getDefaultChatProfileId,
+    } as unknown as ProviderService;
+    const voiceEvidence: EvolutionReviewEvidence = {
+      ...evidence(),
+      run: {
+        ...evidence().run,
+        provider: {
+          ...evidence().run.provider,
+          modelId: "gpt-realtime-2.1",
+        },
+        source: "voice",
+      },
+    };
+
+    await expect(
+      new ModelEvolutionReviewer(providers, new CryptoIdGenerator()).review(
+        voiceEvidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual([]);
+    expect(getDefaultChatProfileId).toHaveBeenCalledOnce();
+    expect(createChatModelRuntime).toHaveBeenCalledWith("chat-profile");
+    expect(createChatModelRuntime).not.toHaveBeenCalledWith(
+      voiceEvidence.run.provider.profileId,
+      "gpt-realtime-2.1",
+    );
+    expect(provider.requests[0]?.modelId).toBe("chat-model");
+  });
+
+  it("marks Voice Review as unavailable before any Provider call when no Chat Model is configured", async () => {
+    const createChatModelRuntime = vi.fn();
+    const providers = {
+      createChatModelRuntime,
+      getDefaultChatProfileId: () => {
+        throw new ProviderError(
+          "PROVIDER.INVALID_CONFIGURATION",
+          "请先配置一个可用的 Chat Provider 与模型。",
+          false,
+        );
+      },
+    } as unknown as ProviderService;
+    const voiceEvidence: EvolutionReviewEvidence = {
+      ...evidence(),
+      run: { ...evidence().run, source: "voice" },
+    };
+
+    await expect(
+      new ModelEvolutionReviewer(providers, new CryptoIdGenerator()).review(
+        voiceEvidence,
+        new AbortController().signal,
+      ),
+    ).rejects.toBeInstanceOf(EvolutionReviewSkippedError);
+    expect(createChatModelRuntime).not.toHaveBeenCalled();
+  });
+
   it("uses one tool-free structured review call and grounds the candidate", async () => {
     const provider = new TextQueueProvider([
       JSON.stringify({

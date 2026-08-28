@@ -76,3 +76,24 @@ A1/A2 的“压缩”没有自动解决长期候选污染：它们仍把每日�
 - 原始事件是 transition 级而非每秒采样，因此 Episode 压缩率不能外推到高频埋点系统；CharaMate 生产也只持久化变化。
 
 候选 runner 在结果 hash 核验后删除。生产只保留 A3，不保存 A0–A2 mode、阈值设置或候选实现。
+
+## 2026-08-27 产品边界修订：停止软件时长直接进入长期 Memory
+
+本 Decision 的历史实验结果仍证明 `Episode → Daily/Weekly Digest` 比逐事件或逐日候选更能压缩 Activity；它不证明“跨日软件时长”适合长期 Memory。生产数据复核发现，一条已接受的软件使用 Memory 可以累积数百个 Episode 来源，而当前内容只是一句累计时长陈述：来源明细随时间增长，Memory 文本本身又不能回答用户使用该软件的真实目的。用户因此明确选择更窄的产品边界。
+
+从本修订起，生产保留 A3 的确定性 Episode、Daily Digest 与 Weekly Digest，先删除把跨日累计时长及全部 Episode 来源直接写成 `activity_digest Memory candidate` 的实现。Activity 事实仍可用于 Activity 页面、证据充分时的主动对话，以及用户明确选择后的 Territory 来源；它不自动写 active Memory/Profile。已有已接受 `activity_digest` Memory 不自动归档、删除或重写，继续由用户在 Memory 中管理。
+
+这是一项用户确认的产品语义修订，不把旧候选精度结果改写成新实验。生产删除跨日累计时长和 Episode 来源扩张路径，不新增开关或替代算法。
+
+## 2026-08-28 产品语义修订：Activity 可检索事实与跨周期稳定候选
+
+源快照：2026-08-28 复核 CharaMate 基线提交 `f7122f23e1ce3b6cce3008b9e0c59d43343c23f2` 的 `ActivityService`、`MemoryService`、`ToolRegistry` 与 Agent Tool Search 路径，并以本修订后的工作树实现作为验收对象。这里没有新的 Provider 协议硬限制；最多 8 条结果是复用当前 Agent Context 的有界产品投影，不作为可调检索参数或 SOTA 声明。
+
+用户进一步确认：Activity 若只停留在页面和主动对话触发，Agent 无法在用户主动询问“我平时怎么使用软件”时可靠读取；若彻底不再沉淀，跨周期稳定行为也失去长期价值。因此本修订替代 2026-08-27 的“完全删除 Weekly → Memory candidate”边界，但不恢复原来的累计时长方案。
+
+生产增加两条单一职责路径：
+
+1. `activity.search` 由 Activity 领域直接聚合 Episode/Digest，向 Text/Voice Agent 最多投影 8 条 label、活跃日期数、Episode 数、累计分钟与首末时间。它不进入普通 Memory Retrieval，不返回窗口原文、截图、Episode/Digest ID 或逐条来源；模型只能把结果表述为观察行为。
+2. 同一 user actor/label 只有在至少两个已完成自然周的 Weekly Digest 都出现时，才提出待确认 `activity_digest`。这里的两个周期是“跨周期”成立的最小产品语义，不是本 Decision 新测出的统计阈值。候选内容不再累计分钟；来源固定为最近两个匹配 Weekly Digest。pending 只刷新不叠加，拒绝后抑制，接受后相同语义不再生成 Revision。新的稳定标签仍可继续形成候选。
+
+旧版已经接受的累计时长 Memory 不由迁移静默改写；同一标签再次跨周稳定时，允许提出一个指向原 Memory 的紧凑替换候选，用户确认后才创建 Revision。完整 Episode evidence 继续由 Weekly Digest 在 Activity 领域持有。该修订是用户确认的产品所有者变更，没有重跑 A0–A3，也不声称新增了偏好推断能力。

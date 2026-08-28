@@ -19,6 +19,12 @@ import {
   distillEpisodes,
   EPISODE_MERGE_MS,
 } from "./activityDistillation";
+import {
+  buildStableActivityPatterns,
+  searchActivityEpisodes,
+  type ActivitySearchRequest,
+  type ActivitySearchResult,
+} from "./activityRecall";
 import { ActivityError } from "./activityError";
 import type { ActivityRepository } from "./activityRepository";
 
@@ -208,6 +214,31 @@ export class ActivityService {
     return digest;
   }
 
+  search(request: ActivitySearchRequest): ActivitySearchResult {
+    const now = this.clock.now();
+    const periodEnd = request.periodEnd ?? now;
+    const periodStart =
+      request.periodStart ??
+      new Date(
+        Date.parse(periodEnd) - RETAINED_EPISODE_DAYS * DAY_MS,
+      ).toISOString();
+    if (Date.parse(periodStart) >= Date.parse(periodEnd)) {
+      throw new TypeError("Activity search start must be before its end");
+    }
+    const query = request.query?.trim();
+    return {
+      observedBehaviorOnly: true,
+      patterns: searchActivityEpisodes(
+        this.repository.listEpisodes(periodStart, periodEnd),
+        query,
+        this.timeZone,
+      ),
+      periodEnd,
+      periodStart,
+      ...(query ? { query } : {}),
+    };
+  }
+
   setPaused(paused: boolean): ActivitySnapshot {
     const now = this.clock.now();
     this.repository.setPaused(paused, now);
@@ -378,7 +409,7 @@ export class ActivityService {
           continue;
         const episodes = this.repository.listEpisodes(periodStart, periodEnd);
         if (episodes.length === 0) continue;
-        const draft = createWeeklyDigest(
+        const digest = createWeeklyDigest(
           episodes,
           this.ids,
           now,
@@ -386,15 +417,12 @@ export class ActivityService {
           periodEnd,
           this.timeZone,
         );
-        const candidateIds = draft.proposals
-          .filter(({ reason }) => !this.memory.hasCandidateReason(reason))
-          .map((proposal) => this.memory.propose(proposal).id);
-        const digest = { ...draft.digest, candidateIds };
         this.repository.insertDigest(
           digest,
           new Map(episodes.map((episode) => [episode.id, episode.summary])),
         );
       }
+      this.#reconcileStablePatterns(now);
       this.repository.finishDistillation(runId, this.clock.now());
     } catch (error) {
       this.repository.finishDistillation(
@@ -416,6 +444,26 @@ export class ActivityService {
     if (pending.length > 0) {
       this.repository.insertEpisodes(distillEpisodes(pending, this.ids, now));
     }
+  }
+
+  #reconcileStablePatterns(now: Timestamp): void {
+    const periodStart = new Date(
+      Date.parse(now) - RETAINED_EPISODE_DAYS * DAY_MS,
+    ).toISOString();
+    const episodes = this.repository.listEpisodes(periodStart, now);
+    const weeklyDigests = this.repository
+      .listDigests(periodStart, now)
+      .filter(({ kind }) => kind === "weekly");
+    const patterns = buildStableActivityPatterns(
+      weeklyDigests,
+      episodes,
+      this.timeZone,
+    );
+    const reconciliation = this.memory.reconcileActivityPatterns(patterns);
+    this.repository.reconcileDigestCandidateLinks(
+      reconciliation.links,
+      reconciliation.removedCandidateIds,
+    );
   }
 
   async #maintain(): Promise<void> {

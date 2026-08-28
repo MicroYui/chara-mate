@@ -311,15 +311,11 @@ async function startFakeProvider(browserUrl?: string) {
         ) {
           writeSse(response, finalAnswer(responseId, "已把爱好更新为游泳。"));
         } else {
-          const memoryId = body.match(
-            /\[memory:([0-9a-f]{8}-[0-9a-f-]{27})\s/iu,
-          )?.[1];
           writeSse(response, [
             functionCall("memory-replace", "record", "memory", {
               basis: "explicit_user_statement",
               claimSlot: "preference.hobbies",
               content: "用户现在的爱好是游泳。",
-              ...(memoryId ? { memoryId } : {}),
               operation: "replace",
             }),
             completed(responseId),
@@ -1377,7 +1373,7 @@ test("updates one stable Memory across Chats without leaving conflicting active 
     expect(taskBodies[0]).toContain('"defer_loading":false');
     expect(taskBodies[0]).toContain('"type":"tool_search"');
     expect(taskBodies[0]).toContain('"type":"web_search"');
-    expect(taskBodies[2]).toContain("Relevant long-term memories");
+    expect(taskBodies[2]).toContain("Long-term memory evidence");
     expect(taskBodies[2]).toContain("stableClaimSlot: preference.hobbies");
     expect(taskBodies[2]).toContain("用户的爱好是徒步。");
     expect(taskBodies[4]).toContain("用户现在的爱好是游泳。");
@@ -1394,6 +1390,13 @@ test("updates one stable Memory across Chats without leaving conflicting active 
     expect(snapshot.value.memories[0]?.memory.claimSlot).toBe(
       "preference.hobbies",
     );
+    const stableMemory = snapshot.value.memories[0]!;
+    expect(taskBodies.join("\n")).not.toContain(stableMemory.memory.id);
+    expect(taskBodies.join("\n")).not.toContain(
+      stableMemory.memory.currentRevisionId,
+    );
+    expect(taskBodies.join("\n")).not.toContain('"memoryId"');
+    expect(taskBodies.join("\n")).not.toContain("[memory:");
     expect(snapshot.value.memories[0]?.sources).toEqual([
       expect.objectContaining({ type: "chat" }),
     ]);

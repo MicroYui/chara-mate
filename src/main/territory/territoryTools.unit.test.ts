@@ -12,8 +12,7 @@ const readyCandidate: TerritoryChangeCandidate = {
   ...starterTerritoryCandidate,
   intent: "item",
   lockedInstanceIds: [],
-  prompt:
-    "长夜台灯：留一盏灯，纪念完成项目的夜晚。视觉：一盏小巧的黄铜工坊台灯",
+  prompt: "长夜台灯：一盏小巧的黄铜工坊台灯",
   scope: {
     kind: "zone",
     zoneId: starterTerritorySnapshot.world.activeZoneId,
@@ -61,6 +60,10 @@ describe("Territory World Agent Tool", () => {
       {
         baseRevisionId: starterTerritorySnapshot.world.currentRevision.id,
         intent: "item",
+        itemContent: {
+          description: "留一盏灯，纪念完成项目的夜晚。",
+          name: "长夜台灯",
+        },
         lockedInstanceIds: [],
         prompt: readyCandidate.prompt,
         providerProfileId: context.providerProfileId,

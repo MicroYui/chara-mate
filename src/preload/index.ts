@@ -49,6 +49,7 @@ import {
   type MemoryCreateRequest,
   type MemoryIdRequest,
   type MemoryListRequest,
+  type MemoryResolveClaimRequest,
   type MemoryReviseRequest,
   type MemorySetPinnedRequest,
 } from "../shared/contracts/memory";
@@ -186,6 +187,7 @@ import {
   MemoryListResponseSchema,
   MemoryMutationResponseSchema,
   MemoryPurgeResponseSchema,
+  MemoryResolveClaimRequestSchema,
   MemoryReviseRequestSchema,
   MemorySetPinnedRequestSchema,
 } from "../shared/schemas/memory";
@@ -286,6 +288,7 @@ import {
 } from "../shared/schemas/territoryWorld";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
 import { createVoiceApi } from "./voiceApi";
+import { createVoiceWakeSettingsApi } from "./voiceWakeApi";
 
 const chatApi: ChatApi = Object.freeze({
   archive: async (input: ChatIdRequest) => {
@@ -667,6 +670,14 @@ const evolutionApi: EvolutionApi = Object.freeze({
         ),
       ),
     ),
+  dismissReview: async (input: EvolutionRunIdRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      EvolutionReviewMutationResponseSchema,
+      await ipcRenderer.invoke(
+        EVOLUTION_CHANNELS.dismissReview,
+        parseSchemaWithoutCodeGeneration(EvolutionRunIdRequestSchema, input),
+      ),
+    ),
   list: async (input: EvolutionListRequest) =>
     parseSchemaWithoutCodeGeneration(
       EvolutionSnapshotResponseSchema,
@@ -822,6 +833,7 @@ const settingsApi: SettingsApi = Object.freeze({
 });
 
 const voiceApi = createVoiceApi();
+const voiceWakeApi = createVoiceWakeSettingsApi();
 
 const providerApi: ProviderApi = Object.freeze({
   deleteProfile: async (request: ProviderDeleteProfileRequest) =>
@@ -1192,6 +1204,16 @@ const memoryApi: MemoryApi = Object.freeze({
       await ipcRenderer.invoke(MEMORY_CHANNELS.rejectCandidate, request),
     );
   },
+  resolveClaim: async (input: MemoryResolveClaimRequest) => {
+    const request = parseSchemaWithoutCodeGeneration(
+      MemoryResolveClaimRequestSchema,
+      input,
+    );
+    return parseSchemaWithoutCodeGeneration(
+      MemoryMutationResponseSchema,
+      await ipcRenderer.invoke(MEMORY_CHANNELS.resolveClaim, request),
+    );
+  },
   restore: async (input: MemoryIdRequest) => {
     const request = parseSchemaWithoutCodeGeneration(
       MemoryIdRequestSchema,
@@ -1306,6 +1328,7 @@ const desktopApi: CharaMateApi = Object.freeze({
   settings: settingsApi,
   territory: territoryWorldApi,
   voice: voiceApi,
+  voiceWake: voiceWakeApi,
 });
 
 contextBridge.exposeInMainWorld("charaMate", desktopApi);

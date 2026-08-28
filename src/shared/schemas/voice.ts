@@ -132,7 +132,10 @@ export const VoiceStartRequestSchema = Type.Object(
 
 export const VoiceQuickStartRequestSchema = Type.Union([
   Type.Object(
-    { requestedAt: TimestampSchema },
+    {
+      origin: Type.Optional(Type.Literal("voice_wake")),
+      requestedAt: TimestampSchema,
+    },
     { additionalProperties: false },
   ),
   Type.Object(
@@ -172,6 +175,7 @@ export const VoiceMutedRequestSchema = Type.Object(
 
 export const VoicePausedRequestSchema = Type.Object(
   {
+    origin: Type.Optional(Type.Literal("voice_wake")),
     paused: Type.Boolean(),
     requestedAt: TimestampSchema,
     sessionId: EntityIdSchema,
@@ -245,6 +249,38 @@ export const VoiceDriverEventSchema = Type.Union([
     {
       requestId: EntityIdSchema,
       type: Type.Literal("session.refreshed"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      responseId: NonBlankStringSchema,
+      type: Type.Literal("wake.greeting.audio.started"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      responseId: NonBlankStringSchema,
+      type: Type.Literal("wake.greeting.audio.stopped"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      hasAudio: Type.Boolean(),
+      responseId: NonBlankStringSchema,
+      status: Type.Union([
+        Type.Literal("completed"),
+        Type.Literal("cancelled"),
+        Type.Literal("failed"),
+        Type.Literal("incomplete"),
+      ]),
+      statusReason: Type.Optional(Type.String()),
+      type: Type.Literal("wake.greeting.done"),
+      usage: Type.Optional(
+        Type.Object(voiceUsageProperties, { additionalProperties: false }),
+      ),
     },
     { additionalProperties: false },
   ),
@@ -434,6 +470,16 @@ export const VoiceClientCommandSchema = Type.Union([
       sessionId: EntityIdSchema,
       tools: Type.Array(VoiceFunctionToolSchema),
       type: Type.Literal("session.refresh"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      instructions: NonBlankStringSchema,
+      prompt: NonBlankStringSchema,
+      requestId: EntityIdSchema,
+      sessionId: EntityIdSchema,
+      type: Type.Literal("wake.greeting.create"),
     },
     { additionalProperties: false },
   ),

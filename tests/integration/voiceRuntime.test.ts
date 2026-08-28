@@ -14,6 +14,10 @@ import { ChatRepository } from "../../src/main/chat/chatRepository";
 import { ChatService } from "../../src/main/chat/chatService";
 import { registerBrowserTools } from "../../src/main/browser/managedBrowser";
 import { openApplicationDatabase } from "../../src/main/db/database";
+import { LexicalRetrievalPipeline } from "../../src/main/memory/lexicalRetrievalPipeline";
+import { MemoryRepository } from "../../src/main/memory/memoryRepository";
+import { MemoryService } from "../../src/main/memory/memoryService";
+import { registerMemoryTool } from "../../src/main/memory/memoryTool";
 import type { ProviderService } from "../../src/main/providers/providerService";
 import { registerLocalTools } from "../../src/main/tools/localTools";
 import {
@@ -85,6 +89,14 @@ async function fixture(options?: {
   const commands: VoiceClientCommand[] = [];
   const snapshots: Array<VoiceSessionSnapshot | null> = [];
   const tools = new ToolRegistry();
+  const memoryRepository = new MemoryRepository(database);
+  const memory = new MemoryService(
+    memoryRepository,
+    new LexicalRetrievalPipeline(database, memoryRepository, clock),
+    ids,
+    clock,
+  );
+  registerMemoryTool(tools, memory);
   registerLocalTools(tools, undefined as never);
   registerBrowserTools(tools, undefined as never, undefined as never);
   const read = vi.fn().mockResolvedValue({
@@ -211,6 +223,7 @@ async function fixture(options?: {
     },
     () => "Workspace skill instructions.",
     options?.title,
+    memory,
   );
   registerVoiceTools(tools, {
     requestEndAfterResponse: (runId) => service.requestEndAfterResponse(runId),
@@ -225,6 +238,7 @@ async function fixture(options?: {
     createChatModelRuntime,
     database,
     issue,
+    memory,
     read,
     repository,
     runs,
@@ -319,6 +333,47 @@ async function finalResponse(
 }
 
 describe("Realtime native Voice runtime", () => {
+  it("injects stable profile claims for a semantically related voice question", async () => {
+    const value = await fixture();
+    const created = value.memory.create({
+      claimSlot: "preference.hobbies",
+      confidence: 1,
+      content: "用户长期游玩 CS2，并关注职业选手比赛。",
+      importance: 0.9,
+      reason: "用户明确说明",
+      sources: [],
+      type: "preference",
+    });
+
+    const { connection } = await startTurn(
+      value,
+      { mode: "chat" },
+      "我有什么爱好？",
+    );
+    const response = value.commands.findLast(
+      (command) => command.type === "response.create",
+    );
+    if (response?.type !== "response.create") {
+      throw new Error("Voice response command was not emitted");
+    }
+    expect(response.instructions).not.toContain(created.memory.id);
+    expect(response.instructions).not.toContain(
+      created.memory.currentRevisionId,
+    );
+    expect(response.instructions).toContain("preference.hobbies");
+    expect(response.instructions).toContain("长期游玩 CS2");
+    expect(value.issue.mock.calls[0]?.[1].tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "memory_search" }),
+      ]),
+    );
+    expect(value.memory.get(created.memory.id).usages).toEqual([
+      expect.objectContaining({ consumer: "context" }),
+    ]);
+    value.service.end({ sessionId: connection.sessionId });
+    value.database.close();
+  });
+
   it("injects the durable Chat summary and only uncovered history on start and reconnect", async () => {
     const value = await fixture();
     const runIds = [
@@ -531,6 +586,7 @@ describe("Realtime native Voice runtime", () => {
     value.setVoiceSettings({ voice: "coral" });
 
     const resumed = await value.service.setPaused({
+      origin: "voice_wake",
       paused: false,
       requestedAt: NOW,
       sessionId: connection.sessionId,
@@ -551,6 +607,17 @@ describe("Realtime native Voice runtime", () => {
         (command) =>
           command.type === "session.close" &&
           command.sessionId === connection.sessionId,
+      ),
+    ).toBe(true);
+    await report(value.service, resumed.connection!.sessionId, {
+      protocolSessionId: "wake-cold-resume-session",
+      type: "session.ready",
+    });
+    expect(
+      value.commands.some(
+        (command) =>
+          command.type === "wake.greeting.create" &&
+          command.sessionId === resumed.connection!.sessionId,
       ),
     ).toBe(true);
     value.database.close();
@@ -1285,6 +1352,107 @@ describe("Realtime native Voice runtime", () => {
     value.database.close();
   });
 
+  it("creates a non-persistent Mika greeting only after a wake-started Realtime session is ready", async () => {
+    const value = await fixture();
+    const connection = await value.service.quickStart({
+      origin: "voice_wake",
+      requestedAt: NOW,
+    });
+    const chatId = value.service.getActive()?.chatId;
+    if (!chatId) throw new Error("Wake Voice Chat was not created");
+
+    expect(
+      value.commands.some(({ type }) => type === "wake.greeting.create"),
+    ).toBe(false);
+    await report(value.service, connection.sessionId, {
+      protocolSessionId: "wake-greeting-session",
+      type: "session.ready",
+    });
+
+    const greeting = value.commands.find(
+      (command) => command.type === "wake.greeting.create",
+    );
+    expect(value.service.getActive()?.phase).toBe("thinking");
+    expect(greeting).toMatchObject({
+      prompt: "Hi Mika",
+      sessionId: connection.sessionId,
+      type: "wake.greeting.create",
+    });
+    expect(greeting?.instructions).toContain("使用自然、简洁的中文口语。");
+    expect(greeting?.instructions).toContain('say exactly "我在，请说。"');
+    expect(greeting?.instructions).not.toContain(
+      "Workspace skill instructions.",
+    );
+    expect(value.runs.getActiveRun(chatId)).toBeUndefined();
+    expect(value.chats.listMessages(chatId)).toEqual([]);
+
+    await report(value.service, connection.sessionId, {
+      responseId: "wake-greeting-response",
+      type: "wake.greeting.audio.started",
+    });
+    expect(value.service.getActive()?.phase).toBe("speaking");
+    await report(value.service, connection.sessionId, {
+      hasAudio: true,
+      responseId: "wake-greeting-response",
+      status: "completed",
+      type: "wake.greeting.done",
+    });
+    await report(value.service, connection.sessionId, {
+      responseId: "wake-greeting-response",
+      type: "wake.greeting.audio.stopped",
+    });
+    expect(value.service.getActive()?.phase).toBe("listening");
+    expect(value.runs.getActiveRun(chatId)).toBeUndefined();
+    expect(value.chats.listMessages(chatId)).toEqual([]);
+    value.database.close();
+  });
+
+  it("adds the same wake greeting after an in-place paused-session resume", async () => {
+    const value = await fixture();
+    const connection = await value.service.start({
+      chatId: CHAT_ID,
+      chatProviderProfileId: PROFILE_ID,
+      execution: { mode: "chat" },
+      requestedAt: NOW,
+    });
+    await report(value.service, connection.sessionId, {
+      protocolSessionId: "wake-resume-session",
+      type: "session.ready",
+    });
+    await value.service.setPaused({
+      paused: true,
+      requestedAt: NOW,
+      sessionId: connection.sessionId,
+    });
+
+    await value.service.setPaused({
+      origin: "voice_wake",
+      paused: false,
+      requestedAt: NOW,
+      sessionId: connection.sessionId,
+    });
+    const refresh = value.commands.findLast(
+      (command) => command.type === "session.refresh",
+    );
+    if (refresh?.type !== "session.refresh") {
+      throw new Error("Session refresh command was not emitted");
+    }
+    expect(
+      value.commands.filter(({ type }) => type === "wake.greeting.create"),
+    ).toHaveLength(0);
+    await report(value.service, connection.sessionId, {
+      requestId: refresh.requestId,
+      type: "session.refreshed",
+    });
+
+    expect(
+      value.commands.filter(({ type }) => type === "wake.greeting.create"),
+    ).toHaveLength(1);
+    expect(value.chats.listMessages(CHAT_ID)).toEqual([]);
+    expect(value.runs.getActiveRun(CHAT_ID)).toBeUndefined();
+    value.database.close();
+  });
+
   it("reuses the ordinary fallback and AI title chain for a quick Voice Chat", async () => {
     const generate = vi
       .fn<ChatTitleGenerator["generate"]>()
@@ -1298,6 +1466,9 @@ describe("Realtime native Voice runtime", () => {
       protocolSessionId: "quick-session",
       type: "session.ready",
     });
+    expect(
+      value.commands.some(({ type }) => type === "wake.greeting.create"),
+    ).toBe(false);
     await report(value.service, connection.sessionId, {
       itemId: "quick-user",
       type: "speech.started",

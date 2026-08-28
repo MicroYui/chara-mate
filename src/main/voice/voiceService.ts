@@ -45,7 +45,10 @@ import {
 import { AgentError } from "../agent/agentError";
 import { realtimeAgentInstructions } from "../agent/agentInstructions";
 import { ChatContextService } from "../agent/chatContextService";
-import { createMemoryContextInput } from "../agent/memoryContext";
+import {
+  createMemoryContextInput,
+  memoryContextTargetIds,
+} from "../agent/memoryContext";
 import type { RunRepository } from "../agent/runRepository";
 import type { RunEventWriter } from "../agent/runEventWriter";
 import type { SettingsRepository } from "../app/settingsRepository";
@@ -66,6 +69,8 @@ import type { VoiceMetrics } from "./voiceMetrics";
 import type { VoiceRepository } from "./voiceRepository";
 
 const APPROVAL_RUN_LIFETIME = "9999-12-31T23:59:59.999Z";
+const VOICE_WAKE_GREETING_PROMPT = "Hi Mika";
+const VOICE_WAKE_GREETING_INSTRUCTIONS = `The user has just activated you with the local wake phrase "Hi Mika". Reply immediately with only a brief spoken acknowledgement. In Simplified Chinese say exactly "我在，请说。"; otherwise use its direct equivalent in the user's current language. Do not ask a question, mention systems, call tools, or begin a task.`;
 const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
   "interrupted",
   "completed",
@@ -153,10 +158,13 @@ interface ActiveVoice {
   readonly responseTurns: Map<string, string>;
   realtimeTools: PreparedRealtimeTools;
   readonly runMemoryIds: Map<string, readonly string[]>;
+  readonly runMemoryQueryIds: Map<string, readonly string[]>;
   readonly runTurns: Map<string, string>;
   snapshot: VoiceSessionSnapshot;
   readonly turnAborts: Map<string, AbortController>;
   readonly turns: Map<string, VoiceTurnRecord>;
+  wakeGreetingPending: boolean;
+  wakeGreetingResponseId?: string;
 }
 
 export interface VoiceServicePublisher {
@@ -319,14 +327,19 @@ function history(messages: readonly Message[]): VoiceHistoryMessage[] {
 function memoryEvidence(
   memory: MemoryService | undefined,
   query: string,
-): { readonly content?: string; readonly ids: readonly string[] } {
-  if (!memory) return { ids: [] as readonly string[] };
-  const hits = memory.search(query.trim() ? { query } : {}, "context", 8);
-  const value = createMemoryContextInput(hits);
+): {
+  readonly content?: string;
+  readonly ids: readonly string[];
+  readonly queryIds: readonly string[];
+} {
+  if (!memory) return { ids: [], queryIds: [] };
+  const selection = memory.selectContext(query);
+  const value = createMemoryContextInput(selection);
   const content = object(value)?.["content"];
   return {
     ...(typeof content === "string" ? { content } : {}),
-    ids: hits.map(({ memory: item }) => item.id),
+    ids: memoryContextTargetIds(value),
+    queryIds: selection.queryRelevantMemoryIds,
   };
 }
 
@@ -452,6 +465,10 @@ export class VoiceService {
     return this.#active?.runMemoryIds.get(runId) ?? [];
   }
 
+  getMemoryContextQueryIds(runId: string): readonly string[] {
+    return this.#active?.runMemoryQueryIds.get(runId) ?? [];
+  }
+
   requestEndAfterResponse(runId: string): void {
     const active = this.#active;
     const pending = active?.pendingTool;
@@ -525,6 +542,7 @@ export class VoiceService {
 
   async quickStart(request: VoiceQuickStartRequest): Promise<VoiceConnection> {
     const targetChatId = "chatId" in request ? request.chatId : undefined;
+    const wakeGreeting = "origin" in request && request.origin === "voice_wake";
     this.#assertCanStart(targetChatId);
     const execution =
       "chatId" in request
@@ -571,6 +589,7 @@ export class VoiceService {
           requestedAt: request.requestedAt,
         },
         prepared,
+        { wakeGreeting },
       );
     } catch (error) {
       this.chatTurns.delete({ chatId: chat.id });
@@ -674,6 +693,7 @@ export class VoiceService {
   #activate(
     request: VoiceStartRequest,
     prepared: PreparedVoiceStart,
+    options: { readonly wakeGreeting?: boolean } = {},
   ): VoiceConnection {
     const id = this.ids.generate();
     const createdAt = request.requestedAt;
@@ -720,10 +740,12 @@ export class VoiceService {
       responseTurns: new Map(),
       realtimeTools: prepared.realtimeTools,
       runMemoryIds: new Map(),
+      runMemoryQueryIds: new Map(),
       runTurns: new Map(),
       snapshot,
       turnAborts: new Map(),
       turns: new Map(),
+      wakeGreetingPending: options.wakeGreeting ?? false,
     };
     this.metrics?.startSession(id, createdAt);
     this.metrics?.connectionStage("credential", prepared.credentialDurationMs);
@@ -876,6 +898,8 @@ export class VoiceService {
     }
     if (request.paused) {
       if (active.paused) return { snapshot: active.snapshot };
+      active.wakeGreetingPending = false;
+      delete active.wakeGreetingResponseId;
       this.#setCapture(active, false);
       this.#publishCommand({
         enabled: false,
@@ -907,6 +931,7 @@ export class VoiceService {
       return { snapshot: active.snapshot };
     }
 
+    if (request.origin === "voice_wake") active.wakeGreetingPending = true;
     this.#setPhase(active, "resuming");
     try {
       const prepared = await this.#prepareConfiguration(
@@ -952,6 +977,7 @@ export class VoiceService {
           requestedAt: request.requestedAt,
         },
         issued,
+        { wakeGreeting: request.origin === "voice_wake" },
       );
       this.#publishCommand({
         sessionId: replacedSessionId,
@@ -973,6 +999,9 @@ export class VoiceService {
         active.record.status === "active" &&
         active.paused
       ) {
+        if (request.origin === "voice_wake") {
+          active.wakeGreetingPending = false;
+        }
         this.#setPhase(active, "paused");
       }
       throw error;
@@ -1046,7 +1075,11 @@ export class VoiceService {
       });
       this.#setPhase(active, "listening");
       this.#setCapture(active, true);
+      this.#startWakeGreeting(active);
       return active.snapshot;
+    }
+    if (event.type === "wake.greeting.done") {
+      this.metrics?.responseUsage(event.usage);
     }
     if (
       active.paused &&
@@ -1068,6 +1101,40 @@ export class VoiceService {
       this.metrics?.connected(active.record.id, request.occurredAt);
       this.#setPhase(active, "listening");
       this.#setCapture(active, true);
+      this.#startWakeGreeting(active);
+    } else if (event.type === "wake.greeting.audio.started") {
+      active.wakeGreetingResponseId = event.responseId;
+      active.audioPlaying = true;
+      this.#setPhase(active, "speaking");
+    } else if (event.type === "wake.greeting.audio.stopped") {
+      if (active.wakeGreetingResponseId === event.responseId) {
+        delete active.wakeGreetingResponseId;
+        active.audioPlaying = false;
+        const turn = this.#currentTurn(active);
+        if (!turn || turn.status === "listening") {
+          this.#setPhase(active, "listening");
+        }
+      }
+    } else if (event.type === "wake.greeting.done") {
+      if (!event.hasAudio) {
+        delete active.wakeGreetingResponseId;
+        active.audioPlaying = false;
+        if (!this.#currentTurn(active)) {
+          this.#setPhase(
+            active,
+            "listening",
+            event.status === "failed" || event.status === "incomplete"
+              ? {
+                  code: "VOICE.WAKE_GREETING_FAILED",
+                  message:
+                    event.statusReason ||
+                    "Realtime 已连接，但 Mika 的欢迎语没有成功播放。",
+                  retryable: true,
+                }
+              : undefined,
+          );
+        }
+      }
     } else if (event.type === "speech.started") {
       this.metrics?.speechStarted(
         active.record.id,
@@ -1090,6 +1157,7 @@ export class VoiceService {
         });
       }
       active.audioPlaying = false;
+      delete active.wakeGreetingResponseId;
       this.#interruptCurrentTurn(
         active,
         request.occurredAt,
@@ -1457,6 +1525,7 @@ export class VoiceService {
       active.turns.set(turn.id, turn);
       active.runTurns.set(runId, turn.id);
       active.runMemoryIds.set(runId, evidence.ids);
+      active.runMemoryQueryIds.set(runId, evidence.queryIds);
       active.record = this.repository.updateSession({
         ...active.record,
         lastRunId: runId,
@@ -2105,6 +2174,25 @@ export class VoiceService {
         active.record.status === "active",
       sessionId: active.record.id,
       type: "capture.set",
+    });
+  }
+
+  #startWakeGreeting(active: ActiveVoice): void {
+    if (
+      !active.wakeGreetingPending ||
+      active.paused ||
+      active.record.status !== "active"
+    ) {
+      return;
+    }
+    active.wakeGreetingPending = false;
+    this.#setPhase(active, "thinking");
+    this.#publishCommand({
+      instructions: `${active.configuredInstructions}\n\n${VOICE_WAKE_GREETING_INSTRUCTIONS}`,
+      prompt: VOICE_WAKE_GREETING_PROMPT,
+      requestId: this.ids.generate(),
+      sessionId: active.record.id,
+      type: "wake.greeting.create",
     });
   }
 

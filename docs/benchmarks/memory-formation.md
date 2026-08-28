@@ -176,3 +176,21 @@ U0/U1 实现、Arm 分支、runner、冻结 JSON 与 raw report 均只曾存在�
 ### 不能声称什么
 
 本实验是确定性宿主正确性比较，不使用当前不可用的 Chat deployment，也不把它冒充模型语义召回评测。目标 Provider 对 `operation/claimSlot` 的真实选择质量仍需 Phase 7 Live；若旧 Memory 没有被 C2-PRE8 预载，而模型又错误地把改口声明为全新的另一个 slot，宿主没有足够证据判断两者冲突，因此仍可能形成不同 slot 的事实。闭集覆盖当前常见 profile/preference 字段，不代表所有用户表达都可归入这些字段；未覆盖的 project/event/procedure/commitment 只在有本轮合法目标时直接更新。生产能保证的是“本轮证据可辨识时精确修订；同 slot、错 ID、缺目标和预载同类歧义时候选或拒绝”，不是“模型永远理解正确”或“不依赖检索即可发现所有语义矛盾”。
+
+## 2026-08-27 旧数据显式归一化修订
+
+生产数据复核确认，v5→v6 的“不猜测旧内容”迁移正确保留了 unkeyed profile/preference，但 Memory 页面没有后续的人工收口动作，导致这些记录既无法成为稳定画像，也会继续依赖词面检索。本次修订不改变 U2 的宿主身份规则，而是补齐其用户确认生命周期：
+
+- 手动新建 profile/preference 必须显式选择闭集 `claimSlot`；project/event 等仍按原类型创建。
+- 稳定画像中的全部已绑定字段都进入更新 allowlist，但“另一个 slot 的 create 是否歧义”只检查当前 R0 实际命中的同类型字段；仅因画像有界预注入而出现的无关字段不阻断新字段形成。
+- active unkeyed profile/preference 的详情允许用户选择与类型匹配的 slot。slot 无 owner 时，在同一 Memory 上创建用户确认 Revision 并绑定；slot 已有 owner 时，界面同时展示两条内容，要求用户提交合并后的完整快照。
+- 合并在单一事务内修订既有 slot owner，新 Revision 以 `user_edit` 来源分别引用 owner 与 unkeyed Memory ID；两边原始 evidence 继续保留在各自既有 Revision 中。unkeyed 记录变为 `superseded` 并指向 owner，没有第二条 active 字段事实，也不删除旧 Revision。
+- 绑定和合并都必须由显式 UI 动作触发；应用启动、迁移、检索和模型 Tool 都不做语义自动分类。
+
+确定性回归分别覆盖无 owner 绑定、已有 owner 合并、slot/type 校验、来源与 Revision 保留、失败事务零部分写入，以及 Renderer 提交的完整合并内容。这是已选 U2 的缺失产品路径修复，不新增候选 Arm、迁移表或设置。
+
+## 2026-08-27 模型可见标识收口
+
+生产复核发现，Context 与 `memory.record` Tool Result 暴露的 Memory/Revision UUID 会诱导模型在普通回复中复述内部标识。U2 的正确性依赖“宿主私有 allowlist”，并不依赖模型看见或复制 UUID。因此本修订把稳定字段更新改为：模型只提交 `claimSlot`、operation 和完整新内容；宿主仅当该 slot 的唯一 active owner 属于当前 Run 私有 allowlist 时解析目标并在原 Memory 上创建 Revision。内部服务调用仍可显式携带 ID 并接受原有交叉校验，模型 Tool Schema 与 Tool Result 均不再暴露 ID。
+
+无 slot 的 project/event/procedure/commitment 若没有宿主内部精确目标，继续进入 `missing_target` 候选；旧 unkeyed profile/preference 继续由 Memory 页面显式绑定或合并。确定性回归必须证明 Provider 可见 Context、`memory.search`、`memory.record` continuation 和 Run `displayOutput` 都不含内部 UUID，同时合法稳定字段改口仍命中同一 Memory Revision。

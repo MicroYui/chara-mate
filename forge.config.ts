@@ -90,6 +90,10 @@ const config: ForgeConfig = {
   },
   packagerConfig: {
     asar: true,
+    extendInfo: {
+      NSMicrophoneUsageDescription:
+        "CharaMate 使用麦克风进行本地 Hi Mika 唤醒和实时语音对话。",
+    },
     icon: appIconPath,
     executableName: "CharaMate",
     extraResource: [

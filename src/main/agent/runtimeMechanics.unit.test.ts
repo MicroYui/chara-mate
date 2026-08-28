@@ -218,7 +218,12 @@ describe("Phase 2 Runtime mechanics", () => {
 
   it("keeps the selected long-term memory evidence before the current goal", () => {
     const compiler = new ContextCompiler();
-    const memoryContext = createMemoryContextInput([]);
+    const memoryContext = createMemoryContextInput({
+      legacyUnkeyedCount: 0,
+      queryMatches: [],
+      queryRelevantMemoryIds: [],
+      stableProfile: [],
+    });
     const current = {
       content: "继续完成当前目标",
       role: "user",

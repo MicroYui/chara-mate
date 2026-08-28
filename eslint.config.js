@@ -11,6 +11,7 @@ export default tseslint.config(
       "coverage/**",
       "playwright-report/**",
       "test-results/**",
+      "src/renderer/character/public/wake-word/**",
     ],
   },
   eslint.configs.recommended,

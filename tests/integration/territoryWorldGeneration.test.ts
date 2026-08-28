@@ -197,8 +197,12 @@ describe("Territory World AI generation", () => {
     const result = await service.create({
       baseRevisionId: snapshot.world.currentRevision.id,
       intent: "item",
+      itemContent: {
+        description: "玻璃灯把雨声收进一圈柔光里，夜深时仍替桌边留着温度。",
+        name: "听雨玻璃灯",
+      },
       lockedInstanceIds: [],
-      prompt: "一盏会记住雨声的玻璃灯",
+      prompt: "透明玻璃灯，黄铜底座，雨滴纹理与柔和暖光",
       providerProfileId: null,
       scope: { kind: "zone", zoneId: snapshot.world.activeZoneId },
       sources: [],
@@ -217,15 +221,47 @@ describe("Territory World AI generation", () => {
       result.candidateId,
       "2026-08-13T10:02:00.000Z",
     );
-    expect(
-      applied.definitions.some(({ id }) => id.startsWith("generated.item.")),
-    ).toBe(true);
+    const generatedDefinition = applied.definitions.find(({ id }) =>
+      id.startsWith("generated.item."),
+    );
+    expect(generatedDefinition).toMatchObject({
+      description: "玻璃灯把雨声收进一圈柔光里，夜深时仍替桌边留着温度。",
+      name: "听雨玻璃灯",
+    });
+    expect(generatedDefinition?.description).not.toContain("黄铜底座");
     expect(applied.assets.some(({ origin }) => origin === "generated")).toBe(
       true,
     );
     expect(
       applied.assetPacks.some(({ id }) => id.startsWith("generated.pack.")),
     ).toBe(true);
+    database.close();
+  });
+
+  it("creates a poetic host fallback instead of displaying a raw visual prompt", async () => {
+    const { database, repository, service } = await fixture();
+    const snapshot = repository.getSnapshot();
+    const rawPrompt = "一枚透明水晶月相徽章，opaque magenta background";
+
+    const result = await service.create({
+      baseRevisionId: snapshot.world.currentRevision.id,
+      intent: "item",
+      lockedInstanceIds: [],
+      prompt: rawPrompt,
+      providerProfileId: null,
+      scope: { kind: "zone", zoneId: snapshot.world.activeZoneId },
+      sources: [],
+    });
+    const definition = result.snapshot.candidates[0]?.changeSet?.mutations.find(
+      (mutation) => mutation.kind === "definition.put",
+    );
+
+    expect(definition?.kind).toBe("definition.put");
+    if (definition?.kind === "definition.put") {
+      expect(definition.definition.description).not.toBe(rawPrompt);
+      expect(definition.definition.description).not.toContain("magenta");
+      expect(definition.definition.description).toContain("日常");
+    }
     database.close();
   });
 
@@ -314,13 +350,20 @@ describe("Territory World AI generation", () => {
     expect(
       normalizations.slice(1).every(({ removeBackground }) => removeBackground),
     ).toBe(true);
+    const zoneDefinitions = zoneCandidate.changeSet?.mutations.filter(
+      (mutation) =>
+        mutation.kind === "definition.put" &&
+        mutation.definition.id.startsWith("generated.zone-piece."),
+    );
+    expect(zoneDefinitions).toHaveLength(20);
     expect(
-      zoneCandidate.changeSet?.mutations.filter(
+      zoneDefinitions?.every(
         (mutation) =>
           mutation.kind === "definition.put" &&
-          mutation.definition.id.startsWith("generated.zone-piece."),
+          !mutation.definition.description.includes("生成主题") &&
+          !mutation.definition.description.includes("改成月光下的玻璃花房"),
       ),
-    ).toHaveLength(20);
+    ).toBe(true);
     const applied = repository.applyCandidate(
       result.candidateId,
       "2026-08-13T10:02:00.000Z",

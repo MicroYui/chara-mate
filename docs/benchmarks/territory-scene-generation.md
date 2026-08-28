@@ -86,6 +86,16 @@
 - Edit 只在有真实生成/编辑源 PNG 时使用；随包 Pixi 原生图形走语义重生成，避免把不存在的 PNG 冒充参考图。
 - 当前目标 API 的复杂请求可能有明显远端延迟；产品不设置任意 wall-clock kill。用户显式取消通过 AbortSignal 结束任务，候选状态可重试。
 
+## 2026-08-28 产品内容修订：物件叙事与视觉 prompt 分离
+
+源快照：2026-08-28 复核 CharaMate 基线提交 `f7122f23e1ce3b6cce3008b9e0c59d43343c23f2` 的起始 World、Memory/Activity 来源物件、普通 Item、Zone plate 与 Selection Edit Definition 创建路径，并以本修订后的工作树实现作为验收对象。描述最多 180 字、来源标签最多 120 字、视觉上下文最多 240 字均是 CharaMate 的展示与请求有界守卫，不是图片 Provider 的协议限制，也不暴露为设置项。
+
+本 Decision 选择的是视觉资产路径，并不证明原始图片 prompt 适合作为用户可见故事。生产数据复核发现，部分生成物件直接展示视觉 prompt，Activity 来源物件甚至展示整段 Weekly Digest；随包物件也混有像素尺寸、锚点等技术说明，无法作为 Territory 的展示内容。
+
+从本修订起，每个 Definition 的用户可见内容固定为结构化的简短名称与 1–2 句诗意描述，视觉 prompt 只进入 Image Adapter。描述须有具体、克制的感官意象并忠于来源，不包含 Provider/模型术语、尺寸参数、内部 ID、Weekly Digest 全文或窗口列表；Activity 来源只能写成观察到的节奏，不能虚构成偏好。Agent/Tool 创建物件时随候选提交这两个字段，普通 UI 缺省请求由 Territory 宿主生成同样有界的 fallback。
+
+随包起始物件和仍停留在系统首版技术/原始 prompt 描述的既有 revision 1 Definition 通过一次幂等补全创建新 Definition Revision，并由一个 World Revision 原子切换当前实例。用户已经编辑过故事的后续 Revision 不覆盖。该修订不改变 S0 视觉生成路径，不重跑付费图片模型，也不新增第二套文本 Provider 或后台内容任务。
+
 ## 失败路径删除证明
 
 - 没有 contact-sheet parser、图片推断碰撞、第二套 scene schema、透明请求、`input_fidelity` 控件、quality/size 设置、候选 runtime mode 或 Provider fallback。

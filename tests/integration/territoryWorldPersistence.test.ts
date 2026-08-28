@@ -164,6 +164,55 @@ describe("Territory World persistence", () => {
     database.close();
   });
 
+  it("adds one idempotent narrative revision for legacy system descriptions", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "territory-narrative-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = openApplicationDatabase(
+      path.join(directory, "narrative.sqlite"),
+    );
+    const repository = new TerritoryWorldRepository(
+      database,
+      new QueueIds([...revisionIds]),
+    );
+    const starter = createStarterTerritoryWorldSeed("2026-08-13T08:00:00.000Z");
+    repository.ensureInitialized({
+      ...starter,
+      definitions: starter.definitions.map((definition) =>
+        definition.id === "starter.cabin-wall"
+          ? {
+              ...definition,
+              description:
+                "整面可替换墙体，包含雨夜窗景、木梁、挂画区与窗台锚点。",
+            }
+          : definition,
+      ),
+    });
+
+    expect(
+      repository.ensurePoeticDescriptions("2026-08-28T08:00:00.000Z"),
+    ).toBe(true);
+    const upgraded = repository.getSnapshot();
+    const currentWall = repository
+      .getZoneView({
+        revisionId: upgraded.world.currentRevision.id,
+        zoneId: upgraded.world.activeZoneId,
+      })
+      .definitions.find(({ id }) => id === "starter.cabin-wall");
+    expect(upgraded.world.currentRevision).toMatchObject({
+      label: "补全领地物件故事",
+      sequence: 2,
+    });
+    expect(currentWall).toMatchObject({ revision: 2 });
+    expect(currentWall?.description).not.toContain("锚点");
+    expect(
+      repository.ensurePoeticDescriptions("2026-08-28T08:01:00.000Z"),
+    ).toBe(false);
+    expect(repository.getSnapshot().world.currentRevision.sequence).toBe(2);
+    database.close();
+  });
+
   it("initializes one persistent World and survives reopen", async () => {
     const { database, databasePath, repository } = await createRepository();
 

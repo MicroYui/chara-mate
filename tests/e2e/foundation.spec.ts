@@ -143,6 +143,7 @@ test("launches through the typed preload boundary", async () => {
       settingsKeys: Object.keys(window.charaMate.settings).sort(),
       territoryKeys: Object.keys(window.charaMate.territory).sort(),
       voiceKeys: Object.keys(window.charaMate.voice).sort(),
+      voiceWakeKeys: Object.keys(window.charaMate.voiceWake).sort(),
       exposesRawIpcRenderer: "ipcRenderer" in window.charaMate,
       exposesSecretReader: "getApiKey" in window.charaMate.provider,
     }));
@@ -188,6 +189,7 @@ test("launches through the typed preload boundary", async () => {
       evolutionKeys: [
         "acceptCandidate",
         "archiveCandidate",
+        "dismissReview",
         "list",
         "rejectCandidate",
         "restoreCandidate",
@@ -225,6 +227,7 @@ test("launches through the typed preload boundary", async () => {
         "list",
         "purge",
         "rejectCandidate",
+        "resolveClaim",
         "restore",
         "revise",
         "setPinned",
@@ -264,6 +267,7 @@ test("launches through the typed preload boundary", async () => {
         "settings",
         "territory",
         "voice",
+        "voiceWake",
       ],
       runEventKeys: ["replay", "subscribe"],
       settingsKeys: [
@@ -302,6 +306,7 @@ test("launches through the typed preload boundary", async () => {
         "subscribeChanged",
         "subscribeCommand",
       ],
+      voiceWakeKeys: ["getSnapshot", "setEnabled", "subscribe"],
       exposesRawIpcRenderer: false,
       exposesSecretReader: false,
     });
@@ -363,6 +368,7 @@ test("launches through the typed preload boundary", async () => {
       "subscribeApproval",
       "subscribeProactiveBubble",
       "voice",
+      "voiceWake",
     ]);
     await expect(
       characterPage.evaluate(() =>
@@ -380,6 +386,68 @@ test("launches through the typed preload boundary", async () => {
       "subscribeChanged",
       "subscribeCommand",
     ]);
+    await expect(
+      characterPage.evaluate(() =>
+        Object.keys(window.charaMateCharacter.voiceWake).sort(),
+      ),
+    ).resolves.toEqual(["getSnapshot", "report", "subscribe"]);
+    await expect(
+      page.evaluate(() => window.charaMate.voiceWake.getSnapshot()),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { enabled: false, phase: "disabled", phrase: "Hi Mika" },
+    });
+    await expect(
+      characterPage.evaluate(async () => {
+        const script = document.querySelector<HTMLScriptElement>(
+          'script[type="module"][src]',
+        );
+        if (!script) throw new Error("Character entry script is missing.");
+        const source = await fetch(script.src).then((response) =>
+          response.text(),
+        );
+        const workerFilename = source.match(
+          /wakeWordWorker-[A-Za-z0-9_-]+\.js/u,
+        )?.[0];
+        if (!workerFilename) throw new Error("Voice Wake Worker is missing.");
+        const worker = new Worker(new URL(workerFilename, script.src));
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = window.setTimeout(
+              () =>
+                reject(
+                  new Error("Voice Wake Worker initialization timed out."),
+                ),
+              20_000,
+            );
+            worker.addEventListener("error", (event) => {
+              window.clearTimeout(timeout);
+              reject(new Error(event.message));
+            });
+            worker.addEventListener("message", (event) => {
+              const message = event.data as { message?: string; type?: string };
+              if (message.type === "error") {
+                window.clearTimeout(timeout);
+                reject(new Error(message.message));
+              }
+              if (message.type === "ready") {
+                window.clearTimeout(timeout);
+                resolve();
+              }
+            });
+            worker.postMessage({
+              baseUrl: new URL("../wake-word/", script.src).href,
+              keywords: "▁HI ▁MI K A :2.5 #0.05 @Hi_Mika",
+              type: "initialize",
+            });
+          });
+          worker.postMessage({ type: "shutdown" });
+          return true;
+        } finally {
+          worker.terminate();
+        }
+      }),
+    ).resolves.toBe(true);
     const voiceCallsUrl = "https://voice-csp.test/openai/v1/realtime/calls";
     await page
       .context()
@@ -633,6 +701,9 @@ description: Verify editing, saving, and permanent deletion through Settings.
     await expect(
       page.getByRole("heading", { name: "Realtime 语音" }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("switch", { name: /Hi Mika/u }),
+    ).toHaveAttribute("aria-checked", "false");
     const voiceSelect = page.getByLabel("音色");
     const previewButton = page.getByRole("button", { name: "试听" });
     const [voiceSelectBox, previewButtonBox] = await Promise.all([

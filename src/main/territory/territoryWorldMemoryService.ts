@@ -12,6 +12,10 @@ import type {
 } from "../../shared/contracts/territoryWorld";
 import type { Clock } from "../../shared/pure/clock";
 import { TerritoryError } from "./territoryError";
+import {
+  territorySourceItemContent,
+  type TerritoryItemContent,
+} from "./territoryWorldNarrative";
 import type { TerritoryWorldRepository } from "./territoryWorldRepository";
 import type {
   TerritoryWorldCandidateJob,
@@ -28,6 +32,28 @@ const memoryObjectNames: Readonly<Record<MemoryType, string>> = {
   profile: "关于你的记忆",
   project: "一起完成的项目",
 };
+
+function compactSourceLabel(value: string): string {
+  const normalized = value.normalize("NFC").replaceAll(/\s+/gu, " ").trim();
+  const characters = [...normalized];
+  return characters.length > 120
+    ? `${characters.slice(0, 119).join("")}…`
+    : normalized;
+}
+
+function compactVisualContext(value: string): string {
+  const parts = value
+    .normalize("NFC")
+    .replaceAll(/\s+/gu, " ")
+    .split(/[；;]/u)
+    .slice(0, 3)
+    .join("；")
+    .trim();
+  const characters = [...parts];
+  return characters.length > 240
+    ? `${characters.slice(0, 239).join("")}…`
+    : parts;
+}
 
 export class TerritoryWorldMemoryService {
   constructor(
@@ -74,6 +100,7 @@ export class TerritoryWorldMemoryService {
     const candidateRequest: TerritoryCreateChangeCandidateRequest = {
       baseRevisionId: snapshot.world.currentRevision.id,
       intent: existing ? "selection" : "item",
+      itemContent: source.itemContent,
       lockedInstanceIds: [],
       prompt,
       providerProfileId: null,
@@ -96,6 +123,7 @@ export class TerritoryWorldMemoryService {
 
   private readMemorySource(memoryId: string): {
     description: string;
+    itemContent: TerritoryItemContent;
     name: string;
     snapshot: TerritorySourceSnapshot;
   } {
@@ -132,13 +160,19 @@ export class TerritoryWorldMemoryService {
         false,
       );
     }
-    return {
-      description: revision.content,
+    const itemContent = territorySourceItemContent({
+      kind: "memory",
       name: memoryObjectNames[detail.memory.type],
+      sourceText: revision.content,
+    });
+    return {
+      description: compactVisualContext(revision.content),
+      itemContent,
+      name: itemContent.name,
       snapshot: {
         id: detail.memory.id,
         kind: "memory",
-        label: revision.content,
+        label: compactSourceLabel(revision.content),
         occurredAt: revision.createdAt,
         revisionId: revision.id,
       },
@@ -147,6 +181,7 @@ export class TerritoryWorldMemoryService {
 
   private readActivitySource(digestId: string): {
     description: string;
+    itemContent: TerritoryItemContent;
     name: string;
     snapshot: TerritorySourceSnapshot;
   } {
@@ -166,13 +201,19 @@ export class TerritoryWorldMemoryService {
         false,
       );
     }
-    return {
-      description: digest.summary,
+    const itemContent = territorySourceItemContent({
+      kind: "activity_digest",
       name: digest.title,
+      sourceText: digest.summary,
+    });
+    return {
+      description: compactVisualContext(digest.summary),
+      itemContent,
+      name: itemContent.name,
       snapshot: {
         id: digest.id,
         kind: "activity_digest",
-        label: `${digest.title}：${digest.summary}`,
+        label: digest.title,
         occurredAt: digest.periodEnd,
         revisionId: null,
       },

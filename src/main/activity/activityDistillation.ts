@@ -4,12 +4,10 @@ import type {
   ActivityEvent,
   ActivitySource,
 } from "../../shared/contracts/activity";
-import type { MemoryProposalInput } from "../../shared/contracts/memory";
 import type { Timestamp } from "../../shared/contracts/primitives";
 import type { IdGenerator } from "../../shared/pure/id";
 
 export const EPISODE_MERGE_MS = 8 * 60 * 1_000;
-const CANDIDATE_EVIDENCE_DAYS = 2;
 
 interface EpisodeDraft {
   readonly actor: ActivityEvent["actor"];
@@ -27,11 +25,6 @@ interface EpisodeDraft {
 export interface DistilledEpisode {
   readonly episode: ActivityEpisode;
   readonly eventIds: readonly string[];
-}
-
-export interface DigestDraft {
-  readonly digest: ActivityDigest;
-  readonly proposals: readonly MemoryProposalInput[];
 }
 
 function eventSource(event: ActivityEvent): ActivitySource {
@@ -296,41 +289,8 @@ export function createWeeklyDigest(
   periodStart: Timestamp,
   periodEnd: Timestamp,
   timeZone: string,
-): DigestDraft {
-  const groups = new Map<string, ActivityEpisode[]>();
-  for (const episode of episodes) {
-    if (
-      episode.actor !== "user" ||
-      (episode.sourceTypes.length === 1 &&
-        episode.sourceTypes[0] === "screenshot")
-    ) {
-      continue;
-    }
-    const label = episodeLabel(episode);
-    const values = groups.get(label) ?? [];
-    values.push(episode);
-    groups.set(label, values);
-  }
-  const proposals: MemoryProposalInput[] = [];
-  for (const [label, values] of groups) {
-    const evidenceDays = new Set(
-      values.map(({ startedAt }) => dateKey(startedAt, timeZone)),
-    ).size;
-    if (evidenceDays < CANDIDATE_EVIDENCE_DAYS) continue;
-    proposals.push({
-      confidence: 0.6,
-      content: `过去 ${evidenceDays} 个不同日期，用户累计使用 ${label} ${totalMinutes(values)} 分钟。`,
-      importance: 0.5,
-      novelty: 1,
-      reason: `Activity 跨日证据归纳：${label}`,
-      sourceIds: values.map(({ id }) => id),
-      sourceLabels: values.map(({ summary }) => summary),
-      sourceType: "activity",
-      type: "activity_digest",
-      ...(values[0] ? { validFrom: values[0].startedAt } : {}),
-    });
-  }
-  const digest: ActivityDigest = {
+): ActivityDigest {
+  return {
     candidateIds: [],
     createdAt: now,
     evidenceDays: new Set(
@@ -344,5 +304,4 @@ export function createWeeklyDigest(
     summary: digestSummary(episodes),
     title: `${dateKey(periodStart, timeZone)} 起一周趋势`,
   };
-  return { digest, proposals };
 }

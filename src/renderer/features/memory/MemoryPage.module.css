@@ -6,6 +6,12 @@
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--canvas);
 }
+.content {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
 .toolbar {
   display: flex;
   min-width: 0;
@@ -82,6 +88,7 @@
 }
 .workspace {
   display: grid;
+  flex: 1;
   min-width: 0;
   min-height: 0;
   grid-template-columns: minmax(250px, 34%) minmax(0, 1fr);
@@ -331,6 +338,35 @@
 }
 .editor > button {
   justify-self: end;
+}
+.claimNote {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.claimComparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.claimComparison > div {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface);
+}
+.claimComparison span {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+}
+.claimComparison strong {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.45;
 }
 .timeline article {
   position: relative;

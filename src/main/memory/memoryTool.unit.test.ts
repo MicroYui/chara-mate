@@ -29,7 +29,6 @@ describe("Memory formation Tool schema", () => {
       parseSchema(MemoryFormationInputSchema, {
         basis: "explicit_user_statement",
         content: "Lantern 计划六月发布。",
-        memoryId: "10000000-0000-4000-8000-000000000001",
         operation: "replace",
         type: "project",
       }),
@@ -41,7 +40,7 @@ describe("Memory formation Tool schema", () => {
         claimSlot: "preference.hobbies",
         content: "用户的爱好是徒步。",
         memoryId: "10000000-0000-4000-8000-000000000001",
-        operation: "create",
+        operation: "replace",
       }),
     ).toThrow(/rejected value/u);
   });

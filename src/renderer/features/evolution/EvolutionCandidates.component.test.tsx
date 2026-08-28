@@ -66,6 +66,16 @@ function makeApi() {
   const api: EvolutionApi = {
     acceptCandidate,
     archiveCandidate: vi.fn<EvolutionApi["archiveCandidate"]>(unchanged),
+    dismissReview: vi.fn<EvolutionApi["dismissReview"]>(() =>
+      Promise.resolve({
+        ok: false as const,
+        error: {
+          code: "EVOLUTION.NOT_USED",
+          message: "not used",
+          retryable: false,
+        },
+      }),
+    ),
     list: vi.fn<EvolutionApi["list"]>(() =>
       Promise.resolve({
         ok: true as const,
@@ -158,16 +168,66 @@ describe("EvolutionCandidates", () => {
     };
 
     render(<EvolutionCandidates api={failedApi} />);
-    expect(await screen.findByText("复盘失败")).toBeVisible();
+    expect(await screen.findByText("成长复盘未完成")).toBeVisible();
     expect(screen.getByText("Provider 暂时不可用。")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "重试复盘" }));
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() =>
       expect(retryReview).toHaveBeenCalledWith({
         runId: candidate.sourceRunIds[0],
       }),
     );
     await waitFor(() =>
-      expect(screen.queryByText("复盘失败")).not.toBeInTheDocument(),
+      expect(screen.queryByText("成长复盘未完成")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("dismisses a failed Review without deleting its source Run", async () => {
+    const { api } = makeApi();
+    const review = {
+      chatId: candidate.chatId,
+      completedAt: candidate.updatedAt,
+      createdAt: candidate.createdAt,
+      error: {
+        code: "EVOLUTION.REVIEW_FAILED",
+        message: "Provider 暂时不可用。",
+        retryable: true,
+      },
+      id: candidate.reviewId,
+      runId: candidate.sourceRunIds[0]!,
+      startedAt: candidate.createdAt,
+      status: "failed" as const,
+      triggers: ["explicit_teaching" as const],
+      updatedAt: candidate.updatedAt,
+    };
+    const { error: _error, ...reviewWithoutError } = review;
+    void _error;
+    const dismissReview = vi.fn<EvolutionApi["dismissReview"]>(() =>
+      Promise.resolve({
+        ok: true,
+        value: { ...reviewWithoutError, status: "skipped" as const },
+      }),
+    );
+    const failedApi: EvolutionApi = {
+      ...api,
+      dismissReview,
+      list: vi.fn(() =>
+        Promise.resolve({
+          ok: true as const,
+          value: { candidates: [], reviews: [review] },
+        }),
+      ),
+    };
+
+    render(<EvolutionCandidates api={failedApi} compact />);
+    expect(await screen.findByText("成长复盘未完成")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() =>
+      expect(dismissReview).toHaveBeenCalledWith({
+        runId: candidate.sourceRunIds[0],
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("成长复盘未完成")).not.toBeInTheDocument(),
     );
   });
 

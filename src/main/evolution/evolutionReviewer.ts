@@ -18,7 +18,11 @@ import {
   type ModelProvider,
   type ModelStructuredOutput,
 } from "../agent/modelProvider";
-import type { ProviderService } from "../providers/providerService";
+import { ProviderError } from "../providers/providerError";
+import type {
+  ChatModelRuntime,
+  ProviderService,
+} from "../providers/providerService";
 import { parseSkill } from "../extensions/skillService";
 
 const ReviewerReplayCaseSchema = Type.Object(
@@ -95,6 +99,13 @@ export interface EvolutionReplayRunner {
     run: Run,
     signal: AbortSignal,
   ): Promise<{ readonly failureReason?: string; readonly passed: boolean }>;
+}
+
+export class EvolutionReviewSkippedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EvolutionReviewSkippedError";
+  }
 }
 
 const REVIEW_INSTRUCTIONS = `You are CharaMate's asynchronous Experience Review candidate generator, not a second Agent runtime. You have no tools and cannot mutate anything.
@@ -186,14 +197,36 @@ export class ModelEvolutionReviewer
     private readonly ids: IdGenerator,
   ) {}
 
+  async #createModelRuntime(run: Run): Promise<ChatModelRuntime> {
+    if (run.source === "text") {
+      return this.providers.createChatModelRuntime(
+        run.provider.profileId,
+        run.provider.modelId,
+      );
+    }
+    const profileId = this.providers.getDefaultChatProfileId();
+    return this.providers.createChatModelRuntime(profileId);
+  }
+
   async review(
     evidence: EvolutionReviewEvidence,
     signal: AbortSignal,
   ): Promise<readonly GeneratedEvolutionCandidate[]> {
-    const runtime = await this.providers.createChatModelRuntime(
-      evidence.run.provider.profileId,
-      evidence.run.provider.modelId,
-    );
+    let runtime: ChatModelRuntime;
+    try {
+      runtime = await this.#createModelRuntime(evidence.run);
+    } catch (error) {
+      if (
+        evidence.run.source === "voice" &&
+        error instanceof ProviderError &&
+        error.code === "PROVIDER.INVALID_CONFIGURATION"
+      ) {
+        throw new EvolutionReviewSkippedError(
+          "Voice Review 已跳过：未配置可用的 Chat Provider 与模型。",
+        );
+      }
+      throw error;
+    }
     const output = parseSchema(
       ReviewerOutputSchema,
       extractJson(
@@ -314,10 +347,7 @@ export class ModelEvolutionReviewer
     run: Run,
     signal: AbortSignal,
   ): Promise<{ readonly failureReason?: string; readonly passed: boolean }> {
-    const runtime = await this.providers.createChatModelRuntime(
-      run.provider.profileId,
-      run.provider.modelId,
-    );
+    const runtime = await this.#createModelRuntime(run);
     const output = parseSchema(
       ReplayOutputSchema,
       extractJson(

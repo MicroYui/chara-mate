@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "15";
+export const CURRENT_SCHEMA_VERSION = "16";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -911,6 +911,7 @@ export const CURRENT_SCHEMA_SQL = `
     input_mode TEXT NOT NULL CHECK (
       input_mode IN ('hands_free', 'push_to_talk')
     ),
+    wake_enabled INTEGER NOT NULL DEFAULT 0 CHECK (wake_enabled IN (0, 1)),
     updated_at TEXT NOT NULL
   ) STRICT;
 

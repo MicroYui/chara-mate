@@ -151,6 +151,21 @@ export function registerEvolutionIpc(service: EvolutionService): () => void {
     }
   });
 
+  ipcMain.handle(EVOLUTION_CHANNELS.dismissReview, (_event, input) => {
+    try {
+      const request = parseSchema(EvolutionRunIdRequestSchema, input);
+      return parseSchema(EvolutionReviewMutationResponseSchema, {
+        ok: true,
+        value: service.dismissReview(request.runId),
+      });
+    } catch (error) {
+      return parseSchema(EvolutionReviewMutationResponseSchema, {
+        error: toEvolutionAppError(error),
+        ok: false,
+      });
+    }
+  });
+
   return () => {
     for (const channel of Object.values(EVOLUTION_CHANNELS)) {
       if (channel !== EVOLUTION_CHANNELS.changed) {

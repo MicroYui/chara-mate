@@ -219,18 +219,20 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - Phase 2 提供稳定 Agent、ContextCompiler 接口、Tool/Run evidence；
 - `P3-STRUCTURED-INPUT` 与 `P3-MULTIMODAL-INPUT` 只依赖 Phase 1 Attachment/Composer 和 Phase 2 Run/Provider/Tool 契约，不受 Memory Decision 阻塞，可与 Memory 研究并行；
 - `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH` 依研究依赖完成；`MEMORY-FORMATION` 在 Agent Runtime 与上述 Memory 契约稳定后完成；
-- `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 在 Memory proposal/source 契约稳定后完成。
+- `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 在 Activity Digest/source 契约稳定后完成；后续产品修订把原来的跨日累计时长 proposal 收口为 Activity 独立检索与跨自然周稳定候选。
 
 ### 工作包
 
 - `P3-STRUCTURED-INPUT`：实现直接、非 deferred 的宿主交互能力 `request_user_input`、持久化 `input_request` RunItem、选项/自由文本回答卡与同一 Run continuation；刷新或重启后仍可回答，回答只消费一次，不经过 Tool Search，也不伪装成 Approval。
 - `P3-MULTIMODAL-INPUT`：建立一条 Main-owned 图片解码与 Provider 多模态输入路径；用户显式附加的图片直接进入模型输入，Agent 查看已知本地图片、截图或图片 artifact 时使用仅在模型与环境支持时直载的 `image.inspect`。两种入口复用媒体校验与尺寸处理；不按文件名假装看过图片，也不增加未验证的 OCR fallback。
 - `P3-MEMORY-SEMANTICS`：Memory/Revision/Source、validity、supersede、pin、archive/delete 和 Profile 投影。
-- `P3-MEMORY-RUNTIME`：唯一 Retrieval Pipeline、唯一 Context Recipe、获胜索引生命周期和 `memory.search`。
-- `P3-MEMORY-FORMATION`：Chat/Agent 始终加载的唯一 `memory.record`，明确陈述直接形成/修订，推断与执行观察候选化；profile/preference 使用闭集稳定 claim slot，更新目标必须来自当前 Run allowlist 并匹配 type/slot，缺失目标、错 ID、冲突和旧数据首次绑定转候选或拒绝；Main 绑定来源并保证重复/恢复幂等。
+- `P3-MEMORY-RUNTIME`：唯一 Retrieval Pipeline、唯一 Context Recipe、获胜索引生命周期和 `memory.search`；模型只消费无内部 UUID、无逐条来源展开的紧凑 evidence，完整 provenance 留在 Memory 详情。
+- `MAINT-MEMORY-PROFILE-RECALL`（已完成）：在不改变 R0 的前提下，把已绑定 profile/preference 作为有界稳定画像注入 Text/Voice Context；证据不足时允许当前模型一次结构化 `memory.search`；旧无字段记录由 Memory 详情显式绑定或合并，手动新建画像/偏好必须选择字段。
+- `P3-MEMORY-FORMATION`：Chat/Agent 始终加载的唯一 `memory.record`，明确陈述直接形成/修订，推断与执行观察候选化；profile/preference 使用闭集稳定 claim slot，宿主从当前 Run 私有 allowlist 解析字段 owner，模型不接触 Memory/Revision ID；缺失目标、内部错 ID、冲突和旧数据首次绑定转候选或拒绝；Main 绑定来源并保证重复/恢复幂等。
 - `P3-MEMORY-UI`：搜索、筛选、来源、Revision、画像、候选与领地入口；Graph 未晋级时没有入口。
 - `P3-ACTIVITY-CAPTURE`：Active App、Managed Browser、Screenshot/OCR metadata、Idle 和 Agent Run 区分；macOS Active App 使用 `NSWorkspace`/Accessibility 事件通知，15 秒只采样进程内 idle 状态，不周期性启动 AppleScript。Activity 截图以逻辑像素获取一次 PNG并异步落盘，不阻塞 metadata event 队列。
-- `P3-ACTIVITY-DISTILL`：确定性 Episode 边界、获胜 Digest/候选流程、evidence 与冲突处理。
+- `P3-ACTIVITY-DISTILL`：确定性 Episode 边界与 Daily/Weekly Digest、evidence 和保留生命周期；不把跨日累计时长与全部 Episode 来源直接写成长期 Memory 候选。
+- `MAINT-ACTIVITY-AGENT-RECALL`：增加 Activity-owned `activity.search` 紧凑事实检索；同一标签跨至少两个已完成自然周时，只用最近两个 Weekly Digest 形成可确认、可更新且不持续膨胀的 `activity_digest`，不推断偏好或用途。
 - `P3-ACTIVITY-RETENTION`：获胜保留策略、文件/缩略图/OCR/索引/行一致清理、orphan sweep。
 - `P3-BENCHMARK`：LongMemEval、LoCoMo 与冻结中文产品集的 Retrieval、Answer、Storage 和 Activity 记录。
 
@@ -240,8 +242,10 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - 用户图片附件及 Agent 已知的本地图片/artifact 都能让支持视觉输入的目标 Provider 读取真实像素内容；不支持的模型明确说明能力不可用，路径文字或缩略图不算语义读取成功；
 - Memory 编辑产生 Revision，改口后旧事实不进入默认 Context，所有投影可追溯；
 - Chat/Agent 的明确耐久陈述无需手动新建即可进入后续 Run Context；跨 Chat 改口在证据可辨识时沿同一 Memory ID 产生 Revision，错 ID、未命中、同字段冲突与同类字段歧义不制造第二条 active 事实；推断和执行观察只进入带原因/来源的待确认候选，重复调用与重启不重复写入；
+- Text 与 Voice 都能在自然同义问法未命中 R0 时读取已绑定稳定画像；证据不足时只通过同一 R0 完成一次结构化再检索；旧无字段画像/偏好不被静默猜测绑定，用户确认合并后只有一个 active 字段 owner；
 - 发布物只加载一个 Retrieval/Context/Graph 结果，失败候选模型、依赖、表和设置不存在；
 - Activity 被压缩成少量 Episode/Digest，原始事件不进入普通长期检索；
+- Text/Voice Agent 能按需检索不含内部 ID、窗口原文或逐条来源的 Activity 聚合；同一稳定行为候选拒绝后不重复、接受后不堆叠，旧累计时长 Memory 只经用户确认的替换 Revision 收口；
 - 清理引用完整率达到 Decision 门槛，长期 Memory/Territory evidence 不随原始资产删除；
 - 相关 contract、DB/integration、UI、benchmark regression、full offline、build 和受影响 E2E 通过。
 
@@ -268,6 +272,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P4-VOICE-SETTINGS`：音色试听、Persona 默认音色和 Realtime instructions。
 - `P4-VOICE-CONNECTION-LIFECYCLE`：Voice Dock 暂停/恢复与结束分离；健康连接按稳定身份复用并刷新 instructions/tools，不兼容或断线时冷重连；麦克风与临时凭据并行初始化，开发看板记录五段建连耗时。
 - `P4-VOICE-ENTRY-HANGUP`：一个活动 Session 固定归属一个 Voice Chat；桌宠共享暂停/恢复控制，主窗口浏览或隐藏不迁移连接；Realtime Agent 以 Session 专属 `voice.end` Tool 在简短告别音频排空后主动挂断。
+- `P4-VOICE-WAKE`：默认关闭的本地固定短语 `Hi Mika` 由 Character Renderer 的 AudioWorklet/Web Worker 匹配；命中前不建立 Provider Session，命中后复用桌宠 `Agent + 完全访问` quick-start 与唯一麦克风租约，不打开主窗口、不复制 Voice Runtime；Realtime 真正就绪后由 Mika 通过 out-of-band response 主动给出连接欢迎语。
 
 ### 验收
 
@@ -283,6 +288,9 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - 冷启动并行申请麦克风和临时凭据，开发看板分别报告 credential、microphone、ICE、SDP 与 DataChannel 的真实观测耗时；
 - 选择 Chat B、关闭主窗口和桌宠声波点击都不改变 Chat A 的 Voice 归属：活动时桌宠点击暂停、暂停时恢复原连接；显式 End 后下一次桌宠入口创建新 Voice Chat；
 - `voice.end` 仅在 Voice Session 中可见，无审批且只接受当前 Voice Run；模型明确告别后继续一次简短 response，WebRTC 输出缓冲排空才关闭，普通文字 Agent 不发现该 Tool；
+- `Hi Mika` 唤醒默认关闭且只在本机处理待机音频；Settings 与 Tray 共用一个开关，活动 Voice、锁屏和休眠停止 KWS，恢复后按持久设置重新布防；ready cue 区分本地命中，Realtime ready 后立即进入回应并由 Mika 的极短欢迎语确认连接；欢迎语不进入默认 conversation 且不创建 Run，10 秒无真实用户输入窗口只从欢迎语完整停止后开始；
+- 桌宠上的 Voice 连接失败提示可显式关闭；关闭只清 Renderer 展示态，不改变真实 Session、持久错误记录或 `wake_enabled`，下一次尝试仍展示新的真实结果；
+- production build、Electron E2E 与 packaged smoke 能加载同一固定哈希的 Worker/WASM/INT8 模型和许可证；仓库无候选模型开关、云端 wake fallback、同一口气 pre-roll 或第二套 Voice/Tool/Approval 状态机；
 - mock 测试只证明状态机，不代替 Live 体验结论；离线与 Live 结果分开报告。
 
 ## Phase 5 — Automations、主动聊天与可选成长能力
@@ -303,6 +311,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P5-COMPANIONSHIP-MVP`：在 Chats 与 Agent 内部实现 Journey/Together Session 两级时间尺度、唯一活跃共处、系统 Home Chat 路由、稀疏节点和续接记录；Activity 只发布当前活动事实，陪伴 Agent 语义判断保持沉默、发起全新话题或回到既有 Journey，并经统一 Run 先写真实助手消息再投影气泡。全新话题先进入不出现在 Chats 的 provisional Chat，20 秒内首个文字/语音回复后原地转正，超时、关闭或崩溃恢复时级联清理；已有 Chat 的续接不自动删除。用户可不打开主窗口，在气泡内连续短文字往返；气泡始终绑定发起时的精确 Chat，复用普通 Chat-mode Run，并只把附件、完整历史、富内容、结构化输入、审批和复杂执行交给转正后的完整 Chat。用户接住对话且 Agent 实际参与后才在内部建立共处，长期性明确且用户确认自然承诺后才创建 Journey。正常界面只保留普通 Chat 列表和一条不带状态动作的当前在场提示；开始、切换、暂停、续接、完成与范围纠正均由 Agent 从日常表达语义判断，不向用户暴露 Journey/Session/Home Chat 或状态名。一次明确跟进复用 Automation，显著记忆复用 Memory；不新增显式创建按钮、详情抽屉、一级页面、第三种 Composer 模式、任务看板、气泡专属历史或第二套 Runtime。
 - `P5-MULTI-AGENT`（已完成）：Agent 自主调用 `collaboration.dispatch`，宿主校验两个 child 的只读性、当前 Tool scope、互斥资源和可变会话禁用，再并发执行确切读取与独立分析；父 Run 等待并合并，统一 Subtask Item 承载状态/证据/Token，取消与恢复复用既有边界；没有 Composer/Settings 开关、候选 Arm 或额外表/依赖。
 - `P5-EVOLUTION`（已完成）：Run 完成事件只在明确纠正、明确教学、客观验证成功或重复流程时持久化异步 Review；单次无 Tool 结构化调用生成四类候选，全部经用户确认，Skill 再经 replay 后激活；patch 使用内部目标 revision/hash 防止覆盖后续手动编辑，Settings/Agent Skill 变更会同步候选状态；候选生效后只由普通 Skill 管理器负责 pin、归档和恢复，崩溃恢复和 typed IPC/UI 已进入单一生产路径。
+- `MAINT-EVOLUTION-VOICE-REVIEW`（已完成）：修正 Voice Run 错把 Realtime deployment 用作 Structured Outputs Reviewer 的协议错误；无兼容 Chat Model 时 skipped，失败 Review 可关闭，Memory 候选进入有界区域，并以真实桌面几何回归保护搜索栏与列表/详情布局。
 - `P5-SKILL-DELETE`（已完成）：Settings 对当前或已归档用户 Skill 提供二次确认的永久删除；当前 Skill 在删除事务内部先归档，Extension 再删除目录和全部内部 revision，Evolution 只保留来源证据并解除目标绑定，普通 UI 不提供第二条恢复路径，workspace Skill 拒绝删除；不新增表、后台清理任务或候选状态。
 
 ### 验收
@@ -355,6 +364,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P6-TERRITORY-BUILD-UI` 只使用冻结 fixture 开发 React 工作区，覆盖工具状态、Undo/Redo、检查器、组合、删除恢复、AI Preview diff、键盘与 reduced motion 的 component test；真实 Main 接入和跨重启旅程由 Territory integration owner 完成。
 - `P6-TERRITORY-AI-CREATION` 的确定性测试注入 Image/Compiler adapter，覆盖锁定内容、base Revision 冲突、取消、失败、重试、Asset Pack 原子安装与回滚；真实 GPT Image 只进入显式 live/benchmark。`TERRITORY-SCENE-GENERATION` 的失败 Arms、prompt/processor、临时依赖、素材和设置在胜者重写前全部删除。
 - `P6-TERRITORY-MEMORY-LIVING` 覆盖 Memory/Activity 来源幂等、上游删除后快照保留、Definition Revision、桌宠能力与环境投影；用户可见 E2E 从 Memory 形成物件、放入组合、编辑版本、删除/恢复并重启，确认不会反写或删除 Memory。
+- `MAINT-TERRITORY-NARRATIVE`：把名称/诗意故事与视觉 prompt 分离；补全随包和仍为系统首版描述的既有 Definition，并保证未来 Agent/Tool/UI 生成都得到 1–2 句可展示、忠于来源且无内部元数据的描述。
 - 整个 Phase 6 的非目标是第一人称/3D 体素、物理引擎、挖矿/锻造/战斗、经济/收益、关系等级、无限开放世界、任意生成脚本和用户可调渲染/生成参数。
 
 ### 验收

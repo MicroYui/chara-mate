@@ -113,7 +113,15 @@ Hybrid 多答对 1 个中文 mixed 样本；两者都未解决同一个 LoCoMo c
 
 生产路径冻结为：先按删除/状态/有效时间/`asOf` 选择合法 Revision，再用 NFKC + 中英文 word/Han bigram FTS5 BM25 召回；相同 relevance 才依次使用 pin、importance、confidence、last access、updated time 和 ID。Revision 写入与 FTS 同事务更新，不做启动时全量重建。Context 与 `memory.search` 固定取 top8，Memory 页面复用同一 Pipeline 并可继续展示其余结果。
 
+2026-08-27 的产品输出修订不改变检索、排序或 top8：Context 与 `memory.search` 的模型投影不再展开逐条来源，也不返回 Memory/Revision/来源 ID；每条只保留事实文本、类型、稳定字段、有效时间、rank，以及来源数量、类型和时间跨度。完整 provenance 继续由 Memory 详情读取真源。该修订消除“单条短 Memory 因数百条来源而生成数万字符 Tool Result”的结构性放大；它不是第二条检索或字符截断 fallback。
+
 Reranker、8B、ANN 和 `MEMORY-STORAGE` vector/compute 阶段均不触发。生产树没有 dense/hybrid 分支、向量 schema、模型依赖、fallback、设置或 worker。候选 runner、venv、模型缓存、临时 FTS 数据库和 Storage 候选库已移到 macOS 废纸篓 `chara-mate-phase3-candidates-20260809`，可恢复；仓库外持久证据目录保留全部 raw JSON、无效运行、分片、manifest、日志和来源副本。
+
+## 2026-08-27 调用边界澄清
+
+长期偏好召回缺陷的修复不改变本 Decision 的获胜算法：FTS 文档、NFKC/分词/Han bigram、BM25、tie-break、top8 和事务索引均保持不变。`claimSlot` 只是与既有 type/status/asOf 同类的结构化过滤条件；模型在证据不足时提交的 query 改写仍由同一个 R0 执行，不构成 dense、hybrid、reranker 或第二检索 lane。
+
+已绑定 profile/preference 的稳定画像投影属于 Context 装配，不参与 R0 排名，也不把 project/event 等全库注入。它解决的是稳定字段不应依赖当前问题词面命中的产品正确性边界；R0 继续负责当前请求相关的开放型 Memory evidence。生产不增加停用词表或硬编码同义词表来冒充语义召回。
 
 ## 限制
 

@@ -77,9 +77,13 @@ describe("Phase 4 Voice boundary contracts", () => {
       ).toMatchObject({ chatId: FIXTURE_IDS.chat });
       expect(
         parse(VoiceQuickStartRequestSchema, {
+          origin: "voice_wake",
           requestedAt: FIXTURE_TIMESTAMPS.updated,
         }),
-      ).toEqual({ requestedAt: FIXTURE_TIMESTAMPS.updated });
+      ).toEqual({
+        origin: "voice_wake",
+        requestedAt: FIXTURE_TIMESTAMPS.updated,
+      });
       expect(
         parse(VoiceDriverEventRequestSchema, {
           event: {
@@ -95,6 +99,15 @@ describe("Phase 4 Voice boundary contracts", () => {
           sessionId,
         }),
       ).toMatchObject({ event: { callId: "call-1", type: "tool.call" } });
+      expect(
+        parse(VoiceClientCommandSchema, {
+          instructions: "用一句简短欢迎语回应。",
+          prompt: "Hi Mika",
+          requestId: FIXTURE_IDS.request,
+          sessionId,
+          type: "wake.greeting.create",
+        }),
+      ).toMatchObject({ type: "wake.greeting.create" });
       expect(
         parse(VoiceClientCommandSchema, {
           generation: 1,
@@ -117,11 +130,12 @@ describe("Phase 4 Voice boundary contracts", () => {
       ).toMatchObject({ callId: "call-1", type: "tool.result" });
       expect(
         parse(VoicePausedRequestSchema, {
+          origin: "voice_wake",
           paused: true,
           requestedAt: FIXTURE_TIMESTAMPS.updated,
           sessionId,
         }),
-      ).toMatchObject({ paused: true, sessionId });
+      ).toMatchObject({ origin: "voice_wake", paused: true, sessionId });
       expect(
         parse(VoiceClientCommandSchema, {
           instructions: "恢复后的指令。",
@@ -138,6 +152,35 @@ describe("Phase 4 Voice boundary contracts", () => {
           type: "session.refresh",
         }),
       ).toMatchObject({ type: "session.refresh" });
+      expect(
+        parse(VoiceDriverEventRequestSchema, {
+          event: {
+            responseId: "response-wake-greeting",
+            type: "wake.greeting.audio.started",
+          },
+          occurredAt: FIXTURE_TIMESTAMPS.updated,
+          sessionId,
+        }),
+      ).toMatchObject({
+        event: { type: "wake.greeting.audio.started" },
+      });
+      expect(
+        parse(VoiceDriverEventRequestSchema, {
+          event: {
+            hasAudio: true,
+            responseId: "response-wake-greeting",
+            status: "completed",
+            type: "wake.greeting.done",
+            usage: {
+              cachedInputTokens: 0,
+              inputTokens: 8,
+              outputTokens: 4,
+            },
+          },
+          occurredAt: FIXTURE_TIMESTAMPS.updated,
+          sessionId,
+        }),
+      ).toMatchObject({ event: { type: "wake.greeting.done" } });
       expect(
         parse(VoiceDriverEventRequestSchema, {
           event: {

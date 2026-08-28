@@ -18,6 +18,7 @@ import type {
   MemoryProposalInputSchema,
   MemoryPurgeResponseSchema,
   MemoryRecordSchema,
+  MemoryResolveClaimRequestSchema,
   MemoryRevisionSchema,
   MemoryReviseRequestSchema,
   MemorySetPinnedRequestSchema,
@@ -39,6 +40,7 @@ export const MEMORY_CHANNELS = {
   list: "memory.list",
   purge: "memory.purge",
   rejectCandidate: "memory.candidate.reject",
+  resolveClaim: "memory.claim.resolve",
   restore: "memory.restore",
   revise: "memory.revise",
   setPinned: "memory.setPinned",
@@ -62,6 +64,9 @@ export type MemorySnapshot = Static<typeof MemorySnapshotSchema>;
 export type MemoryListRequest = Static<typeof MemoryListRequestSchema>;
 export type MemoryIdRequest = Static<typeof MemoryIdRequestSchema>;
 export type MemoryCreateRequest = Static<typeof MemoryCreateRequestSchema>;
+export type MemoryResolveClaimRequest = Static<
+  typeof MemoryResolveClaimRequestSchema
+>;
 export type MemoryReviseRequest = Static<typeof MemoryReviseRequestSchema>;
 export type MemorySetPinnedRequest = Static<
   typeof MemorySetPinnedRequestSchema
@@ -93,6 +98,9 @@ export interface MemoryApi {
   rejectCandidate(
     request: MemoryCandidateIdRequest,
   ): Promise<MemoryCandidateMutationResponse>;
+  resolveClaim(
+    request: MemoryResolveClaimRequest,
+  ): Promise<MemoryMutationResponse>;
   restore(request: MemoryIdRequest): Promise<MemoryMutationResponse>;
   revise(request: MemoryReviseRequest): Promise<MemoryMutationResponse>;
   setPinned(request: MemorySetPinnedRequest): Promise<MemoryMutationResponse>;

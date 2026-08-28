@@ -10,6 +10,10 @@ import type {
   VoiceSettingsConfig,
 } from "../../../shared/contracts/settings";
 import type { VoiceName } from "../../../shared/contracts/voice";
+import type {
+  VoiceWakeSettingsApi,
+  VoiceWakeSnapshot,
+} from "../../../shared/contracts/voiceWake";
 import type { VoiceStore } from "../voice/voiceStore";
 import styles from "./CapabilitySettingsPanel.module.css";
 
@@ -43,6 +47,7 @@ interface VoiceSettingsPanelProps {
   readonly providerApi?: ProviderApi;
   readonly settingsApi?: SettingsApi;
   readonly voiceStore: VoiceStore;
+  readonly voiceWakeApi?: VoiceWakeSettingsApi;
 }
 
 function realtimeProfiles(profiles: readonly ProviderProfile[]) {
@@ -58,6 +63,7 @@ export function VoiceSettingsPanel({
   providerApi = window.charaMate.provider,
   settingsApi = window.charaMate.settings,
   voiceStore,
+  voiceWakeApi = window.charaMate.voiceWake,
 }: VoiceSettingsPanelProps) {
   const [settings, setSettings] = useState<VoiceSettingsConfig>(initial);
   const [profiles, setProfiles] = useState<readonly ProviderProfile[]>([]);
@@ -66,6 +72,8 @@ export function VoiceSettingsPanel({
   const [previewing, setPreviewing] = useState(false);
   const [feedback, setFeedback] = useState<string>();
   const [error, setError] = useState<string>();
+  const [wake, setWake] = useState<VoiceWakeSnapshot>();
+  const [wakeBusy, setWakeBusy] = useState(false);
   const hasSelectedProfile = profiles.some(
     (profile) => profile.id === settings.providerProfileId,
   );
@@ -90,6 +98,22 @@ export function VoiceSettingsPanel({
       active = false;
     };
   }, [providerApi, settingsApi]);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = voiceWakeApi.subscribe((snapshot) => {
+      if (active) setWake(snapshot);
+    });
+    void voiceWakeApi.getSnapshot().then((response) => {
+      if (!active) return;
+      if (response.ok) setWake(response.value);
+      else setError(response.error.message);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [voiceWakeApi]);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -134,6 +158,31 @@ export function VoiceSettingsPanel({
     }
   };
 
+  const toggleWake = async () => {
+    if (!wake || wakeBusy) return;
+    setWakeBusy(true);
+    setError(undefined);
+    setFeedback(undefined);
+    try {
+      const response = await voiceWakeApi.setEnabled({
+        enabled: !wake.enabled,
+      });
+      if (!response.ok) setError(response.error.message);
+      else {
+        setWake(response.value);
+        setFeedback(
+          response.value.enabled
+            ? "已开启 Hi Mika 语音唤醒。"
+            : "已关闭语音唤醒。",
+        );
+      }
+    } catch {
+      setError("无法更新语音唤醒设置。");
+    } finally {
+      setWakeBusy(false);
+    }
+  };
+
   return (
     <section className={styles["panel"]}>
       <header className={styles["header"]}>
@@ -157,6 +206,23 @@ export function VoiceSettingsPanel({
             {microphone ? permissionLabel[microphone] : "读取中"}
           </span>
         </div>
+        <button
+          aria-checked={wake?.enabled ?? false}
+          className={styles["wakeToggle"]}
+          disabled={!wake || wakeBusy}
+          role="switch"
+          type="button"
+          onClick={() => void toggleWake()}
+        >
+          <span>
+            <strong>说“Hi Mika”自动唤醒</strong>
+            <small>
+              待机识别仅在本机进行；命中后复用桌宠的 Agent + 完全访问语音模式，
+              无需打开主窗口。
+            </small>
+          </span>
+          <span aria-hidden="true" className={styles["wakeSwitch"]} />
+        </button>
       </div>
       <form className={styles["form"]} onSubmit={(event) => void save(event)}>
         <label>

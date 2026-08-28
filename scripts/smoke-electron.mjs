@@ -174,6 +174,7 @@ if (
   result.rendererReady !== true ||
   result.singleInstance !== true ||
   result.trayReady !== true ||
+  result.wakeAssetsReady !== true ||
   result.backgroundTest !== true ||
   result.visibleWindowCount !== 0 ||
   (process.platform === "darwin" && result.dockVisible !== false) ||

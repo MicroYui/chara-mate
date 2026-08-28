@@ -43,6 +43,7 @@ import {
 import { parseSchema } from "../../shared/schemas/validation";
 import { serializeForPersistence } from "../db/persistenceBoundary";
 import { TerritoryError } from "./territoryError";
+import { legacyTerritoryNarrativeUpgrade } from "./territoryWorldNarrative";
 import type { StoredTerritoryWorldAsset } from "./territoryWorldAssetStore";
 
 interface WorldRow {
@@ -287,6 +288,82 @@ export class TerritoryWorldRepository {
       this.assertCurrentProjectionValid();
     });
     initialize();
+  }
+
+  ensurePoeticDescriptions(now: Timestamp): boolean {
+    const snapshot = this.getSnapshot();
+    const state = this.getCurrentState();
+    const purged = this.listPurgedIds();
+    const definitions = this.listDefinitions();
+    const byKey = new Map(
+      definitions.map((definition) => [definitionKey(definition), definition]),
+    );
+    const latestRevision = new Map<string, number>();
+    for (const definition of definitions) {
+      latestRevision.set(
+        definition.id,
+        Math.max(latestRevision.get(definition.id) ?? 0, definition.revision),
+      );
+    }
+    const instancesByDefinition = new Map<string, TerritoryInstance[]>();
+    for (const instance of state.instances) {
+      if (purged.has(instance.id)) continue;
+      const key = definitionKey(instance.definition);
+      const instances = instancesByDefinition.get(key) ?? [];
+      instances.push(instance);
+      instancesByDefinition.set(key, instances);
+    }
+
+    const mutations: TerritoryWorldChangeSet["mutations"][number][] = [];
+    for (const [key, instances] of instancesByDefinition) {
+      const definition = byKey.get(key);
+      if (!definition) continue;
+      const content = legacyTerritoryNarrativeUpgrade(definition, instances);
+      if (!content) continue;
+      const nextDefinition: TerritoryDefinition = {
+        ...definition,
+        createdAt: now,
+        description: content.description,
+        name: content.name,
+        revision:
+          (latestRevision.get(definition.id) ?? definition.revision) + 1,
+        tags: definition.id.startsWith("generated.")
+          ? [...new Set([...definition.tags, "narrative-v1"])]
+          : definition.tags,
+      };
+      latestRevision.set(definition.id, nextDefinition.revision);
+      mutations.push({
+        changeId: this.ids.generate(),
+        definition: nextDefinition,
+        kind: "definition.put",
+      });
+      for (const instance of instances) {
+        mutations.push({
+          changeId: this.ids.generate(),
+          instance: {
+            ...instance,
+            definition: {
+              id: nextDefinition.id,
+              revision: nextDefinition.revision,
+            },
+            updatedAt: now,
+          },
+          kind: "instance.put",
+        });
+      }
+    }
+    if (mutations.length === 0) return false;
+    this.commitChangeSet({
+      changeSet: {
+        baseRevisionId: snapshot.world.currentRevision.id,
+        id: this.ids.generate(),
+        label: "补全领地物件故事",
+        mutations,
+      },
+      now,
+      reason: "direct",
+    });
+    return true;
   }
 
   getSnapshot(): TerritoryWorldSnapshot {

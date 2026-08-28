@@ -235,6 +235,230 @@ describe("WebRTC Voice driver", () => {
     driver.close();
   });
 
+  it("plays a wake greeting as an out-of-band response without reporting a normal turn", async () => {
+    const fixture = api();
+    const driver = new WebRtcVoiceDriver(fixture.value, connection, vi.fn());
+    await driver.connect();
+    const channel = FakePeerConnection.latest?.channel;
+    if (!channel) throw new Error("Missing fake data channel");
+
+    driver.handle({
+      instructions: "用一句简短欢迎语确认已经可以聊天。",
+      prompt: "Hi Mika",
+      requestId: "10000000-0000-4000-8000-000000000010",
+      sessionId: connection.sessionId,
+      type: "wake.greeting.create",
+    });
+    expect(sent(channel).at(-1)).toEqual({
+      event_id: "10000000-0000-4000-8000-000000000010",
+      response: {
+        conversation: "none",
+        input: [
+          {
+            content: [{ text: "Hi Mika", type: "input_text" }],
+            role: "user",
+            type: "message",
+          },
+        ],
+        instructions: "用一句简短欢迎语确认已经可以聊天。",
+        metadata: {
+          charamate_purpose: "wake_greeting",
+          charamate_request_id: "10000000-0000-4000-8000-000000000010",
+        },
+        output_modalities: ["audio"],
+        tools: [],
+      },
+      type: "response.create",
+    });
+
+    channel.emit({
+      response: {
+        id: "response-wake-greeting",
+        metadata: { charamate_purpose: "wake_greeting" },
+      },
+      type: "response.created",
+    });
+    channel.emit({
+      item: { id: "wake-greeting-item", type: "message" },
+      response_id: "response-wake-greeting",
+      type: "response.output_item.added",
+    });
+    channel.emit({
+      response_id: "response-wake-greeting",
+      type: "output_audio_buffer.started",
+    });
+    await vi.waitFor(() =>
+      expect(
+        fixture.report.mock.calls
+          .map(([request]) => request.event)
+          .some(({ type }) => type === "wake.greeting.audio.started"),
+      ).toBe(true),
+    );
+    channel.emit({
+      response: {
+        id: "response-wake-greeting",
+        status: "completed",
+        usage: {
+          input_token_details: { cached_tokens: 2 },
+          input_tokens: 12,
+          output_tokens: 5,
+        },
+      },
+      type: "response.done",
+    });
+    channel.emit({
+      response_id: "response-wake-greeting",
+      type: "output_audio_buffer.stopped",
+    });
+
+    await vi.waitFor(() => {
+      const events = fixture.report.mock.calls.map(
+        ([request]) => request.event,
+      );
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            responseId: "response-wake-greeting",
+            type: "wake.greeting.audio.started",
+          }),
+          expect.objectContaining({
+            responseId: "response-wake-greeting",
+            type: "wake.greeting.audio.stopped",
+          }),
+          expect.objectContaining({
+            hasAudio: true,
+            status: "completed",
+            type: "wake.greeting.done",
+            usage: {
+              cachedInputTokens: 2,
+              inputTokens: 12,
+              outputTokens: 5,
+            },
+          }),
+        ]),
+      );
+      expect(events.some(({ type }) => type === "response.started")).toBe(
+        false,
+      );
+      expect(
+        events.some(({ type }) => type.startsWith("transcript.assistant")),
+      ).toBe(false);
+    });
+    driver.close();
+  });
+
+  it("cancels the wake greeting when the user starts speaking", async () => {
+    const fixture = api();
+    const driver = new WebRtcVoiceDriver(fixture.value, connection, vi.fn());
+    await driver.connect();
+    const channel = FakePeerConnection.latest?.channel;
+    if (!channel) throw new Error("Missing fake data channel");
+
+    driver.handle({
+      instructions: "简短欢迎。",
+      prompt: "Hi Mika",
+      requestId: "10000000-0000-4000-8000-000000000011",
+      sessionId: connection.sessionId,
+      type: "wake.greeting.create",
+    });
+    channel.emit({
+      response: {
+        id: "response-wake-interrupted",
+        metadata: { charamate_purpose: "wake_greeting" },
+      },
+      type: "response.created",
+    });
+    channel.emit({
+      item: { id: "wake-interrupted-item", type: "message" },
+      response_id: "response-wake-interrupted",
+      type: "response.output_item.added",
+    });
+    channel.emit({
+      response_id: "response-wake-interrupted",
+      type: "output_audio_buffer.started",
+    });
+    await vi.waitFor(() =>
+      expect(
+        fixture.report.mock.calls
+          .map(([request]) => request.event)
+          .some(({ type }) => type === "wake.greeting.audio.started"),
+      ).toBe(true),
+    );
+
+    channel.emit({
+      item_id: "user-after-wake",
+      type: "input_audio_buffer.speech_started",
+    });
+
+    expect(sent(channel).slice(-2)).toEqual([
+      {
+        response_id: "response-wake-interrupted",
+        type: "response.cancel",
+      },
+      { type: "output_audio_buffer.clear" },
+    ]);
+    await vi.waitFor(() => {
+      const events = fixture.report.mock.calls.map(
+        ([request]) => request.event,
+      );
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "wake.greeting.audio.stopped" }),
+          expect.objectContaining({
+            itemId: "user-after-wake",
+            type: "speech.started",
+          }),
+        ]),
+      );
+      const speech = events.find(({ type }) => type === "speech.started");
+      expect(speech).not.toHaveProperty("assistantItemId");
+    });
+    driver.close();
+  });
+
+  it("rejects a late wake greeting response when speech begins before response.created", async () => {
+    const fixture = api();
+    const driver = new WebRtcVoiceDriver(fixture.value, connection, vi.fn());
+    await driver.connect();
+    const channel = FakePeerConnection.latest?.channel;
+    if (!channel) throw new Error("Missing fake data channel");
+
+    driver.handle({
+      instructions: "简短欢迎。",
+      prompt: "Hi Mika",
+      requestId: "10000000-0000-4000-8000-000000000012",
+      sessionId: connection.sessionId,
+      type: "wake.greeting.create",
+    });
+    channel.emit({
+      item_id: "user-before-wake-response",
+      type: "input_audio_buffer.speech_started",
+    });
+    channel.emit({
+      response: {
+        id: "late-wake-greeting",
+        metadata: { charamate_purpose: "wake_greeting" },
+      },
+      type: "response.created",
+    });
+
+    expect(sent(channel).slice(-2)).toEqual([
+      { response_id: "late-wake-greeting", type: "response.cancel" },
+      { type: "output_audio_buffer.clear" },
+    ]);
+    channel.emit({
+      response_id: "late-wake-greeting",
+      type: "output_audio_buffer.started",
+    });
+    await Promise.resolve();
+    expect(
+      fixture.report.mock.calls
+        .map(([request]) => request.event)
+        .some(({ type }) => type === "wake.greeting.audio.started"),
+    ).toBe(false);
+    driver.close();
+  });
+
   it("keeps the data channel open while refreshing a paused session", async () => {
     const fixture = api();
     const driver = new WebRtcVoiceDriver(fixture.value, connection, vi.fn());

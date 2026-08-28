@@ -185,7 +185,7 @@ describe("Activity persistence and distillation", () => {
     database.close();
   });
 
-  it("distills transition events into Episodes, daily Digests and one cross-date candidate", () => {
+  it("keeps one completed week in Activity without proposing long-term Memory", () => {
     const { database, memory, service } = harness();
     service.recordEvent(
       {
@@ -240,14 +240,8 @@ describe("Activity persistence and distillation", () => {
       "user",
     ]);
     expect(snapshot.digests.some(({ kind }) => kind === "daily")).toBe(true);
-    const candidates = memory.list({}).candidates;
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0]).toMatchObject({
-      sourceType: "activity",
-      type: "activity_digest",
-    });
-    expect(candidates[0]?.content).toContain("Visual Studio Code");
-    expect(candidates[0]?.content).not.toContain("Terminal");
+    expect(snapshot.digests.some(({ kind }) => kind === "weekly")).toBe(true);
+    expect(memory.list({}).candidates).toEqual([]);
     expect(
       database
         .prepare(
@@ -255,6 +249,191 @@ describe("Activity persistence and distillation", () => {
         )
         .get(),
     ).toEqual({ status: "completed" });
+    database.close();
+  });
+
+  it("searches compact Activity observations and proposes a two-Weekly-Digest stable pattern", () => {
+    const { database, memory, service } = harness("2026-08-24T12:00:00.000Z");
+    for (const day of ["04", "11", "18"]) {
+      service.recordEvent(
+        {
+          appName: "Visual Studio Code",
+          source: "active_app",
+          windowTitle: `private-project-${day}`,
+        },
+        "user",
+        `2026-08-${day}T01:00:00.000Z`,
+        `2026-08-${day}T02:00:00.000Z`,
+      );
+    }
+    service.recordEvent(
+      { appName: "Terminal", source: "active_app" },
+      "agent",
+      "2026-08-18T03:00:00.000Z",
+      "2026-08-18T04:00:00.000Z",
+    );
+
+    service.distill();
+
+    const result = service.search({ query: "private-project" });
+    expect(result).toMatchObject({
+      observedBehaviorOnly: true,
+      patterns: [
+        {
+          activeDays: 3,
+          episodeCount: 3,
+          kind: "app",
+          label: "Visual Studio Code",
+          totalMinutes: 180,
+        },
+      ],
+    });
+    expect(JSON.stringify(result.patterns)).not.toContain("private-project");
+    const candidate = memory.list({}).candidates[0]!;
+    const weeklyIds = new Set(
+      database
+        .prepare("SELECT id FROM activity_digests WHERE kind = 'weekly'")
+        .all()
+        .map((row) => (row as { id: string }).id),
+    );
+    expect(candidate).toMatchObject({
+      content:
+        "用户在多个自然周持续使用 Visual Studio Code。这是观察到的使用习惯，不等同于用户明确表达的偏好。",
+      sourceType: "activity",
+      type: "activity_digest",
+    });
+    expect(candidate.sourceIds).toHaveLength(2);
+    expect(candidate.sourceIds.every((id) => weeklyIds.has(id))).toBe(true);
+    expect(candidate.sourceLabels.join(" ")).not.toContain("private-project");
+    database.close();
+  });
+
+  it("refreshes one pending stable pattern to the latest two weeks without accumulating sources", () => {
+    const { clock, database, memory, service } = harness(
+      "2026-08-17T12:00:00.000Z",
+    );
+    for (const day of ["04", "11"]) {
+      service.recordEvent(
+        { appName: "Visual Studio Code", source: "active_app" },
+        "user",
+        `2026-08-${day}T01:00:00.000Z`,
+        `2026-08-${day}T02:00:00.000Z`,
+      );
+    }
+    service.distill();
+    const original = memory.list({}).candidates[0]!;
+    expect(original.sourceIds).toHaveLength(2);
+
+    clock.advance(7 * 86_400_000);
+    service.recordEvent(
+      { appName: "Visual Studio Code", source: "active_app" },
+      "user",
+      "2026-08-18T01:00:00.000Z",
+      "2026-08-18T02:00:00.000Z",
+    );
+    service.distill();
+
+    const refreshed = memory.list({}).candidates;
+    expect(refreshed).toHaveLength(1);
+    expect(refreshed[0]?.id).not.toBe(original.id);
+    expect(refreshed[0]?.sourceIds).toHaveLength(2);
+    expect(refreshed[0]?.sourceIds).not.toContain(original.sourceIds[0]);
+    expect(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM activity_digests
+           WHERE candidate_ids_json LIKE ?`,
+        )
+        .get(`%${refreshed[0]!.id}%`),
+    ).toEqual({ count: 2 });
+    database.close();
+  });
+
+  it("offers one user-confirmed compact revision for an accepted legacy Activity Memory", () => {
+    const { database, memory, service } = harness("2026-08-24T12:00:00.000Z");
+    const legacy = memory.propose({
+      confidence: 0.6,
+      content: "过去 18 个不同日期，用户累计使用 Visual Studio Code 920 分钟。",
+      importance: 0.5,
+      novelty: 1,
+      reason: "Activity 跨日证据归纳：Visual Studio Code",
+      sourceIds: [
+        "81000000-0000-4000-8000-000000000001",
+        "81000000-0000-4000-8000-000000000002",
+      ],
+      sourceLabels: ["旧 Episode 1", "旧 Episode 2"],
+      sourceType: "activity",
+      type: "activity_digest",
+    });
+    const accepted = memory.acceptCandidate(legacy.id);
+    for (const day of ["11", "18"]) {
+      service.recordEvent(
+        { appName: "Visual Studio Code", source: "active_app" },
+        "user",
+        `2026-08-${day}T01:00:00.000Z`,
+        `2026-08-${day}T02:00:00.000Z`,
+      );
+    }
+
+    service.distill();
+
+    const replacement = memory.list({}).candidates[0]!;
+    expect(replacement).toMatchObject({
+      claimOperation: "replace",
+      supersedesMemoryId: accepted.memory.id,
+    });
+    expect(replacement.sourceIds).toHaveLength(2);
+    const revised = memory.acceptCandidate(replacement.id);
+    expect(revised.memory.id).toBe(accepted.memory.id);
+    expect(
+      revised.revisions.find(
+        ({ id }) => id === revised.memory.currentRevisionId,
+      )?.content,
+    ).toBe(
+      "用户在多个自然周持续使用 Visual Studio Code。这是观察到的使用习惯，不等同于用户明确表达的偏好。",
+    );
+
+    service.distill();
+    expect(memory.list({}).candidates).toEqual([]);
+    database.close();
+  });
+
+  it("keeps a rejected stable Activity pattern suppressed across label casing changes", () => {
+    const { clock, database, memory, service } = harness(
+      "2026-08-24T12:00:00.000Z",
+    );
+    for (const day of ["11", "18"]) {
+      service.recordEvent(
+        { appName: "Visual Studio Code", source: "active_app" },
+        "user",
+        `2026-08-${day}T01:00:00.000Z`,
+        `2026-08-${day}T02:00:00.000Z`,
+      );
+    }
+    service.distill();
+    const candidate = memory.list({}).candidates[0]!;
+    memory.rejectCandidate(candidate.id);
+
+    service.distill();
+    clock.advance(7 * 86_400_000);
+    service.recordEvent(
+      { appName: "visual studio code", source: "active_app" },
+      "user",
+      "2026-08-25T01:00:00.000Z",
+      "2026-08-25T02:00:00.000Z",
+    );
+    service.distill();
+
+    expect(memory.list({}).candidates).toEqual([]);
+    expect(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM memory_candidates
+           WHERE reason = ?`,
+        )
+        .get(candidate.reason),
+    ).toEqual({ count: 1 });
     database.close();
   });
 
@@ -436,8 +615,25 @@ describe("Activity persistence and distillation", () => {
       "2026-08-06T02:00:00.000Z",
     );
     service.distill();
-    const candidate = memory.list({}).candidates[0]!;
-    const accepted = memory.acceptCandidate(candidate.id);
+    const sourceIds = new CryptoIdGenerator();
+    const episodes = [
+      ...service.getSnapshot("2026-08-04").episodes,
+      ...service.getSnapshot("2026-08-06").episodes,
+    ];
+    const accepted = memory.create({
+      confidence: 1,
+      content: "过去两个不同日期，用户使用了 Visual Studio Code。",
+      importance: 0.5,
+      reason: "既有已接受 Activity Memory",
+      sources: episodes.map((episode) => ({
+        createdAt: episode.createdAt,
+        id: sourceIds.generate(),
+        label: episode.summary,
+        referenceId: episode.id,
+        type: "activity",
+      })),
+      type: "activity_digest",
+    });
     const sourceSnapshot = accepted.sources;
 
     await service.cleanup();
@@ -638,7 +834,7 @@ describe("Activity persistence and distillation", () => {
     database.close();
   });
 
-  it("rebuilds a pending weekly candidate from the remaining evidence", async () => {
+  it("rebuilds a weekly Digest without creating a Memory candidate", async () => {
     const { database, memory, service } = harness();
     for (const day of ["04", "05", "06"]) {
       service.recordEvent(
@@ -649,17 +845,18 @@ describe("Activity persistence and distillation", () => {
       );
     }
     service.distill();
-    const original = memory.list({}).candidates[0]!;
-    expect(original.sourceIds).toHaveLength(3);
+    expect(memory.list({}).candidates).toEqual([]);
     const deletedEpisode = service.getSnapshot("2026-08-04").episodes[0]!;
 
     await service.deleteEpisode(deletedEpisode.id);
 
-    const rebuilt = memory.list({}).candidates;
-    expect(rebuilt).toHaveLength(1);
-    expect(rebuilt[0]?.id).not.toBe(original.id);
-    expect(rebuilt[0]?.sourceIds).toHaveLength(2);
-    expect(rebuilt[0]?.sourceIds).not.toContain(deletedEpisode.id);
+    expect(memory.list({}).candidates).toEqual([]);
+    const weekly = database
+      .prepare(
+        "SELECT candidate_ids_json FROM activity_digests WHERE kind = 'weekly'",
+      )
+      .get() as { candidate_ids_json: string };
+    expect(JSON.parse(weekly.candidate_ids_json)).toEqual([]);
     database.close();
   });
 

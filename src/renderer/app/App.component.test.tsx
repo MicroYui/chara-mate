@@ -307,6 +307,7 @@ function renderApp({
     evolution: {
       acceptCandidate: vi.fn(),
       archiveCandidate: vi.fn(),
+      dismissReview: vi.fn(),
       list: vi.fn().mockResolvedValue({
         ok: true,
         value: { candidates: [], reviews: [] },
@@ -356,6 +357,7 @@ function renderApp({
       list: vi.fn(),
       purge: vi.fn(),
       rejectCandidate: vi.fn(),
+      resolveClaim: vi.fn(),
       restore: vi.fn(),
       revise: vi.fn(),
       setPinned: vi.fn(),
@@ -483,6 +485,19 @@ function renderApp({
         };
       }),
       subscribeCommand: vi.fn(() => () => undefined),
+    },
+    voiceWake: {
+      getSnapshot: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          enabled: false,
+          microphone: "granted",
+          phase: "disabled",
+          phrase: "Hi Mika",
+        },
+      }),
+      setEnabled: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
     },
   };
   Object.defineProperty(window, "charaMate", {

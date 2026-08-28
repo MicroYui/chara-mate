@@ -120,6 +120,25 @@ C2 在正确数、supported、稳定完成、输入量和尾延迟上整体最�
 
 验收固定覆盖：跨 Run 与重启后不重复总结同一前缀；覆盖水位无跳跃/重复；UI 完整历史不变；旧 Schema 迁移；超长既有 Chat 分批启动；首请求超限与 Run 内超限边界；Voice start/reconnect 不回放已覆盖原文；Automation/主动对话复用相同路径。此 amendment 没有新 Arm、模型设置、兼容分支或常驻 experiment runner。
 
+## 2026-08-27 稳定画像与按需再检索正确性修复
+
+真实复核发现，两个仍有效的旧版 preference 已存在数据库，但都没有 `claimSlot`；用户以“我的爱好”这类概括问法询问时，Text/Voice 只用原始问题执行一次 R0，结果为 0。当前实现也没有 query 改写：模型只有在显式检查预注入范围之外的 Memory 时才可使用 `memory.search`。因此缺陷不是 R0 索引失效，而是稳定画像仍被当作普通词面检索结果，且证据不足时没有受控的语义补问边界。
+
+2026-08-27 来源快照：
+
+- OpenAI 官方 [最新模型指南](https://developers.openai.com/api/docs/guides/latest-model) 将工具使用边界交给应用指令，并建议以完成任务所需的最小充分证据为准、仅在核心证据缺失时继续搜索；协议没有定义 CharaMate 的画像字段、检索次数或 Memory 生命周期。
+- Codex `main` commit [`694edc23b22b4696400dc47663ecacd437623870`](https://github.com/openai/codex/tree/694edc23b22b4696400dc47663ecacd437623870) 的 `codex-rs/memories/README.md` 把全局记忆整合为有界工件，并由 read path 在 root session 开始时作为 developer instruction 注入。它支持“稳定工件由上下文读取路径负责”的边界，不证明 Codex 的抽取格式或后台 pipeline 适合直接复制。
+
+本次按 owner 明确确认的产品修订处理正确性缺口，不重新比较 C0–C6：
+
+1. 每个新 Run 先装配全部已绑定且 active 的 profile/preference。闭集只有 18 个 slot，因此这是可审计的有界稳定画像，不受当前问法词面影响。
+2. 当前请求仍只执行一次 R0 top8；与稳定画像按 Memory ID 去重后共同写入 checkpoint 和 formation allowlist。checkpoint 另保留本次 R0 真正命中的 ID，只用于既有 U2 的跨 slot create 歧义防护；否则全量稳定画像会让任意第二个 profile/preference 字段都被错误候选化。项目、事件、方法等不扩大为全量预注入。
+3. 若用户询问个人历史、偏好或“记得什么”，而预注入证据确实不足，当前 Chat/Agent/Voice 模型可按需加载并调用至多一次 `memory.search`，提交简洁的 evidence-oriented query，并可附 `type`、`claimSlot`、`asOf`。结果仍走同一 R0 top8；没有后台 query model、同义词表、停用词正确性规则或第二 Retrieval Pipeline。
+4. 已有证据充分时禁止重复搜索；空结果继续只表示“当前查询未召回”，不证明事实不存在。
+5. 旧 unkeyed profile/preference 不自动进入稳定画像。Memory 详情由用户明确选择 slot；已有 owner 时用户编辑并确认合并后的完整内容，宿主在 owner 上创建 Revision 并把旧记录标为 superseded。迁移和模型都不猜字段。
+
+验收覆盖自然同义问法下的 Text/Voice 稳定画像、结构化 Tool Schema 与单次调用指令、R0 结果去重、旧数据无 owner 绑定、已有 owner 合并、来源/Revision 保留，以及手动新建不再产生 unkeyed profile/preference。本修订没有新 Arm、参数设置、依赖、索引或运行时模式。
+
 ## 限制
 
 - live 结果只支持记录的目标 Adapter/模型，不声称所有 Provider 都有相同 Tool 主动性；生产仍使用一套可恢复 Recipe。

@@ -16,6 +16,7 @@ import type { TerritoryWorldApi } from "./territoryWorld";
 import type { MemoryApi } from "./memory";
 import type { JourneyApi } from "./journey";
 import type { VoiceApi } from "./voice";
+import type { VoiceWakeSettingsApi } from "./voiceWake";
 
 export const FOUNDATION_CHANNELS = {
   getSnapshot: "app.foundation.getSnapshot",
@@ -42,6 +43,7 @@ export interface DesktopApi {
   settings: SettingsApi;
   territory: TerritoryWorldApi;
   voice: VoiceApi;
+  voiceWake: VoiceWakeSettingsApi;
 }
 
 export interface CharaMateApi extends DesktopApi {

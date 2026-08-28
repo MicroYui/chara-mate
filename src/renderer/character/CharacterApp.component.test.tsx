@@ -75,7 +75,10 @@ beforeEach(() => {
   );
 });
 
-function renderCharacter(surface: "conversation" | "pet" = "pet") {
+function renderCharacter(
+  surface: "conversation" | "pet" = "pet",
+  quickStartError?: Error,
+) {
   let voiceListener:
     ((snapshot: VoiceSessionSnapshot | null) => void) | undefined;
   let approvalListener:
@@ -83,6 +86,7 @@ function renderCharacter(surface: "conversation" | "pet" = "pet") {
   let proactiveListener:
     Parameters<CharacterWindowApi["subscribeProactiveBubble"]>[0] | undefined;
   const quickStart = vi.fn<VoiceApi["quickStart"]>().mockImplementation(() => {
+    if (quickStartError) return Promise.reject(quickStartError);
     voiceListener?.(ACTIVE_VOICE);
     return Promise.resolve({
       ok: true,
@@ -184,6 +188,27 @@ function renderCharacter(surface: "conversation" | "pet" = "pet") {
       };
     },
     voice,
+    voiceWake: {
+      getSnapshot: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          enabled: false,
+          microphone: "granted",
+          phase: "disabled",
+          phrase: "Hi Mika",
+        },
+      }),
+      report: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          enabled: false,
+          microphone: "granted",
+          phase: "disabled",
+          phrase: "Hi Mika",
+        },
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    },
   };
   Object.defineProperty(window, "charaMateCharacter", {
     configurable: true,
@@ -252,6 +277,30 @@ describe("Character chat control", () => {
     expect(end).not.toHaveBeenCalled();
     expect(
       await screen.findByRole("button", { name: "暂停语音聊天" }),
+    ).toBeInTheDocument();
+  });
+
+  it("lets the user dismiss a failed Voice connection notice", async () => {
+    const { end, quickStart } = renderCharacter(
+      "pet",
+      new Error("无法连接 Azure Realtime。"),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "开始语音聊天" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "无法连接 Azure Realtime。",
+    );
+    expect(quickStart).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭语音错误提示" }));
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(quickStart).toHaveBeenCalledOnce();
+    expect(end).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "开始语音聊天" }),
     ).toBeInTheDocument();
   });
 

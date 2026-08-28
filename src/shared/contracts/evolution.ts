@@ -27,6 +27,7 @@ export const EVOLUTION_CHANNELS = {
   acceptCandidate: "evolution.candidate.accept",
   archiveCandidate: "evolution.candidate.archive",
   changed: "evolution.changed",
+  dismissReview: "evolution.review.dismiss",
   list: "evolution.list",
   rejectCandidate: "evolution.candidate.reject",
   restoreCandidate: "evolution.candidate.restore",
@@ -80,6 +81,9 @@ export interface EvolutionApi {
   archiveCandidate(
     request: EvolutionCandidateIdRequest,
   ): Promise<EvolutionCandidateMutationResponse>;
+  dismissReview(
+    request: EvolutionRunIdRequest,
+  ): Promise<EvolutionReviewMutationResponse>;
   list(request: EvolutionListRequest): Promise<EvolutionSnapshotResponse>;
   rejectCandidate(
     request: EvolutionCandidateIdRequest,

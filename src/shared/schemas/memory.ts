@@ -175,6 +175,7 @@ export const MemoryCandidateSchema = Type.Object(
 export const MemoryListRequestSchema = Type.Object(
   {
     asOf: Type.Optional(TimestampSchema),
+    claimSlot: Type.Optional(MemoryClaimSlotSchema),
     includeDeleted: Type.Optional(Type.Boolean()),
     includeInactive: Type.Optional(Type.Boolean()),
     query: Type.Optional(Type.String()),
@@ -192,6 +193,7 @@ export const MemoryIdRequestSchema = Type.Object(
 
 export const MemoryCreateRequestSchema = Type.Object(
   {
+    claimSlot: Type.Optional(MemoryClaimSlotSchema),
     confidence: Type.Number({ maximum: 1, minimum: 0 }),
     content: NonBlankStringSchema,
     importance: Type.Number({ maximum: 1, minimum: 0 }),
@@ -201,6 +203,15 @@ export const MemoryCreateRequestSchema = Type.Object(
     type: MemoryTypeSchema,
     validFrom: Type.Optional(TimestampSchema),
     validTo: Type.Optional(TimestampSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const MemoryResolveClaimRequestSchema = Type.Object(
+  {
+    claimSlot: MemoryClaimSlotSchema,
+    content: NonBlankStringSchema,
+    memoryId: EntityIdSchema,
   },
   { additionalProperties: false },
 );

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProviderApi } from "../../../shared/contracts/provider";
 import type { SettingsApi } from "../../../shared/contracts/settings";
+import type { VoiceWakeSettingsApi } from "../../../shared/contracts/voiceWake";
 import type { VoiceStore } from "../voice/voiceStore";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
@@ -82,17 +83,49 @@ describe("Voice Settings panel", () => {
     } satisfies ProviderApi;
     const preview = vi.fn().mockResolvedValue(undefined);
     const voiceStore = { preview } as unknown as VoiceStore;
+    const setEnabled = vi
+      .fn<VoiceWakeSettingsApi["setEnabled"]>()
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          enabled: true,
+          microphone: "granted",
+          phase: "arming",
+          phrase: "Hi Mika",
+        },
+      });
+    const voiceWakeApi = {
+      getSnapshot: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          enabled: false,
+          microphone: "granted",
+          phase: "disabled",
+          phrase: "Hi Mika",
+        },
+      }),
+      setEnabled,
+      subscribe: vi.fn(() => vi.fn()),
+    } satisfies VoiceWakeSettingsApi;
 
     render(
       <VoiceSettingsPanel
         providerApi={providerApi}
         settingsApi={settingsApi}
         voiceStore={voiceStore}
+        voiceWakeApi={voiceWakeApi}
       />,
     );
 
     expect(await screen.findByText("已授权")).toBeVisible();
     expect(screen.getByRole("option", { name: /Azure Voice/u })).toBeVisible();
+    const wakeSwitch = await screen.findByRole("switch", {
+      name: /Hi Mika/u,
+    });
+    fireEvent.click(wakeSwitch);
+    await waitFor(() => {
+      expect(setEnabled).toHaveBeenCalledWith({ enabled: true });
+    });
     fireEvent.change(screen.getByLabelText("音色"), {
       target: { value: "coral" },
     });

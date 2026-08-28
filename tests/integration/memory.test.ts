@@ -317,7 +317,6 @@ describe("Memory persistence", () => {
       basis: "explicit_user_statement",
       claimSlot: "preference.response_style",
       content: "用户偏好技术回答只保留必要依据。",
-      memoryId: formed.memoryId,
       operation: "replace",
       source: source(randomUUID()),
     });
@@ -978,14 +977,222 @@ describe("Memory persistence", () => {
     database.close();
   });
 
+  it("assembles stable profile claims independently from raw lexical matches", () => {
+    const { database, service } = harness();
+    const claimed = service.create({
+      claimSlot: "preference.hobbies",
+      confidence: 1,
+      content: "用户长期游玩 CS2，并关注职业选手比赛。",
+      importance: 0.8,
+      reason: "用户明确说明",
+      sources: [],
+      type: "preference",
+    });
+    service.create({
+      confidence: 1,
+      content: "用户常在周末拍摄胶片。",
+      importance: 0.6,
+      reason: "v5 旧数据",
+      sources: [],
+      type: "preference",
+    });
+
+    const selection = service.selectContext("我的爱好是什么？");
+    expect(selection.stableProfile).toHaveLength(1);
+    expect(selection.stableProfile[0]?.memory).toMatchObject({
+      claimSlot: "preference.hobbies",
+      id: claimed.memory.id,
+    });
+    expect(selection.queryMatches).toEqual([]);
+    expect(selection.legacyUnkeyedCount).toBe(1);
+    expect(service.get(claimed.memory.id).usages).toEqual([
+      expect.objectContaining({ consumer: "context" }),
+    ]);
+    database.close();
+  });
+
+  it("supports claim-slot filtering through the single R0 search path", () => {
+    const { database, service } = harness();
+    const hobbies = service.create({
+      claimSlot: "preference.hobbies",
+      confidence: 1,
+      content: "用户喜欢安静地玩游戏。",
+      importance: 0.7,
+      reason: "用户说明",
+      sources: [],
+      type: "preference",
+    });
+    service.create({
+      claimSlot: "preference.response_style",
+      confidence: 1,
+      content: "用户喜欢安静简洁的回答。",
+      importance: 0.7,
+      reason: "用户说明",
+      sources: [],
+      type: "preference",
+    });
+
+    expect(
+      service
+        .search(
+          {
+            claimSlot: "preference.hobbies",
+            query: "用户喜欢安静",
+          },
+          "tool",
+          8,
+        )
+        .map(({ memory }) => memory.id),
+    ).toEqual([hobbies.memory.id]);
+    database.close();
+  });
+
+  it("does not treat unrelated stable profile injection as a new-slot ambiguity", () => {
+    const { clock, database, service } = harness();
+    const source = () => ({
+      id: randomUUID(),
+      label: "用户消息",
+      referenceId: randomUUID(),
+      type: "chat" as const,
+    });
+    const hobbies = service.form({
+      allowedMemoryIds: [],
+      basis: "explicit_user_statement",
+      claimSlot: "preference.hobbies",
+      content: "用户喜欢玩 CS2。",
+      operation: "create",
+      source: source(),
+    });
+    if (!("memoryId" in hobbies)) throw new Error("Expected hobbies Memory");
+
+    clock.advance(1_000);
+    const music = service.form({
+      allowedMemoryIds: [hobbies.memoryId],
+      ambiguityMemoryIds: [],
+      basis: "explicit_user_statement",
+      claimSlot: "preference.music",
+      content: "用户喜欢听爵士乐。",
+      operation: "create",
+      source: source(),
+    });
+    expect(music).toMatchObject({ outcome: "created" });
+
+    const ambiguous = service.form({
+      allowedMemoryIds: [hobbies.memoryId],
+      ambiguityMemoryIds: [hobbies.memoryId],
+      basis: "explicit_user_statement",
+      claimSlot: "preference.likes",
+      content: "用户喜欢竞技游戏。",
+      operation: "create",
+      source: source(),
+    });
+    expect(ambiguous).toMatchObject({ outcome: "candidate_created" });
+    database.close();
+  });
+
+  it("binds or merges legacy profile records only after explicit confirmation", () => {
+    const { database, service } = harness();
+    const unowned = service.create({
+      confidence: 1,
+      content: "用户常听爵士乐。",
+      importance: 0.6,
+      reason: "v5 旧数据",
+      sources: [],
+      type: "preference",
+    });
+    const bound = service.resolveClaim({
+      claimSlot: "preference.music",
+      content: "用户常听爵士乐。",
+      memoryId: unowned.memory.id,
+    });
+    expect(bound.memory).toMatchObject({
+      claimSlot: "preference.music",
+      id: unowned.memory.id,
+      status: "active",
+    });
+    expect(bound.revisions).toHaveLength(2);
+    expect(bound.sources).toEqual([
+      expect.objectContaining({
+        referenceId: unowned.memory.id,
+        type: "user_edit",
+      }),
+    ]);
+
+    const owner = service.create({
+      claimSlot: "preference.hobbies",
+      confidence: 1,
+      content: "用户喜欢玩 CS2。",
+      importance: 0.8,
+      reason: "用户说明",
+      sources: [],
+      type: "preference",
+    });
+    const legacy = service.create({
+      confidence: 1,
+      content: "用户也喜欢胶片摄影。",
+      importance: 0.7,
+      reason: "v5 旧数据",
+      sources: [],
+      type: "preference",
+    });
+    const merged = service.resolveClaim({
+      claimSlot: "preference.hobbies",
+      content: "用户喜欢玩 CS2，也喜欢胶片摄影。",
+      memoryId: legacy.memory.id,
+    });
+    expect(merged.memory.id).toBe(owner.memory.id);
+    expect(merged.revisions).toHaveLength(2);
+    const mergedReferences = merged.sources.map(
+      ({ referenceId }) => referenceId,
+    );
+    expect(mergedReferences).toHaveLength(2);
+    expect(mergedReferences).toEqual(
+      expect.arrayContaining([owner.memory.id, legacy.memory.id]),
+    );
+    expect(service.get(legacy.memory.id).memory).toMatchObject({
+      status: "superseded",
+      supersededById: owner.memory.id,
+    });
+    expect(
+      service
+        .list({ claimSlot: "preference.hobbies", status: "active" })
+        .memories.map(({ memory }) => memory.id),
+    ).toEqual([owner.memory.id]);
+
+    const profileLegacy = service.create({
+      confidence: 1,
+      content: "用户住在上海。",
+      importance: 0.8,
+      reason: "v5 旧数据",
+      sources: [],
+      type: "profile",
+    });
+    expect(() =>
+      service.resolveClaim({
+        claimSlot: "preference.travel",
+        content: "用户住在上海。",
+        memoryId: profileLegacy.memory.id,
+      }),
+    ).toThrow("类型不一致");
+    database.close();
+  });
+
   it("exposes one direct memory.search Tool and records only returned Revision usage", async () => {
     const { database, service } = harness();
+    const sources = Array.from({ length: 600 }, (_, index) => ({
+      createdAt: "2026-08-27T12:00:00.000Z",
+      id: randomUUID(),
+      label: `source-label-${String(index)}-${"x".repeat(80)}`,
+      referenceId: randomUUID(),
+      type: "activity" as const,
+    }));
     const created = service.create({
+      claimSlot: "preference.response_style",
       confidence: 1,
       content: "用户希望技术回答先给结论，再给必要依据。",
       importance: 0.9,
       reason: "用户明确表达",
-      sources: [],
+      sources,
       type: "preference",
     });
     const tools = new ToolRegistry();
@@ -993,7 +1200,10 @@ describe("Memory persistence", () => {
 
     const result = await tools.execute(
       "memory.search",
-      { query: "技术回答如何组织" },
+      {
+        claimSlot: "preference.response_style",
+        query: "技术回答如何组织",
+      },
       {
         itemId: randomUUID(),
         onDelta: () => undefined,
@@ -1005,14 +1215,26 @@ describe("Memory persistence", () => {
     expect(result.modelContent).toMatchObject({
       hits: [
         {
+          content: "用户希望技术回答先给结论，再给必要依据。",
+          evidence: {
+            count: 600,
+            firstAt: "2026-08-27T12:00:00.000Z",
+            lastAt: "2026-08-27T12:00:00.000Z",
+            types: ["activity"],
+          },
           memoryCreatedAt: created.memory.createdAt,
-          memoryId: created.memory.id,
+          claimSlot: "preference.response_style",
           revisionCreatedAt: created.revisions[0]?.createdAt,
-          revisionId: created.memory.currentRevisionId,
-          status: "active",
         },
       ],
     });
+    const serialized = JSON.stringify(result.modelContent);
+    expect(serialized.length).toBeLessThan(2_000);
+    expect(serialized).not.toContain(created.memory.id);
+    expect(serialized).not.toContain(created.memory.currentRevisionId);
+    expect(serialized).not.toContain(sources[0]?.id);
+    expect(serialized).not.toContain(sources[0]?.referenceId);
+    expect(serialized).not.toContain("source-label-");
     expect(
       database
         .prepare(

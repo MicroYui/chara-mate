@@ -32,6 +32,11 @@ import type {
   TerritoryWorldAssetStore,
 } from "./territoryWorldAssetStore";
 import { buildTerritoryWorldImagePrompt } from "./territoryWorldImagePrompt";
+import {
+  territoryBackgroundDescription,
+  territoryGeneratedItemContent,
+  territoryZonePieceDescription,
+} from "./territoryWorldNarrative";
 import type { TerritoryWorldRepository } from "./territoryWorldRepository";
 
 const itemRenderOptions: TerritoryImageRenderOptions = {
@@ -1168,6 +1173,13 @@ export class TerritoryWorldCandidateService {
     const definitionId = `generated.item.${candidateId}`;
     const assetId = `generated.asset.${this.ids.generate()}`;
     const archetype = classifyTerritoryWorldItem(context.request.prompt);
+    const itemContent = territoryGeneratedItemContent({
+      ...(context.request.itemContent
+        ? { provided: context.request.itemContent }
+        : {}),
+      prompt: context.request.prompt,
+      sources: context.request.sources,
+    });
     const placementRule: TerritoryDefinition["placement"] =
       archetype.placement.kind === "attachment"
         ? {
@@ -1189,15 +1201,16 @@ export class TerritoryWorldCandidateService {
         ? ["inspectable", "memory-reveal"]
         : ["inspectable"],
       createdAt: now,
-      description: context.request.prompt,
+      description: itemContent.description,
       id: definitionId,
       layer: archetype.layer,
-      name: instanceName(context.request.prompt) || "新创作物件",
+      name: itemContent.name,
       placement: placementRule,
       revision: 1,
       schemaVersion: 3,
       tags: [
         "generated",
+        "narrative-v1",
         ...archetype.tags,
         ...(context.request.sources.length ? ["memory"] : []),
       ],
@@ -1359,7 +1372,7 @@ export class TerritoryWorldCandidateService {
       const nextDefinition: TerritoryDefinition = {
         ...sourceDefinition,
         createdAt: this.clock.now(),
-        description: `${sourceDefinition.description}；外观修改：${editInstruction ?? context.request.prompt}`,
+        description: sourceDefinition.description,
         revision,
         visual: { ...sourceDefinition.visual, assetId },
       };
@@ -1457,7 +1470,7 @@ export class TerritoryWorldCandidateService {
       anchors: [],
       capabilities: ["inspectable"],
       createdAt: this.clock.now(),
-      description: "AI 生成的可编辑区域基础环境。",
+      description: territoryBackgroundDescription(input.name),
       id: `generated.background.${input.candidateId}`,
       layer: "structure",
       name: input.name,
@@ -1468,7 +1481,7 @@ export class TerritoryWorldCandidateService {
       },
       revision: 1,
       schemaVersion: 3,
-      tags: ["generated", "background", "environment"],
+      tags: ["generated", "background", "environment", "narrative-v1"],
       transforms: { flippable: false, rotations: [0] },
       visual: {
         assetId: input.assetId,
@@ -1606,7 +1619,7 @@ export class TerritoryWorldCandidateService {
         anchors: [],
         capabilities: [...spec.capabilities],
         createdAt: now,
-        description: `${spec.description}；生成主题：${context.request.prompt}`,
+        description: territoryZonePieceDescription(spec.key, spec.description),
         id: `generated.zone-piece.${candidateId}.${spec.key}`,
         layer: spec.layer,
         name: spec.name,
@@ -1623,7 +1636,7 @@ export class TerritoryWorldCandidateService {
               },
         revision: 1,
         schemaVersion: 3,
-        tags: ["generated", "zone-piece", spec.key],
+        tags: ["generated", "zone-piece", spec.key, "narrative-v1"],
         transforms: { flippable: true, rotations: [0] },
         visual: {
           assetId: pieceAssetId,

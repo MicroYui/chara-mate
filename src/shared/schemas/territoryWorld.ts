@@ -753,6 +753,15 @@ export const TerritoryCreateChangeCandidateRequestSchema = Type.Object(
   {
     baseRevisionId: TerritoryWorldRevisionIdSchema,
     intent: TerritoryCandidateIntentSchema,
+    itemContent: Type.Optional(
+      Type.Object(
+        {
+          description: NonBlankStringSchema,
+          name: NonBlankStringSchema,
+        },
+        { additionalProperties: false },
+      ),
+    ),
     lockedInstanceIds: Type.Array(TerritoryInstanceIdSchema, {
       uniqueItems: true,
     }),

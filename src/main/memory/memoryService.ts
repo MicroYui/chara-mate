@@ -7,6 +7,7 @@ import type {
   MemoryHit,
   MemoryListRequest,
   MemoryProposalInput,
+  MemoryResolveClaimRequest,
   MemoryReviseRequest,
   MemorySnapshot,
   MemorySource,
@@ -26,6 +27,7 @@ export type MemoryFormationBasis =
 
 interface MemoryFormationBase {
   readonly allowedMemoryIds: readonly string[];
+  readonly ambiguityMemoryIds?: readonly string[];
   readonly basis: MemoryFormationBasis;
   readonly content: string;
   readonly memoryId?: string;
@@ -63,8 +65,54 @@ export type MemoryFormationResult =
       readonly outcome: "candidate_created" | "candidate_duplicate";
     };
 
+export interface MemoryContextSelection {
+  readonly legacyUnkeyedCount: number;
+  readonly queryMatches: readonly MemoryHit[];
+  readonly queryRelevantMemoryIds: readonly string[];
+  readonly stableProfile: readonly MemoryHit[];
+}
+
+export interface ActivityMemoryPatternInput {
+  readonly content: string;
+  readonly legacyReason: string;
+  readonly reason: string;
+  readonly sourceIds: readonly string[];
+  readonly sourceLabels: readonly string[];
+  readonly validFrom: string;
+}
+
+export interface ActivityMemoryPatternReconciliation {
+  readonly links: readonly {
+    readonly candidateId: string;
+    readonly digestIds: readonly string[];
+  }[];
+  readonly removedCandidateIds: readonly string[];
+}
+
 function normalizeFormedContent(content: string): string {
   return redactText(content).normalize("NFKC").replaceAll(/\s+/gu, " ").trim();
+}
+
+function sameStrings(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function activityPatternReasonKey(reason: string): string {
+  return reason.normalize("NFKC").replaceAll(/\s+/gu, " ").trim().toLowerCase();
+}
+
+function managedActivityPatternReason(reason: string): boolean {
+  const key = activityPatternReasonKey(reason);
+  return (
+    key.startsWith("activity 跨周稳定行为候选：") ||
+    key.startsWith("activity 跨日证据归纳：")
+  );
 }
 
 function formationReason(basis: MemoryFormationBasis): string {
@@ -151,17 +199,32 @@ export class MemoryService {
       },
       limit,
     );
-    const usedAt = this.clock.now();
-    this.repository.recordUsages(
-      hits.map((hit) => ({
-        consumer,
-        id: this.ids.generate(),
-        memoryId: hit.memory.id,
-        revisionId: hit.revision.id,
-        usedAt,
-      })),
-    );
+    this.#recordUsages(hits, consumer);
     return hits;
+  }
+
+  selectContext(query: string, limit = 8): MemoryContextSelection {
+    const stableProfile = this.repository.stableClaimHits();
+    const stableIds = new Set(stableProfile.map(({ memory }) => memory.id));
+    const rawQueryMatches = this.retrieval.search(
+      {
+        includeDeleted: false,
+        includeInactive: false,
+        ...(query.trim() ? { query } : {}),
+        status: "active",
+      },
+      limit,
+    );
+    const queryMatches = rawQueryMatches
+      .filter(({ memory }) => !stableIds.has(memory.id))
+      .map((hit, index) => ({ ...hit, rank: index + 1 }));
+    this.#recordUsages([...stableProfile, ...queryMatches], "context");
+    return {
+      legacyUnkeyedCount: this.repository.countUnclaimedStableMemories(),
+      queryMatches,
+      queryRelevantMemoryIds: rawQueryMatches.map(({ memory }) => memory.id),
+      stableProfile,
+    };
   }
 
   get(memoryId: string): MemoryDetail {
@@ -172,9 +235,17 @@ export class MemoryService {
     return this.repository.findDetailBySourceReference(referenceId);
   }
 
-  create(
-    request: MemoryCreateRequest & { readonly claimSlot?: MemoryClaimSlot },
-  ): MemoryDetail {
+  create(request: MemoryCreateRequest): MemoryDetail {
+    if (
+      request.claimSlot &&
+      memoryClaimDefinition(request.claimSlot).type !== request.type
+    ) {
+      throw new MemoryError(
+        "MEMORY.CONFLICT",
+        "记忆类型与稳定字段不一致。",
+        false,
+      );
+    }
     return this.repository.create({
       ...request,
       content: redactText(request.content),
@@ -231,8 +302,144 @@ export class MemoryService {
     });
   }
 
-  hasCandidateReason(reason: string): boolean {
-    return this.repository.hasCandidateReason(reason);
+  reconcileActivityPatterns(
+    patterns: readonly ActivityMemoryPatternInput[],
+  ): ActivityMemoryPatternReconciliation {
+    const decisions = this.repository.listCandidateDecisions({
+      sourceType: "activity",
+      type: "activity_digest",
+    });
+    const latestByReason = new Map<string, (typeof decisions)[number]>();
+    for (const decision of decisions) {
+      const reasonKey = activityPatternReasonKey(decision.candidate.reason);
+      if (!latestByReason.has(reasonKey)) {
+        latestByReason.set(reasonKey, decision);
+      }
+    }
+
+    const retainedCandidateIds = new Set<string>();
+    const removedCandidateIds = new Set<string>();
+    const links: Array<{
+      candidateId: string;
+      digestIds: readonly string[];
+    }> = [];
+
+    for (const pattern of patterns) {
+      if (pattern.sourceIds.length !== 2) {
+        throw new TypeError(
+          "Stable Activity patterns require exactly two Weekly Digest sources",
+        );
+      }
+      if (pattern.sourceIds.length !== pattern.sourceLabels.length) {
+        throw new TypeError("Activity pattern sources and labels must align");
+      }
+      const current = latestByReason.get(
+        activityPatternReasonKey(pattern.reason),
+      );
+      const legacy = latestByReason.get(
+        activityPatternReasonKey(pattern.legacyReason),
+      );
+      if (
+        current?.candidate.status === "accepted" ||
+        current?.candidate.status === "rejected"
+      ) {
+        continue;
+      }
+      if (
+        !current &&
+        (legacy?.candidate.status === "rejected" ||
+          (legacy?.candidate.status === "accepted" && !legacy.acceptedMemoryId))
+      ) {
+        continue;
+      }
+
+      const targetMemoryId =
+        legacy?.candidate.status === "accepted"
+          ? legacy.acceptedMemoryId
+          : undefined;
+      if (targetMemoryId) {
+        const target = this.repository.getDetail(targetMemoryId);
+        if (
+          !target ||
+          target.memory.deletedAt ||
+          target.memory.status !== "active"
+        ) {
+          continue;
+        }
+        const revision = target.revisions.find(
+          ({ id }) => id === target.memory.currentRevisionId,
+        );
+        if (
+          revision &&
+          normalizeFormedContent(revision.content) ===
+            normalizeFormedContent(pattern.content)
+        ) {
+          continue;
+        }
+      }
+
+      const pending =
+        current?.candidate.status === "pending" ? current.candidate : undefined;
+      const pendingMatches =
+        pending?.content === pattern.content &&
+        sameStrings(pending.sourceIds, pattern.sourceIds) &&
+        sameStrings(pending.sourceLabels, pattern.sourceLabels) &&
+        pending.validFrom === pattern.validFrom &&
+        pending.supersedesMemoryId === targetMemoryId &&
+        (targetMemoryId
+          ? pending.claimOperation === "replace"
+          : !pending.claimOperation);
+      if (pending && !pendingMatches) {
+        if (this.repository.discardPendingCandidate(pending.id)) {
+          removedCandidateIds.add(pending.id);
+        }
+      }
+      if (!current && legacy?.candidate.status === "pending") {
+        if (this.repository.discardPendingCandidate(legacy.candidate.id)) {
+          removedCandidateIds.add(legacy.candidate.id);
+        }
+      }
+
+      const candidate = pendingMatches
+        ? pending
+        : this.repository.propose({
+            candidateId: this.ids.generate(),
+            confidence: 0.6,
+            content: pattern.content,
+            ...(targetMemoryId
+              ? { formation: { operation: "replace" as const } }
+              : {}),
+            importance: 0.5,
+            novelty: 1,
+            now: this.clock.now(),
+            reason: pattern.reason,
+            sourceIds: [...pattern.sourceIds],
+            sourceLabels: pattern.sourceLabels.map(redactText),
+            sourceType: "activity",
+            ...(targetMemoryId ? { supersedesMemoryId: targetMemoryId } : {}),
+            type: "activity_digest",
+            validFrom: pattern.validFrom,
+          });
+      retainedCandidateIds.add(candidate.id);
+      links.push({ candidateId: candidate.id, digestIds: pattern.sourceIds });
+    }
+
+    for (const decision of decisions) {
+      const candidate = decision.candidate;
+      if (
+        candidate.status === "pending" &&
+        managedActivityPatternReason(candidate.reason) &&
+        !retainedCandidateIds.has(candidate.id) &&
+        this.repository.discardPendingCandidate(candidate.id)
+      ) {
+        removedCandidateIds.add(candidate.id);
+      }
+    }
+
+    return {
+      links,
+      removedCandidateIds: [...removedCandidateIds],
+    };
   }
 
   acceptCandidate(candidateId: string): MemoryDetail {
@@ -294,6 +501,50 @@ export class MemoryService {
 
   rejectCandidate(candidateId: string): MemoryCandidate {
     return this.repository.rejectCandidate(candidateId, this.clock.now());
+  }
+
+  resolveClaim(request: MemoryResolveClaimRequest): MemoryDetail {
+    const legacy = this.repository.requireDetail(request.memoryId);
+    const definition = memoryClaimDefinition(request.claimSlot);
+    if (definition.type !== legacy.memory.type) {
+      throw new MemoryError(
+        "MEMORY.CONFLICT",
+        "所选稳定字段与旧记忆类型不一致。",
+        false,
+      );
+    }
+    const owner = this.repository.findDetailByClaimSlot(request.claimSlot);
+    if (owner && owner.memory.type !== definition.type) {
+      throw new MemoryError(
+        "MEMORY.CONFLICT",
+        "稳定字段当前绑定了不兼容的记忆类型。",
+        false,
+      );
+    }
+    const now = this.clock.now();
+    const references = owner
+      ? [
+          { id: owner.memory.id, label: "用户确认合并：现有稳定字段" },
+          { id: legacy.memory.id, label: "用户确认合并：旧版未绑定记忆" },
+        ]
+      : [{ id: legacy.memory.id, label: "用户确认绑定：旧版未绑定记忆" }];
+    return this.repository.resolveClaim({
+      claimSlot: request.claimSlot,
+      content: redactText(request.content),
+      memoryId: request.memoryId,
+      now,
+      reason: owner
+        ? "用户在 Memory 页面确认合并旧记忆"
+        : "用户在 Memory 页面确认旧记忆字段",
+      revisionId: this.ids.generate(),
+      sources: references.map(({ id, label }) => ({
+        createdAt: now,
+        id: this.ids.generate(),
+        label,
+        referenceId: id,
+        type: "user_edit" as const,
+      })),
+    });
   }
 
   confirmPreference(input: {
@@ -360,9 +611,10 @@ export class MemoryService {
       );
     }
 
+    const allowedSet = new Set(input.allowedMemoryIds);
     let providedTarget: MemoryDetail | undefined;
     if (input.memoryId) {
-      if (!new Set(input.allowedMemoryIds).has(input.memoryId)) {
+      if (!allowedSet.has(input.memoryId)) {
         throw new MemoryError(
           "MEMORY.CONFLICT",
           "模型提交的记忆不在当前 Run 的合法候选中。",
@@ -425,6 +677,11 @@ export class MemoryService {
       );
     }
 
+    const resolvedTarget =
+      providedTarget ??
+      (slotTarget && allowedSet.has(slotTarget.memory.id)
+        ? slotTarget
+        : undefined);
     const comparisonTarget = providedTarget ?? slotTarget;
     const currentRevision = comparisonTarget?.revisions.find(
       ({ id }) => id === comparisonTarget.memory.currentRevisionId,
@@ -462,7 +719,6 @@ export class MemoryService {
           slotTarget.memory.id,
         );
       }
-      const allowedSet = new Set(input.allowedMemoryIds);
       const duplicate = this.repository.findActiveDetailByContent(content);
       if (duplicate) {
         if (
@@ -506,15 +762,17 @@ export class MemoryService {
       }
       if (
         input.claimSlot &&
-        input.allowedMemoryIds.some((memoryId) => {
-          const allowed = this.repository.getDetail(memoryId, false);
-          return (
-            allowed?.memory.status === "active" &&
-            allowed.memory.type === type &&
-            allowed.memory.claimSlot !== undefined &&
-            allowed.memory.claimSlot !== input.claimSlot
-          );
-        })
+        (input.ambiguityMemoryIds ?? input.allowedMemoryIds).some(
+          (memoryId) => {
+            const allowed = this.repository.getDetail(memoryId, false);
+            return (
+              allowed?.memory.status === "active" &&
+              allowed.memory.type === type &&
+              allowed.memory.claimSlot !== undefined &&
+              allowed.memory.claimSlot !== input.claimSlot
+            );
+          },
+        )
       ) {
         return this.#proposeFormation(
           input,
@@ -554,7 +812,7 @@ export class MemoryService {
       };
     }
 
-    if (!providedTarget) {
+    if (!resolvedTarget) {
       return this.#proposeFormation(
         input,
         content,
@@ -563,13 +821,13 @@ export class MemoryService {
         slotTarget?.memory.id,
       );
     }
-    if (input.claimSlot && !providedTarget.memory.claimSlot) {
+    if (input.claimSlot && !resolvedTarget.memory.claimSlot) {
       return this.#proposeFormation(
         input,
         content,
         type,
         "legacy_binding",
-        providedTarget.memory.id,
+        resolvedTarget.memory.id,
       );
     }
     if (
@@ -581,7 +839,7 @@ export class MemoryService {
         content,
         type,
         "single_value_operation",
-        providedTarget.memory.id,
+        resolvedTarget.memory.id,
       );
     }
     if (!direct) {
@@ -590,14 +848,14 @@ export class MemoryService {
         content,
         type,
         "basis",
-        providedTarget.memory.id,
+        resolvedTarget.memory.id,
       );
     }
 
     const revised = this.revise({
       confidence: 1,
       content,
-      memoryId: providedTarget.memory.id,
+      memoryId: resolvedTarget.memory.id,
       reason: formationReason(input.basis),
       sources: [
         {
@@ -611,7 +869,7 @@ export class MemoryService {
     const pending = this.repository.findPendingCandidateByContent(content, {
       operation: input.operation,
       ...(input.claimSlot ? { slot: input.claimSlot } : {}),
-      supersedesMemoryId: providedTarget.memory.id,
+      supersedesMemoryId: resolvedTarget.memory.id,
     });
     if (pending) this.repository.discardPendingCandidate(pending.id);
     return {
@@ -619,6 +877,22 @@ export class MemoryService {
       outcome: "revised",
       revisionId: revised.memory.currentRevisionId,
     };
+  }
+
+  #recordUsages(
+    hits: readonly MemoryHit[],
+    consumer: "context" | "tool",
+  ): void {
+    const usedAt = this.clock.now();
+    this.repository.recordUsages(
+      hits.map((hit) => ({
+        consumer,
+        id: this.ids.generate(),
+        memoryId: hit.memory.id,
+        revisionId: hit.revision.id,
+        usedAt,
+      })),
+    );
   }
 
   #proposeFormation(

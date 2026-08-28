@@ -24,6 +24,7 @@ import type {
   EvolutionReviewEvidence,
   GeneratedEvolutionCandidate,
 } from "./evolutionReviewer";
+import { EvolutionReviewSkippedError } from "./evolutionReviewer";
 import { detectEvolutionTriggers } from "./evolutionTrigger";
 
 export interface EvolutionPublisher {
@@ -250,6 +251,26 @@ export class EvolutionService {
     const review = this.repository.resetReview(runId, this.clock.now());
     this.#publishReview(review);
     this.#scheduleDrain();
+    return review;
+  }
+
+  dismissReview(runId: string): EvolutionReview {
+    const current = this.repository.requireReviewByRun(runId);
+    if (current.status !== "failed") {
+      throw new EvolutionError(
+        "EVOLUTION.INVALID_STATE",
+        "只有失败的 Review 可以关闭。",
+        false,
+      );
+    }
+    const completedAt = this.clock.now();
+    const review = this.repository.updateReview({
+      completedAt,
+      runId,
+      status: "skipped",
+      updatedAt: completedAt,
+    });
+    this.#publishReview(review);
     return review;
   }
 
@@ -641,6 +662,16 @@ export class EvolutionService {
       if (this.#stopping && this.#abortController.signal.aborted) return;
       if (!this.repository.getReviewByRun(running.runId)) return;
       const completedAt = this.clock.now();
+      if (error instanceof EvolutionReviewSkippedError) {
+        const skipped = this.repository.updateReview({
+          completedAt,
+          runId: running.runId,
+          status: "skipped",
+          updatedAt: completedAt,
+        });
+        this.#publishReview(skipped);
+        return;
+      }
       const failed = this.repository.updateReview({
         completedAt,
         error: toEvolutionAppError(error),

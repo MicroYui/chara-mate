@@ -17,9 +17,12 @@ import type {
   ProactiveConversationBubble,
 } from "../../shared/contracts/pet";
 import type { Approval } from "../../shared/contracts/run";
+import type { VoiceWakeSnapshot } from "../../shared/contracts/voiceWake";
 import { getDragAnimation } from "./petAtlas";
 import { PixiPetCanvas } from "./PixiPetCanvas";
 import { VoiceStore } from "../features/voice/voiceStore";
+import { MicrophoneLease } from "./MicrophoneLease";
+import { VoiceWakeController } from "./VoiceWakeController";
 import styles from "./CharacterApp.module.css";
 
 type CharacterSurface = "conversation" | "pet";
@@ -55,10 +58,17 @@ export function CharacterApp({
   const [replyError, setReplyError] = useState<string | null>(null);
   const [dragFacing, setDragFacing] = useState<PetFacing>("right");
   const [lookAngleDegrees, setLookAngleDegrees] = useState<number | null>(null);
-  const voiceStore = useMemo(
-    () => new VoiceStore(window.charaMateCharacter.voice),
-    [],
-  );
+  const [wake, setWake] = useState<VoiceWakeSnapshot>();
+  const voiceRuntime = useMemo(() => {
+    const microphone = new MicrophoneLease();
+    return {
+      microphone,
+      voiceStore: new VoiceStore(window.charaMateCharacter.voice, () =>
+        microphone.prepareVoiceMicrophone(),
+      ),
+    };
+  }, []);
+  const { microphone, voiceStore } = voiceRuntime;
   const voice = useSyncExternalStore(voiceStore.subscribe, voiceStore.getState);
   const activePointer = useRef<number | null>(null);
   const lastDragPoint = useRef<PetDragPoint | null>(null);
@@ -154,6 +164,29 @@ export function CharacterApp({
     };
   }, [isConversationSurface, markReady, receiveProactiveBubble]);
   useEffect(() => voiceStore.startListening(), [voiceStore]);
+  useEffect(() => {
+    if (isConversationSurface) return undefined;
+    let active = true;
+    const unsubscribeWake = window.charaMateCharacter.voiceWake.subscribe(
+      (snapshot) => {
+        if (active) setWake(snapshot);
+      },
+    );
+    void window.charaMateCharacter.voiceWake.getSnapshot().then((response) => {
+      if (active && response.ok) setWake(response.value);
+    });
+    const controller = new VoiceWakeController(
+      window.charaMateCharacter.voiceWake,
+      voiceStore,
+      microphone,
+    );
+    const stopController = controller.start();
+    return () => {
+      active = false;
+      unsubscribeWake();
+      stopController();
+    };
+  }, [isConversationSurface, microphone, voiceStore]);
 
   const decideApproval = (decision: "approved" | "rejected") => {
     if (!approval) return;
@@ -464,12 +497,46 @@ export function CharacterApp({
         </section>
       ) : null}
       {!isConversationSurface && voice.error ? (
-        <span
+        <div
           className={styles["voiceError"]}
           onPointerDown={stopPetInteraction}
           role="alert"
         >
-          {voice.error.message}
+          <span>{voice.error.message}</span>
+          <button
+            aria-label="关闭语音错误提示"
+            className={styles["voiceErrorClose"]}
+            onClick={() => voiceStore.clearError()}
+            title="关闭"
+            type="button"
+          >
+            <X aria-hidden="true" size={12} />
+          </button>
+        </div>
+      ) : null}
+      {!isConversationSurface && wake?.enabled ? (
+        <span
+          aria-label={
+            wake.phase === "listening"
+              ? "正在等待 Hi Mika"
+              : wake.phase === "detected"
+                ? "已听到 Hi Mika"
+                : wake.phase === "error"
+                  ? "Hi Mika 语音唤醒暂时不可用"
+                  : "Hi Mika 语音唤醒已开启"
+          }
+          className={styles["wakeStatus"]}
+          data-phase={wake.phase}
+          title={wake.error ?? "说 Hi Mika 开始语音对话"}
+        >
+          <Mic aria-hidden="true" size={11} strokeWidth={2.4} />
+          <span>
+            {wake.phase === "detected"
+              ? "听到了"
+              : wake.phase === "connecting"
+                ? "连接中"
+                : "Hi Mika"}
+          </span>
         </span>
       ) : null}
       {!isConversationSurface ? (

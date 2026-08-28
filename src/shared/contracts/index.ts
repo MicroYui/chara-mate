@@ -316,3 +316,16 @@ export type {
   VoiceTurnRecord,
   VoiceTurnStatus,
 } from "./voice";
+export {
+  VOICE_WAKE_CHANNELS,
+  VOICE_WAKE_PHRASE,
+  type VoiceWakeCharacterApi,
+  type VoiceWakePhase,
+  type VoiceWakeReportRequest,
+  type VoiceWakeReportedPhase,
+  type VoiceWakeSetEnabledRequest,
+  type VoiceWakeSettingsApi,
+  type VoiceWakeSnapshot,
+  type VoiceWakeSnapshotResponse,
+  type VoiceWakeSubscriptionApi,
+} from "./voiceWake";

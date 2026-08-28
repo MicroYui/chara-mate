@@ -57,7 +57,7 @@ describe("activity distillation", () => {
         "2026-08-04T16:00:00.000Z",
         "2026-08-11T16:00:00.000Z",
         "Asia/Shanghai",
-      ).proposals,
+      ).candidateIds,
     ).toEqual([]);
   });
 

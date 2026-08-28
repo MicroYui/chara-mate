@@ -23,6 +23,10 @@ interface VoiceSettingsRow {
   voice: VoiceSettingsConfig["voice"];
 }
 
+interface VoiceWakeSettingsRow {
+  wake_enabled: 0 | 1;
+}
+
 export const DEFAULT_VOICE_INSTRUCTIONS =
   "使用用户当前使用的语言自然、简洁地回应，并在用户切换语言时跟随；中文使用简体中文。角色整体开朗、有温度，处理任务时保持清楚可靠。允许自然停顿，不朗读命令、代码、JSON 和日志；涉及工具执行时只用一句短话说明正在做什么。";
 
@@ -124,5 +128,37 @@ export class SettingsRepository {
       )
       .run({ ...value, updatedAt });
     return this.getVoice();
+  }
+
+  getVoiceWakeEnabled(): boolean {
+    const row = this.database
+      .prepare(
+        "SELECT wake_enabled FROM voice_settings WHERE settings_id = 'voice'",
+      )
+      .get() as VoiceWakeSettingsRow | undefined;
+    return row?.wake_enabled === 1;
+  }
+
+  saveVoiceWakeEnabled(enabled: boolean, updatedAt: Timestamp): boolean {
+    const current = this.getVoice();
+    this.database
+      .prepare(
+        `INSERT INTO voice_settings (
+           settings_id, provider_profile_id, voice, instructions,
+           input_mode, wake_enabled, updated_at
+         ) VALUES (
+           'voice', @providerProfileId, @voice, @instructions,
+           @inputMode, @wakeEnabled, @updatedAt
+         )
+         ON CONFLICT(settings_id) DO UPDATE SET
+           wake_enabled = excluded.wake_enabled,
+           updated_at = excluded.updated_at`,
+      )
+      .run({
+        ...current,
+        updatedAt,
+        wakeEnabled: enabled ? 1 : 0,
+      });
+    return this.getVoiceWakeEnabled();
   }
 }

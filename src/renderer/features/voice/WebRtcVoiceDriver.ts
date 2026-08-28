@@ -53,6 +53,11 @@ function responseGeneration(event: RealtimeEvent): number | undefined {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function wakeGreetingResponse(event: RealtimeEvent): boolean {
+  const metadata = object(object(event["response"])?.["metadata"]);
+  return metadata?.["charamate_purpose"] === "wake_greeting";
+}
+
 function usage(event: RealtimeEvent) {
   const value = object(object(event["response"])?.["usage"]);
   if (!value) return undefined;
@@ -179,6 +184,7 @@ export class WebRtcVoiceDriver {
   #currentAudioStartedAt = 0;
   #currentPlayingResponseId: string | undefined;
   #currentResponseId: string | undefined;
+  #currentWakeGreetingResponseId: string | undefined;
   #latestGeneration = 0;
   #microphone: MediaStream | undefined;
   #outputEnabled = false;
@@ -190,9 +196,12 @@ export class WebRtcVoiceDriver {
   readonly #responseItems = new Map<string, string>();
   readonly #playbackReadyResponses = new Set<string>();
   readonly #reportedAudioStarts = new Set<string>();
+  readonly #reportedWakeGreetingStops = new Set<string>();
   readonly #startedResponses = new Set<string>();
   readonly #stoppedResponses = new Set<string>();
   #suppressAudio = false;
+  #wakeGreetingAllowed = false;
+  readonly #wakeGreetingResponses = new Set<string>();
 
   constructor(
     private readonly api: VoiceApi,
@@ -290,7 +299,10 @@ export class WebRtcVoiceDriver {
     }
     if (command.type === "playback.set") {
       this.#playbackAllowed = command.enabled;
-      if (!command.enabled) this.#setOutputEnabled(false);
+      if (!command.enabled) {
+        this.#cancelWakeGreeting();
+        this.#setOutputEnabled(false);
+      }
       return;
     }
     if (command.type === "session.refresh") {
@@ -317,7 +329,34 @@ export class WebRtcVoiceDriver {
       this.close();
       return;
     }
+    if (command.type === "wake.greeting.create") {
+      this.#wakeGreetingAllowed = true;
+      this.#suppressAudio = false;
+      this.#send({
+        event_id: command.requestId,
+        response: {
+          conversation: "none",
+          input: [
+            {
+              content: [{ text: command.prompt, type: "input_text" }],
+              role: "user",
+              type: "message",
+            },
+          ],
+          instructions: command.instructions,
+          metadata: {
+            charamate_purpose: "wake_greeting",
+            charamate_request_id: command.requestId,
+          },
+          output_modalities: ["audio"],
+          tools: [],
+        },
+        type: "response.create",
+      });
+      return;
+    }
     if (command.type === "response.create") {
+      this.#cancelWakeGreeting();
       this.#latestGeneration = command.generation;
       this.#suppressAudio = false;
       this.#createResponse(
@@ -379,8 +418,12 @@ export class WebRtcVoiceDriver {
     this.#responseGenerations.clear();
     this.#responseItems.clear();
     this.#reportedAudioStarts.clear();
+    this.#reportedWakeGreetingStops.clear();
     this.#startedResponses.clear();
     this.#stoppedResponses.clear();
+    this.#wakeGreetingResponses.clear();
+    this.#currentWakeGreetingResponseId = undefined;
+    this.#wakeGreetingAllowed = false;
     this.#pendingRefreshRequestId = undefined;
     void this.#audioContext.close();
     this.onEnvelope({ input: 0, output: 0 });
@@ -462,16 +505,22 @@ export class WebRtcVoiceDriver {
     if (type === "input_audio_buffer.speech_started") {
       const inputItemId = itemId(event);
       if (!inputItemId) return;
+      const wakeGreetingPlaying = this.#currentPlayingResponseId
+        ? this.#isWakeGreeting(this.#currentPlayingResponseId)
+        : false;
       const audioEndMs = Math.max(
         0,
         Math.round(
           (this.#outputAudio.currentTime - this.#currentAudioStartedAt) * 1_000,
         ),
       );
+      if (wakeGreetingPlaying || this.#wakeGreetingAllowed) {
+        this.#cancelWakeGreeting();
+      }
       this.#setOutputEnabled(false);
       this.#suppressAudio = true;
       this.#report({
-        ...(this.#currentAudioItemId
+        ...(!wakeGreetingPlaying && this.#currentAudioItemId
           ? {
               assistantItemId: this.#currentAudioItemId,
               audioEndMs,
@@ -524,6 +573,12 @@ export class WebRtcVoiceDriver {
     }
     if (type === "response.created") {
       const id = responseId(event);
+      if (id && wakeGreetingResponse(event)) {
+        this.#wakeGreetingResponses.add(id);
+        this.#currentWakeGreetingResponseId = id;
+        if (!this.#wakeGreetingAllowed) this.#cancelWakeGreeting();
+        return;
+      }
       const generation = responseGeneration(event);
       if (id && generation) {
         this.#responseGenerations.set(id, generation);
@@ -538,8 +593,17 @@ export class WebRtcVoiceDriver {
       return;
     }
     if (type === "response.output_item.added") {
-      const response = responseId(event) ?? this.#currentResponseId;
-      if (!response || this.#generationFor(response) === undefined) return;
+      const response =
+        responseId(event) ??
+        this.#currentResponseId ??
+        this.#currentWakeGreetingResponseId;
+      if (
+        !response ||
+        (!this.#isWakeGreeting(response) &&
+          this.#generationFor(response) === undefined)
+      ) {
+        return;
+      }
       const item = object(event["item"]);
       const id = text(item?.["id"]);
       if (id && item?.["type"] === "message") {
@@ -627,7 +691,13 @@ export class WebRtcVoiceDriver {
     if (type === "output_audio_buffer.started") {
       const response = responseId(event);
       const generation = response ? this.#generationFor(response) : undefined;
-      if (!this.#suppressAudio && response && generation) {
+      const wakeGreeting = response ? this.#isWakeGreeting(response) : false;
+      if (
+        !this.#suppressAudio &&
+        response &&
+        (generation !== undefined ||
+          (wakeGreeting && this.#wakeGreetingAllowed))
+      ) {
         const item = itemId(event) ?? this.#responseItems.get(response);
         if (item) this.#responseItems.set(response, item);
         this.#currentPlayingResponseId = response;
@@ -640,44 +710,58 @@ export class WebRtcVoiceDriver {
     if (type === "output_audio_buffer.stopped") {
       const response = responseId(event);
       const generation = response ? this.#generationFor(response) : undefined;
-      if (!response || !generation) return;
+      const wakeGreeting = response ? this.#isWakeGreeting(response) : false;
+      if (!response || (generation === undefined && !wakeGreeting)) return;
       const isCurrent = this.#currentPlayingResponseId === response;
       const item = this.#responseItems.get(response);
       this.#stoppedResponses.add(response);
-      this.#releaseCompletedResponse(response);
       if (isCurrent) {
-        this.#report({
-          ...(item ? { itemId: item } : {}),
-          generation,
-          responseId: response,
-          type: "audio.stopped",
-        });
+        if (wakeGreeting) this.#reportWakeGreetingStopped(response);
+        else if (generation !== undefined) {
+          this.#report({
+            ...(item ? { itemId: item } : {}),
+            generation,
+            responseId: response,
+            type: "audio.stopped",
+          });
+        }
         this.#setOutputEnabled(false);
         this.#currentPlayingResponseId = undefined;
         this.#currentAudioItemId = undefined;
       }
+      this.#releaseCompletedResponse(response);
       return;
     }
     if (type === "output_audio_buffer.cleared") {
       const response = responseId(event);
-      if (!response || this.#generationFor(response) === undefined) return;
+      if (
+        !response ||
+        (!this.#isWakeGreeting(response) &&
+          this.#generationFor(response) === undefined)
+      ) {
+        return;
+      }
       this.#stoppedResponses.add(response);
-      this.#releaseCompletedResponse(response);
       if (this.#currentPlayingResponseId === response) {
+        if (this.#isWakeGreeting(response)) {
+          this.#reportWakeGreetingStopped(response);
+        }
         this.#setOutputEnabled(false);
         this.#currentPlayingResponseId = undefined;
         this.#currentAudioItemId = undefined;
       }
+      this.#releaseCompletedResponse(response);
       return;
     }
     if (type === "response.done") {
       const response = object(event["response"]);
       const id = text(response?.["id"]);
+      const wakeGreeting = id ? this.#isWakeGreeting(id) : false;
       const generation = id ? this.#generationFor(id) : undefined;
       const status = text(response?.["status"]);
       if (
         id &&
-        generation &&
+        (generation !== undefined || wakeGreeting) &&
         (status === "completed" ||
           status === "cancelled" ||
           status === "failed" ||
@@ -689,15 +773,26 @@ export class WebRtcVoiceDriver {
             text(object(details["error"])?.["message"]))
           : undefined;
         const responseUsage = usage(event);
-        this.#report({
-          generation,
-          hasAudio: this.#startedResponses.has(id),
-          responseId: id,
-          status,
-          ...(statusReason ? { statusReason } : {}),
-          type: "response.done",
-          ...(responseUsage ? { usage: responseUsage } : {}),
-        });
+        if (wakeGreeting) {
+          this.#report({
+            hasAudio: this.#startedResponses.has(id),
+            responseId: id,
+            status,
+            ...(statusReason ? { statusReason } : {}),
+            type: "wake.greeting.done",
+            ...(responseUsage ? { usage: responseUsage } : {}),
+          });
+        } else if (generation !== undefined) {
+          this.#report({
+            generation,
+            hasAudio: this.#startedResponses.has(id),
+            responseId: id,
+            status,
+            ...(statusReason ? { statusReason } : {}),
+            type: "response.done",
+            ...(responseUsage ? { usage: responseUsage } : {}),
+          });
+        }
         if (status === "completed") {
           if (this.#startedResponses.has(id)) {
             this.#completedResponses.add(id);
@@ -766,6 +861,10 @@ export class WebRtcVoiceDriver {
     return generation === this.#latestGeneration ? generation : undefined;
   }
 
+  #isWakeGreeting(responseId: string): boolean {
+    return this.#wakeGreetingResponses.has(responseId);
+  }
+
   #releaseCompletedResponse(responseId: string): void {
     if (
       !this.#completedResponses.has(responseId) ||
@@ -777,6 +876,15 @@ export class WebRtcVoiceDriver {
   }
 
   #releaseResponse(responseId: string): void {
+    if (
+      this.#currentPlayingResponseId === responseId &&
+      this.#isWakeGreeting(responseId)
+    ) {
+      this.#reportWakeGreetingStopped(responseId);
+      this.#setOutputEnabled(false);
+      this.#currentPlayingResponseId = undefined;
+      this.#currentAudioItemId = undefined;
+    }
     this.#completedResponses.delete(responseId);
     this.#responseGenerations.delete(responseId);
     this.#responseItems.delete(responseId);
@@ -784,8 +892,14 @@ export class WebRtcVoiceDriver {
     this.#reportedAudioStarts.delete(responseId);
     this.#startedResponses.delete(responseId);
     this.#stoppedResponses.delete(responseId);
+    this.#wakeGreetingResponses.delete(responseId);
+    this.#reportedWakeGreetingStops.delete(responseId);
     if (this.#currentResponseId === responseId) {
       this.#currentResponseId = undefined;
+    }
+    if (this.#currentWakeGreetingResponseId === responseId) {
+      this.#currentWakeGreetingResponseId = undefined;
+      this.#wakeGreetingAllowed = false;
     }
   }
 
@@ -798,16 +912,46 @@ export class WebRtcVoiceDriver {
     ) {
       return;
     }
-    const generation = this.#generationFor(responseId);
     const item = this.#responseItems.get(responseId);
-    if (!generation || !item) return;
+    if (!item) return;
     this.#reportedAudioStarts.add(responseId);
+    if (this.#isWakeGreeting(responseId)) {
+      this.#report({
+        responseId,
+        type: "wake.greeting.audio.started",
+      });
+      return;
+    }
+    const generation = this.#generationFor(responseId);
+    if (!generation) return;
     this.#report({
       generation,
       itemId: item,
       responseId,
       type: "audio.started",
     });
+  }
+
+  #reportWakeGreetingStopped(responseId: string): void {
+    if (this.#reportedWakeGreetingStops.has(responseId)) return;
+    this.#reportedWakeGreetingStops.add(responseId);
+    this.#report({
+      responseId,
+      type: "wake.greeting.audio.stopped",
+    });
+  }
+
+  #cancelWakeGreeting(): void {
+    this.#wakeGreetingAllowed = false;
+    const responseId = this.#currentWakeGreetingResponseId;
+    if (!responseId || !this.#isWakeGreeting(responseId)) return;
+    this.#suppressAudio = true;
+    this.#send({ response_id: responseId, type: "response.cancel" });
+    this.#send({ type: "output_audio_buffer.clear" });
+    this.#setOutputEnabled(false);
+    this.#reportWakeGreetingStopped(responseId);
+    this.#currentPlayingResponseId = undefined;
+    this.#currentAudioItemId = undefined;
   }
 
   async #resumeOutput(responseId: string): Promise<void> {

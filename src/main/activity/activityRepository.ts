@@ -680,6 +680,50 @@ export class ActivityRepository {
       .run(JSON.stringify(candidateIds), digestId);
   }
 
+  reconcileDigestCandidateLinks(
+    links: readonly {
+      readonly candidateId: string;
+      readonly digestIds: readonly string[];
+    }[],
+    removedCandidateIds: readonly string[],
+  ): void {
+    const rows = this.database
+      .prepare(
+        `SELECT id, candidate_ids_json
+         FROM activity_digests`,
+      )
+      .all() as Array<{ candidate_ids_json: string; id: string }>;
+    const removed = new Set(removedCandidateIds);
+    const desiredByDigest = new Map<string, Set<string>>();
+    const managed = new Set<string>();
+    for (const link of links) {
+      managed.add(link.candidateId);
+      for (const digestId of link.digestIds) {
+        const ids = desiredByDigest.get(digestId) ?? new Set<string>();
+        ids.add(link.candidateId);
+        desiredByDigest.set(digestId, ids);
+      }
+    }
+    const update = this.database.prepare(
+      `UPDATE activity_digests SET candidate_ids_json = ? WHERE id = ?`,
+    );
+    this.database.transaction(() => {
+      for (const row of rows) {
+        const current = stringArray(row.candidate_ids_json);
+        const next = current.filter(
+          (candidateId) =>
+            !removed.has(candidateId) && !managed.has(candidateId),
+        );
+        for (const candidateId of desiredByDigest.get(row.id) ?? []) {
+          if (!next.includes(candidateId)) next.push(candidateId);
+        }
+        if (JSON.stringify(current) !== JSON.stringify(next)) {
+          update.run(JSON.stringify(next), row.id);
+        }
+      }
+    })();
+  }
+
   getDigest(digestId: string): ActivityDigest | undefined {
     const row = this.database
       .prepare(

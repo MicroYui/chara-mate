@@ -103,6 +103,10 @@ function makeApi() {
     ok: true,
     value: detail,
   });
+  const create = vi.fn<MemoryApi["create"]>().mockResolvedValue({
+    ok: true,
+    value: detail,
+  });
   const acceptCandidate = vi
     .fn<MemoryApi["acceptCandidate"]>()
     .mockResolvedValue({
@@ -113,10 +117,14 @@ function makeApi() {
     ok: true,
     value: detail,
   });
+  const resolveClaim = vi.fn<MemoryApi["resolveClaim"]>().mockResolvedValue({
+    ok: true,
+    value: detail,
+  });
   const api: MemoryApi = {
     acceptCandidate,
     archive: vi.fn().mockResolvedValue({ ok: true, value: detail }),
-    create: vi.fn().mockResolvedValue({ ok: true, value: detail }),
+    create,
     delete: vi.fn().mockResolvedValue({ ok: true, value: detail }),
     get,
     list,
@@ -127,14 +135,130 @@ function makeApi() {
       ok: true,
       value: { ...snapshot.candidates[0]!, status: "rejected" as const },
     }),
+    resolveClaim,
     restore,
     revise,
     setPinned: vi.fn().mockResolvedValue({ ok: true, value: detail }),
   };
-  return { acceptCandidate, api, get, list, restore, revise };
+  return {
+    acceptCandidate,
+    api,
+    create,
+    get,
+    list,
+    resolveClaim,
+    restore,
+    revise,
+  };
 }
 
 describe("MemoryPage", () => {
+  it("requires a stable slot when manually creating a preference", async () => {
+    const { api, create } = makeApi();
+    render(<MemoryPage api={api} onOpenTerritory={() => undefined} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新记忆" }));
+    expect(screen.getByLabelText("新记忆类型")).toHaveValue("preference");
+    fireEvent.change(screen.getByLabelText("新记忆稳定字段"), {
+      target: { value: "preference.media" },
+    });
+    fireEvent.change(screen.getByLabelText("新记忆内容"), {
+      target: { value: "用户喜欢科幻电影。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          claimSlot: "preference.media",
+          content: "用户喜欢科幻电影。",
+          type: "preference",
+        }),
+      ),
+    );
+  });
+
+  it("binds an unkeyed legacy preference only after explicit confirmation", async () => {
+    const { api, resolveClaim } = makeApi();
+    render(<MemoryPage api={api} onOpenTerritory={() => undefined} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /用户偏爱安静且有插座/u }),
+    );
+    expect(await screen.findByText(/旧版未绑定记录/u)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("旧记忆稳定字段"), {
+      target: { value: "preference.hobbies" },
+    });
+    fireEvent.change(screen.getByLabelText("稳定字段确认内容"), {
+      target: { value: "用户喜欢探访安静且有插座的咖啡馆。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认绑定" }));
+
+    await waitFor(() =>
+      expect(resolveClaim).toHaveBeenCalledWith({
+        claimSlot: "preference.hobbies",
+        content: "用户喜欢探访安静且有插座的咖啡馆。",
+        memoryId: MEMORY_ID,
+      }),
+    );
+  });
+
+  it("shows both records and submits a complete explicit merge", async () => {
+    const { api, list, resolveClaim } = makeApi();
+    const ownerHit: MemoryHit = {
+      ...hit,
+      memory: {
+        ...hit.memory,
+        claimSlot: "preference.hobbies",
+        currentRevisionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc",
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+      },
+      revision: {
+        ...hit.revision,
+        content: "用户喜欢玩 CS2。",
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc",
+        memoryId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+      },
+    };
+    const ownerDetail: MemoryDetail = {
+      memory: ownerHit.memory,
+      revisions: [ownerHit.revision],
+      sources: [],
+      usages: [],
+    };
+    list.mockImplementation((request) =>
+      Promise.resolve({
+        ok: true,
+        value: request.claimSlot
+          ? { candidates: [], memories: [ownerHit], profile: [] }
+          : snapshot,
+      }),
+    );
+    resolveClaim.mockResolvedValue({ ok: true, value: ownerDetail });
+    render(<MemoryPage api={api} onOpenTerritory={() => undefined} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /用户偏爱安静且有插座/u }),
+    );
+    expect(await screen.findByText("现有字段内容")).toBeVisible();
+    expect(screen.getByText("用户喜欢玩 CS2。")).toBeVisible();
+    expect(screen.getByText("这条旧记忆")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("稳定字段确认内容"), {
+      target: {
+        value: "用户喜欢玩 CS2，也喜欢探访安静且有插座的咖啡馆。",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认合并" }));
+
+    await waitFor(() =>
+      expect(resolveClaim).toHaveBeenCalledWith({
+        claimSlot: "preference.hobbies",
+        content: "用户喜欢玩 CS2，也喜欢探访安静且有插座的咖啡馆。",
+        memoryId: MEMORY_ID,
+      }),
+    );
+  });
+
   it("creates an idempotent Territory candidate from the selected Memory", async () => {
     const { api } = makeApi();
     const territoryCandidateId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";

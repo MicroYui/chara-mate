@@ -17,4 +17,5 @@ export default defineConfig({
   },
   optimizeDeps: { include: ["lucide-react"] },
   plugins: [react()],
+  worker: { format: "iife" },
 });

@@ -29,8 +29,12 @@ type PreparedMicrophoneResult =
   | { readonly ok: true; readonly value: PreparedMicrophone }
   | { readonly error: unknown; readonly ok: false };
 
-function beginMicrophonePreparation(): Promise<PreparedMicrophoneResult> {
-  return prepareMicrophone().then(
+export type VoiceMicrophonePreparer = () => Promise<PreparedMicrophone>;
+
+function beginMicrophonePreparation(
+  prepare: VoiceMicrophonePreparer,
+): Promise<PreparedMicrophoneResult> {
+  return prepare().then(
     (value) => ({ ok: true, value }),
     (error: unknown) => ({ error, ok: false }),
   );
@@ -64,7 +68,11 @@ export class VoiceStore {
   #unsubscribeChanged: (() => void) | undefined;
   #unsubscribeCommand: (() => void) | undefined;
 
-  constructor(private readonly api: VoiceApi) {}
+  constructor(
+    private readonly api: VoiceApi,
+    private readonly microphonePreparer: VoiceMicrophonePreparer = () =>
+      prepareMicrophone(),
+  ) {}
 
   readonly getState = (): VoiceUiState => this.#state;
   readonly getEnvelope = (): VoiceEnvelope => this.#envelope;
@@ -136,6 +144,16 @@ export class VoiceStore {
     );
   }
 
+  startWake(): Promise<void> {
+    this.preparePlayback();
+    return this.#beginStart(() =>
+      this.api.quickStart({
+        origin: "voice_wake",
+        requestedAt: new Date().toISOString(),
+      }),
+    );
+  }
+
   preparePlayback(): void {
     if (
       this.#driver ||
@@ -175,7 +193,7 @@ export class VoiceStore {
       snapshot: this.#state.snapshot,
       starting: true,
     });
-    const microphone = beginMicrophonePreparation();
+    const microphone = beginMicrophonePreparation(this.microphonePreparer);
     let response: VoiceStartResponse;
     try {
       response = await connect();
@@ -284,9 +302,18 @@ export class VoiceStore {
   }
 
   async setPaused(paused: boolean): Promise<void> {
+    await this.#setPaused(paused);
+  }
+
+  async resumeFromWake(): Promise<void> {
+    await this.#setPaused(false, "voice_wake");
+  }
+
+  async #setPaused(paused: boolean, origin?: "voice_wake"): Promise<void> {
     const sessionId = this.#state.snapshot?.sessionId;
     if (!sessionId) return;
     const response = await this.api.setPaused({
+      ...(origin ? { origin } : {}),
       paused,
       requestedAt: new Date().toISOString(),
       sessionId,
@@ -306,7 +333,7 @@ export class VoiceStore {
     this.#setState({ ...this.#state, starting: true });
     await this.#connectDriver(
       response.value.connection,
-      beginMicrophonePreparation(),
+      beginMicrophonePreparation(this.microphonePreparer),
     );
   }
 

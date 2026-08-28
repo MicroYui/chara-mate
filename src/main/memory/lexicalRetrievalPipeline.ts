@@ -114,6 +114,10 @@ export class LexicalRetrievalPipeline implements RetrievalPipeline {
       );
     }
     if (request.type) memoryClauses.push("m.type = @type");
+    if (request.claimSlot) {
+      memoryClauses.push("mc.claim_slot = @claimSlot");
+      if (historical) memoryClauses.push("mc.created_at <= @at");
+    }
 
     const candidateClauses = ["c.revision_id IS NOT NULL"];
     if (request.status) candidateClauses.push("c.status_at = @status");
@@ -151,6 +155,7 @@ export class LexicalRetrievalPipeline implements RetrievalPipeline {
                   ${lastAccessedExpression} AS last_accessed_at,
                   ${updatedExpression} AS updated_at
            FROM memories m
+           LEFT JOIN memory_claims mc ON mc.memory_id = m.id
            WHERE ${memoryClauses.join(" AND ")}
          )
          SELECT c.memory_id, c.revision_id, c.status_at,
@@ -164,6 +169,7 @@ export class LexicalRetrievalPipeline implements RetrievalPipeline {
       .all({
         at,
         ...(match ? { match } : {}),
+        ...(request.claimSlot ? { claimSlot: request.claimSlot } : {}),
         ...(limit === undefined ? {} : { limit }),
         ...(request.sourceType ? { sourceType: request.sourceType } : {}),
         ...(request.status ? { status: request.status } : {}),

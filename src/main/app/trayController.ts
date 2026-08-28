@@ -8,11 +8,13 @@ import {
 } from "electron";
 
 import type { VoiceSessionSnapshot } from "../../shared/contracts/voice";
+import type { VoiceWakeSnapshot } from "../../shared/contracts/voiceWake";
 import type { ActivityService } from "../activity/activityService";
 import type { AppLogger } from "../observability/logger";
 import type { CharacterWindowController } from "../pet/characterWindowController";
 import type { PetService } from "../pet/petService";
 import type { VoiceService } from "../voice/voiceService";
+import type { VoiceWakeService } from "../voice/voiceWakeService";
 
 const TRAY_ICON_FILENAME = "charamate-statusTemplate.png";
 
@@ -36,6 +38,10 @@ interface TrayControllerDependencies {
   readonly pet: Pick<PetService, "getCharacterSnapshot" | "subscribe">;
   readonly quit: () => void;
   readonly voice: Pick<VoiceService, "getActive" | "setMuted">;
+  readonly wake: Pick<
+    VoiceWakeService,
+    "getSnapshot" | "setEnabled" | "subscribe"
+  >;
 }
 
 export function trayIconPath({
@@ -71,6 +77,20 @@ function voiceCanMute(snapshot: VoiceSessionSnapshot | null): boolean {
   );
 }
 
+function wakeStatusLabel(snapshot: VoiceWakeSnapshot): string {
+  const labels: Record<VoiceWakeSnapshot["phase"], string> = {
+    arming: "语音唤醒 · 正在准备",
+    connecting: "语音唤醒 · 正在进入对话",
+    detected: "已听到“Hi Mika”",
+    disabled: "语音唤醒未开启",
+    error: "语音唤醒暂时不可用",
+    listening: "语音唤醒 · 等待“Hi Mika”",
+    suspended: "语音唤醒已随系统暂停",
+    voice_active: "语音唤醒 · 对话中暂停监听",
+  };
+  return labels[snapshot.phase];
+}
+
 export class TrayController {
   #disposers: Array<() => void> = [];
   #refreshGeneration = 0;
@@ -96,6 +116,7 @@ export class TrayController {
     this.#disposers = [
       this.dependencies.pet.subscribe(() => void this.refresh()),
       this.dependencies.activity.onPauseChanged(() => void this.refresh()),
+      this.dependencies.wake.subscribe(() => void this.refresh()),
     ];
     await this.refresh();
   }
@@ -128,6 +149,7 @@ export class TrayController {
       const hasPet = petSnapshot.activePet !== null;
       const petVisible = hasPet && this.dependencies.character.isUserVisible();
       const voiceSnapshot = this.dependencies.voice.getActive();
+      const wakeSnapshot = this.dependencies.wake.getSnapshot();
       const statusLabel = !hasPet
         ? "还没有启用桌宠 · 0 个"
         : petVisible
@@ -136,6 +158,7 @@ export class TrayController {
       const template: MenuItemConstructorOptions[] = [
         { enabled: false, label: statusLabel },
         { enabled: false, label: voiceStatusLabel(voiceSnapshot) },
+        { enabled: false, label: wakeStatusLabel(wakeSnapshot) },
         { type: "separator" },
         {
           checked: petVisible,
@@ -151,6 +174,16 @@ export class TrayController {
         {
           click: () => this.dependencies.openMainWindow(),
           label: "打开 CharaMate",
+        },
+        {
+          checked: wakeSnapshot.enabled,
+          click: (item) => {
+            this.runMenuAction("TRAY_VOICE_WAKE_ERROR", () =>
+              this.dependencies.wake.setEnabled(item.checked),
+            );
+          },
+          label: "语音唤醒（Hi Mika）",
+          type: "checkbox",
         },
         {
           checked: voiceSnapshot?.muted ?? false,
@@ -189,7 +222,15 @@ export class TrayController {
 
   private runMenuAction(message: string, action: () => unknown): void {
     try {
-      action();
+      const result = action();
+      if (result instanceof Promise) {
+        void result
+          .catch((error: unknown) => {
+            this.dependencies.logger.warn(message, { error });
+          })
+          .finally(() => void this.refresh());
+        return;
+      }
     } catch (error) {
       this.dependencies.logger.warn(message, { error });
     }
