@@ -447,7 +447,7 @@ CharaMate 的陪伴叙事是“**一起做，一起经历，一起记住**”。
 - **同行事项（Journey）**：持续数天到数月，表达一件对用户重要的事如何被用户和角色共同走过；一个同行事项拥有一个由系统管理的 Home Chat，可以包含多次共处会话、会话间的续接、稀疏阶段节点、一次明确约定的跟进以及最终回望。
 - **共处会话（Together Session）**：持续数十分钟到数小时，表达一次围绕具体活动的共同在场；可以跨文字、Voice、Browser、文档和普通 Agent Run，但不拥有另一套模型循环、Tool、审批或消息系统。
 
-系统不要求用户先说“陪我做什么”，也不把显式创建入口作为常规起点。常规入口是：Activity 提供有来源的当前活动观察，陪伴 Agent 依据完整语境语义判断“不打扰 / 发起一段新对话 / 回到某个既有 Journey”，再通过普通 Chat Run 发出一句轻量、具体且有依据的对话邀请。全新话题的开场 Run 暂存在一个不进入最近或已归档列表的 provisional Chat 中；气泡可见后的 20 秒内，用户第一次文字回复或明确启动该气泡的语音回复才把它原子转为普通 Chat，超时或关闭则连同开场 Run 与消息级联删除。已有 Chat 的续接与约定跟进已经属于正式历史，不使用这套短时删除规则。Activity 不负责判断陪伴意图，也不创建 Journey 或 Together Session；语义门不使用应用名、论文、电影等关键词表或正则硬编码。20 秒是当前仓库所有者选择用于首轮验收的 CharaMate MVP 可用性启发式，不是协议限制，后续只能依据真实体验结果替换。
+系统不要求用户先说“陪我做什么”，也不把显式创建入口作为常规起点。常规入口是：Activity 提供有来源的当前活动观察，陪伴 Agent 依据完整语境语义判断“不打扰 / 发起一段新对话 / 回到某个既有 Journey”，再通过普通 Chat Run 发出一句轻量、具体且有依据的对话邀请。全新话题的开场 Run 暂存在一个不进入最近或已归档列表的 provisional Chat 中；气泡可见后的 20 秒内，用户第一次文字回复或明确启动该气泡的语音回复才把它原子转为普通 Chat，超时或关闭则连同开场 Run 与消息级联删除。已有 Chat 的续接与约定跟进已经属于正式历史，不使用这套短时删除规则。Activity 不负责判断陪伴意图，也不创建 Journey 或 Together Session；语义门不使用应用名、论文、电影等关键词表或正则硬编码。每条 Activity 主动消息成功投影后，宿主执行 5 分钟全局冷却；仅持久化最近 3 次主动消息的观察依据、实际话术和回应/关闭/到期结果，冷却结束后由 Agent 基于这 3 条记录判断新开场是否在语义上重复，宿主不增加标题、关键词或字面相似度规则。20 秒与 5 分钟都是仓库所有者明确选择的 CharaMate 产品启发式，分别负责临时 Chat 转正和全局打扰节流，不是 Provider 或操作系统协议限制。
 
 主动开场本身仍是普通对话，不自动代表共同在场。用户接住话题并让角色实际参与当前活动后，Agent 才可根据语义开始 Together Session，不要求用户说出固定邀约句；只闲聊、忽略或关闭气泡都不产生 Session。对话进一步表明这是一件会持续数天到数月、且对用户重要的事时，Agent 可以自然提议把它作为 Journey 一起走；Journey 仍只能由用户明确提出，或由 Agent 提议并获得用户确认后创建，绝不因 Activity 匹配而静默创建。若新 Journey 正是从当前对话里尚未结束的共处生长出来，宿主在同一事务中完成创建与关联，不让用户重新选择或搬运 Chat。Agent 只提交带候选 ID 的语义动作，宿主负责 ID、Home Chat、路由和全部状态不变量。
 
@@ -515,6 +515,8 @@ Registry 负责：
 - 指标与错误分类。
 
 Provider wire Schema 与领域 Schema 只有一个真源、两个校验层次：Tool Registry 始终用完整 TypeBox/Ajv Schema 校验真实调用；Responses Adapter 只有在根级对象、全部对象字段必填且没有 strict 子集不支持的约束时，才为该 Tool 启用 `strict: true`。包含 `format`、`pattern`、长度或数值范围等完整领域约束的 Tool 仍发送同一 Schema，但使用非 strict Function Calling，并在宿主执行前完成完整校验，不复制或放宽领域契约。来源：2026-08-14 复核 [OpenAI Structured Outputs supported schemas](https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas) 与锁定的 `openai@6.49.0` 类型。
+
+Tool 的模型可见性分为固定核心与 deferred 长尾两层。`file.list`、`file.read`、`file.search`、`file.write`、`file.patch`、`file.trash` 和 `command.run` 是本地执行的核心原语：只要当前 Chat/Agent 模式允许，该完整 Schema 就随首个模型请求常驻，并从 Tool Discovery 候选集中排除；Agent 不先搜索这些能力。Skills、MCP、App Action、Browser/Computer 专项动作以及其他长尾能力继续使用已接受的 `T2-CLIENT-BM25` 按需发现。常驻只表示模型可见，不表示获得执行授权：Chat 仍只暴露幂等只读能力，Agent 写入与 critical 操作仍经过统一 Approval Policy。2026-08-28 复核锁定的 `openai@6.49.0` Responses 类型：`defer_loading` 是逐 Tool 的可选字段，`tool_search` 只服务 deferred Tool；协议没有要求同一 Registry 中全部 Tool 都必须 deferred。具体边界见 `docs/benchmarks/tool-discovery.md` 的带日期修正。
 
 ### 5.2 内置能力
 
@@ -845,12 +847,12 @@ Memory 页面包含：
 - 前台应用变化立即结束上一段并开始下一段。
 - 同 actor、同应用和同窗口在 8 分钟内合并；不同窗口不因应用名相同而混为一段。
 - Browser 标签停留和 Active App 统一到时间线，但保留来源。
-- macOS 前台应用使用 `NSWorkspace.didActivateApplicationNotification` 事件驱动更新；启动时从 `frontmostApplication` 取得一次初始事实，当前应用激活后才通过 Accessibility 读取焦点窗口标题，并在焦点窗口或标题变化通知到达时刷新。生产路径不再周期性启动 `System Events`/AppleScript；仅保留每 15 秒一次的进程内 idle 状态采样，以在连续 idle 60 秒时切断 Episode，锁屏或休眠仍由系统事件立即切断。15 秒是 CharaMate 的 idle 边界延迟启发式，不是协议限制或普通用户设置。
+- macOS 前台应用使用加载到 Electron Main 进程内的最小 Node-API 原生适配层订阅 `NSWorkspace.didActivateApplicationNotification`；启动时从 `frontmostApplication` 取得一次初始事实，同一 Main 进程再通过 Accessibility 读取焦点窗口标题，并在焦点窗口或标题变化通知到达时刷新。生产路径没有独立 Activity 可执行 helper，也不周期性启动 `System Events`/AppleScript；仅保留每 15 秒一次的进程内 idle 状态采样，以在连续 idle 60 秒时切断 Episode，锁屏或休眠仍由系统事件立即切断。15 秒是 CharaMate 的 idle 边界延迟启发式，不是协议限制或普通用户设置。
 - 截图只在用户前台状态变化时触发，且距上次成功截图至少 15 分钟；Activity 使用主显示器逻辑像素尺寸获取一次 PNG，资产层直接写入同一字节并异步计算摘要，不再二次解码/编码。截图任务不占用前台 metadata event 的串行队列；失败不阻断 metadata event，内部频率不做用户档位。
 - 原图单独保存；数据库仅保存路径、尺寸、时间和摘要。
 - 先用时间、应用变化和 Idle 等确定性边界形成 Episode；Agent 操作使用独立 actor，不归因给用户，发布版不逐事件调用模型。
 
-本节于 2026-08-15 按锁定 `electron@43.2.0`、Apple AppKit/ApplicationServices 当前文档与 PixiJS `8.19.0` 复核：`NSWorkspace` 激活通知和 `frontmostApplication` 是操作系统事实源，Accessibility 只补充当前焦点窗口标题；截图逻辑尺寸来自 Electron `Display.size`，`desktopCapturer.thumbnailSize` 决定实际缩略图请求尺寸。事件订阅、idle 采样延迟和 15 分钟截图间隔属于 CharaMate 产品策略。
+本节于 2026-08-28 复核 Apple [`AXIsProcessTrusted`](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted) 与代码签名文档、锁定 `electron@43.2.0` 的 [`systemPreferences.isTrustedAccessibilityClient`](https://www.electronjs.org/docs/latest/api/system-preferences) 以及既有 AppKit 来源：辅助功能信任检查针对调用它的当前进程，macOS 隐私授权又依赖代码身份；Electron Settings 当前展示的是 Main 进程信任状态。仓库实测发现旧独立 helper 在 Main 显示已授权时仍只能持续产生应用名，且本地 ad-hoc 包中两者代码身份分离。CharaMate 因此把 `NSWorkspace`/AX 调用收敛到 Main 内加载的原生模块，让授权查询者与窗口标题读取者成为同一进程；发布包仍按 Apple 内到外规则签名嵌套 Mach-O。以上是平台硬事实与当前源码观察；“没有非空窗口标题就不调用主动陪伴模型”、事件订阅、idle 采样延迟和 15 分钟截图间隔是 CharaMate 产品策略。
 
 ### 7.3 Activity 页面
 
@@ -1095,9 +1097,9 @@ Automation Run 的 `queued/running/waiting_approval/needs_input/interrupted/comp
 - 领地产生新物件候选；
 - 用户明确要求后续跟进。
 
-Activity 只发布事实，不调用 Journey/Session 写入，也不自行生成话术。陪伴语义门把观察与当前 Journey 候选一起交给模型，模型可以选择保持沉默、开一段新对话或准确回到某个既有 Journey；宿主只校验候选 ID、用户 actor、单次进行中的主动 Run 和现有气泡等结构条件，不用应用名或主题关键词替 Agent 做语义决定。前台切换过程中只保留最新尚未判断的观察，避免把采样流变成排队提醒；失败或证据不足静默退出，不降级为模板问候。
+Activity 只发布事实，不调用 Journey/Session 写入，也不自行生成话术。陪伴语义门把带有非空窗口标题的观察、当前 Journey 候选以及最近 3 次已展示主动消息的紧凑记录一起交给模型，模型可以选择保持沉默、开一段新对话或准确回到某个既有 Journey，并负责判断新话题、意图或搭话方式是否在语义上重复；只有应用名而没有窗口标题时，宿主直接视为证据不足，不发送 Provider 请求。宿主只校验候选 ID、用户 actor、单次进行中的主动 Run、现有气泡和成功展示后 5 分钟全局冷却等结构与时间条件，不用应用名、主题关键词或字面相似度替 Agent 做语义决定。前台切换过程中只保留最新尚未判断的观察，避免把采样流变成排队提醒；失败或证据不足静默退出，不降级为模板问候。
 
-主动聊天由统一 Agent Runtime 在目标 Chat 先写入一条真实助手消息，再投影为气泡；新话题使用普通 Chat，匹配既有 Journey 时使用其 Home Chat。气泡保存并只使用发起时的精确 `chatId`，不会根据当前窗口、Activity 或后续话题重新猜测归属。用户可以在气泡内连续短文字回复，用户消息与助手回答都持久化到该 Chat 的普通 Chat-mode Run，回答再回到同一气泡；“打开完整 Chat”只切换到同一事实源。气泡中的语音入口也固定绑定该 Chat，并默认使用 `Chat` 权限；回复媒介不等于执行授权。仅打开或切换文字/语音媒介不创建或恢复状态；回复内容让 Agent 实际参与当前活动后，才按整体语义开始或恢复 Together Session，长期 Journey 仍必须获得确认。用户可设置主动程度和安静时段，也可以对单类气泡说“少一点”。
+主动聊天由统一 Agent Runtime 在目标 Chat 先写入一条真实助手消息，再投影为气泡；新话题使用普通 Chat，匹配既有 Journey 时使用其 Home Chat。气泡保存并只使用发起时的精确 `chatId`，不会根据当前窗口、Activity 或后续话题重新猜测归属。气泡本身是“当前是否已有主动对话”的唯一真源，不再额外维护一个跨气泡生命周期的等待用户状态：气泡存在或开场 Run 进行中时拒绝并发开场，用户回复后继续同一 Chat，用户关闭或 20 秒临时邀请过期后只释放当前气泡；从消息成功展示起的 5 分钟全局冷却结束后，新的充分 Activity 证据才可再次进入语义门。最近记录只保留 3 条并随回复、主动关闭、到期或应用中断更新结果，不形成无限增长日志，也不暴露给普通 UI。用户可以在气泡内连续短文字回复，用户消息与助手回答都持久化到该 Chat 的普通 Chat-mode Run，回答再回到同一气泡；“打开完整 Chat”只切换到同一事实源。气泡中的语音入口也固定绑定该 Chat，并默认使用 `Chat` 权限；回复媒介不等于执行授权。仅打开或切换文字/语音媒介不创建或恢复状态；回复内容让 Agent 实际参与当前活动后，才按整体语义开始或恢复 Together Session，长期 Journey 仍必须获得确认。用户可设置主动程度和安静时段，也可以对单类气泡说“少一点”。
 
 Journey 跟进是本节的受限特例：只有用户明确约定后才能创建；使用一次性 Agent Task、固定投递到该 Journey 的 Home Chat，并继续复用普通 Run/Item、Tool 与 Approval。完成消息可以投影为桌宠气泡，但气泡只承载该消息、短文字输入、语音、打开完整 Chat 和关闭，不承载完成率、截止时间、续接开关或执行权限。Journey 或 Together Session 的存在、暂停时长和沉默都不是触发条件。MVP 不把“偶尔问问”解释成无限周期任务，而是在每次确认后只保留一个可见的下一次跟进。
 
@@ -1391,7 +1393,7 @@ http://127.0.0.1:<dynamic-port>/dev
 
 ### 13.1 固定基础技术栈与版本基线
 
-CharaMate 是一个单 package Electron 应用，不建设 monorepo。Main、Preload、Renderer 和 shared contracts 全部使用 strict TypeScript 与 ESM；只有 OS 原生能力确实无法由 Electron/Node 提供时，才在对应平台 Adapter 内引入最小原生 helper。
+CharaMate 是一个单 package Electron 应用，不建设 monorepo。Main、Preload、Renderer 和 shared contracts 全部使用 strict TypeScript 与 ESM；只有 OS 原生能力确实无法由 Electron/Node 提供时，才在对应平台 Adapter 内引入最小原生适配代码。原生代码优先加载到拥有该领域状态和系统授权身份的现有进程；除非操作系统协议明确要求，不新增独立常驻 helper 进程。
 
 2026-08-01 核对的一手发布基线：
 

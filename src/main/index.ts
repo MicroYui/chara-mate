@@ -118,6 +118,7 @@ import {
   CompanionInitiativeService,
   ModelCompanionInitiativeDecider,
 } from "./journey/companionInitiative";
+import { CompanionInitiativeRepository } from "./journey/companionInitiativeRepository";
 import { registerJourneyIpc } from "./journey/journeyIpc";
 import { JourneyRepository } from "./journey/journeyRepository";
 import { JourneyService } from "./journey/journeyService";
@@ -361,6 +362,9 @@ async function startApplication(): Promise<void> {
   const idGenerator = new CryptoIdGenerator();
   const clock = new SystemClock();
   const chatRepository = new ChatRepository(applicationDatabase);
+  const companionInitiativeRepository = new CompanionInitiativeRepository(
+    applicationDatabase,
+  );
   const memoryRepository = new MemoryRepository(applicationDatabase);
   const memoryServiceInstance = new MemoryService(
     memoryRepository,
@@ -711,14 +715,14 @@ async function startApplication(): Promise<void> {
         ? path.join(
             process.resourcesPath,
             "native-helpers",
-            "active-application-observer",
+            "active-application-observer.node",
           )
         : path.join(
             app.getAppPath(),
             "resources",
             "generated",
             "native-helpers",
-            "active-application-observer",
+            "active-application-observer.node",
           ),
     ),
     new ElectronActivitySystemSource(60),
@@ -730,13 +734,6 @@ async function startApplication(): Promise<void> {
       },
     },
   );
-  if (!backgroundTest) {
-    const capture = activityCapture;
-    managedBrowser.setActivityObserver((state) =>
-      capture.observeBrowser(state),
-    );
-    capture.start();
-  }
   activityService.startMaintenance((error) => {
     logger.warn("ACTIVITY_MAINTENANCE_ERROR", { error });
   });
@@ -955,6 +952,23 @@ async function startApplication(): Promise<void> {
         characterWindowController?.showProactiveBubble(bubble);
       },
     },
+    {
+      recordOutcome: (bubbleId, outcome) => {
+        try {
+          companionInitiativeRepository.updateOutcome(
+            bubbleId,
+            outcome,
+            clock.now(),
+          );
+        } catch (error) {
+          logger.warn("COMPANION_INITIATIVE_OUTCOME_WRITE_ERROR", {
+            bubbleId,
+            error,
+            outcome,
+          });
+        }
+      },
+    },
   );
   proactiveConversationSurfaceReference.current =
     proactiveConversationSurfaceInstance;
@@ -979,6 +993,7 @@ async function startApplication(): Promise<void> {
       publishBubble: (bubble) =>
         proactiveConversationSurfaceInstance.publish(bubble),
     },
+    companionInitiativeRepository,
     clock,
     logger,
   );
@@ -1354,6 +1369,13 @@ async function startApplication(): Promise<void> {
   );
   await mainWindows.open();
   await characterWindowController.create();
+  if (!backgroundTest && activityCapture) {
+    const capture = activityCapture;
+    managedBrowser.setActivityObserver((state) =>
+      capture.observeBrowser(state),
+    );
+    capture.start();
+  }
   const trayActivity = activityService;
   const trayCharacter = characterWindowController;
   const trayVoice = voiceService;

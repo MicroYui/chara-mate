@@ -7,11 +7,25 @@
 
 ## 当前决策
 
-选择 `T2-CLIENT-BM25` 作为未来生产单路径中的发现协议：模型首屏只见 source/namespace 元数据与 native Tool Search 接口，CharaMate 用固定 metadata BM25（limit 8）返回 `tool_search_output`，命中后才让完整 Schema 进入上下文。它随单一 `HC-FINAL` 组合通过 H7 W2 Quality；不得保留 `T0-FULL` fallback、hosted search 分支、双语 ranker 开关、旧 meta functions 或用户可调 topK。
+选择 `T2-CLIENT-BM25` 作为未来生产单路径中 **deferred 长尾能力** 的发现协议：对于这部分能力，模型首屏只见 source/namespace 元数据与 native Tool Search 接口，CharaMate 用固定 metadata BM25（limit 8）返回 `tool_search_output`，命中后才让完整 Schema 进入上下文。它随单一 `HC-FINAL` 组合通过 H7 W2 Quality；不得保留全量 `T0-FULL` fallback、hosted search 分支、双语 ranker 开关、旧 meta functions 或用户可调 topK。固定核心能力的适用范围按下方 2026-08-28 修正执行。
 
 原 D1C 机械门会选择 `T0-FULL`，原因只有 256-Tool timing 的 end-to-end p95 ratio 单侧 95% 上界 `1.1190` 窄幅超过 CharaMate 启发式 `1.10`。完整证据同时显示：T2 在 256/512 两层业务质量非劣，512 层完整合格，input token 显著下降，且 512 的 TTFT/end-to-end 在 C16 与 C1 下方向一致。仓库 owner 因此在保留机械结论后，以带时间戳 amendment 选择 T2。当前 Decision SHA-256 为 `70a41569…e052`，selection amendment 为 `df73b622…d044`。
 
 H7 W2 使用 T2、512 Tool 极限层和最终 Harness/Cache 组合，300/300 Quality blocks 有效，产品语义终局 300/300、No-op discovery/product calls 为 0。H7 是联合单 Arm 确认，不能反推 T2 的独立因果收益。2026-08-07 owner 决定不再运行专用 H7 Timing 100；Quality raw 的 C12 延迟只作描述性遥测，不把范围关闭写成 timing Gate 通过。
+
+### 2026-08-28 核心能力边界修正
+
+一次真实 `Agent + full_access` Run 要求列出当前目录时，当前 production source 先让模型搜索能力；中文查询没有命中 `file.list` 的完整 Schema，随后模型错误声称环境没有本地文件系统访问能力。这里的失败发生在执行权限判断之前，是把稳定核心原语错误放进召回路径所造成的可用性与正确性问题，而不是文件工具缺失或 Approval 拒绝。
+
+仓库 owner 因此明确修正 T2 的适用范围。以下 7 个本地原语组成唯一 always-loaded core pack：`file.list`、`file.read`、`file.search`、`file.write`、`file.patch`、`file.trash`、`command.run`。当现有执行模式允许时，它们的完整 Schema 直接进入模型请求，并从 client BM25 的搜索候选中排除；即使一次长尾 Tool Search 已把本轮 `allowedTools` 收窄，核心原语仍保持可调用。其余长尾 Registry 继续使用 T2，未增加 fallback、第二 ranker、运行时模式或 Settings 开关。
+
+常驻是可见性边界，不是授权边界。Chat 只会得到 `file.list`、`file.read`、`file.search` 这类幂等只读核心能力；写入、patch、废纸篓和命令只在 Agent 模式出现，并继续服从 `request_approval / auto_approve / full_access`。因此该修正不改变 Tool effect、幂等性、Approval、取消、恢复或实际执行契约。
+
+2026-08-28 source-first 复核分三层记录：
+
+1. **协议能力**：锁定的 `openai@6.49.0` Responses `FunctionTool`/namespace Tool 类型把 `defer_loading` 定义为逐 Tool 可选字段，并把 `tool_search` 定义为 deferred Tools 的 hosted/BYOT 搜索；协议没有要求一个 namespace 或 Registry 内全部 Tool 同时 deferred。
+2. **当前源码行为**：CharaMate Responses Adapter 已逐 Tool 转写 `defer_loading`，且只要仍有 deferred Tool 就保留 client `tool_search`；Agent Runtime 在编译 Schema 前先按 Chat/Agent 模式过滤，真实调用后再走既有 Approval Policy。
+3. **CharaMate 产品选择**：上述 7 个名称是固定核心边界。它不是协议硬限制、数值启发式或把全部 256/512 Schema 恢复常驻，而是针对已复现错误路径的 owner-directed correctness amendment。历史实验结果及其分母保持不变；它们只不再被外推为“所有 built-in 都必须 deferred”。
 
 ## 初始决策（2026-08-03）
 

@@ -15,12 +15,17 @@ import type {
 } from "../agent/modelProvider";
 import type { ProviderService } from "../providers/providerService";
 import {
+  COMPANION_INITIATIVE_COOLDOWN_MS,
   CompanionInitiativeService,
   ModelCompanionInitiativeDecider,
   type AssistantInitiatedRunLauncher,
   type CompanionInitiativeDecider,
   type CompanionInitiativeEvaluation,
 } from "./companionInitiative";
+import type {
+  CompanionInitiativeRecord,
+  NewCompanionInitiativeRecord,
+} from "./companionInitiativeRepository";
 
 const NOW = "2026-08-13T09:00:00.000Z";
 const CHAT_ID = "11111111-1111-4111-8111-111111111111";
@@ -29,6 +34,7 @@ const JOURNEY_ID = "33333333-3333-4333-8333-333333333333";
 const RUN_ID = "44444444-4444-4444-8444-444444444444";
 const EVENT_ID = "55555555-5555-4555-8555-555555555555";
 const PROFILE_ID = "66666666-6666-4666-8666-666666666666";
+const PREVIOUS_RUN_ID = "77777777-7777-4777-8777-777777777777";
 
 const providerSnapshot: ProviderSnapshot = {
   apiStyle: "openai-compatible",
@@ -54,6 +60,18 @@ const observation = {
   eventId: EVENT_ID,
   observedAt: NOW,
   windowTitle: "thesis-outline.md",
+};
+
+const recentInitiative: CompanionInitiativeRecord = {
+  appName: "Text Editor",
+  grounding: "The visible window was thesis-notes.md.",
+  id: PREVIOUS_RUN_ID,
+  kind: "invitation",
+  message: "还在整理论文思路吗？",
+  outcome: "expired",
+  shownAt: "2026-08-13T08:50:00.000Z",
+  updatedAt: "2026-08-13T08:50:20.000Z",
+  windowTitle: "thesis-notes.md",
 };
 
 class TextProvider implements ModelProvider {
@@ -124,43 +142,6 @@ function completedEnvelope(chatId: string): RunEventEnvelope {
   };
 }
 
-function startedEnvelope(
-  chatId: string,
-  runId = "99999999-9999-4999-8999-999999999999",
-): RunEventEnvelope {
-  return {
-    event: {
-      run: { ...run(chatId), id: runId },
-      type: "run.started",
-    },
-    occurredAt: NOW,
-    sequence: 1,
-    streamId: runId,
-  };
-}
-
-function userMessageEnvelope(
-  runId = "99999999-9999-4999-8999-999999999999",
-): RunEventEnvelope {
-  return {
-    event: {
-      item: {
-        artifacts: [],
-        id: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
-        kind: "user_message",
-        runId,
-        sequence: 2,
-        startedAt: NOW,
-        status: "running",
-      },
-      type: "item.started",
-    },
-    occurredAt: NOW,
-    sequence: 2,
-    streamId: runId,
-  };
-}
-
 function snapshot(journeys: readonly Journey[] = []): JourneySnapshot {
   return { journeys: [...journeys], sessions: [] };
 }
@@ -168,6 +149,7 @@ function snapshot(journeys: readonly Journey[] = []): JourneySnapshot {
 function serviceHarness(
   evaluation: CompanionInitiativeEvaluation,
   journeySnapshot = snapshot(),
+  initialHistory: readonly CompanionInitiativeRecord[] = [],
 ) {
   const createdChats: Chat[] = [];
   const archivedChats: string[] = [];
@@ -232,6 +214,16 @@ function serviceHarness(
     readonly content: string;
     readonly journeyId?: string;
   }> = [];
+  const historyRecords = [...initialHistory];
+  const recordShown = vi.fn((input: NewCompanionInitiativeRecord) => {
+    historyRecords.unshift({
+      ...input,
+      outcome: "shown",
+      updatedAt: input.shownAt,
+    });
+    historyRecords.splice(3);
+  });
+  let currentTime = NOW;
   let outstanding = false;
   const logger = { warn: vi.fn() };
   const service = new CompanionInitiativeService(
@@ -248,7 +240,11 @@ function serviceHarness(
         return true;
       },
     },
-    { now: () => NOW } satisfies Clock,
+    {
+      listRecent: () => historyRecords,
+      recordShown,
+    },
+    { now: () => currentTime } satisfies Clock,
     logger,
   );
   return {
@@ -257,10 +253,15 @@ function serviceHarness(
     createdChats,
     decider,
     discardedChats,
+    historyRecords,
     launched,
     logger,
+    recordShown,
     restoredChats,
     service,
+    setNow(value: string) {
+      currentTime = value;
+    },
     setOutstanding(value: boolean) {
       outstanding = value;
     },
@@ -282,7 +283,11 @@ describe("ModelCompanionInitiativeDecider", () => {
     );
 
     const evaluation = await decider.decide(
-      { journeys: [journey], observation },
+      {
+        journeys: [journey],
+        observation,
+        recentInitiatives: [recentInitiative],
+      },
       new AbortController().signal,
     );
 
@@ -298,6 +303,15 @@ describe("ModelCompanionInitiativeDecider", () => {
     expect(provider.requests[0]?.instructions).toContain("Prefer silence");
     expect(JSON.stringify(provider.requests[0]?.input)).toContain(
       "thesis-outline.md",
+    );
+    expect(JSON.stringify(provider.requests[0]?.input)).toContain(
+      "还在整理论文思路吗？",
+    );
+    expect(JSON.stringify(provider.requests[0]?.input)).not.toContain(
+      PREVIOUS_RUN_ID,
+    );
+    expect(provider.requests[0]?.instructions).toContain(
+      "substantially repeat",
     );
   });
 
@@ -316,7 +330,7 @@ describe("ModelCompanionInitiativeDecider", () => {
 
     await expect(
       decider.decide(
-        { journeys: [journey], observation },
+        { journeys: [journey], observation, recentInitiatives: [] },
         new AbortController().signal,
       ),
     ).rejects.toThrow("unavailable Journey");
@@ -340,6 +354,7 @@ describe("ModelCompanionInitiativeDecider", () => {
         {
           journeys: [journey],
           observation: { ...observation, windowTitle: "Untitled" },
+          recentInitiatives: [],
         },
         new AbortController().signal,
       ),
@@ -381,6 +396,15 @@ describe("CompanionInitiativeService", () => {
         kind: "invitation",
       },
     ]);
+    expect(fixture.recordShown).toHaveBeenCalledWith({
+      appName: observation.appName,
+      grounding: "The window title is thesis-outline.md.",
+      id: RUN_ID,
+      kind: "invitation",
+      message: "你在整理这篇论文吗？",
+      shownAt: NOW,
+      windowTitle: observation.windowTitle,
+    });
   });
 
   it("routes a matching observation to the Journey Home Chat without resuming state", async () => {
@@ -461,7 +485,92 @@ describe("CompanionInitiativeService", () => {
     expect(bubbleFixture.decider.decide).not.toHaveBeenCalled();
   });
 
-  it("does not start another opener after one is ignored until the user engages", async () => {
+  it("does not call the semantic gate when Activity has no window title", async () => {
+    const fixture = serviceHarness({
+      decision: {
+        action: "new_conversation",
+        chatTitle: "不应创建",
+        grounding: "Only an application name is available.",
+        journeyId: null,
+      },
+      provider: providerSnapshot,
+    });
+
+    fixture.service.observeForeground({
+      appName: observation.appName,
+      eventId: observation.eventId,
+      observedAt: observation.observedAt,
+    });
+    await fixture.service.settle();
+
+    expect(fixture.decider.decide).not.toHaveBeenCalled();
+    expect(fixture.createdChats).toEqual([]);
+    expect(fixture.launched).toEqual([]);
+  });
+
+  it("evaluates the same application after its delayed title becomes available", async () => {
+    const fixture = serviceHarness({
+      decision: {
+        action: "new_conversation",
+        chatTitle: "论文随聊",
+        grounding: "The focused window title became available.",
+        journeyId: null,
+      },
+      provider: providerSnapshot,
+    });
+
+    fixture.service.observeForeground({
+      appName: observation.appName,
+      eventId: "77777777-7777-4777-8777-777777777777",
+      observedAt: observation.observedAt,
+    });
+    await fixture.service.settle();
+    fixture.service.observeForeground(observation);
+    await fixture.service.settle();
+
+    expect(fixture.decider.decide).toHaveBeenCalledOnce();
+    expect(fixture.createdChats).toHaveLength(1);
+    expect(fixture.launched).toHaveLength(1);
+  });
+
+  it("lets a newer titleless observation supersede an in-flight decision", async () => {
+    const evaluation: CompanionInitiativeEvaluation = {
+      decision: {
+        action: "new_conversation",
+        chatTitle: "论文随聊",
+        grounding: "The window title is thesis-outline.md.",
+        journeyId: null,
+      },
+      provider: providerSnapshot,
+    };
+    const fixture = serviceHarness(evaluation);
+    let resolveDecision:
+      ((value: CompanionInitiativeEvaluation) => void) | undefined;
+    fixture.decider.decide.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDecision = resolve;
+        }),
+    );
+
+    fixture.service.observeForeground(observation);
+    await vi.waitFor(() => {
+      expect(fixture.decider.decide).toHaveBeenCalledOnce();
+    });
+    fixture.service.observeForeground({
+      appName: "Finder",
+      eventId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      observedAt: NOW,
+    });
+    resolveDecision?.(evaluation);
+    await fixture.service.settle();
+
+    expect(fixture.decider.decide).toHaveBeenCalledOnce();
+    expect(fixture.createdChats).toEqual([]);
+    expect(fixture.launched).toEqual([]);
+  });
+
+  it("enforces five minutes from delivery before another semantic evaluation", async () => {
     const fixture = serviceHarness({
       decision: {
         action: "new_conversation",
@@ -475,7 +584,6 @@ describe("CompanionInitiativeService", () => {
     fixture.service.observeForeground(observation);
     await fixture.service.settle();
     fixture.service.observeRun(completedEnvelope(CHAT_ID));
-    fixture.setOutstanding(false);
 
     fixture.service.observeForeground({
       ...observation,
@@ -484,7 +592,12 @@ describe("CompanionInitiativeService", () => {
     await fixture.service.settle();
     expect(fixture.decider.decide).toHaveBeenCalledOnce();
 
-    fixture.service.observeRun(startedEnvelope(CHAT_ID));
+    fixture.setOutstanding(false);
+    fixture.setNow(
+      new Date(
+        Date.parse(NOW) + COMPANION_INITIATIVE_COOLDOWN_MS - 1,
+      ).toISOString(),
+    );
     fixture.service.observeForeground({
       ...observation,
       eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
@@ -492,16 +605,57 @@ describe("CompanionInitiativeService", () => {
     await fixture.service.settle();
     expect(fixture.decider.decide).toHaveBeenCalledOnce();
 
-    fixture.service.observeRun(userMessageEnvelope());
+    fixture.setNow(
+      new Date(
+        Date.parse(NOW) + COMPANION_INITIATIVE_COOLDOWN_MS,
+      ).toISOString(),
+    );
     fixture.service.observeForeground({
       ...observation,
-      eventId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      eventId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
     });
     await fixture.service.settle();
     expect(fixture.decider.decide).toHaveBeenCalledTimes(2);
   });
 
-  it("archives a new empty Chat when its proactive Run fails", async () => {
+  it("restores the cooldown and recent-three evidence from persisted history", async () => {
+    const fixture = serviceHarness(
+      {
+        decision: {
+          action: "new_conversation",
+          chatTitle: "论文随聊",
+          grounding: "The window title is thesis-outline.md.",
+          journeyId: null,
+        },
+        provider: providerSnapshot,
+      },
+      snapshot(),
+      [{ ...recentInitiative, shownAt: NOW, updatedAt: NOW }],
+    );
+
+    fixture.service.observeForeground(observation);
+    await fixture.service.settle();
+    expect(fixture.decider.decide).not.toHaveBeenCalled();
+
+    fixture.setNow(
+      new Date(
+        Date.parse(NOW) + COMPANION_INITIATIVE_COOLDOWN_MS,
+      ).toISOString(),
+    );
+    fixture.service.observeForeground({
+      ...observation,
+      eventId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    });
+    await fixture.service.settle();
+
+    expect(fixture.decider.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ recentInitiatives: fixture.historyRecords }),
+      expect.any(AbortSignal),
+    );
+    expect(fixture.launched[0]?.content).toContain(recentInitiative.message);
+  });
+
+  it("archives a new empty Chat and does not start cooldown when its proactive Run fails", async () => {
     const fixture = serviceHarness({
       decision: {
         action: "new_conversation",
@@ -526,5 +680,12 @@ describe("CompanionInitiativeService", () => {
 
     expect(fixture.discardedChats).toEqual([CHAT_ID]);
     expect(fixture.bubbles).toEqual([]);
+
+    fixture.service.observeForeground({
+      ...observation,
+      eventId: "99999999-9999-4999-8999-999999999999",
+    });
+    await fixture.service.settle();
+    expect(fixture.decider.decide).toHaveBeenCalledTimes(2);
   });
 });

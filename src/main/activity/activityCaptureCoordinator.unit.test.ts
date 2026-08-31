@@ -181,6 +181,41 @@ describe("ActivityCaptureCoordinator", () => {
     expect(fixture.finishEvent).toHaveBeenCalledWith("event-1");
   });
 
+  it("upgrades an activation event when its focused-window title arrives later", async () => {
+    const fixture = harness();
+    fixture.setActiveApplication({
+      appId: "com.example.editor",
+      appName: "Editor",
+    });
+    fixture.coordinator.start();
+    await flushQueue();
+
+    fixture.setActiveApplication({
+      appId: "com.example.editor",
+      appName: "Editor",
+      windowTitle: "late-title.md",
+    });
+    await flushQueue();
+    await fixture.coordinator.stop();
+
+    expect(fixture.observations).toEqual([
+      {
+        appId: "com.example.editor",
+        appName: "Editor",
+        eventId: "event-1",
+        observedAt: "2026-08-08T10:00:00.000Z",
+      },
+      {
+        appId: "com.example.editor",
+        appName: "Editor",
+        eventId: "event-2",
+        observedAt: "2026-08-08T10:00:00.000Z",
+        windowTitle: "late-title.md",
+      },
+    ]);
+    expect(fixture.finishEvent).toHaveBeenCalledWith("event-1");
+  });
+
   it("captures at a user transition no more than once per 15 minutes", async () => {
     const fixture = harness();
     const { coordinator, screenshots } = fixture;

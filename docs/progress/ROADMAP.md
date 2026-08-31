@@ -312,6 +312,8 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P5-MULTI-AGENT`（已完成）：Agent 自主调用 `collaboration.dispatch`，宿主校验两个 child 的只读性、当前 Tool scope、互斥资源和可变会话禁用，再并发执行确切读取与独立分析；父 Run 等待并合并，统一 Subtask Item 承载状态/证据/Token，取消与恢复复用既有边界；没有 Composer/Settings 开关、候选 Arm 或额外表/依赖。
 - `P5-EVOLUTION`（已完成）：Run 完成事件只在明确纠正、明确教学、客观验证成功或重复流程时持久化异步 Review；单次无 Tool 结构化调用生成四类候选，全部经用户确认，Skill 再经 replay 后激活；patch 使用内部目标 revision/hash 防止覆盖后续手动编辑，Settings/Agent Skill 变更会同步候选状态；候选生效后只由普通 Skill 管理器负责 pin、归档和恢复，崩溃恢复和 typed IPC/UI 已进入单一生产路径。
 - `MAINT-EVOLUTION-VOICE-REVIEW`（已完成）：修正 Voice Run 错把 Realtime deployment 用作 Structured Outputs Reviewer 的协议错误；无兼容 Chat Model 时 skipped，失败 Review 可关闭，Memory 候选进入有界区域，并以真实桌面几何回归保护搜索栏与列表/详情布局。
+- `MAINT-PROACTIVE-ACTIVITY-EVIDENCE`（已完成）：把 macOS 前台应用/窗口观察收敛为 Electron Main 进程内原生模块，移除独立 helper 身份；主动陪伴在没有窗口标题时不请求 Provider，并删除气泡之外的重复等待态。
+- `MAINT-PROACTIVE-FREQUENCY`（已完成）：每条 Activity 主动消息成功展示后执行 5 分钟全局冷却；持久化最近 3 次观察依据、实际话术和回复/关闭/到期结果，冷却结束后由 Agent 做语义重复判断，不增加标题关键词、字符串相似度或无限历史。
 - `P5-SKILL-DELETE`（已完成）：Settings 对当前或已归档用户 Skill 提供二次确认的永久删除；当前 Skill 在删除事务内部先归档，Extension 再删除目录和全部内部 revision，Evolution 只保留来源证据并解除目标绑定，普通 UI 不提供第二条恢复路径，workspace Skill 拒绝删除；不新增表、后台清理任务或候选状态。
 
 ### 验收
@@ -322,6 +324,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - Automation 的 Tool、审批、取消、结果和失败与手动 Run 完全同构；
 - 内部 Journey/Session 在多条长期经历、多次共同活动、切换和重启后仍保持全局唯一活跃态、准确 Home Chat 与续接点；自然语言歧义只询问具体事情，不让用户选择 Chat 或内部对象；
 - Activity 观察不会直接创建 Session/Journey；Agent 对证据不足或歧义观察保持沉默，合适时通过普通 Chat Run 发起对话，匹配既有 Journey 时自动路由到其 Home Chat，关闭气泡不会追问；
+- macOS Settings 展示的辅助功能授权进程与实际读取窗口标题的进程一致；没有非空标题时不产生陪伴 Provider 请求；主动消息成功展示后的 5 分钟内不再次请求语义门，冷却结束后只向 Agent 提供最近 3 次主动记录并由其判断是否语义重复；
 - 全新话题气泡在首个回复前不进入最近、搜索或归档列表，也不提供“打开完整 Chat”；20 秒无回复、主动关闭或异常重启后临时 Chat/Run/消息被清理，首个文字或气泡语音回复原子转正同一个 Chat。已有 Chat 的气泡可在主窗口关闭时完成至少两轮连续短文字往返；每轮用户消息、助手回答和 Run 都出现在发起时绑定的同一 Chat，回复期间不会被新主动开场替换，关闭气泡不删除已正式建立的 Chat 或 Run，“打开完整 Chat”准确进入该 Chat；
 - 当前在场提示跨六页可见但不含计时、所属长期经历或状态按钮；Chats 只有普通最近/已归档列表，不出现“同行中 / 待续共处 / 同行回望”、详情抽屉或 Journey/Session/Home Chat 名词；通过普通对话完成开始、切换、暂停、结束、完成、重开、一次跟进、范围纠正和可见 Memory 旅程；
 - 后台 Approval 不被伪装为成功，气泡始终跳转同一 Chat Item；

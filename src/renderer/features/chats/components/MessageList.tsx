@@ -51,6 +51,7 @@ type TimelineEntry =
 interface MessageListProps {
   readonly chat: ChatView;
   readonly dispatch: Dispatch<ChatsUiAction>;
+  readonly onEditUserMessage: (content: string) => void;
   readonly onResumeRun: (runId: string) => void;
   readonly onResolveApproval: (
     approvalId: string,
@@ -106,7 +107,12 @@ function AttachmentCard({
   );
 }
 
-function Message({ value }: { readonly value: ChatMessageView }) {
+interface MessageItemProps {
+  readonly onEditUserMessage: (content: string) => void;
+  readonly value: ChatMessageView;
+}
+
+export function MessageItem({ onEditUserMessage, value }: MessageItemProps) {
   const isUser = value.record.role === "user";
   return (
     <article
@@ -133,7 +139,12 @@ function Message({ value }: { readonly value: ChatMessageView }) {
       <div className={styles["messageActions"]}>
         <CopyButton value={value.record.content} />
         {isUser ? (
-          <button type="button" aria-label="编辑消息">
+          <button
+            type="button"
+            aria-label="编辑消息"
+            title="在输入框中编辑并重新发送"
+            onClick={() => onEditUserMessage(value.record.content)}
+          >
             <Pencil aria-hidden="true" size={12} />
             <span>编辑</span>
           </button>
@@ -206,6 +217,7 @@ export function buildTimeline(
 export function MessageList({
   chat,
   dispatch,
+  onEditUserMessage,
   onResumeRun,
   onResolveApproval,
   onResolveUserInput,
@@ -312,7 +324,10 @@ export function MessageList({
                 style={{ transform: `translateY(${virtualItem.start}px)` }}
               >
                 {entry.kind === "message" ? (
-                  <Message value={entry.value} />
+                  <MessageItem
+                    onEditUserMessage={onEditUserMessage}
+                    value={entry.value}
+                  />
                 ) : entry.kind === "run" ? (
                   <RunProcess
                     run={entry.value}

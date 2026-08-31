@@ -4,7 +4,15 @@
 
 ## 当前里程碑
 
-**Phase 7 — Done；Activity Agent Recall / Territory Narrative 维护包 done**
+**Phase 7 — Done；核心工具发现边界维护包 done**
+
+`MAINT-CORE-TOOL-BOUNDARY` 已完成：文件与命令的 7 个稳定核心原语按执行模式 always-loaded，并从 Tool Discovery 候选中排除；deferred 长尾能力继续使用单一 `T2-CLIENT-BM25`。本变更不改变 Chat/Agent effect 过滤或 Approval Policy。
+
+`MAINT-PROACTIVE-FREQUENCY` 已完成：Activity 主动消息成功展示后由宿主执行 5 分钟全局冷却，最近 3 次观察依据、实际话术和回复/关闭/到期结果持久化后交给 Agent 做语义重复判断；不增加标题关键词、字符串相似度或无限增长历史。冷却从真实气泡展示成功时开始，Provider 失败不占用冷却；应用重启后继续读取同一条持久时间线。
+
+`MAINT-CHAT-MESSAGE-ACTIONS` 已完成：Chat 消息复制统一通过 typed preload 调用 Electron 原生剪贴板，不再依赖 `file://` 页面中不稳定的 Web Clipboard/`execCommand`；用户消息的“编辑”现在会把原始内容带回 Composer、聚焦输入框，并以新一轮发送，不改写已经完成的历史消息。消息正文同时明确保持可选择文本。
+
+`MAINT-PROACTIVE-ACTIVITY-EVIDENCE` 已完成：macOS `NSWorkspace`/Accessibility 观察运行在 Electron Main 进程内；应用激活时若聚焦窗口尚未发布，会在当前应用代次内有界补采，应用切换或停止后旧结果自动失效。真实 packaged App 已连续取得 CharaMate、ChatGPT 与 Chrome 窗口标题；没有真实聚焦窗口时仍保持无标题并静默。标题一旦可用即沿现有 Activity → 主动陪伴语义判断继续，不增加常驻轮询、模板问候或固定主动频率。
 
 `MAINT-ACTIVITY-AGENT-RECALL` 已完成：Activity 保持独立 Episode/Digest 真源，Text/Voice Agent 通过 deferred `activity.search` 读取最多 8 条紧凑聚合；同一标签跨至少两个已完成自然周时，只以最近两个 Weekly Digest 提出待确认 `activity_digest`。pending 刷新、拒绝抑制、接受去重和旧累计时长 Memory 的用户确认替换均已覆盖，不再累计时长、Episode 来源或相同语义 Revision。
 
@@ -37,7 +45,7 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 - [x] World 合同、PixiJS 深度/碰撞/寻路、完整 Candidate/Preview/change-set 与 Memory/Activity 来源快照完成。
 - [x] Character Window 同时支持 Territory 场景交接和独立主动对话跟随窗口，不复制桌宠或遮挡交互。
 - [x] macOS 菜单栏使用单实例 18 px Template 图标，以自然语言投影桌宠、Voice 与 Activity 状态并复用现有领域控制。
-- [x] 合并后的 Schema v16、Chat Context Snapshot、Voice Wake typed IPC、Renderer、离线、Build、Electron E2E 与 package/smoke 全链重新通过。
+- [x] 合并后的 Schema v17、主动聊天最近记录、Chat Context Snapshot、Voice Wake typed IPC、Renderer、离线、Build、Electron E2E 与 package/smoke 全链重新通过。
 - [x] Chats 主内容无重复标题/操作框，重命名、置顶、归档、恢复和删除都从左侧完成；Automations 页面内只有一个持久“新建任务”入口。
 - [x] Appearance 的主题、自定义基础色板与深色派生均持久化；Data 使用真实 typed IPC 且不提供越界删除。
 - [x] 无模型、Foundation 加载失败、React 渲染失败与 Renderer 进程崩溃均有用户可恢复路径。
@@ -48,6 +56,10 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
+| `MAINT-CORE-TOOL-BOUNDARY` | `main` | `done` | 文件/命令核心原语常驻且不参与 Discovery；长尾 T2、执行模式过滤与 Approval 保持单路径 |
+| `MAINT-PROACTIVE-FREQUENCY` | `main` | `done` | 5 分钟展示后全局冷却、最近 3 次有结果记录、重启恢复与 Agent 语义重复判断完成；无关键词/字符串规则 |
+| `MAINT-CHAT-MESSAGE-ACTIONS` | `main` | `done` | 原生剪贴板 typed preload、消息正文选择，以及用户消息回填 Composer 后重新发送完成；历史记录保持 append-first |
+| `MAINT-PROACTIVE-ACTIVITY-EVIDENCE` | `main` | `done` | Main 进程内单一观察路径增加应用代次保护的激活补采；真实 packaged App 的 ChatGPT/Chrome 标题与后续主动判断链路已恢复 |
 | `MAINT-ACTIVITY-AGENT-RECALL` | `codex/voice-wake` | `done` | Activity-owned deferred 紧凑检索、跨自然周稳定候选、旧累计时长 Memory 的用户确认替换与最近两个 Weekly Digest 有界来源完成 |
 | `MAINT-TERRITORY-NARRATIVE` | `codex/voice-wake` | `done` | 随包/既有/未来 Territory Definition 的结构化名称与诗意故事完成；启动升级幂等，视觉 prompt 不再进入展示内容 |
 | `MAINT-MEMORY-EVIDENCE-BOUNDARY` | `codex/voice-wake` | `done` | 模型可见 Memory evidence 与 Tool 展示无内部 UUID/逐条来源；稳定字段由宿主私有 allowlist 解析；旧式累计时长/全 Episode 来源候选被删除，既有已接受记录保持不变 |
@@ -83,6 +95,7 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 - 自动唤醒与桌宠通用声波入口相同，固定使用 `Agent + full_access`。误唤醒后的无语音激活会自动结束，但 10 秒窗口只从欢迎语完整停止并回到 listening 后开始；该等待值是 CharaMate 可用性启发式，不是 OpenAI/Azure 或 sherpa-onnx 协议限制。
 - 当前 KWS 选择证据来自 macOS 合成语料与实际生产 Worker，不代表真实麦克风、多说话人、噪声房间或全天候 FAR/FRR 已通过；功能因此保持默认关闭，限制见 `docs/benchmarks/voice-wake.md`。
 - Activity 只提供前台应用、应用 ID 与窗口标题事实；Agent 可按需通过 deferred `activity.search` 读取有界聚合，但只能表述为观察行为。是否沉默、发起新话题或续接既有 Chat 仍由 Agent 结合完整语义判断，不使用关键词表，也不让用户选择归属 Chat。
+- Activity 主动消息从成功展示起执行 5 分钟全局冷却；冷却结束后 Agent 只读取最近 3 次主动话术及回复、关闭、到期或中断结果做语义重复判断。该记录固定保留 3 条，不进入 Memory，也不影响用户明确约定的 Automation/Journey 跟进。
 - 一次共处最多关联一个长期经历；可以保留多个未完成共处，但全局只有一个进行中，其余自动暂停。应用退出不会虚构后台共同在场。
 - 角色主动内容先作为目标 Chat 中的真实助手消息持久化，再投影到桌宠气泡；气泡只是同一 Chat 的轻量表面，不是独立会话系统。
 - Territory 的连续环境底图是可编辑 Definition；家具、附件、记忆物件、碰撞和寻路仍为结构化实体，不从图片反推可选几何。
@@ -93,6 +106,11 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 ## 最近绿色验证
 
+- 2026-08-28 核心 Tool Discovery 边界修复：`npm run check:fast` 通过（contract 108/108，仅 2 条既有 TanStack Virtual warning），`npm run test:focused` 通过 412/412，`npm run test:integration` 通过 196/196，`npm run build`、arm64 `npm run package` 与 `npm run smoke:package` 通过。新增回归覆盖核心文件/命令 Schema 首轮常驻、无需搜索直接调用、写能力仍需审批、Chat 只暴露只读核心、核心不进入 BM25 搜索结果，以及长尾搜索收窄后核心仍可调用。未运行 Live Provider、Electron E2E 或 make；新 packaged App 已重启为 PID 99660。
+- 2026-08-28 主动陪伴频率收口：全量 typecheck、受影响文件 ESLint/Prettier、contract 108/108、focused/component 412/412、integration 192/192、production build、arm64 package 与 packaged smoke 通过；新增回归覆盖成功展示后 5 分钟边界、重启恢复、最近 3 条有界存储、模型输入不含记录 ID，以及回复/关闭/20 秒到期/应用中断结果。`npm run check:fast` 仅被未跟踪且不属于本工作包的 `docs/presentation/charamate-product/capture/capture.spec.ts` 既有 `only-throw-error` 阻断；本次未改动该文件。真实 packaged App 已重启为 PID 92235，用户数据库从 Schema v16 升级为 v17，新表存在且初始记录为 0。未运行 Live Provider、完整 Electron E2E 或 make。
+- 2026-08-28 主动陪伴标题竞态收口：`npm run check:fast` 通过（contract 108/108，保留 2 条既有 TanStack Virtual warning），`npm run test:focused` 通过 408/408，`npm run test:integration` 通过 192/192；`npm run build`、arm64 `npm run package` 与 `npm run smoke:package` 通过。新增回归覆盖同一应用从无标题升级为真实标题，以及主动陪伴在延迟标题到达后进入语义判断。实际启动新 packaged App 后，Activity 数据库连续写入 `CharaMate / CharaMate`、`ChatGPT / ChatGPT` 与 `Google Chrome / index - Google Chrome`；无文档窗口的 TextEdit 保持无标题。未运行独立 Live/benchmark/E2E 套件；真实应用保持运行供用户复测。
+- 2026-08-28 Chat 消息操作修复：`npm run check:fast` 通过（contract 108/108，保留 2 条既有 TanStack Virtual warning），`npm run test:focused` 通过 406/406，`npm run test:integration` 通过 192/192；`npm run build`、新增 typed preload/编辑回填断言的 Electron E2E 1/1、arm64 `npm run package` 与 `npm run smoke:package` 通过。Computer Use 读取本工作区 packaged App，确认真实聊天页已暴露复制与“在输入框中编辑并重新发送”入口。未运行 Live Provider 或完整 Electron E2E；本次不改变 Provider、Run 或持久化协议。
+- 2026-08-28 主动陪伴前台证据修复：`npm run check:fast` 通过（contract 108/108，保留 2 条既有 TanStack Virtual warning），`npm run test:focused` 通过 404/404，`npm run test:integration` 通过 192/192；`npm run build`、Electron E2E 24/24、arm64 `npm run package` 与 `npm run smoke:package` 通过。原生模块在源码产物与 packaged Electron 二进制中均可直接加载；packaged 探针返回 `accessibilityStatus=available`、应用 ID/名称和真实窗口标题，包内只有 `.node` 模块且不再包含旧可执行 helper。随后再次运行 `npm run verify:offline` 时，被并行出现且不属于本工作包的未跟踪 `docs/presentation/charamate-product/capture/*.ts` ESLint project-service 错误阻断；保留这些文件后，受影响文件 ESLint/Prettier 以及 contract/focused/integration 全部重新通过。未运行 Live Provider；本机没有 Developer ID，正式签名/公证未运行。
 - 2026-08-28 Activity Agent Recall / Territory Narrative：`npm run verify:offline` 通过（contract 108/108、focused/component 401/401、integration 192/192）；`npm run test:e2e` 含 production build 通过 24/24；arm64 `npm run package` 与 `npm run smoke:package` 通过，packaged smoke 确认 `visibleWindowCount=0`、`characterRendererReady=true`、`wakeAssetsReady=true`。新增回归覆盖 Activity 聚合不泄露窗口标题/内部 ID、跨周候选只保留最近两个 Weekly Digest、拒绝/大小写抑制、旧 Memory 原 ID Revision，以及领地既有描述一次升级、未来故事/prompt 分离。未运行 Live Provider。
 - 2026-08-28 Memory evidence / Activity 长期化边界修复：`npm run verify:offline` 通过（contract 108/108、focused/component 392/392、integration 185/185）；`npm run test:e2e` 含 production build 通过 24/24，跨 Chat “徒步 → 游泳 → 回忆”保持同一 Memory 且 Provider 请求不含对应 Memory/Revision UUID；600 条来源压力回归的 `memory.search` 模型结果小于 2,000 字符且不含逐条来源；arm64 `npm run package` 与 `npm run smoke:package` 通过，packaged smoke 确认 `visibleWindowCount=0`、`characterRendererReady=true`、`wakeAssetsReady=true`。未运行 Live Provider。
 - 2026-08-27 Experience Review / Memory 布局修复：`npm run verify:offline` 通过（contract 108/108、focused 392/392、integration 185/185）；`npm run test:e2e` 含 production build 通过 24/24，新增真实窗口几何断言覆盖失败 Review 出现和关闭；arm64 `npm run package` 与 `npm run smoke:package` 通过，packaged smoke 确认 `visibleWindowCount=0`、`characterRendererReady=true`、`wakeAssetsReady=true`。未运行 Live Provider；Voice 兼容 Chat Model 的选择与无配置 skipped 均由注入 Provider 的确定性回归覆盖。
@@ -115,6 +133,9 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 ## 当前来源快照
 
+- 2026-08-28 复核锁定 `openai@6.49.0` Responses 类型与当前 `OpenAIResponsesModelProvider`/`AgentRuntime`/`approvalPolicy`：`defer_loading` 是逐 Tool 可选字段，`tool_search` 服务 deferred Tools；Adapter 已支持一个请求同时携带 always-loaded core 与 deferred 长尾。核心 pack 的 7 个名称属于 CharaMate correctness 边界，不是 Provider 硬限制；Chat/Agent 可见性和 Approval 执行授权继续分层。
+- 2026-08-28 复核 Apple [`NSWorkspace.didActivateApplicationNotification`](https://developer.apple.com/documentation/appkit/nsworkspace/didactivateapplicationnotification)、[`AXObserverAddNotification`](https://developer.apple.com/documentation/applicationservices/1462089-axobserveraddnotification) 与 [`kAXFocusedWindowAttribute`](https://developer.apple.com/documentation/applicationservices/kaxfocusedwindowattribute)：激活通知给出目标 `NSRunningApplication`，聚焦窗口与标题由独立 Accessibility 属性/通知提供，官方未承诺二者在同一时刻就绪。激活后的下一主队列轮次及 50/150/300 ms 有界补采是 CharaMate 针对实测竞态的恢复启发式，不是 macOS 协议限制；每次补采绑定当前应用代次，切换或停止后旧结果失效。
+- 2026-08-28 复核 Apple [`AXIsProcessTrusted`](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted)、代码签名/嵌套代码要求、Electron `43.2.0` `systemPreferences.isTrustedAccessibilityClient` 与 Forge macOS 签名路径：辅助功能信任检查属于调用进程，隐私授权依赖代码身份。当前旧独立 helper 在 Main 显示已授权时持续缺少窗口标题，且本地 ad-hoc 包中二者身份分离；生产因此收敛为 Main 内 Node-API 模块。没有窗口标题时直接静默、邀请过期后允许后续充分证据再次触发属于 CharaMate 产品规则，不是平台协议限制。
 - 2026-08-28 复核基线提交 `f7122f23e1ce3b6cce3008b9e0c59d43343c23f2` 的 Activity/Memory/Tool Search 与 Territory 全部 Definition 创建入口：`activity.search` 使用既有 deferred Tool Discovery，跨周候选来源固定为最近两个完成周；Territory 的展示故事与 Image prompt 分离，既有系统首版描述只通过幂等 Revision 升级。8 条检索结果和 180/120/240 字符守卫均为 CharaMate 产品边界，不是 Provider 协议限制。
 - 2026-08-27 复核 OpenAI Realtime conversations、Realtime client events 与 Microsoft Azure GPT Realtime audio（页面更新于 2026-07-29）：`response.create` 可用 `conversation: "none"` 创建不进入默认 conversation 的 out-of-band response，并以 metadata 关联事件、自定义 input 提供临时上下文；response 级 instructions 只覆盖本次 response 的 Session 默认配置。VOICE-WAKE 因此在 Session ready 后用紧凑指令生成 Mika 连接欢迎语，不伪造持久消息或重复完整 Agent 上下文。
 - 2026-08-25 复核 OpenAI Realtime VAD/WebRTC 指南：`speech_started/stopped` 属于已建立 Realtime Session，不是常驻 wake-word detector；客户端音频继续使用现有 WebRTC 路径。复核 sherpa-onnx `v1.13.6`（commit `1cb484af5e69d3c7803c1eb0b3b5ab8041e0e911`）的官方 WASM KWS/C API，以及当前 HEAD `34eba5a27220026b5981b633981c53205515067d`；固定英文短语使用 GigaSpeech 3.3M INT8 模型，下载包 SHA-256 为 `f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a`，包内 README 明示 Apache-2.0。选择、结果与外推限制见 `docs/benchmarks/voice-wake.md`。

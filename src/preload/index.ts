@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { clipboard, contextBridge, ipcRenderer, webUtils } from "electron";
 
 import {
   AGENT_CHANNELS,
@@ -1305,6 +1305,15 @@ const desktopApi: CharaMateApi = Object.freeze({
   agent: agentApi,
   automations: automationApi,
   chat: chatApi,
+  clipboard: Object.freeze({
+    writeText: (value: string) => {
+      if (typeof value !== "string") {
+        throw new TypeError("Clipboard content must be a string");
+      }
+      clipboard.writeText(value);
+      return Promise.resolve();
+    },
+  }),
   evolution: evolutionApi,
   extensions: extensionsApi,
   files: Object.freeze({

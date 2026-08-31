@@ -221,6 +221,7 @@ async function collect(
               name: "file",
               tools: [
                 {
+                  deferLoading: false,
                   description: "Read a file",
                   inputSchema: {
                     additionalProperties: false,
@@ -485,7 +486,7 @@ describe("OpenAI Responses Agent wire shape", () => {
         },
         {
           name: "charamate_file",
-          tools: [{ name: "read", type: "function" }],
+          tools: [{ defer_loading: false, name: "read", type: "function" }],
           type: "namespace",
         },
         {

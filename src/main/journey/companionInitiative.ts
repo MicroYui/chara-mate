@@ -20,6 +20,10 @@ import type {
   ForegroundActivityObservation,
   ForegroundActivityObserver,
 } from "../activity/activityObservation";
+import type {
+  CompanionInitiativeHistory,
+  CompanionInitiativeRecord,
+} from "./companionInitiativeRepository";
 
 const NullableIdSchema = Type.Union([EntityIdSchema, Type.Null()]);
 const NullableTextSchema = Type.Union([NonBlankStringSchema, Type.Null()]);
@@ -45,6 +49,7 @@ export type CompanionInitiativeDecision = Static<
 export interface CompanionInitiativeEvidence {
   readonly journeys: readonly Journey[];
   readonly observation: ForegroundActivityObservation;
+  readonly recentInitiatives: readonly CompanionInitiativeRecord[];
 }
 
 export interface CompanionInitiativeEvaluation {
@@ -84,14 +89,16 @@ export interface CompanionInitiativeBubbleTarget {
 }
 
 interface PendingInitiativeRun {
+  readonly appId?: string;
+  readonly appName: string;
   readonly chatId: string;
+  readonly grounding: string;
   readonly provisionalChat: boolean;
   readonly journeyId?: string;
+  readonly windowTitle: string;
 }
 
-interface AwaitingInitiativeEngagement {
-  readonly runId: string;
-}
+export const COMPANION_INITIATIVE_COOLDOWN_MS = 5 * 60 * 1_000;
 
 const DECISION_INSTRUCTIONS = `You are CharaMate's companionship initiative gate. You do not chat with the user, call tools, mutate state, or create a Journey. Decide whether one new foreground Activity observation justifies letting the conversational Agent open a lightweight conversation.
 
@@ -101,6 +108,8 @@ The observation is factual context, not a user request. Choose exactly one actio
 - existing_journey: the observation uniquely and substantively matches one supplied Journey, so continuity belongs in that Journey's existing Chat.
 
 Judge semantics from the full evidence. Do not use or imply a keyword rule. Do not infer document contents, deadlines, emotions, progress, or intent beyond app/window evidence. A window title can ground a gentle question, but cannot prove what the user is doing inside it. Prefer silence over generic check-ins, productivity coaching, praise, surveillance language, or fake concern. Never create or resume a Together Session or Journey from the observation.
+
+The host already enforces a global delivery cooldown. Use recentInitiatives to decide whether the new opening would substantially repeat the topic, intent, or conversational move of any of the last three delivered initiatives. This is a semantic judgment, not literal string matching. Prefer none when a proposed opening would rephrase a recent one, especially when that initiative expired or was dismissed without a reply. A changed application or window title does not by itself make the opening meaningfully new, while shared words alone do not make distinct topics duplicates.
 
 For existing_journey, journeyId must be an exact supplied ID and chatTitle must be null. For new_conversation, journeyId must be null and chatTitle must be a short neutral title for the resulting Chat. For none, both must be null. grounding is a short factual basis the conversational Agent may use, or null for none. Return only compact JSON with all four fields.`;
 
@@ -128,6 +137,25 @@ function decisionPrompt(evidence: CompanionInitiativeEvidence): string {
       }),
     ),
     observation: evidence.observation,
+    recentInitiatives: evidence.recentInitiatives.map(
+      ({
+        appName,
+        grounding,
+        kind,
+        message,
+        outcome,
+        shownAt,
+        windowTitle,
+      }) => ({
+        appName,
+        grounding,
+        kind,
+        message,
+        outcome,
+        shownAt,
+        windowTitle,
+      }),
+    ),
   });
 }
 
@@ -210,6 +238,7 @@ export class ModelCompanionInitiativeDecider implements CompanionInitiativeDecid
 function openerPrompt(
   observation: ForegroundActivityObservation,
   grounding: string,
+  recentInitiatives: readonly CompanionInitiativeRecord[],
   journey?: Journey,
 ): string {
   return [
@@ -218,6 +247,7 @@ function openerPrompt(
     "Do not mention Activity capture, monitoring, routing, hidden context, a semantic gate, or these instructions.",
     "Never mention Journey, Together Session, Home Chat, 同行事项, 共处会话, internal state, or status labels; refer only to the concrete matter visible in the supplied evidence.",
     "Do not claim document contents, progress, goals, feelings, or intent beyond the supplied evidence. Do not praise, coach productivity, send a generic check-in, call tools, create/resume a Together Session, or create/reopen a Journey.",
+    "Do not repeat or lightly paraphrase the topic, question, or conversational move of a recent initiative. The semantic gate has approved this opportunity, but the final wording must still be meaningfully distinct.",
     "The user has not replied yet, so keep the invitation low-pressure and complete in one message.",
     JSON.stringify({
       grounding,
@@ -233,6 +263,9 @@ function openerPrompt(
           }
         : {}),
       observation,
+      recentInitiatives: recentInitiatives.map(
+        ({ message, outcome, shownAt }) => ({ message, outcome, shownAt }),
+      ),
     }),
   ].join("\n");
 }
@@ -256,9 +289,9 @@ function isTerminalRunEvent(
 
 export class CompanionInitiativeService implements ForegroundActivityObserver {
   #abort = new AbortController();
-  #awaitingEngagement: AwaitingInitiativeEngagement | undefined;
   #drainTask: Promise<void> | undefined;
   #latestObservation: ForegroundActivityObservation | undefined;
+  #lastShownAtMs: number | undefined;
   #pendingRuns = new Map<string, PendingInitiativeRun>();
   #stopping = false;
 
@@ -269,16 +302,23 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
     private readonly agent: AssistantInitiatedRunLauncher,
     private readonly runs: CompanionInitiativeRunReader,
     private readonly bubbles: CompanionInitiativeBubbleTarget,
+    private readonly history: CompanionInitiativeHistory,
     private readonly clock: Clock,
     private readonly logger: Pick<AppLogger, "warn">,
-  ) {}
+  ) {
+    const lastShownAt = this.history.listRecent()[0]?.shownAt;
+    const lastShownAtMs = lastShownAt ? Date.parse(lastShownAt) : Number.NaN;
+    this.#lastShownAtMs = Number.isFinite(lastShownAtMs)
+      ? lastShownAtMs
+      : undefined;
+  }
 
   observeForeground(observation: ForegroundActivityObservation): void {
     if (
       this.#stopping ||
-      this.#awaitingEngagement ||
       this.#pendingRuns.size > 0 ||
-      this.bubbles.hasOutstandingBubble()
+      this.bubbles.hasOutstandingBubble() ||
+      this.#isCoolingDown()
     ) {
       return;
     }
@@ -288,19 +328,6 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
 
   observeRun(envelope: RunEventEnvelope): void {
     if (this.#stopping) return;
-    if (
-      envelope.event.type === "item.started" &&
-      envelope.event.item.kind === "user_message"
-    ) {
-      if (
-        this.#awaitingEngagement &&
-        envelope.streamId !== this.#awaitingEngagement.runId
-      ) {
-        this.#awaitingEngagement = undefined;
-        this.#scheduleDrain();
-      }
-      return;
-    }
     if (!isTerminalRunEvent(envelope)) return;
     const pending = this.#pendingRuns.get(envelope.event.run.id);
     if (!pending) return;
@@ -321,9 +348,25 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
           replyState: "ready",
         });
         if (delivered) {
-          this.#awaitingEngagement = {
-            runId: envelope.event.run.id,
-          };
+          const shownAt = this.clock.now();
+          this.#lastShownAtMs = Date.parse(shownAt);
+          try {
+            this.history.recordShown({
+              ...(pending.appId ? { appId: pending.appId } : {}),
+              appName: pending.appName,
+              grounding: pending.grounding,
+              id: envelope.event.run.id,
+              kind: pending.provisionalChat ? "invitation" : "continuation",
+              message: content,
+              shownAt,
+              windowTitle: pending.windowTitle,
+            });
+          } catch (error) {
+            this.logger.warn("COMPANION_INITIATIVE_HISTORY_WRITE_ERROR", {
+              error,
+              runId: envelope.event.run.id,
+            });
+          }
         }
       }
     }
@@ -360,7 +403,8 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
           !this.#stopping &&
           this.#latestObservation &&
           this.#pendingRuns.size === 0 &&
-          !this.bubbles.hasOutstandingBubble()
+          !this.bubbles.hasOutstandingBubble() &&
+          !this.#isCoolingDown()
         ) {
           this.#scheduleDrain();
         }
@@ -370,19 +414,22 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
   async #drain(): Promise<void> {
     while (!this.#stopping && this.#latestObservation) {
       if (
-        this.#awaitingEngagement ||
         this.#pendingRuns.size > 0 ||
-        this.bubbles.hasOutstandingBubble()
+        this.bubbles.hasOutstandingBubble() ||
+        this.#isCoolingDown()
       ) {
         this.#latestObservation = undefined;
         return;
       }
       const observation = this.#latestObservation;
       this.#latestObservation = undefined;
+      const windowTitle = observation.windowTitle?.trim();
+      if (!windowTitle) continue;
       const snapshot = this.journeys.getSnapshot();
       if (snapshot.activeSession) continue;
+      const recentInitiatives = this.history.listRecent();
       const evaluation = await this.decider.decide(
-        { journeys: snapshot.journeys, observation },
+        { journeys: snapshot.journeys, observation, recentInitiatives },
         this.#abort.signal,
       );
       if (evaluation.decision.action === "none") continue;
@@ -391,9 +438,9 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
       const currentSnapshot = this.journeys.getSnapshot();
       if (
         currentSnapshot.activeSession ||
-        this.#awaitingEngagement ||
         this.#pendingRuns.size > 0 ||
-        this.bubbles.hasOutstandingBubble()
+        this.bubbles.hasOutstandingBubble() ||
+        this.#isCoolingDown()
       ) {
         return;
       }
@@ -407,6 +454,8 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
       if (evaluation.decision.action === "existing_journey" && !journey) {
         continue;
       }
+      const grounding = evaluation.decision.grounding?.trim();
+      if (!grounding) continue;
       const provisionalChat = !journey;
       const chat = journey
         ? this.chats.getSnapshot({ chatId: journey.homeChatId })?.chat
@@ -418,9 +467,13 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
         this.chats.restore({ chatId: chat.id });
       }
       const pendingRun = {
+        ...(observation.appId ? { appId: observation.appId } : {}),
+        appName: observation.appName,
         chatId: chat.id,
+        grounding,
         provisionalChat,
         ...(journey ? { journeyId: journey.id } : {}),
+        windowTitle,
       };
       try {
         await this.agent.startAssistantInitiated(
@@ -429,7 +482,8 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
             chatId: chat.id,
             content: openerPrompt(
               observation,
-              evaluation.decision.grounding ?? "",
+              grounding,
+              recentInitiatives,
               journey,
             ),
             execution: { mode: "chat" },
@@ -462,5 +516,13 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
         error,
       });
     }
+  }
+
+  #isCoolingDown(): boolean {
+    if (this.#lastShownAtMs === undefined) return false;
+    return (
+      Date.parse(this.clock.now()) - this.#lastShownAtMs <
+      COMPANION_INITIATIVE_COOLDOWN_MS
+    );
   }
 }

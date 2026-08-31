@@ -458,6 +458,7 @@ function registerTool(
     ) => Promise<ToolResult>;
     readonly idempotency?: "idempotent" | "non_idempotent";
     readonly name: string;
+    readonly namespace?: string;
     readonly recoveryGroup?: string;
   },
 ): void {
@@ -473,7 +474,7 @@ function registerTool(
       },
       itemKind: "tool_call",
       name: input.name,
-      namespace: "test",
+      namespace: input.namespace ?? "test",
       ...(input.recoveryGroup ? { recoveryGroup: input.recoveryGroup } : {}),
       source: "builtin",
       summary: input.name,
@@ -2206,6 +2207,223 @@ describe("Agent Runtime production path", () => {
     expect(
       new ChatRepository(fixture.database).getContextSnapshot(fixture.chatId),
     ).toMatchObject({ generation: 2 });
+    fixture.database.close();
+  });
+
+  it("loads core local tools and calls file.list without a Tool Search round trip", async () => {
+    const fixture = await createFixture([
+      namespacedFunctionTurn("list-core", "list", "file", { value: "." }),
+      finalTurn("已列出目录"),
+    ]);
+    let listCalls = 0;
+    registerTool(fixture, {
+      execute: () => {
+        listCalls += 1;
+        return Promise.resolve(successfulResult("listed"));
+      },
+      name: "file.list",
+      namespace: "file",
+    });
+    for (const name of ["file.read", "file.search"] as const) {
+      registerTool(fixture, {
+        execute: () => Promise.resolve(successfulResult("read")),
+        name,
+        namespace: "file",
+      });
+    }
+    for (const name of ["file.patch", "file.write"] as const) {
+      registerTool(fixture, {
+        effect: "write",
+        execute: () => Promise.resolve(successfulResult("wrote")),
+        idempotency: "non_idempotent",
+        name,
+        namespace: "file",
+      });
+    }
+    registerTool(fixture, {
+      effect: "critical",
+      execute: () => Promise.resolve(successfulResult("trashed")),
+      idempotency: "non_idempotent",
+      name: "file.trash",
+      namespace: "file",
+    });
+    registerTool(fixture, {
+      effect: "write",
+      execute: () => Promise.resolve(successfulResult("ran")),
+      idempotency: "non_idempotent",
+      name: "command.run",
+      namespace: "command",
+    });
+    registerTool(fixture, {
+      execute: () => Promise.resolve(successfulResult("special")),
+      name: "test.special",
+    });
+
+    const run = await startAgent(fixture);
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(listCalls).toBe(1);
+    expect(fixture.provider.requests).toHaveLength(2);
+    const coreTools = fixture.provider.requests[0]?.toolNamespaces
+      .filter(({ name }) => name === "command" || name === "file")
+      .flatMap(({ tools }) => tools);
+    expect(coreTools).toHaveLength(7);
+    expect(coreTools?.every(({ deferLoading }) => deferLoading === false)).toBe(
+      true,
+    );
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "file")
+        ?.tools.find(({ name }) => name === "file.list"),
+    ).toMatchObject({ deferLoading: false });
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "command")
+        ?.tools.find(({ name }) => name === "command.run"),
+    ).toMatchObject({ deferLoading: false });
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "test")
+        ?.tools.find(({ name }) => name === "test.special"),
+    ).toMatchObject({ deferLoading: true });
+    expect(fixture.provider.requests[0]?.instructions).toContain(
+      "Core local file and command capabilities are already loaded",
+    );
+    expect(JSON.stringify(fixture.provider.requests[1]?.input)).not.toContain(
+      "tool_search_output",
+    );
+    fixture.database.close();
+  });
+
+  it("keeps write-capable core tools behind Agent approval", async () => {
+    const fixture = await createFixture([
+      namespacedFunctionTurn("write-core", "write", "file", { value: "x" }),
+      finalTurn("未写入"),
+    ]);
+    let writeCalls = 0;
+    registerTool(fixture, {
+      effect: "write",
+      execute: () => {
+        writeCalls += 1;
+        return Promise.resolve(successfulResult("wrote"));
+      },
+      idempotency: "non_idempotent",
+      name: "file.write",
+      namespace: "file",
+    });
+
+    const run = await startAgent(fixture, "request_approval");
+    await waitForStatus(fixture, run.id, "waiting_approval");
+
+    expect(writeCalls).toBe(0);
+    expect(
+      fixture.provider.requests[0]?.toolNamespaces
+        .find(({ name }) => name === "file")
+        ?.tools.find(({ name }) => name === "file.write"),
+    ).toMatchObject({ deferLoading: false });
+    const approval = fixture.runtime.getPendingApproval();
+    expect(approval).not.toBeNull();
+    fixture.runtime.resolveApproval({
+      approvalId: approval!.id,
+      decidedAt: REQUESTED_AT,
+      decision: "rejected",
+      reason: "测试权限边界",
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(writeCalls).toBe(0);
+    fixture.database.close();
+  });
+
+  it("exposes only read-only core tools in Chat mode", async () => {
+    const fixture = await createFixture([finalTurn("只读回答")]);
+    registerTool(fixture, {
+      execute: () => Promise.resolve(successfulResult("read")),
+      name: "file.read",
+      namespace: "file",
+    });
+    registerTool(fixture, {
+      effect: "write",
+      execute: () => Promise.resolve(successfulResult("wrote")),
+      idempotency: "non_idempotent",
+      name: "file.write",
+      namespace: "file",
+    });
+    registerTool(fixture, {
+      effect: "write",
+      execute: () => Promise.resolve(successfulResult("ran")),
+      idempotency: "non_idempotent",
+      name: "command.run",
+      namespace: "command",
+    });
+
+    const run = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "读取当前文件",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    const firstRequest = fixture.provider.requests[0];
+    expect(
+      firstRequest?.toolNamespaces
+        .find(({ name }) => name === "file")
+        ?.tools.map(({ name }) => name),
+    ).toEqual(["file.read"]);
+    expect(
+      firstRequest?.toolNamespaces.find(({ name }) => name === "file")
+        ?.tools[0],
+    ).toMatchObject({ deferLoading: false });
+    expect(
+      firstRequest?.toolNamespaces.some(({ name }) => name === "command"),
+    ).toBe(false);
+    fixture.database.close();
+  });
+
+  it("keeps core local tools callable after Tool Search narrows the deferred scope", async () => {
+    const fixture = await createFixture([
+      searchTurn("search-special", "file list special"),
+      namespacedFunctionTurn("list-after-search", "list", "file", {
+        value: ".",
+      }),
+      finalTurn("核心能力仍可用"),
+    ]);
+    let listCalls = 0;
+    registerTool(fixture, {
+      execute: () => {
+        listCalls += 1;
+        return Promise.resolve(successfulResult("listed"));
+      },
+      name: "file.list",
+      namespace: "file",
+    });
+    registerTool(fixture, {
+      execute: () => Promise.resolve(successfulResult("special")),
+      name: "test.special",
+    });
+
+    const run = await startAgent(fixture);
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(listCalls).toBe(1);
+    expect(JSON.stringify(fixture.provider.requests[1]?.input)).toContain(
+      "test.special",
+    );
+    expect(JSON.stringify(fixture.provider.requests[1]?.input)).not.toContain(
+      "file.list",
+    );
+    expect(fixture.provider.requests[1]?.allowedTools).toEqual(
+      expect.arrayContaining([
+        { name: "file.list", namespace: "file" },
+        { name: "test.special", namespace: "test" },
+      ]),
+    );
+    expect(JSON.stringify(fixture.provider.requests[2]?.input)).not.toContain(
+      "TOOL.SCOPE_NOT_ALLOWED",
+    );
     fixture.database.close();
   });
 

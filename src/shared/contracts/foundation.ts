@@ -30,9 +30,14 @@ export interface FoundationApi {
   markRendererReady(): void;
 }
 
+export interface ClipboardApi {
+  writeText(value: string): Promise<void>;
+}
+
 export interface DesktopApi {
   activity: ActivityApi;
   automations: AutomationApi;
+  clipboard: ClipboardApi;
   evolution: EvolutionApi;
   files: LocalFilesApi;
   foundation: FoundationApi;

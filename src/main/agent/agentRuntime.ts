@@ -102,6 +102,13 @@ const USER_ATTACHMENT_KINDS = new Set<ArtifactKind>([
 ]);
 
 const ALWAYS_LOADED_CLIENT_TOOLS = new Set([
+  "file.list",
+  "file.read",
+  "file.search",
+  "file.write",
+  "file.patch",
+  "file.trash",
+  "command.run",
   "plan.update",
   MEMORY_FORMATION_TOOL_NAME,
   COMPANIONSHIP_UPDATE_TOOL_NAME,
@@ -1581,7 +1588,11 @@ export class AgentRuntime {
 
   #searchTools(active: ActiveRun, query: string, limit: number) {
     const available = new Set(
-      this.#availableTools(active).map(({ descriptor }) => descriptor.name),
+      this.#availableTools(active)
+        .filter(
+          ({ descriptor }) => !ALWAYS_LOADED_CLIENT_TOOLS.has(descriptor.name),
+        )
+        .map(({ descriptor }) => descriptor.name),
     );
     return active.tools
       .search(query, active.tools.list().length)

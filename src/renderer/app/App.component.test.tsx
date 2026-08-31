@@ -288,6 +288,9 @@ function renderApp({
         };
       }),
     },
+    clipboard: {
+      writeText: vi.fn().mockResolvedValue(undefined),
+    },
     extensions: {
       mcpDelete: vi.fn(),
       mcpList: vi.fn().mockResolvedValue({ ok: true, value: [] }),

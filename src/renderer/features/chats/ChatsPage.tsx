@@ -20,6 +20,7 @@ interface ChatsPageProps {
   readonly dispatch: Dispatch<ChatsUiAction>;
   readonly models: readonly ChatModelOption[];
   readonly onConfigureModels: () => void;
+  readonly onEditUserMessage: (content: string) => void;
   readonly onResumeRun: (runId: string) => void;
   readonly onResolveApproval: (
     approvalId: string,
@@ -105,6 +106,7 @@ export function ChatsPage({
   dispatch,
   models,
   onConfigureModels,
+  onEditUserMessage,
   onResumeRun,
   onResolveApproval,
   onResolveUserInput,
@@ -132,6 +134,7 @@ export function ChatsPage({
           <MessageList
             chat={activeChat}
             dispatch={dispatch}
+            onEditUserMessage={onEditUserMessage}
             onResumeRun={onResumeRun}
             onResolveApproval={onResolveApproval}
             onResolveUserInput={onResolveUserInput}

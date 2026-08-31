@@ -926,6 +926,10 @@ export function AppShell({
         ?.focus();
     }, 0);
   };
+  const editUserMessage = (content: string) => {
+    dispatch({ draft: content, type: "draft.changed" });
+    focusComposer();
+  };
   const correctCompanionshipScope = (chatId: string, title: string) => {
     dispatch({ chatId, type: "chat.selected" });
     dispatch({
@@ -1033,6 +1037,7 @@ export function AppShell({
               dispatch={dispatch}
               models={chatDomain.models}
               onConfigureModels={onConfigureModels}
+              onEditUserMessage={editUserMessage}
               onResumeRun={onRunResume}
               onResolveApproval={onResolveApproval}
               onResolveUserInput={onResolveUserInput}

@@ -32,6 +32,9 @@ import {
 type IpcListener = (event: unknown, input: unknown) => void;
 
 const electron = vi.hoisted(() => ({
+  clipboard: {
+    writeText: vi.fn(),
+  },
   contextBridge: {
     exposeInMainWorld: vi.fn(),
   },
@@ -77,6 +80,15 @@ beforeEach(() => {
 });
 
 describe("Phase 1 typed preload data boundary", () => {
+  it("copies text through the narrow native clipboard boundary", async () => {
+    const api = await loadApi();
+
+    await expect(
+      api.clipboard.writeText("完整 Markdown"),
+    ).resolves.toBeUndefined();
+    expect(electron.clipboard.writeText).toHaveBeenCalledWith("完整 Markdown");
+  });
+
   it("validates failed Experience Review dismissal on both sides", async () => {
     const runId = FIXTURE_IDS.run;
     const review = {

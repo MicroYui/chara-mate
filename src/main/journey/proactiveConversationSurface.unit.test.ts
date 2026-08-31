@@ -75,6 +75,7 @@ function envelope(
 function harness(chatStatus: "active" | "archived" = "active") {
   const shown: ProactiveConversationBubble[] = [];
   const cleared: Array<string | undefined> = [];
+  const outcomes: Array<{ bubbleId: string; outcome: string }> = [];
   const discardProvisional = vi.fn(() => true);
   const establishProvisional = vi.fn();
   const restore = vi.fn();
@@ -110,6 +111,11 @@ function harness(chatStatus: "active" | "archived" = "active") {
         shown.push(next);
       },
     },
+    {
+      recordOutcome: (bubbleId, outcome) => {
+        outcomes.push({ bubbleId, outcome });
+      },
+    },
   );
   return {
     cleared,
@@ -117,6 +123,7 @@ function harness(chatStatus: "active" | "archived" = "active") {
     discardProvisional,
     establishProvisional,
     originRuns,
+    outcomes,
     restore,
     shown,
     startInlineConversation,
@@ -141,6 +148,9 @@ describe("ProactiveConversationSurface", () => {
       expect(fixture.cleared).toEqual([invitation.id]);
       expect(fixture.discardProvisional).toHaveBeenCalledWith(CHAT_ID);
       expect(fixture.establishProvisional).not.toHaveBeenCalled();
+      expect(fixture.outcomes).toEqual([
+        { bubbleId: invitation.id, outcome: "expired" },
+      ]);
     } finally {
       vi.useRealTimers();
     }
@@ -167,6 +177,9 @@ describe("ProactiveConversationSurface", () => {
       vi.advanceTimersByTime(20_000);
       expect(fixture.surface.current()).toBeDefined();
       expect(fixture.discardProvisional).not.toHaveBeenCalled();
+      expect(fixture.outcomes).toEqual([
+        { bubbleId: bubble.id, outcome: "replied" },
+      ]);
     } finally {
       vi.useRealTimers();
     }
@@ -189,6 +202,9 @@ describe("ProactiveConversationSurface", () => {
       vi.advanceTimersByTime(20_000);
       expect(fixture.surface.current()).toBeDefined();
       expect(fixture.discardProvisional).not.toHaveBeenCalled();
+      expect(fixture.outcomes).toEqual([
+        { bubbleId: bubble.id, outcome: "replied" },
+      ]);
     } finally {
       vi.useRealTimers();
     }
@@ -274,6 +290,9 @@ describe("ProactiveConversationSurface", () => {
     expect(fixture.surface.clear(OTHER_RUN_ID)).toBe(false);
     expect(fixture.surface.clear(bubble.id)).toBe(true);
     expect(fixture.cleared).toEqual([bubble.id]);
+    expect(fixture.outcomes).toEqual([
+      { bubbleId: bubble.id, outcome: "replied" },
+    ]);
   });
 
   it("marks the bubble failed instead of inventing a second surface when its Run fails", async () => {
@@ -302,6 +321,9 @@ describe("ProactiveConversationSurface", () => {
 
     expect(fixture.surface.current()).toBeUndefined();
     expect(fixture.cleared).toEqual([bubble.id]);
+    expect(fixture.outcomes).toEqual([
+      { bubbleId: bubble.id, outcome: "interrupted" },
+    ]);
   });
 
   it("keeps the bubble transport alive when Voice starts in its bound Chat", () => {
@@ -312,5 +334,24 @@ describe("ProactiveConversationSurface", () => {
 
     expect(fixture.surface.current()).toEqual(bubble);
     expect(fixture.cleared).toEqual([]);
+    expect(fixture.outcomes).toEqual([
+      { bubbleId: bubble.id, outcome: "replied" },
+    ]);
+  });
+
+  it("records an explicit close as dismissed and shutdown as interrupted", () => {
+    const dismissed = harness();
+    dismissed.surface.publish(bubble);
+    dismissed.surface.clear(bubble.id);
+    expect(dismissed.outcomes).toEqual([
+      { bubbleId: bubble.id, outcome: "dismissed" },
+    ]);
+
+    const interrupted = harness();
+    interrupted.surface.publish(bubble);
+    interrupted.surface.shutdown();
+    expect(interrupted.outcomes).toEqual([
+      { bubbleId: bubble.id, outcome: "interrupted" },
+    ]);
   });
 });

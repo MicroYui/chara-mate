@@ -11,6 +11,7 @@ import {
   ProactiveConversationBubbleSchema,
 } from "../../shared/schemas/pet";
 import { parseSchema } from "../../shared/schemas/validation";
+import type { CompanionInitiativeOutcome } from "./companionInitiativeRepository";
 
 export interface InlineConversationChatStore {
   discardProvisional(chatId: string): boolean;
@@ -40,6 +41,13 @@ export interface ProactiveConversationProjector {
   show(bubble: ProactiveConversationBubble): void;
 }
 
+export interface ProactiveConversationLifecycleObserver {
+  recordOutcome(
+    bubbleId: string,
+    outcome: Exclude<CompanionInitiativeOutcome, "shown">,
+  ): void;
+}
+
 export const PROVISIONAL_CHAT_REPLY_WINDOW_MS = 20_000;
 
 function terminalRun(envelope: RunEventEnvelope): Run | undefined {
@@ -66,6 +74,7 @@ export class ProactiveConversationSurface {
     private readonly providers: InlineConversationProvider,
     private readonly runs: InlineConversationRunReader,
     private readonly projector: ProactiveConversationProjector,
+    private readonly lifecycle?: ProactiveConversationLifecycleObserver,
     private readonly provisionalReplyWindowMs = PROVISIONAL_CHAT_REPLY_WINDOW_MS,
   ) {}
 
@@ -83,7 +92,7 @@ export class ProactiveConversationSurface {
   ): boolean {
     const bubble = parseSchema(ProactiveConversationBubbleSchema, input);
     if (this.#bubble && (!options.replace || this.#engaged)) return false;
-    if (this.#bubble) this.#releaseCurrent(false);
+    if (this.#bubble) this.#releaseCurrent(false, "interrupted");
     this.#resetReply();
     this.#engaged = false;
     this.#bubble = bubble;
@@ -96,12 +105,12 @@ export class ProactiveConversationSurface {
     if (!this.#bubble || (bubbleId && this.#bubble.id !== bubbleId)) {
       return false;
     }
-    this.#releaseCurrent(true);
+    this.#releaseCurrent(true, "dismissed");
     return true;
   }
 
   shutdown(): void {
-    if (this.#bubble) this.#releaseCurrent(true);
+    if (this.#bubble) this.#releaseCurrent(true, "interrupted");
     else this.#cancelExpiration();
   }
 
@@ -179,7 +188,7 @@ export class ProactiveConversationSurface {
         return;
       }
       if (this.#bubble?.chatId === run.chatId && this.#bubble.id !== run.id) {
-        this.clear(this.#bubble.id);
+        this.#releaseCurrent(true, "interrupted");
       }
       return;
     }
@@ -214,7 +223,7 @@ export class ProactiveConversationSurface {
 
   #engage(): void {
     const bubble = this.#bubble;
-    if (!bubble) return;
+    if (!bubble || this.#engaged) return;
     if (bubble.kind === "invitation") {
       this.chats.establishProvisional(bubble.chatId);
       this.#cancelExpiration();
@@ -222,13 +231,18 @@ export class ProactiveConversationSurface {
       this.projector.show(this.#bubble);
     }
     this.#engaged = true;
+    this.lifecycle?.recordOutcome(bubble.id, "replied");
   }
 
-  #releaseCurrent(clearProjection: boolean): void {
+  #releaseCurrent(
+    clearProjection: boolean,
+    outcome: Exclude<CompanionInitiativeOutcome, "shown" | "replied">,
+  ): void {
     const bubble = this.#bubble;
     if (!bubble) return;
     this.#cancelExpiration();
     this.#bubble = undefined;
+    if (!this.#engaged) this.lifecycle?.recordOutcome(bubble.id, outcome);
     this.#engaged = false;
     this.#resetReply();
     if (clearProjection) this.projector.clear(bubble.id);
@@ -241,7 +255,9 @@ export class ProactiveConversationSurface {
     this.#cancelExpiration();
     this.#expirationTimer = setTimeout(() => {
       this.#expirationTimer = undefined;
-      this.clear(bubbleId);
+      if (this.#bubble?.id === bubbleId) {
+        this.#releaseCurrent(true, "expired");
+      }
     }, this.provisionalReplyWindowMs);
     this.#expirationTimer.unref?.();
   }

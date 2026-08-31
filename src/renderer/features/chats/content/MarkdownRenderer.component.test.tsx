@@ -33,14 +33,15 @@ vi.mock("mermaid", () => ({
 beforeEach(() => {
   clipboardWrite.mockReset();
   clipboardWrite.mockResolvedValue(undefined);
-  Object.defineProperty(navigator, "clipboard", {
+  Object.defineProperty(window, "charaMate", {
     configurable: true,
-    value: { writeText: clipboardWrite },
+    value: { clipboard: { writeText: clipboardWrite } },
   });
 });
 
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(window, "charaMate");
 });
 
 describe("MarkdownRenderer", () => {

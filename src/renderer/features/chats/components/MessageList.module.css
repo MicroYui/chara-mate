@@ -44,6 +44,9 @@
 .messageBody {
   min-width: 0;
   max-width: 100%;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .message[data-role="user"] .messageBody {

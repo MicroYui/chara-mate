@@ -124,12 +124,18 @@ test("launches through the typed preload boundary", async () => {
       .toBe(true);
     await expect(page.getByText(messageFixture.content)).toBeVisible();
     await expect(page.getByRole("button", { name: /已处理/u })).toHaveCount(0);
+    await page.getByRole("button", { name: "编辑消息" }).click();
+    const composer = page.getByRole("textbox", { name: "消息" });
+    await expect(composer).toHaveValue(messageFixture.content);
+    await expect(composer).toBeFocused();
+    await composer.fill("");
 
     const bridgeShape = await page.evaluate(() => ({
       activityKeys: Object.keys(window.charaMate.activity).sort(),
       agentKeys: Object.keys(window.charaMate.agent).sort(),
       automationKeys: Object.keys(window.charaMate.automations).sort(),
       chatKeys: Object.keys(window.charaMate.chat).sort(),
+      clipboardKeys: Object.keys(window.charaMate.clipboard).sort(),
       evolutionKeys: Object.keys(window.charaMate.evolution).sort(),
       extensionKeys: Object.keys(window.charaMate.extensions).sort(),
       fileKeys: Object.keys(window.charaMate.files).sort(),
@@ -186,6 +192,7 @@ test("launches through the typed preload boundary", async () => {
         "setPinned",
         "subscribeChanged",
       ],
+      clipboardKeys: ["writeText"],
       evolutionKeys: [
         "acceptCandidate",
         "archiveCandidate",
@@ -255,6 +262,7 @@ test("launches through the typed preload boundary", async () => {
         "agent",
         "automations",
         "chat",
+        "clipboard",
         "evolution",
         "extensions",
         "files",
