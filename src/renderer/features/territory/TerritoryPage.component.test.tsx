@@ -528,6 +528,63 @@ describe("TerritoryPage World workspace", () => {
     expect(onFocusConsumed).toHaveBeenCalledTimes(1);
   });
 
+  it("presents a Chat moment as an editable experience instead of a fixed template", async () => {
+    const { api, getSnapshot } = createApi();
+    const snapshot: TerritoryWorldSnapshot = structuredClone(
+      starterTerritorySnapshot,
+    );
+    const momentKey =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    snapshot.candidates[0] = {
+      ...snapshot.candidates[0]!,
+      intent: "item",
+      sources: [
+        {
+          attachments: [
+            {
+              attachmentId: "70000000-0000-4000-8000-000000000001",
+              displayName: "sunset.jpg",
+              mediaType: "image/jpeg",
+              sha256:
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            },
+          ],
+          chatId: "70000000-0000-4000-8000-000000000002",
+          id: momentKey,
+          kind: "chat_moment",
+          label: "散场后的余光",
+          memoryRevisions: [],
+          messageId: "70000000-0000-4000-8000-000000000003",
+          momentKey,
+          occurredAt: "2026-09-01T09:00:00.000Z",
+          personaRef: {
+            personaId: "70000000-0000-4000-8000-000000000004",
+            revision: 1,
+          },
+          runId: "70000000-0000-4000-8000-000000000005",
+        },
+      ],
+    };
+    getSnapshot.mockResolvedValue({ ok: true, value: snapshot });
+
+    render(
+      <TerritoryPage
+        activePet={undefined}
+        animationSpeed={0.75}
+        api={api}
+        focusCandidateId={starterTerritoryCandidate.id}
+        providerApi={providerApi}
+      />,
+    );
+
+    expect(await screen.findByText("散场后的余光")).toBeVisible();
+    expect(screen.getByText(/sunset\.jpg/u)).toBeVisible();
+    expect(screen.getByRole("button", { name: "这次不要" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "换一种表达" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "放进领地" })).toBeVisible();
+    expect(screen.queryByText(/拍立得/u)).not.toBeInTheDocument();
+  });
+
   it("shows a skippable source reveal after applying a Memory item", async () => {
     const { api, getSnapshot } = createApi();
     const snapshot: TerritoryWorldSnapshot = structuredClone(

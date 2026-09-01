@@ -5,6 +5,7 @@ import type {
   TerritoryAsset,
   TerritoryAssetPack,
   TerritoryChangeCandidate,
+  TerritoryChatMomentSourceSnapshot,
   TerritoryCreateChangeCandidateRequest,
   TerritoryDefinition,
   TerritoryEditChangeCandidateRequest,
@@ -27,6 +28,7 @@ import {
   validateTerritoryWorldSnapshot,
   validateTerritoryZoneView,
 } from "../../shared/pure/territoryWorldValidation";
+import { Sha256Schema } from "../../shared/schemas/primitives";
 import {
   TerritoryAssetPackSchema,
   TerritoryAssetSchema,
@@ -128,6 +130,12 @@ export interface TerritoryCommitInput {
   readonly now: Timestamp;
   readonly pet?: TerritoryPetState;
   readonly reason: "ai" | "direct";
+}
+
+export interface TerritoryMomentCandidateResult {
+  readonly candidateId: string;
+  readonly created: boolean;
+  readonly snapshot: TerritoryWorldSnapshot;
 }
 
 function parseJson<T extends TSchema>(schema: T, json: string): Static<T> {
@@ -914,7 +922,7 @@ export class TerritoryWorldRepository {
   }
 
   findInstanceBySource(
-    kind: "activity_digest" | "memory",
+    kind: TerritoryInstance["sources"][number]["kind"],
     sourceId: string,
   ): TerritoryInstance | undefined {
     const purged = this.listPurgedIds();
@@ -928,7 +936,7 @@ export class TerritoryWorldRepository {
   }
 
   findOpenCandidateBySource(
-    kind: "activity_digest" | "memory",
+    kind: TerritoryInstance["sources"][number]["kind"],
     sourceId: string,
   ): TerritoryChangeCandidate | undefined {
     return this.listCandidates().find(
@@ -939,6 +947,93 @@ export class TerritoryWorldRepository {
           (source) => source.kind === kind && source.id === sourceId,
         ),
     );
+  }
+
+  findCandidateByMomentKey(
+    momentKey: string,
+  ): TerritoryChangeCandidate | undefined {
+    const parsedMomentKey = parseSchema(Sha256Schema, momentKey);
+    const row = this.database
+      .prepare(
+        `SELECT candidate_id
+           FROM territory_change_candidates
+          WHERE moment_key = ?`,
+      )
+      .get(parsedMomentKey) as { readonly candidate_id: string } | undefined;
+    return row ? this.requireCandidate(row.candidate_id) : undefined;
+  }
+
+  createMomentCandidate(
+    momentKey: string,
+    request: TerritoryCreateChangeCandidateRequest,
+    now: Timestamp,
+  ): TerritoryMomentCandidateResult {
+    const parsedMomentKey = parseSchema(Sha256Schema, momentKey);
+    const parsed = parseSchema(
+      TerritoryCreateChangeCandidateRequestSchema,
+      request,
+    );
+    const momentSources = parsed.sources.filter(
+      (source): source is TerritoryChatMomentSourceSnapshot =>
+        source.kind === "chat_moment",
+    );
+    if (
+      parsed.intent !== "item" ||
+      parsed.sources.length !== 1 ||
+      momentSources.length !== 1 ||
+      momentSources[0]?.id !== parsedMomentKey ||
+      momentSources[0].momentKey !== parsedMomentKey
+    ) {
+      throw new TerritoryError(
+        "TERRITORY.CHANGESET_INVALID",
+        "经历回响只能创建绑定同一时刻来源的单物件候选。",
+        false,
+      );
+    }
+
+    const result = this.database
+      .transaction(() => {
+        const existing = this.database
+          .prepare(
+            `SELECT candidate_id
+             FROM territory_change_candidates
+            WHERE moment_key = ?`,
+          )
+          .get(parsedMomentKey) as
+          { readonly candidate_id: string } | undefined;
+        if (existing) {
+          return { candidateId: existing.candidate_id, created: false };
+        }
+
+        const snapshot = this.getSnapshot();
+        if (parsed.baseRevisionId !== snapshot.world.currentRevision.id) {
+          throw new TerritoryError(
+            "TERRITORY.REVISION_CONFLICT",
+            "当前领地已经变化，请基于最新版本重新创建预览。",
+            false,
+          );
+        }
+        const candidateId = this.ids.generate();
+        this.database
+          .prepare(
+            `INSERT INTO territory_change_candidates (
+             candidate_id, moment_key, base_revision_id, request_json, status,
+             change_set_json, preview_groups_json, error_json,
+             applied_revision_id, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, 'draft', NULL, '[]', NULL, NULL, ?, ?)`,
+          )
+          .run(
+            candidateId,
+            parsedMomentKey,
+            parsed.baseRevisionId,
+            serializeForPersistence(parsed),
+            now,
+            now,
+          );
+        return { candidateId, created: true };
+      })
+      .immediate();
+    return { ...result, snapshot: this.getSnapshot() };
   }
 
   createCandidate(
@@ -997,19 +1092,23 @@ export class TerritoryWorldRepository {
       TerritoryCreateChangeCandidateRequestSchema,
       row.request_json,
     );
+    const snapshot = this.getSnapshot();
     const nextRequest: TerritoryCreateChangeCandidateRequest = {
       ...original,
+      baseRevisionId: snapshot.world.currentRevision.id,
       lockedInstanceIds: parsed.lockedInstanceIds,
     };
     this.database
       .prepare(
         `UPDATE territory_change_candidates
-            SET request_json = ?, edit_request_json = ?, status = 'draft',
+            SET base_revision_id = ?, request_json = ?, edit_request_json = ?,
+                status = 'draft',
                 change_set_json = NULL, preview_groups_json = '[]',
                 error_json = NULL, applied_revision_id = NULL, updated_at = ?
           WHERE candidate_id = ?`,
       )
       .run(
+        nextRequest.baseRevisionId,
         serializeForPersistence(nextRequest),
         serializeForPersistence(parsed),
         now,

@@ -22,8 +22,10 @@ import type {
   JourneySnapshot,
 } from "../../shared/contracts/journey";
 import type {
+  PetComposerAttachments,
   PetLibrarySnapshot,
   PetMainTarget,
+  PetTerritoryCandidateNavigation,
 } from "../../shared/contracts/pet";
 import type {
   PersonaApi,
@@ -46,6 +48,10 @@ import {
   starterTerritoryZoneView,
 } from "../../../tests/fixtures/territoryWorld";
 import { App } from "./App";
+
+vi.mock("../features/territory/PixiTerritoryWorldCanvas", () => ({
+  PixiTerritoryWorldCanvas: () => <div data-testid="world-canvas" />,
+}));
 
 const CREATED_CHAT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ACTIVE_CHAT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -120,6 +126,10 @@ function renderApp({
   let personaLibraryListener:
     ((snapshot: PersonaLibrarySnapshot) => void) | undefined;
   let petMainListener: ((target: PetMainTarget) => void) | undefined;
+  let petComposerAttachmentsListener:
+    ((target: PetComposerAttachments) => void) | undefined;
+  let petTerritoryCandidateListener:
+    ((target: PetTerritoryCandidateNavigation) => void) | undefined;
   let chatChangedListener: ((chat: Chat) => void) | undefined;
   let journeyChangedListener: ((snapshot: JourneySnapshot) => void) | undefined;
   let voiceChangedListener:
@@ -431,7 +441,35 @@ function renderApp({
           if (petMainListener === listener) petMainListener = undefined;
         };
       }),
+      subscribeOpenComposerAttachments: vi.fn(
+        (
+          listener: Parameters<
+            CharaMateApi["pet"]["subscribeOpenComposerAttachments"]
+          >[0],
+        ) => {
+          petComposerAttachmentsListener = listener;
+          return () => {
+            if (petComposerAttachmentsListener === listener) {
+              petComposerAttachmentsListener = undefined;
+            }
+          };
+        },
+      ),
       subscribeOpenConversation: vi.fn(() => () => undefined),
+      subscribeOpenTerritoryCandidate: vi.fn(
+        (
+          listener: Parameters<
+            CharaMateApi["pet"]["subscribeOpenTerritoryCandidate"]
+          >[0],
+        ) => {
+          petTerritoryCandidateListener = listener;
+          return () => {
+            if (petTerritoryCandidateListener === listener) {
+              petTerritoryCandidateListener = undefined;
+            }
+          };
+        },
+      ),
     },
     provider: {
       deleteProfile: vi.fn(),
@@ -509,6 +547,8 @@ function renderApp({
               endMinute: 8 * 60,
               startMinute: 22 * 60,
             },
+            territoryMomentSurprisesEnabled: false,
+            territoryMomentSurprisesPrompted: false,
           },
           voice: {
             inputMode: "hands_free",
@@ -576,6 +616,10 @@ function renderApp({
     listProfiles,
     markRendererReady,
     openMain: (target: PetMainTarget) => petMainListener?.(target),
+    openComposerAttachments: (target: PetComposerAttachments) =>
+      petComposerAttachmentsListener?.(target),
+    openTerritoryCandidate: (target: PetTerritoryCandidateNavigation) =>
+      petTerritoryCandidateListener?.(target),
     selectPersona: (snapshot: PersonaLibrarySnapshot) => {
       personaLibrary = snapshot;
       personaLibraryListener?.(personaLibrary);
@@ -801,6 +845,30 @@ describe("application shell", () => {
     act(() => openMain("character"));
     expect(screen.getByRole("heading", { name: "角色人格" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "桌面形象" })).toBeVisible();
+  });
+
+  it("opens Chats and prefills attachments dropped on the desktop pet", async () => {
+    const { openComposerAttachments } = renderApp();
+    await screen.findByRole("region", { name: "Chats" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    act(() =>
+      openComposerAttachments({
+        attachments: [
+          {
+            byteLength: 321,
+            displayName: "sunset.jpg",
+            id: "11111111-1111-4111-8111-111111111111",
+            mediaType: "image/jpeg",
+            source: "image",
+            storageKey: "/tmp/sunset.jpg",
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByRole("region", { name: "Chats" })).toBeVisible();
+    expect(screen.getByLabelText("待发送附件")).toHaveTextContent("sunset.jpg");
   });
 
   it("keeps New Chat as a right-side draft until the first send", async () => {
@@ -1162,6 +1230,20 @@ describe("application shell", () => {
     ).toBeVisible();
     expect(screen.getByText("尚未连接手机")).toBeVisible();
     expect(screen.getByRole("button", { name: "Settings" })).toBeVisible();
+  });
+
+  it("opens the exact Territory candidate requested by the pet", async () => {
+    const { openTerritoryCandidate } = renderApp();
+    await screen.findByRole("region", { name: "Chats" });
+
+    act(() =>
+      openTerritoryCandidate({
+        candidateId: starterTerritorySnapshot.candidates[0]!.id,
+      }),
+    );
+
+    expect(await screen.findByText("AI 创作台")).toBeVisible();
+    expect(screen.getByText("正在预览 AI 变更")).toBeVisible();
   });
 
   it("opens the integrated Provider settings from Models", async () => {

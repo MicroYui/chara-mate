@@ -4,6 +4,8 @@ import { VOICE_END_TOOL_NAME } from "../../shared/contracts/voice";
 import { MEMORY_FORMATION_TOOL_NAME } from "../memory/memoryTool";
 import { COMPANIONSHIP_UPDATE_TOOL_NAME } from "../journey/companionshipTool";
 import { IMPORTANT_MOMENT_OUTREACH_TOOL_NAME } from "../journey/importantMomentOutreachTool";
+import { TERRITORY_MOMENT_SURPRISES_TOOL_NAME } from "../journey/territoryMomentSurprisesTool";
+import { TERRITORY_PROPOSE_MOMENT_TOOL_NAME } from "../territory/territoryMomentTool";
 import { COLLABORATION_DISPATCH_TOOL_NAME } from "./collaborationTool";
 
 export function toolAllowedInExecution(
@@ -18,6 +20,8 @@ export function toolAllowedInExecution(
     descriptor.name === MEMORY_FORMATION_TOOL_NAME ||
     descriptor.name === COMPANIONSHIP_UPDATE_TOOL_NAME ||
     descriptor.name === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME ||
+    descriptor.name === TERRITORY_MOMENT_SURPRISES_TOOL_NAME ||
+    descriptor.name === TERRITORY_PROPOSE_MOMENT_TOOL_NAME ||
     execution.mode === "agent" ||
     (descriptor.effect === "read" && descriptor.idempotency === "idempotent")
   );
@@ -31,7 +35,9 @@ export function requiresApproval(
   if (
     descriptor.name === MEMORY_FORMATION_TOOL_NAME ||
     descriptor.name === COMPANIONSHIP_UPDATE_TOOL_NAME ||
-    descriptor.name === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME
+    descriptor.name === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME ||
+    descriptor.name === TERRITORY_MOMENT_SURPRISES_TOOL_NAME ||
+    descriptor.name === TERRITORY_PROPOSE_MOMENT_TOOL_NAME
   ) {
     return false;
   }

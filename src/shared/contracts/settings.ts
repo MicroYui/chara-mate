@@ -53,6 +53,8 @@ export const DEFAULT_COMPANION_INITIATIVE_SETTINGS = {
     endMinute: 8 * 60,
     startMinute: 22 * 60,
   },
+  territoryMomentSurprisesEnabled: false,
+  territoryMomentSurprisesPrompted: false,
 } as const satisfies CompanionInitiativeSettings;
 export type CompanionInitiativeSettingsSaveRequest = Static<
   typeof CompanionInitiativeSettingsSaveRequestSchema

@@ -110,6 +110,7 @@ import {
 import {
   PET_CHANNELS,
   type PetAnimationSpeedRequest,
+  type PetComposerAttachments,
   type PetConversationNavigation,
   type PetLibrarySnapshot,
   type PetMainTarget,
@@ -117,6 +118,7 @@ import {
   type PetScaleRequest,
   type PetSelectRequest,
   type PetTerritoryPresenceRequest,
+  type PetTerritoryCandidateNavigation,
 } from "../shared/contracts/pet";
 import {
   type ProviderApi,
@@ -268,6 +270,7 @@ import {
 } from "../shared/schemas/settings";
 import {
   PetAnimationSpeedRequestSchema,
+  PetComposerAttachmentsSchema,
   PetConversationNavigationSchema,
   PetImportResponseSchema,
   PetLibraryResponseSchema,
@@ -276,6 +279,7 @@ import {
   PetScaleRequestSchema,
   PetSelectRequestSchema,
   PetTerritoryPresenceRequestSchema,
+  PetTerritoryCandidateNavigationSchema,
 } from "../shared/schemas/pet";
 import {
   ProviderDeleteProfileRequestSchema,
@@ -1006,6 +1010,39 @@ const petApi: PetManagementApi = Object.freeze({
     ipcRenderer.on(PET_CHANNELS.openConversation, wrappedListener);
     return () =>
       ipcRenderer.off(PET_CHANNELS.openConversation, wrappedListener);
+  },
+  subscribeOpenComposerAttachments: (
+    listener: (target: PetComposerAttachments) => void,
+  ) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        parseSchemaWithoutCodeGeneration(PetComposerAttachmentsSchema, input),
+      );
+    };
+    ipcRenderer.on(PET_CHANNELS.openComposerAttachments, wrappedListener);
+    return () =>
+      ipcRenderer.off(PET_CHANNELS.openComposerAttachments, wrappedListener);
+  },
+  subscribeOpenTerritoryCandidate: (
+    listener: (target: PetTerritoryCandidateNavigation) => void,
+  ) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        parseSchemaWithoutCodeGeneration(
+          PetTerritoryCandidateNavigationSchema,
+          input,
+        ),
+      );
+    };
+    ipcRenderer.on(PET_CHANNELS.openTerritoryCandidate, wrappedListener);
+    return () =>
+      ipcRenderer.off(PET_CHANNELS.openTerritoryCandidate, wrappedListener);
   },
 });
 

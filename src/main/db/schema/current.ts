@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "23";
+export const CURRENT_SCHEMA_VERSION = "24";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -243,6 +243,12 @@ export const CURRENT_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS territory_change_candidates (
     candidate_id TEXT PRIMARY KEY NOT NULL,
+    moment_key TEXT CHECK (
+      moment_key IS NULL OR (
+        length(moment_key) = 64 AND
+        moment_key NOT GLOB '*[^0-9a-f]*'
+      )
+    ),
     base_revision_id TEXT NOT NULL
       REFERENCES territory_world_revisions(revision_id),
     request_json TEXT NOT NULL CHECK (json_valid(request_json)),
@@ -272,7 +278,7 @@ export const CURRENT_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS territory_instance_sources (
     source_kind TEXT NOT NULL CHECK (
-      source_kind IN ('memory', 'activity_digest')
+      source_kind IN ('memory', 'activity_digest', 'chat_moment')
     ),
     source_id TEXT NOT NULL,
     instance_id TEXT NOT NULL,
@@ -291,6 +297,10 @@ export const CURRENT_SCHEMA_SQL = `
 
   CREATE INDEX IF NOT EXISTS territory_change_candidates_updated_idx
     ON territory_change_candidates(updated_at DESC, candidate_id DESC);
+
+  CREATE UNIQUE INDEX IF NOT EXISTS territory_change_candidates_moment_key_idx
+    ON territory_change_candidates(moment_key)
+    WHERE moment_key IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY NOT NULL,
@@ -993,6 +1003,12 @@ export const CURRENT_SCHEMA_SQL = `
     ),
     important_moment_outreach_prompted INTEGER NOT NULL DEFAULT 0 CHECK (
       important_moment_outreach_prompted IN (0, 1)
+    ),
+    territory_moment_surprises_enabled INTEGER NOT NULL DEFAULT 0 CHECK (
+      territory_moment_surprises_enabled IN (0, 1)
+    ),
+    territory_moment_surprises_prompted INTEGER NOT NULL DEFAULT 0 CHECK (
+      territory_moment_surprises_prompted IN (0, 1)
     ),
     updated_at TEXT NOT NULL
   ) STRICT;

@@ -335,16 +335,76 @@ export const TerritoryDefinitionRefSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const TerritorySourceSnapshotSchema = Type.Object(
+export const TerritoryMemorySourceSnapshotSchema = Type.Object(
   {
     id: EntityIdSchema,
-    kind: Type.Union([Type.Literal("memory"), Type.Literal("activity_digest")]),
+    kind: Type.Literal("memory"),
     label: NonBlankStringSchema,
     occurredAt: TimestampSchema,
-    revisionId: Type.Union([EntityIdSchema, Type.Null()]),
+    revisionId: EntityIdSchema,
   },
   { additionalProperties: false },
 );
+
+export const TerritoryActivityDigestSourceSnapshotSchema = Type.Object(
+  {
+    id: EntityIdSchema,
+    kind: Type.Literal("activity_digest"),
+    label: NonBlankStringSchema,
+    occurredAt: TimestampSchema,
+    revisionId: Type.Null(),
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryChatMomentAttachmentSchema = Type.Object(
+  {
+    attachmentId: EntityIdSchema,
+    displayName: NonBlankStringSchema,
+    mediaType: Type.Optional(NonBlankStringSchema),
+    sha256: Sha256Schema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryChatMomentMemoryRevisionSchema = Type.Object(
+  {
+    memoryId: EntityIdSchema,
+    revisionId: EntityIdSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryChatMomentPersonaRefSchema = Type.Object(
+  {
+    personaId: EntityIdSchema,
+    revision: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryChatMomentSourceSnapshotSchema = Type.Object(
+  {
+    attachments: Type.Array(TerritoryChatMomentAttachmentSchema),
+    chatId: EntityIdSchema,
+    id: Sha256Schema,
+    kind: Type.Literal("chat_moment"),
+    label: NonBlankStringSchema,
+    memoryRevisions: Type.Array(TerritoryChatMomentMemoryRevisionSchema),
+    messageId: EntityIdSchema,
+    momentKey: Sha256Schema,
+    occurredAt: TimestampSchema,
+    personaRef: TerritoryChatMomentPersonaRefSchema,
+    runId: EntityIdSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const TerritorySourceSnapshotSchema = Type.Union([
+  TerritoryMemorySourceSnapshotSchema,
+  TerritoryActivityDigestSourceSnapshotSchema,
+  TerritoryChatMomentSourceSnapshotSchema,
+]);
 
 const transformProperties = {
   flipped: Type.Boolean(),

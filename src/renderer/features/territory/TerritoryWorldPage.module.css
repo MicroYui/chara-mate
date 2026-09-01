@@ -1417,6 +1417,29 @@
   font-size: 8px;
 }
 
+.momentSource {
+  display: grid;
+  gap: 2px;
+  margin: 8px 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(220, 194, 122, 0.12);
+  border-radius: 8px;
+  background: rgba(213, 187, 115, 0.055);
+}
+
+.momentSource strong {
+  overflow: hidden;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.momentSource small {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 8px;
+  overflow-wrap: anywhere;
+}
+
 .previewGroup {
   display: grid;
   grid-template-columns: 7px minmax(0, 1fr) auto auto;

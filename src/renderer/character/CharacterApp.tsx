@@ -14,6 +14,7 @@ import type {
   PetCharacterSnapshot,
   PetDragPoint,
   PetFacing,
+  PetTerritoryMomentNotice,
   ProactiveConversationBubble,
 } from "../../shared/contracts/pet";
 import type { Approval } from "../../shared/contracts/run";
@@ -50,9 +51,12 @@ export function CharacterApp({
   const [snapshot, setSnapshot] = useState<PetCharacterSnapshot | null>(null);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [attachmentDragging, setAttachmentDragging] = useState(false);
   const [approval, setApproval] = useState<Approval | null>(null);
   const [proactiveBubble, setProactiveBubble] =
     useState<ProactiveConversationBubble | null>(null);
+  const [territoryMoment, setTerritoryMoment] =
+    useState<PetTerritoryMomentNotice | null>(null);
   const [replyDraft, setReplyDraft] = useState("");
   const [replyPending, setReplyPending] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
@@ -150,6 +154,15 @@ export function CharacterApp({
       isConversationSurface
         ? undefined
         : window.charaMateCharacter.subscribeApproval(setApproval),
+    [isConversationSurface],
+  );
+  useEffect(
+    () =>
+      isConversationSurface
+        ? undefined
+        : window.charaMateCharacter.subscribeTerritoryMoment(
+            setTerritoryMoment,
+          ),
     [isConversationSurface],
   );
   useEffect(() => {
@@ -386,6 +399,30 @@ export function CharacterApp({
           </div>
         </section>
       ) : null}
+      {!isConversationSurface && !approval && territoryMoment ? (
+        <button
+          aria-label={`打开领地回响：${territoryMoment.name}`}
+          className={styles["territoryMomentNotice"]}
+          data-status={territoryMoment.status}
+          onClick={() => {
+            window.charaMateCharacter.focusTerritoryMoment({
+              candidateId: territoryMoment.candidateId,
+            });
+            setTerritoryMoment(null);
+          }}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onPointerDown={stopPetInteraction}
+          type="button"
+        >
+          <span>
+            {territoryMoment.status === "ready"
+              ? "领地里有一份新的回响"
+              : "这份领地回响需要再试一次"}
+          </span>
+          <strong>{territoryMoment.name}</strong>
+          <ExternalLink aria-hidden="true" size={12} />
+        </button>
+      ) : null}
       {isConversationSurface && proactiveBubble ? (
         <section
           aria-label="角色发起的对话"
@@ -571,7 +608,27 @@ export function CharacterApp({
               : "CharaMate 桌宠"
           }
           className={styles["petSurface"]}
+          data-attachment-dragging={attachmentDragging || undefined}
           data-dragging={dragging || undefined}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setAttachmentDragging(true);
+          }}
+          onDragLeave={(event) => {
+            if (
+              !event.currentTarget.contains(event.relatedTarget as Node | null)
+            ) {
+              setAttachmentDragging(false);
+            }
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            setAttachmentDragging(false);
+            window.charaMateCharacter.dropComposerAttachments([
+              ...event.dataTransfer.files,
+            ]);
+          }}
           onDoubleClick={() => window.charaMateCharacter.focusMain()}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
@@ -605,6 +662,9 @@ export function CharacterApp({
             <span className={styles["status"]}>
               请在 Character 设置中导入桌宠
             </span>
+          ) : null}
+          {attachmentDragging ? (
+            <span className={styles["dropHint"]}>放到聊天里</span>
           ) : null}
         </div>
       ) : null}

@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   CharacterWindowApi,
+  PetTerritoryMomentNotice,
   ProactiveConversationBubble,
 } from "../../shared/contracts/pet";
 import type {
@@ -89,6 +90,8 @@ function renderCharacter(
     Parameters<CharacterWindowApi["subscribeApproval"]>[0] | undefined;
   let proactiveListener:
     Parameters<CharacterWindowApi["subscribeProactiveBubble"]>[0] | undefined;
+  let territoryMomentListener:
+    Parameters<CharacterWindowApi["subscribeTerritoryMoment"]>[0] | undefined;
   const quickStart = vi.fn<VoiceApi["quickStart"]>().mockImplementation(() => {
     if (quickStartError) return Promise.reject(quickStartError);
     voiceListener?.(ACTIVE_VOICE);
@@ -144,6 +147,10 @@ function renderCharacter(
     .fn<CharacterWindowApi["reduceProactiveFrequency"]>()
     .mockResolvedValue({ ok: true, value: { level: "quiet" } });
   const focusConversation = vi.fn<CharacterWindowApi["focusConversation"]>();
+  const dropComposerAttachments =
+    vi.fn<CharacterWindowApi["dropComposerAttachments"]>();
+  const focusTerritoryMoment =
+    vi.fn<CharacterWindowApi["focusTerritoryMoment"]>();
   const voice: VoiceApi = {
     end,
     getActive: vi.fn().mockResolvedValue({ ok: true, value: null }),
@@ -162,11 +169,13 @@ function renderCharacter(
     subscribeCommand: () => () => undefined,
   };
   const api: CharacterWindowApi = {
+    dropComposerAttachments,
     endDrag: vi.fn().mockResolvedValue({ moved: false }),
     dismissProactiveBubble,
     focusApproval: vi.fn(),
     focusConversation,
     focusMain: vi.fn(),
+    focusTerritoryMoment,
     getPendingApproval: vi.fn().mockResolvedValue({ ok: true, value: null }),
     getSnapshot: vi.fn().mockResolvedValue({
       activePet: null,
@@ -193,6 +202,14 @@ function renderCharacter(
       proactiveListener = listener;
       return () => {
         if (proactiveListener === listener) proactiveListener = undefined;
+      };
+    },
+    subscribeTerritoryMoment: (listener) => {
+      territoryMomentListener = listener;
+      return () => {
+        if (territoryMomentListener === listener) {
+          territoryMomentListener = undefined;
+        }
       };
     },
     voice,
@@ -225,13 +242,17 @@ function renderCharacter(
   render(<CharacterApp surface={surface} />);
   return {
     api,
+    dropComposerAttachments,
     dismissProactiveBubble,
     emitApproval: (approval: typeof approvalFixture | null) =>
       approvalListener?.(approval),
     emitProactive: (bubble: ProactiveConversationBubble | null) =>
       proactiveListener?.(bubble),
+    emitTerritoryMoment: (notice: PetTerritoryMomentNotice | null) =>
+      territoryMomentListener?.(notice),
     end,
     focusConversation,
+    focusTerritoryMoment,
     quickStart,
     reduceProactiveFrequency,
     replyProactiveBubble,
@@ -248,6 +269,44 @@ afterEach(() => {
 });
 
 describe("Character chat control", () => {
+  it("hands files dropped on the pet to the desktop Composer bridge", async () => {
+    const { dropComposerAttachments } = renderCharacter();
+    const surface = await screen.findByRole("button", {
+      name: "CharaMate 桌宠",
+    });
+    const file = new File(["sunset"], "sunset.jpg", { type: "image/jpeg" });
+
+    fireEvent.dragEnter(surface, { dataTransfer: { files: [file] } });
+    expect(screen.getByText("放到聊天里")).toBeVisible();
+    fireEvent.drop(surface, { dataTransfer: { files: [file] } });
+
+    expect(dropComposerAttachments).toHaveBeenCalledWith([file]);
+    expect(screen.queryByText("放到聊天里")).toBeNull();
+  });
+
+  it("opens a prepared Territory moment from the pet notice", () => {
+    const { emitTerritoryMoment, focusTerritoryMoment } = renderCharacter();
+    const notice = {
+      candidateId: "30000000-0000-4000-8000-000000000001",
+      createdAt: "2026-09-01T09:00:00.000Z",
+      name: "散场后的余光",
+      status: "ready",
+      updatedAt: "2026-09-01T09:01:00.000Z",
+    } satisfies PetTerritoryMomentNotice;
+
+    act(() => emitTerritoryMoment(notice));
+    fireEvent.click(
+      screen.getByRole("button", { name: `打开领地回响：${notice.name}` }),
+    );
+
+    expect(focusTerritoryMoment).toHaveBeenCalledWith({
+      candidateId: notice.candidateId,
+    });
+    expect(
+      screen.queryByRole("button", { name: `打开领地回响：${notice.name}` }),
+    ).not.toBeInTheDocument();
+  });
+
   it("starts, pauses, and resumes the same Voice Agent Chat", async () => {
     const { end, quickStart, setPaused } = renderCharacter();
     const startButton = await screen.findByRole("button", {

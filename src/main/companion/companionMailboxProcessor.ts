@@ -2,7 +2,9 @@ import type {
   CompanionDesktopMailboxAck,
   CompanionDesktopMailboxEnvelope,
   CompanionDeviceStatus,
+  CompanionNotificationPermission,
   CompanionShareImportedAckResult,
+  CompanionShareUploadedEnvelope,
 } from "../../shared/contracts/companion";
 import { COMPANION_PROTOCOL_VERSION } from "../../shared/contracts/companion";
 import type { Clock } from "../../shared/pure/clock";
@@ -25,6 +27,11 @@ import {
 } from "./companionRelayClient";
 
 interface CompanionMailboxBridgePort {
+  advanceDesktopMailboxCursor(
+    expectedCursor: string | undefined,
+    nextCursor: string,
+    updatedAt: string,
+  ): boolean;
   getDesktopMailboxCursor(): string | undefined;
   getOrCreateDesktopInstanceId(): string;
   getPairedDevice(): PairedCompanionDeviceRecord | undefined;
@@ -33,6 +40,11 @@ interface CompanionMailboxBridgePort {
     submissionId: string,
     acknowledgedAt: string,
   ): CompanionShareImportRecord;
+  updateNotificationPermission(
+    deviceId: string,
+    permission: CompanionNotificationPermission,
+    updatedAt: string,
+  ): PairedCompanionDeviceRecord | undefined;
 }
 
 interface CompanionShareIngressPort {
@@ -54,6 +66,10 @@ export interface CompanionMailboxProcessorDependencies {
   readonly onStatusChange?: (
     deviceId: string,
     status: CompanionDeviceStatus,
+  ) => void;
+  readonly onRegistrationUpdated?: (
+    deviceId: string,
+    notificationPermission: CompanionNotificationPermission,
   ) => void;
   readonly relay: CompanionRelayClient;
   readonly secretStore: Pick<ProviderSecretStore, "get">;
@@ -93,6 +109,12 @@ function shareImportedResult(
     submissionId: record.submissionId,
     type: "share.imported",
   };
+}
+
+function isShareEnvelope(
+  envelope: CompanionDesktopMailboxEnvelope,
+): envelope is CompanionShareUploadedEnvelope {
+  return envelope.event.type === "companion.share.uploaded";
 }
 
 function errorMessage(error: unknown): string {
@@ -326,36 +348,24 @@ export class CompanionMailboxProcessor {
           desktopInstanceId,
           expectedCursor,
         );
-        const result = await this.dependencies.ingress.importEnvelope(
-          envelope,
-          {
+        if (isShareEnvelope(envelope)) {
+          await this.#processShareEnvelope(
+            envelope,
+            paired,
+            desktopInstanceId,
+            session,
             signal,
-          },
-        );
-        signal.throwIfAborted();
-        if (result.submissionId !== envelope.event.share.submissionId) {
-          throw new CompanionMailboxProcessorError(
-            "COMPANION.MAILBOX_IMPORT_RESULT_MISMATCH",
-            "Companion share import result does not match its submission.",
+          );
+        } else {
+          await this.#processRegistrationEnvelope(
+            envelope,
+            paired,
+            desktopInstanceId,
+            expectedCursor,
+            session,
+            signal,
           );
         }
-        const persistedCursor =
-          this.dependencies.bridge.getDesktopMailboxCursor();
-        if (persistedCursor !== envelope.cursor) {
-          throw new CompanionMailboxProcessorError(
-            "COMPANION.MAILBOX_CURSOR_DID_NOT_ADVANCE",
-            "Desktop companion mailbox cursor did not advance after import.",
-          );
-        }
-        await this.#acknowledge(
-          paired,
-          desktopInstanceId,
-          envelope.id,
-          envelope.cursor,
-          result,
-          session,
-          signal,
-        );
         expectedCursor = envelope.cursor;
       }
     }
@@ -377,7 +387,7 @@ export class CompanionMailboxProcessor {
           "Pending companion acknowledgement belongs to another device.",
         );
       }
-      await this.#acknowledge(
+      await this.#acknowledgeShare(
         paired,
         desktopInstanceId,
         record.envelopeId,
@@ -389,7 +399,100 @@ export class CompanionMailboxProcessor {
     }
   }
 
-  async #acknowledge(
+  async #processShareEnvelope(
+    envelope: CompanionShareUploadedEnvelope,
+    paired: PairedCompanionDeviceRecord,
+    desktopInstanceId: string,
+    session: CompanionRelaySession,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const result = await this.dependencies.ingress.importEnvelope(envelope, {
+      signal,
+    });
+    signal.throwIfAborted();
+    if (result.submissionId !== envelope.event.share.submissionId) {
+      throw new CompanionMailboxProcessorError(
+        "COMPANION.MAILBOX_IMPORT_RESULT_MISMATCH",
+        "Companion share import result does not match its submission.",
+      );
+    }
+    if (
+      this.dependencies.bridge.getDesktopMailboxCursor() !== envelope.cursor
+    ) {
+      throw new CompanionMailboxProcessorError(
+        "COMPANION.MAILBOX_CURSOR_DID_NOT_ADVANCE",
+        "Desktop companion mailbox cursor did not advance after import.",
+      );
+    }
+    await this.#acknowledgeShare(
+      paired,
+      desktopInstanceId,
+      envelope.id,
+      envelope.cursor,
+      result,
+      session,
+      signal,
+    );
+  }
+
+  async #processRegistrationEnvelope(
+    envelope: CompanionDesktopMailboxEnvelope,
+    paired: PairedCompanionDeviceRecord,
+    desktopInstanceId: string,
+    expectedCursor: string | undefined,
+    session: CompanionRelaySession,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (envelope.event.type !== "companion.device.registration_updated") {
+      throw new CompanionMailboxProcessorError(
+        "COMPANION.MAILBOX_DEVICE_MISMATCH",
+        "Companion mailbox event is not supported by Desktop.",
+      );
+    }
+    const appliedAt = this.dependencies.clock.now();
+    const updated = this.dependencies.bridge.updateNotificationPermission(
+      envelope.event.deviceId,
+      envelope.event.notificationPermission,
+      appliedAt,
+    );
+    if (!updated) {
+      throw new CompanionMailboxProcessorError(
+        "COMPANION.MAILBOX_DEVICE_MISMATCH",
+        "Companion registration update belongs to another device.",
+      );
+    }
+    await this.#sendAcknowledgement(
+      desktopInstanceId,
+      envelope.id,
+      envelope.cursor,
+      { type: "envelope.received" },
+      session,
+      signal,
+    );
+    signal.throwIfAborted();
+    if (
+      !this.dependencies.bridge.advanceDesktopMailboxCursor(
+        expectedCursor,
+        envelope.cursor,
+        appliedAt,
+      )
+    ) {
+      throw new CompanionMailboxProcessorError(
+        "COMPANION.MAILBOX_CURSOR_DID_NOT_ADVANCE",
+        "Desktop companion mailbox cursor did not advance after registration update.",
+      );
+    }
+    this.dependencies.onRegistrationUpdated?.(
+      envelope.event.deviceId,
+      envelope.event.notificationPermission,
+    );
+    this.#publishStatus(paired.device.id, {
+      observedAt: appliedAt,
+      state: "online",
+    });
+  }
+
+  async #acknowledgeShare(
     paired: PairedCompanionDeviceRecord,
     desktopInstanceId: string,
     envelopeId: string,
@@ -399,6 +502,35 @@ export class CompanionMailboxProcessor {
     signal: AbortSignal,
   ): Promise<void> {
     const acknowledgedAt = this.dependencies.clock.now();
+    await this.#sendAcknowledgement(
+      desktopInstanceId,
+      envelopeId,
+      cursor,
+      result,
+      session,
+      signal,
+      acknowledgedAt,
+    );
+    signal.throwIfAborted();
+    this.dependencies.bridge.markShareAcked(
+      result.submissionId,
+      acknowledgedAt,
+    );
+    this.#publishStatus(paired.device.id, {
+      observedAt: acknowledgedAt,
+      state: "online",
+    });
+  }
+
+  async #sendAcknowledgement(
+    desktopInstanceId: string,
+    envelopeId: string,
+    cursor: string,
+    result: CompanionDesktopMailboxAck["result"],
+    session: CompanionRelaySession,
+    signal: AbortSignal,
+    acknowledgedAt = this.dependencies.clock.now(),
+  ): Promise<void> {
     const ack: CompanionDesktopMailboxAck = {
       acknowledgedAt,
       cursor,
@@ -411,15 +543,6 @@ export class CompanionMailboxProcessor {
       ...session,
       ack,
       signal,
-    });
-    signal.throwIfAborted();
-    this.dependencies.bridge.markShareAcked(
-      result.submissionId,
-      acknowledgedAt,
-    );
-    this.#publishStatus(paired.device.id, {
-      observedAt: acknowledgedAt,
-      state: "online",
     });
   }
 

@@ -355,6 +355,15 @@ export const CompanionShareUploadedEventSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const CompanionDeviceRegistrationUpdatedEventSchema = Type.Object(
+  {
+    deviceId: EntityIdSchema,
+    notificationPermission: CompanionNotificationPermissionSchema,
+    type: Type.Literal("companion.device.registration_updated"),
+  },
+  { additionalProperties: false },
+);
+
 export const CompanionNotificationCreatedEventSchema = Type.Object(
   {
     deviceId: EntityIdSchema,
@@ -378,8 +387,13 @@ export const CompanionAndroidMailboxEventSchema = Type.Union([
   CompanionChatTargetsReplacedEventSchema,
 ]);
 
-export const CompanionMailboxEventSchema = Type.Union([
+export const CompanionDesktopMailboxEventSchema = Type.Union([
   CompanionShareUploadedEventSchema,
+  CompanionDeviceRegistrationUpdatedEventSchema,
+]);
+
+export const CompanionMailboxEventSchema = Type.Union([
+  CompanionDesktopMailboxEventSchema,
   CompanionNotificationCreatedEventSchema,
   CompanionChatTargetsReplacedEventSchema,
 ]);
@@ -395,7 +409,7 @@ const CompanionMailboxEnvelopeBaseProperties = {
 export const CompanionDesktopMailboxEnvelopeSchema = Type.Object(
   {
     ...CompanionMailboxEnvelopeBaseProperties,
-    event: CompanionShareUploadedEventSchema,
+    event: CompanionDesktopMailboxEventSchema,
     recipient: CompanionDesktopMailboxRecipientSchema,
   },
   { additionalProperties: false },
@@ -504,7 +518,10 @@ export const CompanionDesktopMailboxAckSchema = Type.Object(
   {
     ...CompanionMailboxAckBaseProperties,
     recipient: CompanionDesktopMailboxRecipientSchema,
-    result: CompanionShareImportedAckResultSchema,
+    result: Type.Union([
+      CompanionShareImportedAckResultSchema,
+      CompanionEnvelopeReceivedAckResultSchema,
+    ]),
   },
   { additionalProperties: false },
 );
@@ -528,9 +545,8 @@ export const CompanionNotificationPushSchema = Type.Object(
     cursor: CompanionMailboxCursorSchema,
     deviceId: EntityIdSchema,
     envelopeId: EntityIdSchema,
-    notification: CompanionNotificationMessageSchema,
     protocolVersion: CompanionProtocolVersionSchema,
-    type: Type.Literal("companion.notification"),
+    type: Type.Literal("companion.mailbox.wake"),
   },
   { additionalProperties: false },
 );

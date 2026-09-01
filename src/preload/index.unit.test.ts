@@ -277,6 +277,8 @@ describe("Phase 1 typed preload data boundary", () => {
         endMinute: 7 * 60 + 30,
         startMinute: 21 * 60 + 30,
       },
+      territoryMomentSurprisesEnabled: false,
+      territoryMomentSurprisesPrompted: false,
     };
     electron.ipcRenderer.invoke.mockImplementation(
       (channel: string, input: unknown) => {
@@ -905,6 +907,34 @@ describe("Phase 1 typed preload data boundary", () => {
     unsubscribe();
     expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
       PET_CHANNELS.openMain,
+      registeredListener,
+    );
+  });
+
+  it("validates direct Territory candidate navigation", async () => {
+    let registeredListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(PET_CHANNELS.openTerritoryCandidate);
+        registeredListener = listener;
+      },
+    );
+    const api = await loadApi();
+    const listener = vi.fn();
+    const unsubscribe = api.pet.subscribeOpenTerritoryCandidate(listener);
+    const target = {
+      candidateId: "30000000-0000-4000-8000-000000000001",
+    };
+
+    registeredListener?.({}, target);
+    expect(listener).toHaveBeenCalledWith(target);
+    expect(() =>
+      registeredListener?.({}, { candidateId: "invalid" }),
+    ).toThrow();
+
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      PET_CHANNELS.openTerritoryCandidate,
       registeredListener,
     );
   });

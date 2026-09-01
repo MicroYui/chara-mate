@@ -15,6 +15,8 @@ import type {
   PetAnimationSchema,
   PetAnimationSpeedRequestSchema,
   PetCharacterSnapshotSchema,
+  PetComposerAttachmentSchema,
+  PetComposerAttachmentsSchema,
   PetConversationNavigationSchema,
   PetDescriptorSchema,
   PetDragPointSchema,
@@ -31,6 +33,8 @@ import type {
   PetSpriteVersionSchema,
   PetStoredStateSchema,
   PetTerritoryPresenceRequestSchema,
+  PetTerritoryCandidateNavigationSchema,
+  PetTerritoryMomentNoticeSchema,
   ProactiveConversationBubbleDismissRequestSchema,
   ProactiveConversationBubbleFrequencyResponseSchema,
   ProactiveConversationBubbleKindSchema,
@@ -50,12 +54,17 @@ export const PET_CHANNELS = {
   focusMain: "pet.character.focusMain",
   focusApproval: "pet.character.focusApproval",
   focusConversation: "pet.character.focusConversation",
+  focusTerritoryMoment: "pet.character.focusTerritoryMoment",
+  dropComposerAttachments: "pet.character.dropComposerAttachments",
   getLibrary: "pet.library.get",
   importFromFolder: "pet.library.importFromFolder",
   libraryChanged: "pet.library.changed",
   openMain: "pet.main.open",
   openConversation: "pet.main.openConversation",
+  openComposerAttachments: "pet.main.openComposerAttachments",
+  openTerritoryCandidate: "pet.main.openTerritoryCandidate",
   proactiveBubbleChanged: "pet.character.proactiveBubbleChanged",
+  territoryMomentChanged: "pet.character.territoryMomentChanged",
   dismissProactiveBubble: "pet.character.dismissProactiveBubble",
   reduceProactiveFrequency: "pet.character.reduceProactiveFrequency",
   replyProactiveBubble: "pet.character.replyProactiveBubble",
@@ -78,6 +87,16 @@ export type PetMainNavigation = Static<typeof PetMainNavigationSchema>;
 export type PetMainTarget = Static<typeof PetMainTargetSchema>;
 export type PetConversationNavigation = Static<
   typeof PetConversationNavigationSchema
+>;
+export type PetComposerAttachment = Static<typeof PetComposerAttachmentSchema>;
+export type PetComposerAttachments = Static<
+  typeof PetComposerAttachmentsSchema
+>;
+export type PetTerritoryCandidateNavigation = Static<
+  typeof PetTerritoryCandidateNavigationSchema
+>;
+export type PetTerritoryMomentNotice = Static<
+  typeof PetTerritoryMomentNoticeSchema
 >;
 export type ProactiveConversationBubble = Static<
   typeof ProactiveConversationBubbleSchema
@@ -130,13 +149,21 @@ export interface PetManagementApi {
   subscribeOpenConversation(
     listener: (target: PetConversationNavigation) => void,
   ): () => void;
+  subscribeOpenComposerAttachments(
+    listener: (target: PetComposerAttachments) => void,
+  ): () => void;
+  subscribeOpenTerritoryCandidate(
+    listener: (target: PetTerritoryCandidateNavigation) => void,
+  ): () => void;
 }
 
 export interface CharacterWindowApi {
+  dropComposerAttachments(files: readonly File[]): void;
   endDrag(point: PetDragPoint): Promise<PetDragResult>;
   focusMain(): void;
   focusApproval(request: ApprovalNavigationRequest): void;
   focusConversation(request: PetConversationNavigation): void;
+  focusTerritoryMoment(request: PetTerritoryCandidateNavigation): void;
   getSnapshot(): Promise<PetCharacterSnapshot>;
   getPendingApproval(): Promise<PendingApprovalResponse>;
   markReady(): void;
@@ -159,6 +186,9 @@ export interface CharacterWindowApi {
   subscribeApproval(listener: (approval: Approval | null) => void): () => void;
   subscribeProactiveBubble(
     listener: (bubble: ProactiveConversationBubble | null) => void,
+  ): () => void;
+  subscribeTerritoryMoment(
+    listener: (notice: PetTerritoryMomentNotice | null) => void,
   ): () => void;
   voice: VoiceApi;
   voiceWake: VoiceWakeCharacterApi;

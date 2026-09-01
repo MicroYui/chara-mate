@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 
 import {
   app,
@@ -19,16 +20,24 @@ import { COMPANION_DESKTOP_CHANNELS } from "../shared/contracts/companion";
 import { EVOLUTION_CHANNELS } from "../shared/contracts/evolution";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { JOURNEY_CHANNELS } from "../shared/contracts/journey";
-import { PET_CHANNELS } from "../shared/contracts/pet";
+import {
+  PET_CHANNELS,
+  type PetTerritoryMomentNotice,
+} from "../shared/contracts/pet";
 import { PERSONA_CHANNELS } from "../shared/contracts/persona";
-import { TERRITORY_WORLD_CHANNELS } from "../shared/contracts/territoryWorld";
+import {
+  TERRITORY_WORLD_CHANNELS,
+  type TerritoryWorldSnapshot,
+} from "../shared/contracts/territoryWorld";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
 import { VOICE_WAKE_CHANNELS } from "../shared/contracts/voiceWake";
 import { SystemClock } from "../shared/pure/clock";
 import { CryptoIdGenerator } from "../shared/pure/id";
 import {
+  PetComposerAttachmentsSchema,
   PetConversationNavigationSchema,
   PetMainNavigationSchema,
+  PetTerritoryCandidateNavigationSchema,
   ProactiveConversationBubbleReplyResponseSchema,
 } from "../shared/schemas/pet";
 import { ApprovalNavigationTargetSchema } from "../shared/schemas/agent";
@@ -42,6 +51,7 @@ import {
 import { registerAgentIpc } from "./agent/agentIpc";
 import { AgentRuntime } from "./agent/agentRuntime";
 import { toAgentAppError } from "./agent/agentError";
+import { LocalAttachmentInputProvider } from "./agent/attachmentInput";
 import { ElectronImageInputProvider } from "./agent/imageInput";
 import { CheckpointRepository } from "./agent/checkpointRepository";
 import { decodeRuntimeCheckpoint } from "./agent/runtimeCheckpoint";
@@ -80,6 +90,7 @@ import { ChatService } from "./chat/chatService";
 import { ChatTitleService } from "./chat/chatTitleService";
 import { CompanionBridgeRepository } from "./companion/companionBridgeRepository";
 import { CompanionBridgeService } from "./companion/companionBridgeService";
+import { CompanionChatTargetsProjectionService } from "./companion/companionChatTargetsProjectionService";
 import {
   CompanionError,
   toCompanionAppError,
@@ -140,6 +151,9 @@ import { JourneyRepository } from "./journey/journeyRepository";
 import { JourneyService } from "./journey/journeyService";
 import { ProactiveConversationSurface } from "./journey/proactiveConversationSurface";
 import { registerImportantMomentOutreachTool } from "./journey/importantMomentOutreachTool";
+import { registerTerritoryMomentSurprisesTool } from "./journey/territoryMomentSurprisesTool";
+import { registerTerritoryMomentTool } from "./territory/territoryMomentTool";
+import { TerritoryMomentService } from "./territory/territoryMomentService";
 import { ProactiveOpportunityRepository } from "./journey/proactiveOpportunityRepository";
 import {
   ModelProactiveOpportunityDecider,
@@ -266,12 +280,15 @@ let companionBridgeService: CompanionBridgeService | undefined;
 let companionMailboxProcessor: CompanionMailboxProcessor | undefined;
 let companionMessageProjectionService:
   CompanionMessageProjectionService | undefined;
+let companionChatTargetsProjectionService:
+  CompanionChatTargetsProjectionService | undefined;
 let stopPromise: Promise<void> | undefined;
 let shutdownComplete = false;
 
 function openMainWindow(target?: MainWindowTarget): void {
   companionMailboxProcessor?.start();
   companionMessageProjectionService?.start();
+  companionChatTargetsProjectionService?.start();
   const controller = mainWindowController;
   if (!controller) return;
   void controller.open(target).catch((error: unknown) => {
@@ -280,6 +297,36 @@ function openMainWindow(target?: MainWindowTarget): void {
       error instanceof Error ? error : { error },
     );
   });
+}
+
+function latestTerritoryMomentNotice(
+  snapshot: TerritoryWorldSnapshot,
+): PetTerritoryMomentNotice | null {
+  const candidate = snapshot.candidates
+    .filter((entry) =>
+      entry.sources.some((source) => source.kind === "chat_moment"),
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  if (!candidate || !["failed", "ready"].includes(candidate.status)) {
+    return null;
+  }
+  const source = candidate.sources.find(
+    (entry) => entry.kind === "chat_moment",
+  );
+  if (!source || source.kind !== "chat_moment") return null;
+  return {
+    candidateId: candidate.id,
+    createdAt: candidate.createdAt,
+    name: source.label,
+    status: candidate.status as "failed" | "ready",
+    updatedAt: candidate.updatedAt,
+  };
+}
+
+function syncTerritoryMomentNotice(snapshot: TerritoryWorldSnapshot): void {
+  const notice = latestTerritoryMomentNotice(snapshot);
+  if (notice) characterWindowController?.showTerritoryMomentNotice(notice);
+  else characterWindowController?.clearTerritoryMomentNotice();
 }
 
 async function stopApplicationInfrastructure(): Promise<void> {
@@ -337,6 +384,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     companionMailboxProcessor = undefined;
     await companionMessageProjectionService?.shutdown();
     companionMessageProjectionService = undefined;
+    await companionChatTargetsProjectionService?.shutdown();
+    companionChatTargetsProjectionService = undefined;
     proactiveOpportunityService?.shutdown();
     await automationScheduler?.stop();
     automationScheduler = undefined;
@@ -461,6 +510,7 @@ async function startApplication(): Promise<void> {
   const companionMessageProjectionReference: {
     current?: CompanionMessageProjectionService;
   } = {};
+  const territoryMomentReference: { current?: TerritoryMomentService } = {};
   memoryServiceInstance.setChangedListener((memoryId) => {
     try {
       proactiveOpportunityReference.current?.handleMemoryChanged(memoryId);
@@ -581,6 +631,15 @@ async function startApplication(): Promise<void> {
           sequence: envelope.sequence,
         });
       }
+      try {
+        territoryMomentReference.current?.observeRun(envelope);
+      } catch (error) {
+        logger.warn("TERRITORY_MOMENT_RUN_OBSERVER_ERROR", {
+          error,
+          runId: envelope.streamId,
+          sequence: envelope.sequence,
+        });
+      }
       if (
         envelope.event.type === "run.completed" ||
         envelope.event.type === "run.failed" ||
@@ -589,6 +648,7 @@ async function startApplication(): Promise<void> {
       ) {
         companionMailboxProcessor?.start();
         companionMessageProjectionService?.start();
+        companionChatTargetsProjectionService?.wake();
       }
     },
   });
@@ -621,6 +681,7 @@ async function startApplication(): Promise<void> {
         }
       }
     },
+    () => companionChatTargetsProjectionService?.wake(),
   );
   chatService.discardAllProvisional();
   unregisterChatIpc = registerChatIpc(chatService, runEventService);
@@ -903,6 +964,18 @@ async function startApplication(): Promise<void> {
     },
   );
   registerImportantMomentOutreachTool(toolRegistry, settingsService);
+  registerTerritoryMomentSurprisesTool(toolRegistry, settingsService);
+  registerTerritoryMomentTool(toolRegistry, settingsService);
+  const resolveLocalInputSource = async (source: string): Promise<string> => {
+    if (path.isAbsolute(source)) return path.resolve(source);
+    try {
+      const artifactPath = artifactStore.resolvePath(source);
+      await access(artifactPath);
+      return artifactPath;
+    } catch {
+      return settingsService.resolveWorkingPath(source);
+    }
+  };
   registerLocalTools(toolRegistry, {
     artifacts: artifactStore,
     openPath: (target) => shell.openPath(target),
@@ -949,6 +1022,7 @@ async function startApplication(): Promise<void> {
     idGenerator,
     clock,
     (snapshot) => {
+      syncTerritoryMomentNotice(snapshot);
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) {
           window.webContents.send(
@@ -957,6 +1031,27 @@ async function startApplication(): Promise<void> {
           );
         }
       }
+    },
+    async (request) => {
+      const moment = request.sources.find(
+        (source) => source.kind === "chat_moment",
+      );
+      const image = moment?.attachments.find((attachment) =>
+        attachment.mediaType?.toLowerCase().startsWith("image/"),
+      );
+      if (!image) return undefined;
+      const attachment = chatRepository.getAttachment(image.attachmentId);
+      if (!attachment || attachment.sha256 !== image.sha256) {
+        throw new Error("经历回响引用的原图已经变化或不可用。");
+      }
+      const bytes = await readFile(
+        await resolveLocalInputSource(attachment.storageKey),
+      );
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      if (digest !== image.sha256) {
+        throw new Error("经历回响引用的原图摘要校验失败。");
+      }
+      return bytes;
     },
   );
   territoryWorldCandidates.recoverInterruptedCandidates();
@@ -983,6 +1078,17 @@ async function startApplication(): Promise<void> {
     clock,
     territoryWorldCandidates,
   );
+  const territoryMomentService = new TerritoryMomentService(
+    runRepository,
+    chatRepository,
+    checkpointRepository,
+    territoryWorldRepository,
+    territoryWorldCandidates,
+    settingsService,
+    logger,
+  );
+  territoryMomentReference.current = territoryMomentService;
+  territoryMomentService.initialize();
   const collaborationProviderService = providerService;
   registerCollaborationTool(toolRegistry, {
     createChatModelRuntime: (profileId, modelId) =>
@@ -1039,16 +1145,10 @@ async function startApplication(): Promise<void> {
   evolutionServiceReference.current = evolutionService;
   unregisterEvolutionIpc = registerEvolutionIpc(evolutionService);
   evolutionService.initialize();
-  const imageInput = new ElectronImageInputProvider(async (source) => {
-    if (path.isAbsolute(source)) return path.resolve(source);
-    try {
-      const artifactPath = artifactStore.resolvePath(source);
-      await access(artifactPath);
-      return artifactPath;
-    } catch {
-      return settingsService.resolveWorkingPath(source);
-    }
-  });
+  const imageInput = new ElectronImageInputProvider(resolveLocalInputSource);
+  const attachmentInput = new LocalAttachmentInputProvider(
+    resolveLocalInputSource,
+  );
   const chatTitleService = new ChatTitleService(chatService, logger);
   agentRuntime = new AgentRuntime(
     chatRepository,
@@ -1069,9 +1169,15 @@ async function startApplication(): Promise<void> {
         : initiative.importantMomentOutreachPrompted
           ? "declined"
           : "not_asked";
+      const territoryMomentState = initiative.territoryMomentSurprisesEnabled
+        ? "enabled"
+        : initiative.territoryMomentSurprisesPrompted
+          ? "declined"
+          : "not_asked";
       return [
         skillService.instructions(),
         `Important-moment outreach setting: ${outreachState}.`,
+        `Territory moment surprise setting: ${territoryMomentState}.`,
         journeyServiceInstance.agentContextInstructions(run.chatId),
       ]
         .filter(Boolean)
@@ -1080,6 +1186,8 @@ async function startApplication(): Promise<void> {
     chatTitleService,
     imageInput,
     memoryServiceInstance,
+    undefined,
+    attachmentInput,
   );
   const proactiveConversationSurfaceInstance = new ProactiveConversationSurface(
     {
@@ -1370,6 +1478,34 @@ async function startApplication(): Promise<void> {
   companionMessageProjectionReference.current =
     companionMessageProjectionServiceInstance;
   companionMessageProjectionService = companionMessageProjectionServiceInstance;
+  const companionChatTargetsProjectionServiceInstance =
+    new CompanionChatTargetsProjectionService({
+      bridge: companionBridgeRepository,
+      chats: chatRepository,
+      clock,
+      idGenerator,
+      onBackgroundError(error) {
+        logger.warn("COMPANION_CHAT_TARGETS_PROJECTION_ERROR", { error });
+      },
+      onStatusChange(deviceId, status) {
+        try {
+          companionBridgeServiceReference.current?.updateDeviceStatus(
+            deviceId,
+            status,
+          );
+        } catch (error) {
+          const mapped = toCompanionAppError(error);
+          logger.warn("COMPANION_STATUS_UPDATE_ERROR", {
+            code: mapped.code,
+            retryable: mapped.retryable,
+          });
+        }
+      },
+      relay: companionRelay,
+      secretStore,
+    });
+  companionChatTargetsProjectionService =
+    companionChatTargetsProjectionServiceInstance;
   const companionShareIngress = new CompanionShareIngress({
     agent: agentRuntime,
     artifacts: artifactStore,
@@ -1424,6 +1560,7 @@ async function startApplication(): Promise<void> {
         Promise.all([
           companionMailboxProcessorInstance.pause(),
           companionMessageProjectionServiceInstance.pause(),
+          companionChatTargetsProjectionServiceInstance.pause(),
         ]).then(() => undefined),
       onBackgroundError(error) {
         const mapped = toCompanionAppError(error);
@@ -1435,15 +1572,18 @@ async function startApplication(): Promise<void> {
       onPaired: () => {
         companionMailboxProcessorInstance.reset();
         companionMessageProjectionServiceInstance.reset();
+        companionChatTargetsProjectionServiceInstance.reset();
       },
       onUnpairFailed: () => {
         companionMailboxProcessorInstance.resume();
         companionMessageProjectionServiceInstance.resume();
+        companionChatTargetsProjectionServiceInstance.resume();
       },
       onUnpaired: () =>
         Promise.all([
           companionMailboxProcessorInstance.stop(),
           companionMessageProjectionServiceInstance.pause(),
+          companionChatTargetsProjectionServiceInstance.pause(),
         ]).then(() => undefined),
     },
     publisher: {
@@ -1475,10 +1615,12 @@ async function startApplication(): Promise<void> {
   const wakeCompanionWork = () => {
     companionMailboxProcessor?.wake();
     companionMessageProjectionService?.wake();
+    companionChatTargetsProjectionService?.wake();
   };
   const startCompanionWork = () => {
     companionMailboxProcessor?.start();
     companionMessageProjectionService?.start();
+    companionChatTargetsProjectionService?.start();
   };
   powerMonitor.on("resume", wakeCompanionWork);
   powerMonitor.on("unlock-screen", wakeCompanionWork);
@@ -1491,6 +1633,7 @@ async function startApplication(): Promise<void> {
   await agentRuntime.initialize();
   companionMailboxProcessorInstance.start();
   companionMessageProjectionServiceInstance.start();
+  companionChatTargetsProjectionServiceInstance.start();
   proactiveOpportunityServiceInstance.initialize();
   companionInitiativeReference.current = companionInitiativeServiceInstance;
 
@@ -1560,9 +1703,15 @@ async function startApplication(): Promise<void> {
         : initiative.importantMomentOutreachPrompted
           ? "declined"
           : "not_asked";
+      const territoryMomentState = initiative.territoryMomentSurprisesEnabled
+        ? "enabled"
+        : initiative.territoryMomentSurprisesPrompted
+          ? "declined"
+          : "not_asked";
       return [
         skillService.instructions(),
         `Important-moment outreach setting: ${outreachState}.`,
+        `Territory moment surprise setting: ${territoryMomentState}.`,
         journeyServiceInstance.agentContextInstructions(chatId),
       ]
         .filter(Boolean)
@@ -1685,6 +1834,7 @@ async function startApplication(): Promise<void> {
     openMainWindow,
     !backgroundTest,
   );
+  syncTerritoryMomentNotice(territoryWorldRepository.getSnapshot());
   const wakeRuntime = voiceWakeService;
   if (!wakeRuntime) throw new Error("Voice Wake runtime was not initialized.");
   unregisterVoiceWakeIpc = registerVoiceWakeIpc(
@@ -1793,6 +1943,33 @@ async function startApplication(): Promise<void> {
           ok: false,
         });
       }
+    },
+    (request) => {
+      void (async () => {
+        const window = await mainWindows.open("chat");
+        window.webContents.send(
+          PET_CHANNELS.openComposerAttachments,
+          parseSchema(PetComposerAttachmentsSchema, request),
+        );
+      })().catch((error: unknown) => {
+        logger.warn("PET_ATTACHMENT_NAVIGATION_ERROR", {
+          error,
+        });
+      });
+    },
+    (candidateId) => {
+      void (async () => {
+        const window = await mainWindows.open("territory");
+        window.webContents.send(
+          PET_CHANNELS.openTerritoryCandidate,
+          parseSchema(PetTerritoryCandidateNavigationSchema, { candidateId }),
+        );
+      })().catch((error: unknown) => {
+        logger.warn("TERRITORY_MOMENT_NAVIGATION_ERROR", {
+          candidateId,
+          error,
+        });
+      });
     },
   );
   await mainWindows.open();

@@ -6,10 +6,14 @@ import type {
   PetDragPoint,
   PetDragResult,
   PetMainTarget,
+  PetTerritoryMomentNotice,
   ProactiveConversationBubble,
 } from "../../shared/contracts/pet";
 import { PET_CHANNELS } from "../../shared/contracts/pet";
-import { ProactiveConversationBubbleSchema } from "../../shared/schemas/pet";
+import {
+  PetTerritoryMomentNoticeSchema,
+  ProactiveConversationBubbleSchema,
+} from "../../shared/schemas/pet";
 import { parseSchema } from "../../shared/schemas/validation";
 import {
   captureCharacterPlacement,
@@ -36,6 +40,7 @@ export class CharacterWindowController {
   private territoryActive = false;
   private userVisible = true;
   private proactiveBubble: ProactiveConversationBubble | null = null;
+  private territoryMomentNotice: PetTerritoryMomentNotice | null = null;
 
   constructor(
     private readonly service: PetService,
@@ -140,6 +145,38 @@ export class CharacterWindowController {
     window.webContents.send(
       PET_CHANNELS.proactiveBubbleChanged,
       this.proactiveBubble,
+    );
+  }
+
+  showTerritoryMomentNotice(notice: PetTerritoryMomentNotice): void {
+    this.territoryMomentNotice = parseSchema(
+      PetTerritoryMomentNoticeSchema,
+      notice,
+    );
+    this.flushTerritoryMomentNotice();
+  }
+
+  clearTerritoryMomentNotice(candidateId?: string): boolean {
+    if (
+      candidateId &&
+      this.territoryMomentNotice?.candidateId !== candidateId
+    ) {
+      return false;
+    }
+    if (!this.territoryMomentNotice) return false;
+    this.territoryMomentNotice = null;
+    this.flushTerritoryMomentNotice();
+    return true;
+  }
+
+  flushTerritoryMomentNotice(): void {
+    const window = this.window;
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
+      return;
+    }
+    window.webContents.send(
+      PET_CHANNELS.territoryMomentChanged,
+      this.territoryMomentNotice,
     );
   }
 

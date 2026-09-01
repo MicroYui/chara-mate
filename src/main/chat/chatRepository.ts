@@ -376,6 +376,18 @@ export class ChatRepository {
     return row ? readMessage(row) : undefined;
   }
 
+  getAttachment(attachmentId: string): Attachment | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, chat_id, message_id, kind, display_name, storage_key,
+                media_type, byte_length, sha256, created_at
+         FROM attachments
+         WHERE id = ?`,
+      )
+      .get(attachmentId) as AttachmentRow | undefined;
+    return row ? readAttachment(row) : undefined;
+  }
+
   listMessages(chatId: string): Message[] {
     const rows = this.database
       .prepare(

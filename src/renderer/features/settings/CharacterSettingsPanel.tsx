@@ -743,6 +743,30 @@ export function CharacterSettingsPanel({
             </p>
             <label className={styles["initiativeToggle"]}>
               <input
+                aria-label="偶尔为重要时刻准备领地惊喜"
+                checked={initiativeDraft.territoryMomentSurprisesEnabled}
+                type="checkbox"
+                onChange={(event) => {
+                  const territoryMomentSurprisesEnabled =
+                    event.currentTarget.checked;
+                  setInitiativeDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          territoryMomentSurprisesEnabled,
+                          territoryMomentSurprisesPrompted: true,
+                        }
+                      : current,
+                  );
+                }}
+              />
+              <span>偶尔为重要时刻准备领地惊喜</span>
+            </label>
+            <p className={styles["initiativeHint"]}>
+              只会准备一个待你确认的领地预览；表达形式由桌宠根据经历判断，不会自动修改领地。
+            </p>
+            <label className={styles["initiativeToggle"]}>
+              <input
                 aria-label="启用安静时段"
                 checked={initiativeDraft.quietHours.enabled}
                 type="checkbox"

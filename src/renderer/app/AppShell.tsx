@@ -102,6 +102,7 @@ interface AppShellProps {
   readonly chatDomain: ChatDomainState;
   readonly dispatch: Dispatch<ChatsUiAction>;
   readonly foundation: FoundationSnapshot;
+  readonly focusTerritoryCandidateId: string | null;
   readonly journeyError: string | null;
   readonly journeySnapshot: JourneySnapshot;
   readonly personaError: string | null;
@@ -125,6 +126,7 @@ interface AppShellProps {
   readonly onConfigureModels: () => void;
   readonly onProvidersChanged: () => void;
   readonly onSettingsOpen: () => void;
+  readonly onTerritoryCandidateFocusConsumed: () => void;
   readonly onResolveApproval: (
     approvalId: string,
     decision: "approved" | "rejected",
@@ -906,6 +908,7 @@ export function AppShell({
   chatDomain,
   dispatch,
   foundation,
+  focusTerritoryCandidateId,
   journeyError,
   journeySnapshot,
   personaError,
@@ -927,6 +930,7 @@ export function AppShell({
   onConfigureModels,
   onProvidersChanged,
   onSettingsOpen,
+  onTerritoryCandidateFocusConsumed,
   onResolveApproval,
   onResolveUserInput,
   onRunResume,
@@ -951,6 +955,8 @@ export function AppShell({
   const [territoryTargetId, setTerritoryTargetId] = useState<string | null>(
     null,
   );
+  const effectiveTerritoryTargetId =
+    focusTerritoryCandidateId ?? territoryTargetId;
   const personaOptions = (personaLibrary?.personas ?? []).map(
     ({ snapshot }) => ({
       id: snapshot.personaId,
@@ -991,10 +997,10 @@ export function AppShell({
   };
   const consumeActivityTarget = useCallback(() => setActivityTarget(null), []);
   const consumeMemoryTarget = useCallback(() => setMemoryTargetId(null), []);
-  const consumeTerritoryTarget = useCallback(
-    () => setTerritoryTargetId(null),
-    [],
-  );
+  const consumeTerritoryTarget = useCallback(() => {
+    setTerritoryTargetId(null);
+    if (focusTerritoryCandidateId) onTerritoryCandidateFocusConsumed();
+  }, [focusTerritoryCandidateId, onTerritoryCandidateFocusConsumed]);
   const openTerritoryCandidate = useCallback(
     (candidateId: string) => {
       setTerritoryTargetId(candidateId);
@@ -1119,8 +1125,8 @@ export function AppShell({
             <TerritoryPage
               activePet={activePet}
               animationSpeed={petAnimationSpeed}
-              {...(territoryTargetId
-                ? { focusCandidateId: territoryTargetId }
+              {...(effectiveTerritoryTargetId
+                ? { focusCandidateId: effectiveTerritoryTargetId }
                 : {})}
               onFocusConsumed={consumeTerritoryTarget}
               onOpenMemorySource={openTerritoryMemorySource}

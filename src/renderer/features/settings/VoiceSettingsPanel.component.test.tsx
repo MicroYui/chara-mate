@@ -57,6 +57,8 @@ describe("Voice Settings panel", () => {
               endMinute: 8 * 60,
               startMinute: 22 * 60,
             },
+            territoryMomentSurprisesEnabled: false,
+            territoryMomentSurprisesPrompted: false,
           },
           voice: {
             inputMode: "hands_free",

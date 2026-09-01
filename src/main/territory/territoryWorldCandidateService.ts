@@ -853,6 +853,9 @@ export class TerritoryWorldCandidateService {
     private readonly onSnapshotChanged: (
       snapshot: TerritoryWorldSnapshot,
     ) => void = () => undefined,
+    private readonly referenceImage?: (
+      request: TerritoryCreateChangeCandidateRequest,
+    ) => Promise<Buffer | undefined>,
   ) {}
 
   recoverInterruptedCandidates(): number {
@@ -880,6 +883,34 @@ export class TerritoryWorldCandidateService {
     signal?: AbortSignal,
   ): TerritoryWorldCandidateJob {
     const created = this.repository.createCandidate(request, this.clock.now());
+    return this.beginExecution(created.candidateId, signal);
+  }
+
+  async createMoment(
+    momentKey: string,
+    request: TerritoryCreateChangeCandidateRequest,
+    signal?: AbortSignal,
+  ): Promise<TerritoryCandidateMutationResult> {
+    return this.beginCreateMoment(momentKey, request, signal).completion;
+  }
+
+  beginCreateMoment(
+    momentKey: string,
+    request: TerritoryCreateChangeCandidateRequest,
+    signal?: AbortSignal,
+  ): TerritoryWorldCandidateJob {
+    const created = this.repository.createMomentCandidate(
+      momentKey,
+      request,
+      this.clock.now(),
+    );
+    if (!created.created) {
+      const initial = {
+        candidateId: created.candidateId,
+        snapshot: created.snapshot,
+      };
+      return { completion: Promise.resolve(initial), initial };
+    }
     return this.beginExecution(created.candidateId, signal);
   }
 
@@ -955,6 +986,10 @@ export class TerritoryWorldCandidateService {
         view,
         zone,
       };
+      const sourceImage =
+        work.request.intent === "item"
+          ? await this.referenceImage?.(work.request)
+          : undefined;
       const generatedPlan = await this.generatePlan(
         candidateId,
         context,
@@ -962,6 +997,7 @@ export class TerritoryWorldCandidateService {
         work.edit?.instruction ?? null,
         controller.signal,
         installed,
+        sourceImage,
       );
       const plan = reconcileCandidatePlan(
         generatedPlan,
@@ -1046,6 +1082,7 @@ export class TerritoryWorldCandidateService {
     editInstruction: string | null,
     signal: AbortSignal,
     installed: PreparedTerritoryWorldAsset[],
+    sourceImage?: Buffer,
   ): Promise<GeneratedPlan> {
     switch (context.request.intent) {
       case "item":
@@ -1056,6 +1093,7 @@ export class TerritoryWorldCandidateService {
           editInstruction,
           signal,
           installed,
+          sourceImage,
         );
       case "selection":
         return this.generateSelection(
@@ -1168,6 +1206,7 @@ export class TerritoryWorldCandidateService {
     editInstruction: string | null,
     signal: AbortSignal,
     installed: PreparedTerritoryWorldAsset[],
+    sourceImage?: Buffer,
   ): Promise<GeneratedPlan> {
     const now = this.clock.now();
     const definitionId = `generated.item.${candidateId}`;
@@ -1245,6 +1284,7 @@ export class TerritoryWorldCandidateService {
       removeBackground: true,
       provider,
       signal,
+      ...(sourceImage ? { source: sourceImage } : {}),
     });
     installed.push(prepared);
     const pack = generatedAssetPack({

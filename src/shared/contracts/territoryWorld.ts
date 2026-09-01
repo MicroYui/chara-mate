@@ -9,6 +9,10 @@ import type {
   TerritoryCandidateIntentSchema,
   TerritoryCandidateMutationResponseSchema,
   TerritoryCandidateMutationResultSchema,
+  TerritoryChatMomentAttachmentSchema,
+  TerritoryChatMomentMemoryRevisionSchema,
+  TerritoryChatMomentPersonaRefSchema,
+  TerritoryChatMomentSourceSnapshotSchema,
   TerritoryCandidateScopeSchema,
   TerritoryChangeCandidateSchema,
   TerritoryCommitChangeSetRequestSchema,
@@ -97,6 +101,18 @@ export type TerritoryDefinitionRef = Static<
 >;
 export type TerritorySourceSnapshot = Static<
   typeof TerritorySourceSnapshotSchema
+>;
+export type TerritoryChatMomentAttachment = Static<
+  typeof TerritoryChatMomentAttachmentSchema
+>;
+export type TerritoryChatMomentMemoryRevision = Static<
+  typeof TerritoryChatMomentMemoryRevisionSchema
+>;
+export type TerritoryChatMomentPersonaRef = Static<
+  typeof TerritoryChatMomentPersonaRefSchema
+>;
+export type TerritoryChatMomentSourceSnapshot = Static<
+  typeof TerritoryChatMomentSourceSnapshotSchema
 >;
 export type TerritoryInstancePlacement = Static<
   typeof TerritoryInstancePlacementSchema

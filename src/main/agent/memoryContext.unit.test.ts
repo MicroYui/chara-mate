@@ -4,6 +4,7 @@ import type { MemoryHit } from "../../shared/contracts/memory";
 import {
   createMemoryContextInput,
   materializeMemoryContextInput,
+  memoryContextRevisionReferences,
   memoryContextQueryTargetIds,
   memoryContextTargetIds,
 } from "./memoryContext";
@@ -93,5 +94,9 @@ describe("Memory context", () => {
       project.memory.id,
     ]);
     expect(memoryContextQueryTargetIds(context)).toEqual([project.memory.id]);
+    expect(memoryContextRevisionReferences(context)).toEqual([
+      { memoryId: profile.memory.id, revisionId: profile.revision.id },
+      { memoryId: project.memory.id, revisionId: project.revision.id },
+    ]);
   });
 });

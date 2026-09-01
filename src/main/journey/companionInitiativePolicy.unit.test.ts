@@ -31,6 +31,8 @@ const balanced = {
   importantMomentOutreachPrompted: false,
   level: "balanced",
   quietHours: { enabled: false, endMinute: 480, startMinute: 1320 },
+  territoryMomentSurprisesEnabled: false,
+  territoryMomentSurprisesPrompted: false,
 } as const;
 
 describe("companion initiative policy", () => {

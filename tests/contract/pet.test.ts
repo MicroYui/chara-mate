@@ -4,11 +4,14 @@ import {
   CodexPetManifestSchema,
   PetAnimationSpeedRequestSchema,
   PetCharacterSnapshotSchema,
+  PetComposerAttachmentsSchema,
   PetConversationNavigationSchema,
   PetDragPointSchema,
   PetLibrarySnapshotSchema,
   PetMainNavigationSchema,
   PetScaleRequestSchema,
+  PetTerritoryCandidateNavigationSchema,
+  PetTerritoryMomentNoticeSchema,
   ProactiveConversationBubbleReplyRequestSchema,
   ProactiveConversationBubbleReplyResponseSchema,
   ProactiveConversationBubbleSchema,
@@ -103,6 +106,9 @@ describe("pet IPC and import contracts", () => {
       expect(parse(PetMainNavigationSchema, { target: "character" })).toEqual({
         target: "character",
       });
+      expect(parse(PetMainNavigationSchema, { target: "territory" })).toEqual({
+        target: "territory",
+      });
       expect(() =>
         parse(PetMainNavigationSchema, { target: "settings" }),
       ).toThrow();
@@ -110,6 +116,61 @@ describe("pet IPC and import contracts", () => {
         parse(PetMainNavigationSchema, {
           extra: true,
           target: "chat",
+        }),
+      ).toThrow();
+    },
+  );
+
+  it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
+    "validates Territory moment notice navigation through %s",
+    (parse) => {
+      const candidateId = "11111111-1111-4111-8111-111111111111";
+      expect(
+        parse(PetTerritoryMomentNoticeSchema, {
+          candidateId,
+          createdAt: "2026-09-01T09:00:00.000Z",
+          name: "散场后的余光",
+          status: "ready",
+          updatedAt: "2026-09-01T09:01:00.000Z",
+        }),
+      ).toMatchObject({ candidateId, status: "ready" });
+      expect(
+        parse(PetTerritoryCandidateNavigationSchema, { candidateId }),
+      ).toEqual({ candidateId });
+      expect(() =>
+        parse(PetTerritoryMomentNoticeSchema, {
+          candidateId,
+          createdAt: "2026-09-01T09:00:00.000Z",
+          name: "散场后的余光",
+          status: "generating",
+          updatedAt: "2026-09-01T09:01:00.000Z",
+        }),
+      ).toThrow();
+    },
+  );
+
+  it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
+    "validates desktop-pet Composer attachment handoff through %s",
+    (parse) => {
+      const request = {
+        attachments: [
+          {
+            byteLength: 321,
+            displayName: "sunset.jpg",
+            id: "11111111-1111-4111-8111-111111111111",
+            mediaType: "image/jpeg",
+            source: "image",
+            storageKey: "/tmp/sunset.jpg",
+          },
+        ],
+      } as const;
+      expect(parse(PetComposerAttachmentsSchema, request)).toEqual(request);
+      expect(() =>
+        parse(PetComposerAttachmentsSchema, { attachments: [] }),
+      ).toThrow();
+      expect(() =>
+        parse(PetComposerAttachmentsSchema, {
+          attachments: [{ ...request.attachments[0], source: "folder" }],
         }),
       ).toThrow();
     },

@@ -308,6 +308,8 @@ export function TerritoryPage({
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(
     focusCandidateId ?? null,
   );
+  const [lastFocusCandidateId, setLastFocusCandidateId] =
+    useState(focusCandidateId);
   const [visibleLayers, setVisibleLayers] = useState<Set<TerritoryLayer>>(
     new Set(layers),
   );
@@ -351,6 +353,16 @@ export function TerritoryPage({
   );
   const snapshotRef = useRef<TerritoryWorldSnapshot | null>(null);
   const viewRef = useRef<TerritoryZoneView | null>(null);
+
+  if (focusCandidateId !== lastFocusCandidateId) {
+    setLastFocusCandidateId(focusCandidateId);
+    if (focusCandidateId) {
+      setSelectedCandidateId(focusCandidateId);
+      setExcludedChangeIds(new Set());
+      setPreviewSide("after");
+      setPanel("create");
+    }
+  }
 
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -533,6 +545,13 @@ export function TerritoryPage({
         ({ id: candidateId }) => candidateId === selectedCandidateId,
       ),
     [selectedCandidateId, snapshot?.candidates],
+  );
+  const selectedMomentSource = useMemo(
+    () =>
+      selectedCandidate?.sources.find(
+        (source) => source.kind === "chat_moment",
+      ),
+    [selectedCandidate],
   );
   const preview = useMemo(
     () => (view ? candidatePreview(view, selectedCandidate) : null),
@@ -2311,6 +2330,19 @@ export function TerritoryPage({
                         </small>
                       </span>
                     </header>
+                    {selectedMomentSource?.kind === "chat_moment" ? (
+                      <div className={styles["momentSource"]}>
+                        <strong>{selectedMomentSource.label}</strong>
+                        <small>
+                          来自 {dateLabel(selectedMomentSource.occurredAt)}
+                          {selectedMomentSource.attachments.length
+                            ? ` · ${selectedMomentSource.attachments
+                                .map(({ displayName }) => displayName)
+                                .join("、")}`
+                            : ""}
+                        </small>
+                      </div>
+                    ) : null}
                     {selectedCandidate.previewGroups.map((group, index) => {
                       const excluded = group.changeIds.every((changeId) =>
                         excludedChangeIds.has(changeId),
@@ -2352,10 +2384,18 @@ export function TerritoryPage({
                     selectedCandidate.status !== "cancelled" ? (
                       <>
                         <label className={styles["field"]}>
-                          <span>继续修改这版预览</span>
+                          <span>
+                            {selectedMomentSource
+                              ? "想换成什么感觉"
+                              : "继续修改这版预览"}
+                          </span>
                           <textarea
                             rows={3}
-                            placeholder="例如：保留灯光，把植物减少一半。"
+                            placeholder={
+                              selectedMomentSource
+                                ? "例如：更安静一点，保留夕阳的暖色。"
+                                : "例如：保留灯光，把植物减少一半。"
+                            }
                             value={candidateInstruction}
                             onChange={(event) =>
                               setCandidateInstruction(event.target.value)
@@ -2368,14 +2408,14 @@ export function TerritoryPage({
                             type="button"
                             onClick={() => void cancelCandidate()}
                           >
-                            取消预览
+                            {selectedMomentSource ? "这次不要" : "取消预览"}
                           </button>
                           <button
                             disabled={busy || !candidateInstruction.trim()}
                             type="button"
                             onClick={() => void editCandidate()}
                           >
-                            重新生成
+                            {selectedMomentSource ? "换一种表达" : "重新生成"}
                           </button>
                           {selectedCandidate.status === "ready" ? (
                             <button
@@ -2383,7 +2423,7 @@ export function TerritoryPage({
                               type="button"
                               onClick={() => void applyCandidate()}
                             >
-                              应用
+                              {selectedMomentSource ? "放进领地" : "应用"}
                             </button>
                           ) : null}
                         </div>

@@ -78,6 +78,8 @@ export function App() {
   >("appearance");
   const [approvalNavigation, setApprovalNavigation] =
     useState<ApprovalNavigationTarget | null>(null);
+  const [territoryCandidateNavigation, setTerritoryCandidateNavigation] =
+    useState<string | null>(null);
   const focusedApprovalId = useRef<string | undefined>(undefined);
   const openedVoiceChatId = useRef<string | null>(null);
   const routedTogetherSessionId = useRef<string | null>(null);
@@ -205,6 +207,17 @@ export function App() {
     [],
   );
 
+  useEffect(
+    () =>
+      window.charaMate.pet.subscribeOpenTerritoryCandidate(
+        ({ candidateId }) => {
+          setTerritoryCandidateNavigation(candidateId);
+          dispatch({ page: "territory", type: "page.selected" });
+        },
+      ),
+    [],
+  );
+
   useEffect(() => {
     const active = uiState.activePage === "territory";
     window.charaMate.pet.setTerritoryActive({ active });
@@ -223,6 +236,27 @@ export function App() {
             ?.focus();
         }, 0);
       }),
+    [],
+  );
+
+  useEffect(
+    () =>
+      window.charaMate.pet.subscribeOpenComposerAttachments(
+        ({ attachments }) => {
+          dispatch({ page: "chats", type: "page.selected" });
+          for (const attachment of attachments) {
+            dispatch({
+              attachment,
+              type: "composer.attachment-added",
+            });
+          }
+          window.setTimeout(() => {
+            document
+              .querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')
+              ?.focus();
+          }, 0);
+        },
+      ),
     [],
   );
 
@@ -543,6 +577,7 @@ export function App() {
       chatDomain={chatDomain}
       dispatch={dispatch}
       foundation={foundation.snapshot}
+      focusTerritoryCandidateId={territoryCandidateNavigation}
       journeyError={journeyError}
       journeySnapshot={journeySnapshot}
       personaError={personaError}
@@ -599,6 +634,9 @@ export function App() {
         dispatch({ page: "settings", type: "page.selected" });
       }}
       onSettingsOpen={() => setSettingsSectionTarget("appearance")}
+      onTerritoryCandidateFocusConsumed={() =>
+        setTerritoryCandidateNavigation(null)
+      }
       onProvidersChanged={() => void chatStore.refreshModels()}
       onAgentSettingsChanged={(settings) =>
         dispatch({

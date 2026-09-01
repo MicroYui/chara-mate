@@ -185,6 +185,66 @@ describe("CompanionBridgeRepository", () => {
     ).toBe(false);
   });
 
+  it("applies registration permission and advances a generic Desktop envelope idempotently", () => {
+    database = openDatabase();
+    const repository = new CompanionBridgeRepository(database);
+    repository.getOrCreateDesktopInstanceId(() => IDS.desktop);
+    repository.pairDevice(pairedDevice());
+
+    const updated = repository.updateNotificationPermission(
+      IDS.device,
+      "denied",
+      LATER,
+    );
+    expect(updated).toMatchObject({
+      device: { notificationPermission: "denied" },
+      updatedAt: LATER,
+    });
+    expect(
+      repository.updateNotificationPermission(IDS.device, "denied", LATEST),
+    ).toEqual(updated);
+    expect(
+      repository.updateNotificationPermission(
+        IDS.otherDevice,
+        "granted",
+        LATEST,
+      ),
+    ).toBeUndefined();
+
+    expect(
+      repository.advanceDesktopMailboxCursor(
+        undefined,
+        "opaque-registration-cursor",
+        LATER,
+      ),
+    ).toBe(true);
+    expect(repository.getDesktopMailboxCursor()).toBe(
+      "opaque-registration-cursor",
+    );
+    expect(
+      repository.advanceDesktopMailboxCursor(
+        undefined,
+        "opaque-registration-cursor",
+        LATEST,
+      ),
+    ).toBe(true);
+    expect(
+      repository.advanceDesktopMailboxCursor(
+        "opaque-stale-cursor",
+        "opaque-next-cursor",
+        LATEST,
+      ),
+    ).toBe(false);
+    expect(
+      repository.advanceDesktopMailboxCursor(
+        "opaque-registration-cursor",
+        "opaque-next-cursor",
+        LATEST,
+      ),
+    ).toBe(true);
+    expect(repository.getDesktopMailboxCursor()).toBe("opaque-next-cursor");
+  });
+
   it("recovers claimed shares, advances cursor only on completion, and retries Relay ack", () => {
     database = openDatabase();
     const repository = new CompanionBridgeRepository(database);

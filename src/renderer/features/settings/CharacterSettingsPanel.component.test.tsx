@@ -102,6 +102,8 @@ function createSettingsApi() {
             endMinute: 8 * 60,
             startMinute: 22 * 60,
           },
+          territoryMomentSurprisesEnabled: false,
+          territoryMomentSurprisesPrompted: false,
         },
         voice: {
           inputMode: "hands_free",
@@ -153,8 +155,10 @@ function createApi(initial: PetLibrarySnapshot) {
     setScale,
     setTerritoryActive: vi.fn(),
     subscribeChanged: () => () => undefined,
+    subscribeOpenComposerAttachments: () => () => undefined,
     subscribeOpenMain: () => () => undefined,
     subscribeOpenConversation: () => () => undefined,
+    subscribeOpenTerritoryCandidate: () => () => undefined,
   };
   return {
     api,
@@ -347,6 +351,7 @@ describe("Character Settings", () => {
     const level = await screen.findByLabelText("主动程度");
     fireEvent.change(level, { target: { value: "quiet" } });
     fireEvent.click(screen.getByLabelText("重要时刻主动联系我"));
+    fireEvent.click(screen.getByLabelText("偶尔为重要时刻准备领地惊喜"));
     fireEvent.change(screen.getByLabelText("安静时段开始"), {
       target: { value: "21:30" },
     });
@@ -366,6 +371,8 @@ describe("Character Settings", () => {
             endMinute: 7 * 60 + 30,
             startMinute: 21 * 60 + 30,
           },
+          territoryMomentSurprisesEnabled: true,
+          territoryMomentSurprisesPrompted: true,
         },
       }),
     );
@@ -404,6 +411,8 @@ describe("Character Settings", () => {
             endMinute: 8 * 60,
             startMinute: 22 * 60,
           },
+          territoryMomentSurprisesEnabled: false,
+          territoryMomentSurprisesPrompted: false,
         },
       }),
     );

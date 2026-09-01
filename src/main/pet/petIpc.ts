@@ -2,6 +2,7 @@ import { dialog, ipcMain, type BrowserWindow } from "electron";
 
 import {
   PET_CHANNELS,
+  type PetComposerAttachments,
   type ProactiveConversationBubbleFrequencyResponse,
   type ProactiveConversationBubbleReplyRequest,
   type ProactiveConversationBubbleReplyResponse,
@@ -10,6 +11,7 @@ import { ApprovalNavigationRequestSchema } from "../../shared/schemas/agent";
 import {
   PetAnimationSpeedRequestSchema,
   PetCharacterSnapshotSchema,
+  PetComposerAttachmentsSchema,
   PetConversationNavigationSchema,
   PetDragPointSchema,
   PetDragResultSchema,
@@ -20,6 +22,7 @@ import {
   PetScaleRequestSchema,
   PetSelectRequestSchema,
   PetTerritoryPresenceRequestSchema,
+  PetTerritoryCandidateNavigationSchema,
   ProactiveConversationBubbleDismissRequestSchema,
   ProactiveConversationBubbleFrequencyResponseSchema,
   ProactiveConversationBubbleReplyRequestSchema,
@@ -53,6 +56,8 @@ export function registerPetIpc(
   onReplyProactiveBubble?: (
     request: ProactiveConversationBubbleReplyRequest,
   ) => Promise<ProactiveConversationBubbleReplyResponse>,
+  onDropComposerAttachments?: (request: PetComposerAttachments) => void,
+  onFocusTerritoryMoment?: (candidateId: string) => void,
 ): () => void {
   const requireMain = (sender: Electron.WebContents): BrowserWindow => {
     const main = getMainWindow();
@@ -267,6 +272,17 @@ export function registerPetIpc(
     }
     onFocusConversation?.(request.chatId);
   });
+  ipcMain.on(PET_CHANNELS.dropComposerAttachments, (event, input) => {
+    character.assertCharacterSender(event.sender);
+    const request = parseSchema(PetComposerAttachmentsSchema, input);
+    onDropComposerAttachments?.(request);
+  });
+  ipcMain.on(PET_CHANNELS.focusTerritoryMoment, (event, input) => {
+    character.assertCharacterSender(event.sender);
+    const request = parseSchema(PetTerritoryCandidateNavigationSchema, input);
+    character.clearTerritoryMomentNotice(request.candidateId);
+    onFocusTerritoryMoment?.(request.candidateId);
+  });
   ipcMain.on(PET_CHANNELS.dismissProactiveBubble, (event, input) => {
     character.assertCharacterSender(event.sender);
     const request = parseSchema(
@@ -286,6 +302,7 @@ export function registerPetIpc(
     character.assertCharacterSender(event.sender);
     parseSchema(PetEmptyRequestSchema, input);
     character.flushProactiveBubble();
+    character.flushTerritoryMomentNotice();
     onCharacterReady?.();
   });
   ipcMain.on(PET_CHANNELS.setTerritoryActive, (event, input) => {
@@ -315,6 +332,8 @@ export function registerPetIpc(
       PET_CHANNELS.focusMain,
       PET_CHANNELS.focusApproval,
       PET_CHANNELS.focusConversation,
+      PET_CHANNELS.dropComposerAttachments,
+      PET_CHANNELS.focusTerritoryMoment,
       PET_CHANNELS.dismissProactiveBubble,
       PET_CHANNELS.showContextMenu,
       PET_CHANNELS.characterReady,

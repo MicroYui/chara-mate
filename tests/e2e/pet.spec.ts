@@ -395,6 +395,7 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
     ).toBeVisible();
     await first.main.getByLabel("主动程度").selectOption("quiet");
     await first.main.getByLabel("重要时刻主动联系我").check();
+    await first.main.getByLabel("偶尔为重要时刻准备领地惊喜").check();
     await first.main.getByLabel("安静时段开始").fill("21:30");
     await first.main.getByLabel("安静时段结束").fill("07:30");
     await first.main.getByRole("button", { name: "保存主动陪伴" }).click();
@@ -415,6 +416,8 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
           endMinute: 7 * 60 + 30,
           startMinute: 21 * 60 + 30,
         },
+        territoryMomentSurprisesEnabled: true,
+        territoryMomentSurprisesPrompted: true,
       });
     await expect(
       first.main.getByRole("button", { name: "Columbinya 已选" }),
@@ -523,6 +526,8 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
       .toMatchObject({
         importantMomentOutreachEnabled: true,
         importantMomentOutreachPrompted: true,
+        territoryMomentSurprisesEnabled: true,
+        territoryMomentSurprisesPrompted: true,
       });
     const restoredBounds = await application.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows().find(

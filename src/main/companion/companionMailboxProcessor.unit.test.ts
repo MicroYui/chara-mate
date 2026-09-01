@@ -4,6 +4,7 @@ import type {
   CompanionDesktopMailboxEnvelope,
   CompanionDesktopMailboxPage,
   CompanionDeviceStatus,
+  CompanionShareUploadedEnvelope,
   CompanionShareImportedAckResult,
 } from "../../shared/contracts/companion";
 import {
@@ -66,7 +67,7 @@ function envelope(
     readonly desktopInstanceId?: string;
     readonly deviceId?: string;
   } = {},
-): CompanionDesktopMailboxEnvelope {
+): CompanionShareUploadedEnvelope {
   return {
     createdAt: NOW,
     cursor: options.cursor ?? `cursor-${String(sequence)}`,
@@ -91,6 +92,24 @@ function envelope(
   };
 }
 
+function registrationEnvelope(
+  notificationPermission: "unknown" | "granted" | "denied" = "denied",
+): CompanionDesktopMailboxEnvelope {
+  return {
+    createdAt: NOW,
+    cursor: "cursor-registration",
+    event: {
+      deviceId: IDS.device,
+      notificationPermission,
+      type: "companion.device.registration_updated",
+    },
+    expiresAt: EXPIRES_AT,
+    id: IDS.envelope2,
+    protocolVersion: 1,
+    recipient: { desktopInstanceId: IDS.desktop, kind: "desktop" },
+  };
+}
+
 function page(
   envelopes: CompanionDesktopMailboxEnvelope[],
   options: {
@@ -110,7 +129,7 @@ function page(
 }
 
 function importedRecord(
-  value: CompanionDesktopMailboxEnvelope,
+  value: CompanionShareUploadedEnvelope,
 ): CompanionShareImportRecord {
   return {
     chatId: IDS.chat,
@@ -130,7 +149,7 @@ function importedRecord(
 }
 
 function result(
-  value: CompanionDesktopMailboxEnvelope,
+  value: CompanionShareUploadedEnvelope,
 ): CompanionShareImportedAckResult {
   return {
     chatId: IDS.chat,
@@ -166,6 +185,10 @@ function createHarness(
     readonly deviceId: string;
     readonly status: CompanionDeviceStatus;
   }> = [];
+  const registrationUpdates: Array<{
+    readonly deviceId: string;
+    readonly notificationPermission: "unknown" | "granted" | "denied";
+  }> = [];
   const order: string[] = [];
 
   const fetchDesktopMailbox =
@@ -176,7 +199,11 @@ function createHarness(
   const acknowledgeDesktopMailbox = vi.fn<
     CompanionRelayClient["acknowledgeDesktopMailbox"]
   >(({ ack }) => {
-    order.push(`ack:${ack.result.submissionId}`);
+    order.push(
+      ack.result.type === "share.imported"
+        ? `ack:${ack.result.submissionId}`
+        : "ack:envelope.received",
+    );
     return Promise.resolve();
   });
   const relay: CompanionRelayClient = {
@@ -189,7 +216,7 @@ function createHarness(
     unpairDevice: vi.fn(() => Promise.resolve()),
     waitForPairingGrant: vi.fn(() => Promise.resolve(undefined)),
   };
-  const importEnvelope = vi.fn((value: CompanionDesktopMailboxEnvelope) => {
+  const importEnvelope = vi.fn((value: CompanionShareUploadedEnvelope) => {
     order.push(`import:${value.event.share.submissionId}`);
     if (options.advanceCursorOnImport !== false) cursor = value.cursor;
     pending.push(importedRecord(value));
@@ -211,22 +238,53 @@ function createHarness(
   const listPendingShareAcks = vi.fn((deviceId: string) =>
     pending.filter((record) => record.deviceId === deviceId),
   );
+  const advanceDesktopMailboxCursor = vi.fn(
+    (expectedCursor: string | undefined, nextCursor: string) => {
+      if (cursor === nextCursor) return true;
+      if (cursor !== expectedCursor) return false;
+      cursor = nextCursor;
+      return true;
+    },
+  );
+  const updateNotificationPermission = vi.fn(
+    (
+      deviceId: string,
+      notificationPermission: "unknown" | "granted" | "denied",
+      updatedAt: string,
+    ) => {
+      if (!paired || paired.device.id !== deviceId) return undefined;
+      if (paired.device.notificationPermission === notificationPermission) {
+        return paired;
+      }
+      paired = {
+        ...paired,
+        device: { ...paired.device, notificationPermission },
+        updatedAt,
+      };
+      return paired;
+    },
+  );
   const dependencies: CompanionMailboxProcessorDependencies = {
     bridge: {
+      advanceDesktopMailboxCursor,
       getDesktopMailboxCursor: vi.fn(() => cursor),
       getOrCreateDesktopInstanceId: vi.fn(() => IDS.desktop),
       getPairedDevice: vi.fn(() => paired),
       listPendingShareAcks,
       markShareAcked,
+      updateNotificationPermission,
     },
     clock: { now: vi.fn(() => NOW) },
     ingress: { importEnvelope },
     onStatusChange: (deviceId, status) => statuses.push({ deviceId, status }),
+    onRegistrationUpdated: (deviceId, notificationPermission) =>
+      registrationUpdates.push({ deviceId, notificationPermission }),
     relay,
     secretStore: { get: vi.fn(() => Promise.resolve("device-credential")) },
   };
   return {
     acknowledgeDesktopMailbox,
+    advanceDesktopMailboxCursor,
     dependencies,
     fetchDesktopMailbox,
     importEnvelope,
@@ -237,7 +295,9 @@ function createHarness(
     setPairedDevice(value: PairedCompanionDeviceRecord | undefined) {
       paired = value;
     },
+    registrationUpdates,
     statuses,
+    updateNotificationPermission,
   };
 }
 
@@ -336,6 +396,86 @@ describe("CompanionMailboxProcessor", () => {
       protocolVersion: 1,
       recipient: { desktopInstanceId: IDS.desktop, kind: "desktop" },
     });
+
+    await harness.processor.shutdown();
+  });
+
+  it("applies and acknowledges a registration update before advancing its cursor", async () => {
+    const registration = registrationEnvelope();
+    const harness = createHarness();
+    harness.fetchDesktopMailbox.mockResolvedValueOnce(page([registration]));
+
+    harness.processor.start();
+
+    await vi.waitFor(() =>
+      expect(harness.fetchDesktopMailbox).toHaveBeenCalledTimes(2),
+    );
+    expect(harness.importEnvelope).not.toHaveBeenCalled();
+    expect(harness.updateNotificationPermission).toHaveBeenCalledWith(
+      IDS.device,
+      "denied",
+      NOW,
+    );
+    expect(harness.acknowledgeDesktopMailbox.mock.calls[0]?.[0].ack).toEqual({
+      acknowledgedAt: NOW,
+      cursor: registration.cursor,
+      envelopeId: registration.id,
+      protocolVersion: 1,
+      recipient: { desktopInstanceId: IDS.desktop, kind: "desktop" },
+      result: { type: "envelope.received" },
+    });
+    expect(harness.advanceDesktopMailboxCursor).toHaveBeenCalledWith(
+      undefined,
+      registration.cursor,
+      NOW,
+    );
+    expect(harness.registrationUpdates).toEqual([
+      { deviceId: IDS.device, notificationPermission: "denied" },
+    ]);
+    expect(harness.dependencies.bridge.getDesktopMailboxCursor()).toBe(
+      registration.cursor,
+    );
+    expect(harness.order).toEqual(["ack:envelope.received"]);
+    expect(harness.statuses.at(-1)).toEqual({
+      deviceId: IDS.device,
+      status: { observedAt: NOW, state: "online" },
+    });
+
+    await harness.processor.shutdown();
+  });
+
+  it("reapplies a registration update idempotently when its ack must be retried", async () => {
+    const registration = registrationEnvelope();
+    const harness = createHarness();
+    harness.fetchDesktopMailbox
+      .mockResolvedValueOnce(page([registration]))
+      .mockResolvedValueOnce(page([registration]));
+    harness.acknowledgeDesktopMailbox.mockRejectedValueOnce(
+      new CompanionRelayClientError("network", "relay unavailable"),
+    );
+
+    harness.processor.start();
+    await vi.waitFor(() =>
+      expect(harness.statuses.at(-1)?.status.state).toBe("offline"),
+    );
+    expect(
+      harness.dependencies.bridge.getDesktopMailboxCursor(),
+    ).toBeUndefined();
+    expect(harness.registrationUpdates).toEqual([]);
+
+    harness.processor.wake();
+    await vi.waitFor(() =>
+      expect(harness.fetchDesktopMailbox).toHaveBeenCalledTimes(3),
+    );
+    expect(harness.updateNotificationPermission).toHaveBeenCalledTimes(2);
+    expect(harness.acknowledgeDesktopMailbox).toHaveBeenCalledTimes(2);
+    expect(harness.advanceDesktopMailboxCursor).toHaveBeenCalledOnce();
+    expect(harness.dependencies.bridge.getDesktopMailboxCursor()).toBe(
+      registration.cursor,
+    );
+    expect(harness.registrationUpdates).toEqual([
+      { deviceId: IDS.device, notificationPermission: "denied" },
+    ]);
 
     await harness.processor.shutdown();
   });

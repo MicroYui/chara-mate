@@ -13,6 +13,7 @@ import type {
   CompanionChatTargetsReplacedEventSchema,
   CompanionDesktopMailboxAckSchema,
   CompanionDesktopMailboxEnvelopeSchema,
+  CompanionDesktopMailboxEventSchema,
   CompanionDesktopMailboxPageSchema,
   CompanionDesktopMailboxRecipientSchema,
   CompanionDesktopDeviceSchema,
@@ -23,6 +24,7 @@ import type {
   CompanionDesktopUnpairRequestSchema,
   CompanionDeviceNotificationPreferenceRequestSchema,
   CompanionDeviceRegistrationUpdateSchema,
+  CompanionDeviceRegistrationUpdatedEventSchema,
   CompanionDeviceSchema,
   CompanionDeviceStatusSchema,
   CompanionMailboxAckResultSchema,
@@ -90,6 +92,9 @@ export type CompanionDeviceNotificationPreferenceRequest = Static<
 export type CompanionDeviceRegistrationUpdate = Static<
   typeof CompanionDeviceRegistrationUpdateSchema
 >;
+export type CompanionDeviceRegistrationUpdatedEvent = Static<
+  typeof CompanionDeviceRegistrationUpdatedEventSchema
+>;
 export type CompanionUnpairRequest = Static<
   typeof CompanionUnpairRequestSchema
 >;
@@ -154,10 +159,19 @@ export type CompanionChatTargetsReplacedEvent = Static<
 export type CompanionAndroidMailboxEvent = Static<
   typeof CompanionAndroidMailboxEventSchema
 >;
+export type CompanionDesktopMailboxEvent = Static<
+  typeof CompanionDesktopMailboxEventSchema
+>;
 export type CompanionMailboxEvent = Static<typeof CompanionMailboxEventSchema>;
 export type CompanionDesktopMailboxEnvelope = Static<
   typeof CompanionDesktopMailboxEnvelopeSchema
 >;
+export type CompanionShareUploadedEnvelope = Omit<
+  CompanionDesktopMailboxEnvelope,
+  "event"
+> & {
+  readonly event: CompanionShareUploadedEvent;
+};
 export type CompanionAndroidMailboxEnvelope = Static<
   typeof CompanionAndroidMailboxEnvelopeSchema
 >;

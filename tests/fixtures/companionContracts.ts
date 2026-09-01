@@ -23,6 +23,7 @@ export const COMPANION_FIXTURE_IDS = {
   desktop: "90000000-0000-4000-8000-000000000003",
   device: "90000000-0000-4000-8000-000000000004",
   envelopeNotification: "90000000-0000-4000-8000-000000000005",
+  envelopeRegistration: "90000000-0000-4000-8000-000000000014",
   envelopeShare: "90000000-0000-4000-8000-000000000006",
   envelopeTargets: "90000000-0000-4000-8000-000000000013",
   installation: "90000000-0000-4000-8000-000000000007",
@@ -36,6 +37,7 @@ export const COMPANION_FIXTURE_IDS = {
 export const COMPANION_FIXTURE_CURSORS = {
   androidNotification: "mcur_Qv3pA9nX",
   androidTargets: "mcur_Yk8sL2wR",
+  desktopRegistration: "mcur_Rg5nP8vT",
   desktopPrevious: "mcur_Bf6tH1cM",
   desktopShare: "mcur_Zd4jN7uK",
 } as const;
@@ -156,6 +158,23 @@ export const companionShareEnvelopeFixture = {
   },
 } satisfies CompanionMailboxEnvelope;
 
+export const companionDeviceRegistrationEnvelopeFixture = {
+  createdAt: COMPANION_FIXTURE_TIMESTAMPS.created,
+  cursor: COMPANION_FIXTURE_CURSORS.desktopRegistration,
+  event: {
+    deviceId: COMPANION_FIXTURE_IDS.device,
+    notificationPermission: "denied",
+    type: "companion.device.registration_updated",
+  },
+  expiresAt: COMPANION_FIXTURE_TIMESTAMPS.expires,
+  id: COMPANION_FIXTURE_IDS.envelopeRegistration,
+  protocolVersion: 1,
+  recipient: {
+    desktopInstanceId: COMPANION_FIXTURE_IDS.desktop,
+    kind: "desktop",
+  },
+} satisfies CompanionMailboxEnvelope;
+
 export const companionChatTargetEnvelopeFixture = {
   createdAt: COMPANION_FIXTURE_TIMESTAMPS.created,
   cursor: COMPANION_FIXTURE_CURSORS.androidTargets,
@@ -252,11 +271,21 @@ export const companionNotificationAckFixture = {
   },
 } satisfies CompanionMailboxAck;
 
+export const companionDeviceRegistrationAckFixture = {
+  acknowledgedAt: COMPANION_FIXTURE_TIMESTAMPS.created,
+  cursor: COMPANION_FIXTURE_CURSORS.desktopRegistration,
+  envelopeId: COMPANION_FIXTURE_IDS.envelopeRegistration,
+  protocolVersion: 1,
+  recipient: companionMailboxFetchRequestFixture.recipient,
+  result: {
+    type: "envelope.received",
+  },
+} satisfies CompanionMailboxAck;
+
 export const companionNotificationPushFixture = {
   cursor: COMPANION_FIXTURE_CURSORS.androidNotification,
   deviceId: COMPANION_FIXTURE_IDS.device,
   envelopeId: COMPANION_FIXTURE_IDS.envelopeNotification,
-  notification: companionNotificationEnvelopeFixture.event.notification,
   protocolVersion: 1,
-  type: "companion.notification",
+  type: "companion.mailbox.wake",
 } satisfies CompanionNotificationPush;

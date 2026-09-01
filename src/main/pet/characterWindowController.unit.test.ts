@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ProactiveConversationBubble } from "../../shared/contracts/pet";
+import type {
+  PetTerritoryMomentNotice,
+  ProactiveConversationBubble,
+} from "../../shared/contracts/pet";
 import { PET_CHANNELS } from "../../shared/contracts/pet";
 import { CharacterWindowController } from "./characterWindowController";
 import type { PetService } from "./petService";
@@ -35,6 +38,39 @@ beforeEach(() => {
 });
 
 describe("CharacterWindowController proactive conversation window", () => {
+  it("retains and clears the latest Territory moment notice", () => {
+    const send = vi.fn();
+    const controller = new CharacterWindowController({} as PetService, vi.fn());
+    Reflect.set(controller, "window", {
+      isDestroyed: () => false,
+      webContents: {
+        id: 1,
+        isDestroyed: () => false,
+        send,
+      },
+    });
+    const notice = {
+      candidateId: "30000000-0000-4000-8000-000000000001",
+      createdAt: "2026-09-01T09:00:00.000Z",
+      name: "散场后的余光",
+      status: "ready",
+      updatedAt: "2026-09-01T09:01:00.000Z",
+    } satisfies PetTerritoryMomentNotice;
+
+    controller.showTerritoryMomentNotice(notice);
+    expect(send).toHaveBeenCalledWith(
+      PET_CHANNELS.territoryMomentChanged,
+      notice,
+    );
+    expect(controller.clearTerritoryMomentNotice(notice.candidateId)).toBe(
+      true,
+    );
+    expect(send).toHaveBeenLastCalledWith(
+      PET_CHANNELS.territoryMomentChanged,
+      null,
+    );
+  });
+
   it("keeps the pet untouched and projects the bubble into its own window", () => {
     const petWindow = {
       getBounds: () => ({ height: 135, width: 125, x: 1200, y: 750 }),

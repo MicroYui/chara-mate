@@ -16,6 +16,9 @@ const electron = vi.hoisted(() => ({
     on: vi.fn(),
     send: vi.fn(),
   },
+  webUtils: {
+    getPathForFile: vi.fn(() => "/tmp/sunset.jpg"),
+  },
 }));
 
 vi.mock("electron", () => electron);
@@ -64,10 +67,12 @@ describe("Character Window typed preload boundary", () => {
     expect(Object.keys(api).sort()).toEqual(
       [
         "dismissProactiveBubble",
+        "dropComposerAttachments",
         "endDrag",
         "focusApproval",
         "focusConversation",
         "focusMain",
+        "focusTerritoryMoment",
         "getPendingApproval",
         "getSnapshot",
         "markReady",
@@ -80,11 +85,35 @@ describe("Character Window typed preload boundary", () => {
         "subscribe",
         "subscribeApproval",
         "subscribeProactiveBubble",
+        "subscribeTerritoryMoment",
         "voice",
         "voiceWake",
       ].sort(),
     );
     await expect(api.getSnapshot()).resolves.toEqual(characterSnapshot);
+  });
+
+  it("projects dropped files into the typed Main handoff", async () => {
+    const api = await loadApi();
+    const file = new File(["pixels"], "sunset.jpg", { type: "image/jpeg" });
+
+    api.dropComposerAttachments([file]);
+
+    expect(electron.webUtils.getPathForFile).toHaveBeenCalledWith(file);
+    expect(electron.ipcRenderer.send).toHaveBeenCalledWith(
+      PET_CHANNELS.dropComposerAttachments,
+      {
+        attachments: [
+          expect.objectContaining({
+            byteLength: 6,
+            displayName: "sunset.jpg",
+            mediaType: "image/jpeg",
+            source: "image",
+            storageKey: "/tmp/sunset.jpg",
+          }),
+        ],
+      },
+    );
   });
 
   it("validates drag input and Main responses before returning them", async () => {
@@ -292,6 +321,47 @@ describe("Character Window typed preload boundary", () => {
     unsubscribe();
     expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
       PET_CHANNELS.proactiveBubbleChanged,
+      registeredListener,
+    );
+  });
+
+  it("validates Territory moment navigation and notice events", async () => {
+    let registeredListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(PET_CHANNELS.territoryMomentChanged);
+        registeredListener = listener;
+      },
+    );
+    const api = await loadApi();
+    const listener = vi.fn();
+    const unsubscribe = api.subscribeTerritoryMoment(listener);
+    const candidateId = "30000000-0000-4000-8000-000000000001";
+    const notice = {
+      candidateId,
+      createdAt: "2026-09-01T09:00:00.000Z",
+      name: "散场后的余光",
+      status: "ready",
+      updatedAt: "2026-09-01T09:01:00.000Z",
+    };
+
+    registeredListener?.({}, notice);
+    registeredListener?.({}, null);
+    expect(listener).toHaveBeenNthCalledWith(1, notice);
+    expect(listener).toHaveBeenNthCalledWith(2, null);
+
+    api.focusTerritoryMoment({ candidateId });
+    expect(electron.ipcRenderer.send).toHaveBeenCalledWith(
+      PET_CHANNELS.focusTerritoryMoment,
+      { candidateId },
+    );
+    expect(() =>
+      api.focusTerritoryMoment({ candidateId: "invalid" }),
+    ).toThrow();
+
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      PET_CHANNELS.territoryMomentChanged,
       registeredListener,
     );
   });

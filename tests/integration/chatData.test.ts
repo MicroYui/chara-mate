@@ -139,6 +139,26 @@ describe("Phase 1 Chat Data and Run event persistence", () => {
     database.close();
   });
 
+  it("publishes collection changes for creation, updates and deletion", async () => {
+    const { database } = await createDatabase();
+    const collectionChanged = vi.fn();
+    const service = new ChatService(
+      new ChatRepository(database),
+      new RunRepository(database),
+      { generate: () => FIXTURE_IDS.chat },
+      new FakeClock(FIXTURE_TIMESTAMPS.updated),
+      () => undefined,
+      collectionChanged,
+    );
+
+    const created = service.create({ title: "Companion target" });
+    service.rename({ chatId: created.id, title: "Updated target" });
+    service.delete({ chatId: created.id });
+
+    expect(collectionChanged).toHaveBeenCalledTimes(3);
+    database.close();
+  });
+
   it("manages, orders, searches and restores multiple Chats through the domain service", async () => {
     const { database, databasePath } = await createDatabase();
     const clock = new FakeClock(FIXTURE_TIMESTAMPS.created);

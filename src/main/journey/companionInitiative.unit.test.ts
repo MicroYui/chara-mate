@@ -257,6 +257,8 @@ function serviceHarness(
           endMinute: 8 * 60,
           startMinute: 22 * 60,
         },
+        territoryMomentSurprisesEnabled: false,
+        territoryMomentSurprisesPrompted: false,
       }),
     },
     { now: () => currentTime } satisfies Clock,

@@ -28,6 +28,7 @@ import { migrateV19ToV20 } from "./schema/migrateV19ToV20";
 import { migrateV20ToV21 } from "./schema/migrateV20ToV21";
 import { migrateV21ToV22 } from "./schema/migrateV21ToV22";
 import { migrateV22ToV23 } from "./schema/migrateV22ToV23";
+import { migrateV23ToV24 } from "./schema/migrateV23ToV24";
 
 interface MetadataRow {
   value: string;
@@ -115,6 +116,10 @@ function initializeCurrentSchema(database: Database.Database): void {
   if (installedVersion === "22") {
     migrateV22ToV23(database);
     installedVersion = "23";
+  }
+  if (installedVersion === "23") {
+    migrateV23ToV24(database);
+    installedVersion = "24";
   }
   if (
     installedVersion !== undefined &&

@@ -12,6 +12,7 @@ import type { ToolResult } from "../../src/shared/contracts/tool";
 import { SystemClock, type Clock } from "../../src/shared/pure/clock";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { AgentRuntime } from "../../src/main/agent/agentRuntime";
+import type { AttachmentInputProvider } from "../../src/main/agent/attachmentInput";
 import { ChatContextService } from "../../src/main/agent/chatContextService";
 import {
   ACTIVITY_SEARCH_TOOL_NAME,
@@ -308,6 +309,7 @@ async function createFixture(
   images?: ImageInputProvider,
   contextLimits?: ModelContextLimits,
   persona?: PersonaSnapshot,
+  attachmentInputs?: AttachmentInputProvider,
 ): Promise<RuntimeFixture> {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "chara-mate-agent-runtime-"),
@@ -352,6 +354,8 @@ async function createFixture(
     chatTitles,
     images,
     undefined,
+    undefined,
+    attachmentInputs,
   );
   return {
     chatId: chat.id,
@@ -1850,6 +1854,105 @@ describe("Agent Runtime production path", () => {
     expect(JSON.stringify(input)).toContain('"type":"input_image"');
     expect(JSON.stringify(input)).toContain("data:image/png;base64,");
     expect(JSON.stringify(input)).not.toContain("/workspace/layout.png");
+    fixture.database.close();
+  });
+
+  it("reads a shared text document into model context and persists verified facts", async () => {
+    const prepare = vi.fn<AttachmentInputProvider["prepare"]>(() =>
+      Promise.resolve({
+        byteLength: 42,
+        sha256:
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        text: "# Demo 分享\n\n结论比预想顺利。",
+      }),
+    );
+    const fixture = await createFixture(
+      [finalTurn("我看完了")],
+      new SystemClock(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { prepare },
+    );
+
+    const run = await fixture.runtime.start({
+      attachments: [
+        {
+          artifactId: "20000000-0000-4000-8000-000000000010",
+          displayName: "sharing.md",
+          kind: "file",
+          mediaType: "text/markdown",
+          storageKey: "/workspace/sharing.md",
+        },
+      ],
+      chatId: fixture.chatId,
+      content: "分享结束了",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ storageKey: "/workspace/sharing.md" }),
+    );
+    const input = JSON.stringify(fixture.provider.requests[0]?.input);
+    expect(input).toContain("user-supplied attachment content");
+    expect(input).toContain("结论比预想顺利");
+    expect(input).not.toContain("/workspace/sharing.md");
+    expect(
+      fixture.database
+        .prepare("SELECT byte_length, sha256 FROM attachments WHERE id = ?")
+        .get("20000000-0000-4000-8000-000000000010"),
+    ).toEqual({
+      byte_length: 42,
+      sha256:
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+    fixture.database.close();
+  });
+
+  it("rejects an attachment that changed after selection before creating a Run", async () => {
+    const fixture = await createFixture(
+      [finalTurn("不应发送")],
+      new SystemClock(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        prepare: () =>
+          Promise.resolve({
+            byteLength: 11,
+            sha256:
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          }),
+      },
+    );
+
+    await expect(
+      fixture.runtime.start({
+        attachments: [
+          {
+            artifactId: "20000000-0000-4000-8000-000000000011",
+            byteLength: 10,
+            displayName: "changed.txt",
+            kind: "file",
+            storageKey: "/workspace/changed.txt",
+          },
+        ],
+        chatId: fixture.chatId,
+        content: "读一下",
+        execution: { mode: "chat" },
+        providerProfileId: PROFILE_ID,
+        requestedAt: REQUESTED_AT,
+      }),
+    ).rejects.toMatchObject({ code: "AGENT.ATTACHMENT_INPUT_INVALID" });
+    expect(fixture.provider.requests).toHaveLength(0);
+    expect(
+      fixture.database.prepare("SELECT COUNT(*) AS count FROM runs").get(),
+    ).toEqual({ count: 0 });
     fixture.database.close();
   });
 

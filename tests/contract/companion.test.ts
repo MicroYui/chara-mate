@@ -8,6 +8,7 @@ import {
   CompanionChatTargetSnapshotSchema,
   CompanionDeviceNotificationPreferenceRequestSchema,
   CompanionDeviceRegistrationUpdateSchema,
+  CompanionDeviceRegistrationUpdatedEventSchema,
   CompanionDeviceSchema,
   CompanionDesktopSnapshotResponseSchema,
   CompanionDesktopSnapshotSchema,
@@ -34,6 +35,8 @@ import {
   COMPANION_FIXTURE_TIMESTAMPS,
   companionChatTargetEnvelopeFixture,
   companionChatTargetSnapshotFixture,
+  companionDeviceRegistrationAckFixture,
+  companionDeviceRegistrationEnvelopeFixture,
   companionDeviceFixture,
   companionMailboxFetchRequestFixture,
   companionMailboxPageFixture,
@@ -91,6 +94,11 @@ const validCases: readonly (readonly [string, TSchema, unknown])[] = [
     companionShareEnvelopeFixture,
   ],
   [
+    "device registration envelope",
+    CompanionMailboxEnvelopeSchema,
+    companionDeviceRegistrationEnvelopeFixture,
+  ],
+  [
     "notification envelope",
     CompanionMailboxEnvelopeSchema,
     companionNotificationEnvelopeFixture,
@@ -117,6 +125,11 @@ const validCases: readonly (readonly [string, TSchema, unknown])[] = [
   ],
   ["mailbox page", CompanionMailboxPageSchema, companionMailboxPageFixture],
   ["share ack", CompanionMailboxAckSchema, companionShareAckFixture],
+  [
+    "device registration ack",
+    CompanionMailboxAckSchema,
+    companionDeviceRegistrationAckFixture,
+  ],
   [
     "notification ack",
     CompanionMailboxAckSchema,
@@ -145,6 +158,11 @@ const validCases: readonly (readonly [string, TSchema, unknown])[] = [
       protocolVersion: 1,
       pushRegistrationId: "refreshed-opaque-push-registration-id",
     },
+  ],
+  [
+    "device registration updated event",
+    CompanionDeviceRegistrationUpdatedEventSchema,
+    companionDeviceRegistrationEnvelopeFixture.event,
   ],
   [
     "unpair request",
@@ -391,7 +409,7 @@ describe("Android Companion v1 boundary contracts", () => {
   );
 
   it.each(parsers)(
-    "binds share import to Desktop and notification receipt to Android through %s",
+    "binds envelope recipients while supporting Desktop ordinary receipts through %s",
     (parse) => {
       expect(() =>
         parse(CompanionMailboxEnvelopeSchema, {
@@ -405,12 +423,12 @@ describe("Android Companion v1 boundary contracts", () => {
           recipient: companionNotificationEnvelopeFixture.recipient,
         }),
       ).toThrow();
-      expect(() =>
+      expect(
         parse(CompanionMailboxAckSchema, {
           ...companionShareAckFixture,
           result: { type: "envelope.received" },
         }),
-      ).toThrow();
+      ).toMatchObject({ result: { type: "envelope.received" } });
       expect(() =>
         parse(CompanionMailboxAckSchema, {
           ...companionNotificationAckFixture,

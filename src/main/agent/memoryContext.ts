@@ -53,9 +53,50 @@ export function createMemoryContextInput(
   return {
     content: memoryBlock(selection),
     memoryIds: [...new Set(hits.map(({ memory }) => memory.id))],
+    memoryRevisions: hits.map(({ memory, revision }) => ({
+      memoryId: memory.id,
+      revisionId: revision.id,
+    })),
     queryMemoryIds: [...new Set(selection.queryRelevantMemoryIds)],
     type: MEMORY_CONTEXT_TYPE,
   };
+}
+
+export interface MemoryContextRevisionReference {
+  readonly memoryId: string;
+  readonly revisionId: string;
+}
+
+export function memoryContextRevisionReferences(
+  value: JsonValue,
+): MemoryContextRevisionReference[] {
+  if (!isMemoryContextInput(value) || Array.isArray(value) || value === null) {
+    return [];
+  }
+  const context = value as Readonly<Record<string, JsonValue>>;
+  const references = context["memoryRevisions"];
+  if (!Array.isArray(references)) return [];
+  return references.flatMap((reference) => {
+    const record =
+      typeof reference === "object" &&
+      reference !== null &&
+      !Array.isArray(reference)
+        ? (reference as Readonly<Record<string, JsonValue>>)
+        : undefined;
+    if (
+      !record ||
+      typeof record["memoryId"] !== "string" ||
+      typeof record["revisionId"] !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        memoryId: record["memoryId"],
+        revisionId: record["revisionId"],
+      },
+    ];
+  });
 }
 
 export function memoryContextTargetIds(value: JsonValue): string[] {

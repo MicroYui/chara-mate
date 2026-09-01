@@ -14,6 +14,7 @@ import type {
   Approval,
   AppError,
   ArtifactKind,
+  ArtifactReference,
   PlanUpdate,
   RequestUserInputArguments,
   Run,
@@ -44,6 +45,8 @@ import {
 } from "../memory/memoryTool";
 import { COMPANIONSHIP_UPDATE_TOOL_NAME } from "../journey/companionshipTool";
 import { IMPORTANT_MOMENT_OUTREACH_TOOL_NAME } from "../journey/importantMomentOutreachTool";
+import { TERRITORY_MOMENT_SURPRISES_TOOL_NAME } from "../journey/territoryMomentSurprisesTool";
+import { TERRITORY_PROPOSE_MOMENT_TOOL_NAME } from "../territory/territoryMomentTool";
 import type { ChatModelRuntime } from "../providers/providerService";
 import { ProviderError, toProviderAppError } from "../providers/providerError";
 import { toolEvidenceHash } from "../tools/toolRegistry";
@@ -64,6 +67,11 @@ import {
 import { detectToolCycle, semanticToolSignature } from "./loopGuard";
 import { requiresApproval, toolAllowedInExecution } from "./approvalPolicy";
 import { AgentError } from "./agentError";
+import {
+  AttachmentInputError,
+  type AttachmentInputProvider,
+  type PreparedAttachmentInput,
+} from "./attachmentInput";
 import { ChatContextService } from "./chatContextService";
 import {
   ImageInputError,
@@ -116,6 +124,8 @@ const ALWAYS_LOADED_CLIENT_TOOLS = new Set([
   MEMORY_FORMATION_TOOL_NAME,
   COMPANIONSHIP_UPDATE_TOOL_NAME,
   IMPORTANT_MOMENT_OUTREACH_TOOL_NAME,
+  TERRITORY_MOMENT_SURPRISES_TOOL_NAME,
+  TERRITORY_PROPOSE_MOMENT_TOOL_NAME,
   COLLABORATION_DISPATCH_TOOL_NAME,
 ]);
 const USER_INPUT_NAMESPACE = "interaction";
@@ -240,6 +250,41 @@ function imageMessageReference(
     role: "user",
     type: "message",
   };
+}
+
+function attachmentContext(
+  attachments: readonly ArtifactReference[],
+  prepared: ReadonlyMap<string, PreparedAttachmentInput>,
+  originalContent: string,
+): string {
+  if (attachments.length === 0) return originalContent;
+  const descriptions: string[] = [];
+  for (const attachment of attachments) {
+    const input = prepared.get(attachment.artifactId);
+    if (attachment.kind === "image") {
+      descriptions.push(
+        `- ${attachment.displayName}: image pixels included in this message`,
+      );
+      continue;
+    }
+    if (input?.text !== undefined) {
+      const text = input.text.trim();
+      if (text && !originalContent.includes(text)) {
+        descriptions.push(
+          `- ${attachment.displayName}: user-supplied attachment content follows\n\n<attachment name=${JSON.stringify(attachment.displayName)}>\n${input.text}\n</attachment>`,
+        );
+      } else {
+        descriptions.push(
+          `- ${attachment.displayName}: text content is already included in the user message`,
+        );
+      }
+      continue;
+    }
+    descriptions.push(
+      `- ${attachment.displayName}: attached file reference (content was not parsed)`,
+    );
+  }
+  return `${originalContent}\n\nAttached local artifacts:\n${descriptions.join("\n")}`;
 }
 
 async function materializeModelInput(
@@ -438,6 +483,8 @@ function toolDisplayOutput(result: ToolResult, toolName?: string): string {
   if (
     toolName === MEMORY_FORMATION_TOOL_NAME ||
     toolName === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME ||
+    toolName === TERRITORY_MOMENT_SURPRISES_TOOL_NAME ||
+    toolName === TERRITORY_PROPOSE_MOMENT_TOOL_NAME ||
     toolName === MEMORY_SEARCH_TOOL_NAME ||
     toolName === ACTIVITY_SEARCH_TOOL_NAME
   ) {
@@ -799,6 +846,7 @@ export class AgentRuntime {
     private readonly images?: ImageInputProvider,
     private readonly memory?: MemoryService,
     chatContext?: ChatContextService,
+    private readonly attachmentInputs?: AttachmentInputProvider,
   ) {
     this.#chatContext = chatContext ?? new ChatContextService(chats, clock);
   }
@@ -975,7 +1023,50 @@ export class AgentRuntime {
         signal,
       );
       signal?.throwIfAborted();
-      const imageAttachments = request.attachments.filter(
+      const preparedAttachments = new Map<string, PreparedAttachmentInput>();
+      let resolvedAttachments = [...request.attachments];
+      const localAttachments = request.attachments.filter(
+        ({ kind }) => kind === "file" || kind === "image",
+      );
+      if (localAttachments.length > 0 && this.attachmentInputs) {
+        try {
+          for (const attachment of localAttachments) {
+            const prepared = await this.attachmentInputs.prepare(attachment);
+            signal?.throwIfAborted();
+            if (
+              (attachment.byteLength !== undefined &&
+                attachment.byteLength !== prepared.byteLength) ||
+              (attachment.sha256 !== undefined &&
+                attachment.sha256 !== prepared.sha256)
+            ) {
+              throw new AttachmentInputError(
+                `附件“${attachment.displayName}”已发生变化，请重新选择后发送。`,
+              );
+            }
+            preparedAttachments.set(attachment.artifactId, prepared);
+          }
+          resolvedAttachments = request.attachments.map((attachment) => {
+            const prepared = preparedAttachments.get(attachment.artifactId);
+            return prepared
+              ? {
+                  ...attachment,
+                  byteLength: prepared.byteLength,
+                  sha256: prepared.sha256,
+                }
+              : attachment;
+          });
+        } catch (error) {
+          signal?.throwIfAborted();
+          throw new AgentError(
+            "AGENT.ATTACHMENT_INPUT_INVALID",
+            error instanceof AttachmentInputError
+              ? error.message
+              : "附件读取失败，请检查文件后重试。",
+            false,
+          );
+        }
+      }
+      const imageAttachments = resolvedAttachments.filter(
         ({ kind }) => kind === "image",
       );
       const preparedImages: PreparedImageInput[] = [];
@@ -1010,16 +1101,11 @@ export class AgentRuntime {
           );
         }
       }
-      const modelText =
-        request.attachments.length === 0
-          ? request.content
-          : `${request.content}\n\nAttached local artifacts:\n${request.attachments
-              .map(({ displayName, kind, storageKey }) =>
-                kind === "image"
-                  ? `- ${displayName}: image pixels included in this message`
-                  : `- ${displayName}: ${storageKey}`,
-              )
-              .join("\n")}`;
+      const modelText = attachmentContext(
+        resolvedAttachments,
+        preparedAttachments,
+        request.content,
+      );
       const currentInput =
         preparedImages.length > 0
           ? imageMessageReference(
@@ -1088,7 +1174,7 @@ export class AgentRuntime {
           status: "completed",
           updatedAt: now,
         });
-        for (const attachment of request.attachments) {
+        for (const attachment of resolvedAttachments) {
           if (!USER_ATTACHMENT_KINDS.has(attachment.kind)) continue;
           this.chats.insertAttachment({
             chatId: request.chatId,
@@ -1108,7 +1194,7 @@ export class AgentRuntime {
           });
         }
         const userItem = this.writer.startItem(runId, "user_message", {
-          attachmentIds: request.attachments.map(
+          attachmentIds: resolvedAttachments.map(
             ({ artifactId }) => artifactId,
           ),
           content: request.content,
@@ -1707,7 +1793,7 @@ export class AgentRuntime {
         TEXT_AGENT_BASE_INSTRUCTIONS,
         `Current timestamp: ${this.clock.now()}. User system time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}. Interpret relative dates such as today in that time zone.`,
         run.execution.mode === "chat"
-          ? "This Run is Chat mode. You may use the provided idempotent read-only query and plan tools. Never perform write, critical, or other external-effect actions; memory.record, companionship.update, and companion.important_moment_outreach are the only internal persistence exceptions. Ask the user to switch explicitly to Agent mode when another action is required."
+          ? "This Run is Chat mode. You may use the provided idempotent read-only query and plan tools. Never perform write, critical, or other external-effect actions; memory.record, companionship.update, companion.important_moment_outreach, companion.territory_moment_surprises, and territory.propose_moment are the only internal persistence exceptions. Ask the user to switch explicitly to Agent mode when another action is required."
           : "This Run is Agent mode. Follow its approval decisions and continue after structured rejection when a legitimate alternative exists.",
         extra,
       ]
@@ -1869,7 +1955,9 @@ export class AgentRuntime {
     const internalPersistence =
       resolvedName === MEMORY_FORMATION_TOOL_NAME ||
       resolvedName === COMPANIONSHIP_UPDATE_TOOL_NAME ||
-      resolvedName === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME;
+      resolvedName === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME ||
+      resolvedName === TERRITORY_MOMENT_SURPRISES_TOOL_NAME ||
+      resolvedName === TERRITORY_PROPOSE_MOMENT_TOOL_NAME;
     if (!toolAllowedInExecution(run.execution, definition.descriptor)) {
       this.#recordToolResult(active, pending, undefined, chatModeToolResult());
       return;

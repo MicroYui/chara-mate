@@ -175,7 +175,11 @@ export class SettingsService {
       saved.level !== previous.level ||
       saved.quietHours.enabled !== previous.quietHours.enabled ||
       saved.quietHours.startMinute !== previous.quietHours.startMinute ||
-      saved.quietHours.endMinute !== previous.quietHours.endMinute
+      saved.quietHours.endMinute !== previous.quietHours.endMinute ||
+      saved.territoryMomentSurprisesEnabled !==
+        previous.territoryMomentSurprisesEnabled ||
+      saved.territoryMomentSurprisesPrompted !==
+        previous.territoryMomentSurprisesPrompted
     ) {
       this.onCompanionInitiativeChanged?.(saved, previous);
     }

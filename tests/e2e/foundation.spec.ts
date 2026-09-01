@@ -270,8 +270,10 @@ test("launches through the typed preload boundary", async () => {
         "setScale",
         "setTerritoryActive",
         "subscribeChanged",
+        "subscribeOpenComposerAttachments",
         "subscribeOpenConversation",
         "subscribeOpenMain",
+        "subscribeOpenTerritoryCandidate",
       ],
       rootKeys: [
         "activity",
@@ -390,10 +392,12 @@ test("launches through the typed preload boundary", async () => {
       ),
     ).resolves.toEqual([
       "dismissProactiveBubble",
+      "dropComposerAttachments",
       "endDrag",
       "focusApproval",
       "focusConversation",
       "focusMain",
+      "focusTerritoryMoment",
       "getPendingApproval",
       "getSnapshot",
       "markReady",
@@ -406,6 +410,7 @@ test("launches through the typed preload boundary", async () => {
       "subscribe",
       "subscribeApproval",
       "subscribeProactiveBubble",
+      "subscribeTerritoryMoment",
       "voice",
       "voiceWake",
     ]);

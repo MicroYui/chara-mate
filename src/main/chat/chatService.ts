@@ -34,6 +34,7 @@ export class ChatService {
     private readonly idGenerator: IdGenerator,
     private readonly clock: Clock,
     private readonly publishChanged: (chat: Chat) => void = () => undefined,
+    private readonly publishCollectionChanged: () => void = () => undefined,
   ) {}
 
   archive(input: ChatIdRequest): Chat {
@@ -95,6 +96,7 @@ export class ChatService {
         throw new Error("Provisional Chat changed before establishment");
       }
       this.#publishChanged(established);
+      this.#publishCollectionChange();
       return established;
     } catch {
       throw new ChatError("CHAT.STORAGE_FAILED", "无法开始这段对话。", true);
@@ -117,6 +119,7 @@ export class ChatService {
         { provisional },
       );
       if (!provisional) this.#publishChanged(chat);
+      if (!provisional) this.#publishCollectionChange();
       return chat;
     } catch {
       throw new ChatError("CHAT.STORAGE_FAILED", "无法创建会话。", true);
@@ -151,6 +154,7 @@ export class ChatService {
       if (!this.chats.deleteChat(request.chatId)) {
         throw new Error("Chat disappeared before delete");
       }
+      this.#publishCollectionChange();
     } catch {
       throw new ChatError("CHAT.STORAGE_FAILED", "无法删除会话。", true);
     }
@@ -320,6 +324,7 @@ export class ChatService {
     try {
       const updated = this.chats.updateChat(chat);
       this.#publishChanged(updated);
+      this.#publishCollectionChange();
       return updated;
     } catch {
       throw new ChatError("CHAT.STORAGE_FAILED", "无法保存会话。", true);
@@ -331,6 +336,14 @@ export class ChatService {
       this.publishChanged(chat);
     } catch {
       // A Renderer notification must never roll back a durable Chat mutation.
+    }
+  }
+
+  #publishCollectionChange(): void {
+    try {
+      this.publishCollectionChanged();
+    } catch {
+      // A projection wake-up must never roll back a durable Chat mutation.
     }
   }
 }

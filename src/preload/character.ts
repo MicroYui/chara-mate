@@ -1,4 +1,6 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { randomUUID } from "node:crypto";
+
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 import {
   AGENT_CHANNELS,
@@ -21,15 +23,20 @@ import {
   type PetCharacterSnapshot,
   type PetConversationNavigation,
   type PetDragPoint,
+  type PetTerritoryCandidateNavigation,
+  type PetTerritoryMomentNotice,
   type ProactiveConversationBubble,
   type ProactiveConversationBubbleDismissRequest,
   type ProactiveConversationBubbleReplyRequest,
 } from "../shared/contracts/pet";
 import {
   PetCharacterSnapshotSchema,
+  PetComposerAttachmentsSchema,
   PetConversationNavigationSchema,
   PetDragPointSchema,
   PetDragResultSchema,
+  PetTerritoryCandidateNavigationSchema,
+  PetTerritoryMomentNoticeEventSchema,
   ProactiveConversationBubbleDismissRequestSchema,
   ProactiveConversationBubbleFrequencyResponseSchema,
   ProactiveConversationBubbleReplyRequestSchema,
@@ -41,6 +48,25 @@ import { createVoiceApi } from "./voiceApi";
 import { createVoiceWakeCharacterApi } from "./voiceWakeApi";
 
 const characterApi: CharacterWindowApi = Object.freeze({
+  dropComposerAttachments: (files: readonly File[]) => {
+    const attachments = [...files].map((file) => ({
+      byteLength: file.size,
+      displayName: file.name,
+      id: randomUUID(),
+      ...(file.type ? { mediaType: file.type } : {}),
+      source: file.type.startsWith("image/")
+        ? ("image" as const)
+        : ("file" as const),
+      storageKey: webUtils.getPathForFile(file),
+    }));
+    if (attachments.length === 0) return;
+    ipcRenderer.send(
+      PET_CHANNELS.dropComposerAttachments,
+      parseSchemaWithoutCodeGeneration(PetComposerAttachmentsSchema, {
+        attachments,
+      }),
+    );
+  },
   endDrag: async (input: PetDragPoint) =>
     parseSchemaWithoutCodeGeneration(
       PetDragResultSchema,
@@ -59,6 +85,14 @@ const characterApi: CharacterWindowApi = Object.freeze({
     ipcRenderer.send(
       PET_CHANNELS.focusConversation,
       parseSchemaWithoutCodeGeneration(PetConversationNavigationSchema, input),
+    ),
+  focusTerritoryMoment: (input: PetTerritoryCandidateNavigation) =>
+    ipcRenderer.send(
+      PET_CHANNELS.focusTerritoryMoment,
+      parseSchemaWithoutCodeGeneration(
+        PetTerritoryCandidateNavigationSchema,
+        input,
+      ),
     ),
   getPendingApproval: async () =>
     parseSchemaWithoutCodeGeneration(
@@ -194,6 +228,24 @@ const characterApi: CharacterWindowApi = Object.freeze({
     ipcRenderer.on(PET_CHANNELS.proactiveBubbleChanged, wrappedListener);
     return () =>
       ipcRenderer.off(PET_CHANNELS.proactiveBubbleChanged, wrappedListener);
+  },
+  subscribeTerritoryMoment: (
+    listener: (notice: PetTerritoryMomentNotice | null) => void,
+  ) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      input: unknown,
+    ): void => {
+      listener(
+        parseSchemaWithoutCodeGeneration(
+          PetTerritoryMomentNoticeEventSchema,
+          input,
+        ),
+      );
+    };
+    ipcRenderer.on(PET_CHANNELS.territoryMomentChanged, wrappedListener);
+    return () =>
+      ipcRenderer.off(PET_CHANNELS.territoryMomentChanged, wrappedListener);
   },
   voice: createVoiceApi(),
   voiceWake: createVoiceWakeCharacterApi(),

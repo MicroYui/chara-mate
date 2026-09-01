@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   COMPANION_FIXTURE_IDS,
+  companionDeviceRegistrationAckFixture,
   companionMailboxFetchRequestFixture,
   companionMailboxPageFixture,
   companionNotificationEnqueueReceiptFixture,
@@ -94,6 +95,7 @@ describe("HttpsCompanionRelayClient", () => {
     const fetchImplementation = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse(companionMailboxPageFixture))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     const client = new HttpsCompanionRelayClient({ fetchImplementation });
 
@@ -107,6 +109,13 @@ describe("HttpsCompanionRelayClient", () => {
     await expect(
       client.acknowledgeDesktopMailbox({
         ack: companionShareAckFixture,
+        credential: CREDENTIAL,
+        relayOrigin: ORIGIN,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      client.acknowledgeDesktopMailbox({
+        ack: companionDeviceRegistrationAckFixture,
         credential: CREDENTIAL,
         relayOrigin: ORIGIN,
       }),
@@ -126,6 +135,10 @@ describe("HttpsCompanionRelayClient", () => {
     expect(requestBody(ackInit)).toEqual(companionShareAckFixture);
     expect(JSON.stringify(requestBody(fetchInit))).not.toContain(CREDENTIAL);
     expect(JSON.stringify(requestBody(ackInit))).not.toContain(CREDENTIAL);
+    const [, registrationAckInit] = fetchImplementation.mock.calls[2] ?? [];
+    expect(requestBody(registrationAckInit)).toEqual(
+      companionDeviceRegistrationAckFixture,
+    );
   });
 
   it("enqueues one stable Android event and accepts only its Relay-owned envelope", async () => {

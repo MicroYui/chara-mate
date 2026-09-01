@@ -136,6 +136,8 @@ describe("Phase 2 Agent Settings", () => {
           endMinute: 8 * 60,
           startMinute: 22 * 60,
         },
+        territoryMomentSurprisesEnabled: false,
+        territoryMomentSurprisesPrompted: false,
       },
       voice: {
         inputMode: "hands_free",
@@ -200,6 +202,8 @@ describe("Phase 2 Agent Settings", () => {
           endMinute: 7 * 60 + 30,
           startMinute: 21 * 60 + 30,
         },
+        territoryMomentSurprisesEnabled: true,
+        territoryMomentSurprisesPrompted: true,
       }),
     ).toEqual({
       importantMomentOutreachEnabled: true,
@@ -210,6 +214,8 @@ describe("Phase 2 Agent Settings", () => {
         endMinute: 7 * 60 + 30,
         startMinute: 21 * 60 + 30,
       },
+      territoryMomentSurprisesEnabled: true,
+      territoryMomentSurprisesPrompted: true,
     });
     expect(initiativeChanges).toEqual([
       {
@@ -222,6 +228,8 @@ describe("Phase 2 Agent Settings", () => {
             endMinute: 7 * 60 + 30,
             startMinute: 21 * 60 + 30,
           },
+          territoryMomentSurprisesEnabled: true,
+          territoryMomentSurprisesPrompted: true,
         },
         previous: {
           importantMomentOutreachEnabled: false,
@@ -232,6 +240,8 @@ describe("Phase 2 Agent Settings", () => {
             endMinute: 8 * 60,
             startMinute: 22 * 60,
           },
+          territoryMomentSurprisesEnabled: false,
+          territoryMomentSurprisesPrompted: false,
         },
       },
     ]);
@@ -245,6 +255,8 @@ describe("Phase 2 Agent Settings", () => {
           endMinute: 9 * 60,
           startMinute: 9 * 60,
         },
+        territoryMomentSurprisesEnabled: true,
+        territoryMomentSurprisesPrompted: true,
       }),
     ).toThrow("开始和结束时间不能相同");
     expect(repository.getVoiceWakeEnabled()).toBe(false);
@@ -274,6 +286,8 @@ describe("Phase 2 Agent Settings", () => {
         endMinute: 7 * 60 + 30,
         startMinute: 21 * 60 + 30,
       },
+      territoryMomentSurprisesEnabled: true,
+      territoryMomentSurprisesPrompted: true,
     });
     reopened.close();
   });

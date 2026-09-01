@@ -7,6 +7,7 @@ import type {
   CompanionDesktopMailboxEnvelope,
   CompanionShareImportedAckResult,
   CompanionSharePayload,
+  CompanionShareUploadedEnvelope,
   CompanionUploadAsset,
 } from "../../shared/contracts/companion";
 import type { ArtifactReference } from "../../shared/contracts/run";
@@ -100,6 +101,7 @@ export type CompanionShareIngressErrorCode =
   | "COMPANION.CHAT_NOT_FOUND"
   | "COMPANION.RECIPIENT_MISMATCH"
   | "COMPANION.SHARE_EXPIRED"
+  | "COMPANION.SHARE_EVENT_REQUIRED"
   | "COMPANION.SHARE_RECOVERY_FAILED"
   | "COMPANION.SHARE_TARGET_MISMATCH";
 
@@ -144,7 +146,13 @@ function payloadSha256(payload: CompanionSharePayload): string {
   return createHash("sha256").update(canonicalJson(payload)).digest("hex");
 }
 
-function inflightIdentity(envelope: CompanionDesktopMailboxEnvelope): string {
+function isShareEnvelope(
+  envelope: CompanionDesktopMailboxEnvelope,
+): envelope is CompanionShareUploadedEnvelope {
+  return envelope.event.type === "companion.share.uploaded";
+}
+
+function inflightIdentity(envelope: CompanionShareUploadedEnvelope): string {
   const share = envelope.event.share;
   return canonicalJson({
     cursor: envelope.cursor,
@@ -184,6 +192,12 @@ export class CompanionShareIngress {
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<CompanionShareImportedAckResult> {
     const envelope = parseSchema(CompanionDesktopMailboxEnvelopeSchema, input);
+    if (!isShareEnvelope(envelope)) {
+      throw this.#error(
+        "COMPANION.SHARE_EVENT_REQUIRED",
+        "Companion share ingress only accepts share upload envelopes.",
+      );
+    }
     const identity = inflightIdentity(envelope);
     const inflight = this.#inflight.get(identity);
     if (inflight) return inflight;
@@ -200,7 +214,7 @@ export class CompanionShareIngress {
   }
 
   async #importEnvelope(
-    envelope: CompanionDesktopMailboxEnvelope,
+    envelope: CompanionShareUploadedEnvelope,
     signal?: AbortSignal,
   ): Promise<CompanionShareImportedAckResult> {
     signal?.throwIfAborted();
@@ -316,7 +330,7 @@ export class CompanionShareIngress {
   }
 
   async #recoverCompletedMessage(
-    envelope: CompanionDesktopMailboxEnvelope,
+    envelope: CompanionShareUploadedEnvelope,
     record: CompanionShareImportRecord,
     signal?: AbortSignal,
   ): Promise<CompanionShareImportedAckResult | undefined> {
@@ -540,7 +554,7 @@ export class CompanionShareIngress {
   }
 
   #assertNotExpired(
-    envelope: CompanionDesktopMailboxEnvelope,
+    envelope: CompanionShareUploadedEnvelope,
     now: string,
   ): void {
     const expiration =

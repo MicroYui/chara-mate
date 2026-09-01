@@ -104,6 +104,7 @@ export const PetEmptyRequestSchema = Type.Object(
 export const PetMainTargetSchema = Type.Union([
   Type.Literal("chat"),
   Type.Literal("character"),
+  Type.Literal("territory"),
 ]);
 
 export const PetMainNavigationSchema = Type.Object(
@@ -116,6 +117,46 @@ export const PetConversationNavigationSchema = Type.Object(
     bubbleId: Type.Optional(EntityIdSchema),
     chatId: EntityIdSchema,
   },
+  { additionalProperties: false },
+);
+
+export const PetComposerAttachmentSchema = Type.Object(
+  {
+    byteLength: Type.Integer({ minimum: 0 }),
+    displayName: NonBlankStringSchema,
+    id: EntityIdSchema,
+    mediaType: Type.Optional(NonBlankStringSchema),
+    source: Type.Union([Type.Literal("file"), Type.Literal("image")]),
+    storageKey: NonBlankStringSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const PetComposerAttachmentsSchema = Type.Object(
+  {
+    attachments: Type.Array(PetComposerAttachmentSchema, { minItems: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const PetTerritoryMomentNoticeSchema = Type.Object(
+  {
+    candidateId: EntityIdSchema,
+    createdAt: TimestampSchema,
+    name: NonBlankStringSchema,
+    status: Type.Union([Type.Literal("ready"), Type.Literal("failed")]),
+    updatedAt: TimestampSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const PetTerritoryMomentNoticeEventSchema = Type.Union([
+  PetTerritoryMomentNoticeSchema,
+  Type.Null(),
+]);
+
+export const PetTerritoryCandidateNavigationSchema = Type.Object(
+  { candidateId: EntityIdSchema },
   { additionalProperties: false },
 );
 

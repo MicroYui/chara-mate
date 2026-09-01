@@ -60,6 +60,8 @@ export const CompanionInitiativeSettingsSchema = Type.Object(
     importantMomentOutreachPrompted: Type.Boolean(),
     level: CompanionInitiativeLevelSchema,
     quietHours: QuietHoursSchema,
+    territoryMomentSurprisesEnabled: Type.Boolean(),
+    territoryMomentSurprisesPrompted: Type.Boolean(),
   },
   { additionalProperties: false },
 );

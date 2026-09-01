@@ -35,6 +35,8 @@ interface CompanionInitiativeSettingsRow {
   quiet_hours_enabled: 0 | 1;
   quiet_hours_end_minute: number;
   quiet_hours_start_minute: number;
+  territory_moment_surprises_enabled: 0 | 1;
+  territory_moment_surprises_prompted: 0 | 1;
 }
 
 const DEFAULT_VOICE_PROVIDER_PROFILE_ID =
@@ -93,7 +95,9 @@ export class SettingsRepository {
         `SELECT important_moment_outreach_enabled,
                 important_moment_outreach_prompted, level,
                 quiet_hours_enabled, quiet_hours_start_minute,
-                quiet_hours_end_minute
+                quiet_hours_end_minute,
+                territory_moment_surprises_enabled,
+                territory_moment_surprises_prompted
          FROM companion_initiative_settings
          WHERE settings_id = 'companion'`,
       )
@@ -112,6 +116,10 @@ export class SettingsRepository {
               endMinute: row.quiet_hours_end_minute,
               startMinute: row.quiet_hours_start_minute,
             },
+            territoryMomentSurprisesEnabled:
+              row.territory_moment_surprises_enabled === 1,
+            territoryMomentSurprisesPrompted:
+              row.territory_moment_surprises_prompted === 1,
           }
         : DEFAULT_COMPANION_INITIATIVE_SETTINGS,
     );
@@ -128,12 +136,16 @@ export class SettingsRepository {
            settings_id, important_moment_outreach_enabled,
            important_moment_outreach_prompted, level,
            quiet_hours_enabled,
-           quiet_hours_start_minute, quiet_hours_end_minute, updated_at
+           quiet_hours_start_minute, quiet_hours_end_minute,
+           territory_moment_surprises_enabled,
+           territory_moment_surprises_prompted, updated_at
          ) VALUES (
            'companion', @importantMomentOutreachEnabled,
            @importantMomentOutreachPrompted, @level,
            @quietHoursEnabled,
-           @quietHoursStartMinute, @quietHoursEndMinute, @updatedAt
+           @quietHoursStartMinute, @quietHoursEndMinute,
+           @territoryMomentSurprisesEnabled,
+           @territoryMomentSurprisesPrompted, @updatedAt
          )
          ON CONFLICT(settings_id) DO UPDATE SET
            important_moment_outreach_enabled = excluded.important_moment_outreach_enabled,
@@ -142,6 +154,8 @@ export class SettingsRepository {
            quiet_hours_enabled = excluded.quiet_hours_enabled,
            quiet_hours_start_minute = excluded.quiet_hours_start_minute,
            quiet_hours_end_minute = excluded.quiet_hours_end_minute,
+           territory_moment_surprises_enabled = excluded.territory_moment_surprises_enabled,
+           territory_moment_surprises_prompted = excluded.territory_moment_surprises_prompted,
            updated_at = excluded.updated_at`,
       )
       .run({
@@ -155,6 +169,12 @@ export class SettingsRepository {
         quietHoursEnabled: value.quietHours.enabled ? 1 : 0,
         quietHoursEndMinute: value.quietHours.endMinute,
         quietHoursStartMinute: value.quietHours.startMinute,
+        territoryMomentSurprisesEnabled: value.territoryMomentSurprisesEnabled
+          ? 1
+          : 0,
+        territoryMomentSurprisesPrompted: value.territoryMomentSurprisesPrompted
+          ? 1
+          : 0,
         updatedAt,
       });
     return this.getCompanionInitiative();

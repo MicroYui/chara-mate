@@ -4,11 +4,11 @@
 
 ## 当前里程碑
 
-**经历回响与跨设备陪伴 — `implementing`**
+**经历回响与跨设备陪伴 — `done`**
 
 产品方向已确认：用户一次允许重要时刻主动联系后，明确未来事件可以形成到点仍会重判的一次机会；Android 作为通知与分享入口，Desktop 保持唯一 Agent/Memory/Chat/Run/Territory 真源；显著 Chat Moment 可以由现有 Territory 生成能力自主决定表达什么，但只准备待确认 Preview，不固定拍立得等模板，也不自动修改 World。
 
-`EXPERIENCE-ECHO-TIMING` 已按用户要求不做大规模实验，选择固定在 `occursAt` 前 30 分钟获得一次重判机会；事件形成时若不足 30 分钟则不即时补发。`ECHO-PROACTIVE-OPPORTUNITY` 已完成 Memory `occursAt/timeZone`、重要时刻类别许可、持久机会、恢复重查和同一 Chat Run/单表面投影。`ECHO-MOBILE-CONTRACT` 已冻结 Android/Relay/Desktop Bridge 共用的 pairing、device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标与 ack v1 Schema；`ECHO-DESKTOP-BRIDGE` 当前切片已完成 Main 单手机配对、手机分享导入、已完成 Assistant Message 的稳定 Android mailbox 投影、桌面/手机唯一表面选择、投影恢复、黏性协议状态和 Settings → Devices 配对管理。Schema v23 把主动频率基线统一为“即时表面接受”：桌面仍要求气泡实际展示，Android 只记录稳定选择/入队接受，不伪造操作系统展示或交互结果。独立 Relay/Android、三部署单元联合验收、手机只读消息详情与 `chat_moment` Territory 来源仍未实现。任何真实 Provider/FCM/Image Live 仍需用户明确授权。
+`EXPERIENCE-ECHO-TIMING` 已按用户要求不做大规模实验，选择固定在 `occursAt` 前 30 分钟获得一次重判机会；事件形成时若不足 30 分钟则不即时补发。`ECHO-PROACTIVE-OPPORTUNITY` 已完成 Memory `occursAt/timeZone`、重要时刻类别许可、持久机会、恢复重查和同一 Chat Run/单表面投影。跨设备 v1 已完成 compact mailbox wake、设备通知权限回传、最近 Chat 全量替换、双向 mailbox、附件上传与幂等 ack；Desktop、独立 Relay 和 Android Companion 均已实现，本地受信 HTTPS 三部署链路已验证配对、通知、只读消息详情、最近 Chat、PNG/Markdown/PDF 分享、断网重试和素材清理。Schema v24 已完成 `chat_moment`、领地惊喜许可、稳定 `momentKey`、来源快照、既有 Candidate/Preview/Apply、三个候选操作和桌宠待查看提示。真实 Firebase/FID、物理手机、系统通知权限切换与真实 Image Live 未运行，不宣称已验证。
 
 ### 已完成绿色基线
 
@@ -80,12 +80,13 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
 | `ECHO-PROACTIVE-OPPORTUNITY` | `main` | `done` | Schema v20、Memory 明确时间、类别许可、持久机会、启动/恢复重查、取消/恢复与同一 Chat Run/气泡投影完成 |
-| `ECHO-MOBILE-CONTRACT` | `main`（桌面合同 owner） | `done` | pairing/device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、通知、最近 Chat 目标与 ack v1 Schema 已冻结；未提前创建数据库表、IPC 或传输实现 |
-| `ECHO-MOBILE-COMPANION` | `main`（桌面合同 owner） | `implementing` | v1 合同已就绪；Relay/Android 可在独立仓库并行，Desktop Bridge 依合同接入唯一 Chat/Attachment/Run 真源 |
-| `ECHO-MAILBOX-PUSH-RELAY` | 独立 Relay owner | `contract-ready` | 待在独立部署单元实现 mailbox、临时附件、幂等 ack 与 FCM adapter |
-| `ECHO-ANDROID-COMPANION` | 独立 Android owner | `contract-ready` | 待实现配对、通知、精确消息详情、Sharesheet 与 WorkManager 上传队列 |
-| `ECHO-DESKTOP-BRIDGE` | `main` | `integration-verified` | 入站分享、Assistant Message 单表面投影、稳定 Android enqueue/recovery、黏性协议状态与 Devices UI 已接入；独立 Relay/Android 及 paired 联合生命周期待跨部署验收 |
-| `ECHO-TERRITORY-MOMENT` | `main`（Territory integration owner） | `specified` | `chat_moment` 只扩展既有 Candidate 来源且不固定物件形态；等待 `TERRITORY-MOMENT-SELECTION` 与跨设备附件合同 |
+| `ECHO-MOBILE-CONTRACT` | `main`（桌面合同 owner） | `done` | pairing/device、分方向 opaque cursor mailbox、compact wake、`registration_updated`、`chat_targets.replaced`、稳定 submission、单素材 upload request/receipt 与幂等 ack v1 Schema 已冻结并实现 |
+| `ECHO-MOBILE-COMPANION` | `main`（桌面合同 owner） | `done` | Desktop、Relay、Android 三个部署单元完成并通过本地受信 HTTPS 联合验收，Desktop 仍是唯一 Chat/Attachment/Run/Memory 真源 |
+| `ECHO-MAILBOX-PUSH-RELAY` | 独立 Relay owner | `done` | mailbox、临时附件、cursor/ack、保留期、compact FCM adapter 与权限事件完成；acceptance 1/1、check 12/12、build 通过 |
+| `ECHO-ANDROID-COMPANION` | 独立 Android owner | `done` | 配对、通知、精确只读消息详情、最近 Chat、Sharesheet 私有缓存与 WorkManager 队列完成；8 个 JVM 单测、4 个常规 API 36 instrumentation、4 个 opt-in 联合验收及 release/lint 通过 |
+| `ECHO-DESKTOP-BRIDGE` | `main` | `done` | 双向 mailbox、权限同步、最近 Chat 投影、手机分享导入、桌宠拖放和真实附件输入均接入同一 Chat/Attachment/Run；恢复与解绑生命周期完成 |
+| `ECHO-MOBILE-ACCEPTANCE` | Desktop/Relay/Android | `done` | 本地 CA + HTTPS Relay + 实际 Desktop Relay client + API 36 Android 正式 Worker 验证通知去重、详情、PNG/Markdown/PDF、重试、双重 ack 与素材清理；fake push 不冒充真实 FCM |
+| `ECHO-TERRITORY-MOMENT` | `main`（Territory integration owner） | `done` | `M1-IN-RUN` 单一路径、独立许可、稳定 `momentKey`、`chat_moment` 来源、既有 Candidate/Preview/Apply、三个候选操作与桌宠提示完成；不固定物件形态 |
 | `TERRITORY-NPC-ACTION-DECISION` | `codex/character-dialogue-roadmap` | `done` | 选择 T1；生产 `territory.observe → territory.act`、宿主裁决与 Renderer event 已通过完整 offline、25/25 Electron E2E、package 与 packaged smoke |
 | `TERRITORY-NPC-ACTION-EXPERIMENT` | `codex/territory-npc-action-experiment` | `done` | node:test 4/4；27 样本/79 次有效 Provider 请求，T0/T1/T2 均 9/9，raw 仅保存在仓库外 |
 | `NARRATIVE-AGENCY-DECISION` | `codex/character-dialogue-roadmap` | `done` | 48 次有效 Pilot 选择 N0-RULES；生产只补同一 Agent 的角色控制权与虚构事实边界，无 projection/director/新状态 |
@@ -131,8 +132,8 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 ## 依赖、边界与已知问题
 
 - 当前生产已支持用户明确陈述的未来 `event/commitment` 通过 `occursAt/timeZone` 和重要时刻类别许可形成一次持久 `ProactiveOpportunity`；到点仍经过 P2、并发状态与模型语义门，可以静默。它只在 Desktop Main 运行、启动或系统恢复时重查，不是精确闹钟，也不能在 PC 离线时产生新的 Agent 判断。
-- 当前没有独立 Mailbox/Push Relay 部署、Android app、真实 FCM、手机只读消息详情或桌宠附件拖放入口；Desktop 已实现 Relay v1 endpoint client、稳定 Android notification enqueue，并能把合法手机分享信封导入真实 User Message/Attachment。图片使用真实像素；UTF-8 文本/Markdown 可取得正文，PDF/其他文件当前只作附件并不声称已理解内容。
-- 当前 Territory 自主生成已有统一 Candidate/Preview 与自由物件表达，但来源只覆盖 Memory/Activity，Agent Tool 尚未绑定 Chat/附件来源；后台 Moment Preview、`momentKey` 去重和用户“换一种表达 / 这次不要”尚未实现。
+- 独立 Relay、Android 与 Desktop 本地三部署链路已完成。桌宠拖放会预填同一 Chats Composer，并进入统一 Attachment/Run；图片读取真实像素，UTF-8 文本/Markdown 读取正文，PDF 与其他文件只作为未解析附件。真实 FCM/FID、物理手机与系统通知权限切换仍属于发布前 Live 验收边界。
+- Territory Moment 已完成同一 Run 内稀疏提议、幂等候选和桌宠提示；表达由经历与领地风格决定，用户应用前不修改 World。真实 Image Live 未运行。
 - `CHARACTER-DIALOGUE` 已选择并实现 A1。它复用现有 Agent Runtime、Memory、Journey、Voice 与已接受 `CONTEXT-RECIPE`；实验 Arm 和 A2 状态只留在 disposable worktree，不进入生产路径。
 - Persona、revision snapshot 与 Character Context Compiler 已成为唯一生产路径；固定 `Hi Mika` 只保留为当前产品定义的唤醒短语，不再承担非唤醒场景的人格配置。
 - `VOICE-WAKE` 只接受固定短语 `Hi Mika`。Realtime `server_vad` 只在已建立的 Realtime Session 内划分语音边界，不承担待机唤醒；唤醒命中与 out-of-band 连接欢迎语都不写 Chat/Run/Memory，只有后续非空 Realtime 用户转写才进入现有 Voice Run。
@@ -150,6 +151,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 ## 最近绿色验证
 
+- 2026-09-01 经历回响与跨设备陪伴完整收口：Main Schema v24、PC 桌宠附件拖放、实际附件字节/UTF-8 正文、Companion 权限与最近 Chat 同步、`M1-IN-RUN` Territory Moment 和候选导航完成。`npm run verify:offline` 通过（contract 134/134、focused/component 604/604、integration 218/218），production build、Electron E2E 25/25、arm64 package、packaged smoke 与 make/DMG 通过；`git diff --check` 通过，保留 2 条既有 TanStack Virtual warning 和大型懒加载 chunk 提示。Relay acceptance 1/1、check 12/12、build 通过。Android 8 个 JVM 单测、API 36 常规 instrumentation 4/4、assembleRelease 与 lintDebug 通过；另以本地 CA、真实 HTTPS Relay、实际 Desktop `HttpsCompanionRelayClient` 和 Android 正式 Worker 逐项完成 4/4 opt-in 联合验收，覆盖重复 claim、通知/消息去重、只读详情、PNG/Markdown/PDF、断线重试、原始字节/hash、幂等 ack 与素材清理。真实 FCM/FID、物理手机、系统权限切换、Provider 与 Image Live 未运行。
 - 2026-09-01 Assistant Message 跨设备投影与 Devices UI：Schema v23 将最近主动记录从桌面“已展示”推广为唯一即时表面“已接受”，桌面仍要求气泡真实展示，Android 只记录稳定选择/入队而不伪造系统通知结果。Desktop Bridge 新增幂等 Android mailbox enqueue、投影恢复、Relay 回执身份校验、入站/出站共享的黏性协议状态、缺失凭据锁存与重新配对恢复；Settings → Devices 提供单手机二维码、连接/通知/协议状态和解除配对，并以 operation token 避免异步响应覆盖实时事件。`npm run verify:offline` 通过：contract 130/130、focused/component 569/569、integration 213/213；production build 与完整 Electron E2E 25/25 通过，TypeScript、ESLint、Prettier 和 `git diff --check` 通过。保留 2 条既有 TanStack Virtual warning 和大型懒加载 chunk 提示。未运行 package/make、独立 Relay/Android、真实 FCM、Provider 或 Image Live。
 - 2026-09-01 Desktop Companion Bridge Main 集成：Schema v22 在既有 cursor CAS 上持久化前序游标；Main 通过系统密钥存储引用保留配对凭据，接入可取消 pairing/mailbox 长询问、pending ack 优先重放及严格 `import → cursor 校验 → ack → mark`，手机文本、图片、UTF-8 文本/Markdown、PDF/普通文件经受管资产进入现有 User Message/Attachment/Run/Item。配对回滚、过期、长询问续接、Relay/凭据失败解绑恢复、Provider 晚失败、重复/并发冲突、处理器启停/唤醒及解绑期间锁存暂停均有确定性覆盖。直接使用 lockfile 安装入口完成全量离线验证：contract 130/130、focused/component 544/544、integration 211/211，TypeScript、ESLint、Prettier、`git diff --check`、production native/build 与完整 Electron E2E 25/25 通过；Companion 的 E2E 断言当前只覆盖 typed preload、未配对 IPC 和启动/关闭 smoke，paired Relay 生命周期留待跨部署验收。保留 2 条既有 TanStack Virtual warning 和大型懒加载 chunk 提示。未接入或运行独立 Relay、Android、FCM、真实 Provider/Image Live 或 package。
 - 2026-09-01 Android Companion v1 合同：pairing/device、分方向 opaque cursor mailbox、稳定 `submissionId`、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标和 ack Schema 已冻结；TypeScript、受影响 ESLint/Prettier、`git diff --check` 与 contract 128/128 通过，其中 companion 正反例同时覆盖 Ajv codegen 和无 codegen validator。未创建数据库迁移、IPC、Relay/Android 源码，未运行真实 FCM。

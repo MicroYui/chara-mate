@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { StartRunRequest } from "../../shared/contracts/agent";
 import type { Attachment, Chat, Message } from "../../shared/contracts/chat";
 import type {
-  CompanionDesktopMailboxEnvelope,
   CompanionSharePayload,
+  CompanionShareUploadedEnvelope,
   CompanionUploadAsset,
 } from "../../shared/contracts/companion";
 import type { ArtifactReference } from "../../shared/contracts/run";
@@ -44,7 +44,7 @@ function sha256(bytes: Buffer | string): string {
 
 function textEnvelope(
   target: CompanionSharePayload["target"] = { kind: "new_chat" },
-): CompanionDesktopMailboxEnvelope {
+): CompanionShareUploadedEnvelope {
   return {
     createdAt: NOW,
     cursor: "cursor-1",
@@ -78,7 +78,7 @@ function attachmentEnvelope(
     readonly byteLength?: number;
     readonly target?: CompanionSharePayload["target"];
   } = {},
-): CompanionDesktopMailboxEnvelope {
+): CompanionShareUploadedEnvelope {
   return {
     createdAt: NOW,
     cursor: "cursor-1",
@@ -379,7 +379,7 @@ function createHarness(
     readRelayAsset,
     restore,
     seedClaimedRun: (
-      envelope: CompanionDesktopMailboxEnvelope,
+      envelope: CompanionShareUploadedEnvelope,
       message: Message,
       provisional = true,
     ) => {
@@ -412,7 +412,7 @@ function createHarness(
     setNow: (now: string) => {
       currentNow = now;
     },
-    seedBoundRunWithoutMessage: (envelope: CompanionDesktopMailboxEnvelope) => {
+    seedBoundRunWithoutMessage: (envelope: CompanionShareUploadedEnvelope) => {
       const sourceKind = envelope.event.share.kind;
       shareRecord = {
         claimedAt: NOW,

@@ -188,6 +188,15 @@ const DevicePermissionSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const AdvanceDesktopMailboxCursorSchema = Type.Object(
+  {
+    expectedCursor: Type.Optional(NonBlankStringSchema),
+    nextCursor: NonBlankStringSchema,
+    updatedAt: TimestampSchema,
+  },
+  { additionalProperties: false },
+);
+
 const DeviceStatusUpdateSchema = Type.Object(
   {
     deviceId: EntityIdSchema,
@@ -497,6 +506,11 @@ export class CompanionBridgeRepository {
       permission,
       updatedAt,
     });
+    const current = this.getPairedDevice();
+    if (!current || current.device.id !== input.deviceId) return undefined;
+    if (current.device.notificationPermission === input.permission) {
+      return current;
+    }
     const changed = this.database
       .prepare(
         `UPDATE paired_companion_devices
@@ -505,6 +519,50 @@ export class CompanionBridgeRepository {
       )
       .run(input.permission, input.updatedAt, input.deviceId).changes;
     return changed === 1 ? this.getPairedDevice() : undefined;
+  }
+
+  advanceDesktopMailboxCursor(
+    expectedCursor: string | undefined,
+    nextCursor: string,
+    updatedAt: string,
+  ): boolean {
+    const input = parseSchema(AdvanceDesktopMailboxCursorSchema, {
+      ...(expectedCursor === undefined ? {} : { expectedCursor }),
+      nextCursor,
+      updatedAt,
+    });
+    const current = this.getDesktopMailboxCursor();
+    if (current === input.nextCursor) return true;
+    if (current !== input.expectedCursor) return false;
+
+    const desktopInstanceId = this.getOrCreateDesktopInstanceId();
+    if (input.expectedCursor === undefined) {
+      return (
+        this.database
+          .prepare(
+            `INSERT OR IGNORE INTO companion_mailbox_cursors (
+               desktop_instance_id, recipient_kind, cursor, updated_at
+             ) VALUES (?, 'desktop', ?, ?)`,
+          )
+          .run(desktopInstanceId, input.nextCursor, input.updatedAt).changes ===
+        1
+      );
+    }
+    return (
+      this.database
+        .prepare(
+          `UPDATE companion_mailbox_cursors
+           SET cursor = ?, updated_at = ?
+           WHERE desktop_instance_id = ? AND recipient_kind = 'desktop'
+             AND cursor = ?`,
+        )
+        .run(
+          input.nextCursor,
+          input.updatedAt,
+          desktopInstanceId,
+          input.expectedCursor,
+        ).changes === 1
+    );
   }
 
   updateDeviceStatus(
@@ -1110,36 +1168,6 @@ export class CompanionBridgeRepository {
       .get(DESKTOP_INSTANCE_METADATA_KEY) as
       { readonly value: string } | undefined;
     return row ? parseSchema(EntityIdSchema, row.value) : undefined;
-  }
-
-  private advanceDesktopMailboxCursor(
-    expectedCursor: string | undefined,
-    nextCursor: string,
-    updatedAt: string,
-  ): boolean {
-    const desktopInstanceId = this.getOrCreateDesktopInstanceId();
-    if (expectedCursor === undefined) {
-      return (
-        this.database
-          .prepare(
-            `INSERT OR IGNORE INTO companion_mailbox_cursors (
-               desktop_instance_id, recipient_kind, cursor, updated_at
-             ) VALUES (?, 'desktop', ?, ?)`,
-          )
-          .run(desktopInstanceId, nextCursor, updatedAt).changes === 1
-      );
-    }
-    return (
-      this.database
-        .prepare(
-          `UPDATE companion_mailbox_cursors
-           SET cursor = ?, updated_at = ?
-           WHERE desktop_instance_id = ? AND recipient_kind = 'desktop'
-             AND cursor = ?`,
-        )
-        .run(nextCursor, updatedAt, desktopInstanceId, expectedCursor)
-        .changes === 1
-    );
   }
 
   private getShareImportByEnvelopeId(
