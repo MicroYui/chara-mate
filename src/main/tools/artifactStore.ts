@@ -1,8 +1,17 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  link,
+  mkdir,
+  readFile,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
+import type { EntityId } from "../../shared/contracts/primitives";
 import type { ArtifactReference } from "../../shared/contracts/run";
 import type { IdGenerator } from "../../shared/pure/id";
 
@@ -83,6 +92,54 @@ export class ArtifactStore {
       sha256: createHash("sha256").update(content).digest("hex"),
       storageKey,
     };
+  }
+
+  async storeBufferWithStableId(
+    scopeId: EntityId,
+    artifactId: EntityId,
+    displayName: string,
+    content: Buffer,
+    mediaType: string,
+    kind: ArtifactReference["kind"],
+  ): Promise<ArtifactReference> {
+    const storageKey = path.join(scopeId, `${artifactId}.bin`);
+    const destination = this.resolvePath(storageKey);
+    const sha256 = createHash("sha256").update(content).digest("hex");
+    const reference: ArtifactReference = {
+      artifactId,
+      byteLength: content.byteLength,
+      displayName,
+      kind,
+      mediaType,
+      sha256,
+      storageKey,
+    };
+    const directory = path.dirname(destination);
+    const contentTemporary = path.join(
+      directory,
+      `.${artifactId}.${randomUUID()}.tmp`,
+    );
+    await mkdir(directory, { recursive: true });
+    try {
+      await writeFile(contentTemporary, content, { flag: "wx" });
+      try {
+        await link(contentTemporary, destination);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const existingContent = await readFile(destination);
+        if (!existingContent.equals(content)) {
+          throw new Error(
+            `Artifact ${artifactId} already exists with different bytes`,
+            { cause: error },
+          );
+        }
+      }
+    } finally {
+      await unlink(contentTemporary).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+    }
+    return reference;
   }
 
   async storeFile(

@@ -193,6 +193,14 @@ describe("CompanionBridgeRepository", () => {
         }),
       "COMPANION.SHARE_IDENTITY_CONFLICT",
     );
+    expectPersistenceCode(
+      () =>
+        repository.claimShare({
+          ...claim,
+          predecessorCursor: "opaque-unrelated",
+        }),
+      "COMPANION.SHARE_IDENTITY_CONFLICT",
+    );
 
     expect(
       repository.bindOrRebindShareRun({
@@ -232,6 +240,8 @@ describe("CompanionBridgeRepository", () => {
     expect(repository.getDesktopMailboxCursor()).toBe("opaque-cursor-1");
     database.prepare("DELETE FROM chats WHERE id = ?").run(IDS.chat);
     expect(repository.listPendingShareAcks()).toHaveLength(1);
+    expect(repository.pruneExpiredShares(EXPIRES)).toBe(0);
+    expect(repository.listPendingShareAcks()).toHaveLength(1);
 
     expect(repository.markShareAcked(IDS.submission, LATEST).relayAckedAt).toBe(
       LATEST,
@@ -245,7 +255,7 @@ describe("CompanionBridgeRepository", () => {
     expect(repository.getDesktopMailboxCursor()).toBe("opaque-cursor-1");
   });
 
-  it("protects a persisted User Message and rolls back cursor conflicts", () => {
+  it("protects a persisted User Message without rebasing its predecessor cursor", () => {
     database = openDatabase();
     const repository = new CompanionBridgeRepository(database);
     repository.getOrCreateDesktopInstanceId(() => IDS.desktop);
@@ -268,6 +278,7 @@ describe("CompanionBridgeRepository", () => {
       envelopeId: IDS.envelope,
       expiresAt: EXPIRES,
       payloadSha256: "1".repeat(64),
+      predecessorCursor: "opaque-before",
       relayAssetId: IDS.envelope2,
       sourceKind: "attachment",
       submissionId: IDS.submission,
@@ -290,7 +301,7 @@ describe("CompanionBridgeRepository", () => {
       .prepare(
         `INSERT INTO companion_mailbox_cursors (
            desktop_instance_id, recipient_kind, cursor, updated_at
-         ) VALUES (?, 'desktop', 'opaque-before', ?)`,
+         ) VALUES (?, 'desktop', 'opaque-newer', ?)`,
       )
       .run(IDS.desktop, NOW);
 
@@ -299,7 +310,6 @@ describe("CompanionBridgeRepository", () => {
         repository.completeShareImport({
           attachmentId: IDS.attachment,
           chatId: IDS.chat,
-          expectedCursor: "wrong-cursor",
           importedAt: LATEST,
           messageId: IDS.message,
           submissionId: IDS.submission,
@@ -307,7 +317,19 @@ describe("CompanionBridgeRepository", () => {
       "COMPANION.MAILBOX_CURSOR_CONFLICT",
     );
     expect(repository.getShareImport(IDS.submission)?.state).toBe("claimed");
-    expect(repository.getDesktopMailboxCursor()).toBe("opaque-before");
+    expect(repository.getDesktopMailboxCursor()).toBe("opaque-newer");
+    expectPersistenceCode(
+      () =>
+        repository.completeShareImport({
+          attachmentId: IDS.attachment,
+          chatId: IDS.chat,
+          importedAt: LATEST,
+          messageId: IDS.message,
+          submissionId: IDS.submission,
+        }),
+      "COMPANION.MAILBOX_CURSOR_CONFLICT",
+    );
+    expect(repository.getDesktopMailboxCursor()).toBe("opaque-newer");
 
     repository.claimShare(
       textClaim({

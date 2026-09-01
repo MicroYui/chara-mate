@@ -1471,6 +1471,46 @@ describe("Agent Runtime production path", () => {
     fixture.database.close();
   });
 
+  it("binds an ordinary turn at allocation before persisting its Run and User Message", async () => {
+    const fixture = await createFixture([finalTurn("收到手机分享")]);
+    let allocatedRunId: string | undefined;
+
+    const run = await fixture.runtime.start(
+      {
+        attachments: [],
+        chatId: fixture.chatId,
+        content: "从手机分享的文字",
+        execution: { mode: "chat" },
+        providerProfileId: PROFILE_ID,
+        requestedAt: REQUESTED_AT,
+      },
+      {
+        onRunAllocated: (runId) => {
+          allocatedRunId = runId;
+          expect(fixture.runs.getRun(runId)).toBeUndefined();
+          expect(
+            new ChatRepository(fixture.database).listRunMessages(runId),
+          ).toEqual([]);
+        },
+      },
+    );
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(allocatedRunId).toBe(run.id);
+    expect(
+      new ChatRepository(fixture.database).listRunMessages(run.id),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          content: "从手机分享的文字",
+          role: "user",
+          status: "completed",
+        }),
+      ]),
+    );
+    fixture.database.close();
+  });
+
   it("lets Chat use plan and idempotent read tools while retaining the same Harness", async () => {
     const plan = {
       plan: [{ status: "in_progress" as const, step: "查询信息" }],

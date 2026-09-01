@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "21";
+export const CURRENT_SCHEMA_VERSION = "22";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -1065,6 +1065,9 @@ export const CURRENT_SCHEMA_SQL = `
     source_kind TEXT NOT NULL CHECK (source_kind IN ('text', 'attachment')),
     relay_asset_id TEXT,
     cursor TEXT NOT NULL CHECK (length(trim(cursor)) > 0),
+    predecessor_cursor TEXT CHECK (
+      predecessor_cursor IS NULL OR length(trim(predecessor_cursor)) > 0
+    ),
     state TEXT NOT NULL CHECK (state IN ('claimed', 'imported')),
     run_id TEXT UNIQUE,
     expires_at TEXT NOT NULL,

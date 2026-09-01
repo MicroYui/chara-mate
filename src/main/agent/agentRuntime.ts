@@ -870,11 +870,20 @@ export class AgentRuntime {
     }
   }
 
-  async start(request: StartRunRequest): Promise<Run> {
+  async start(
+    request: StartRunRequest,
+    options?: { readonly onRunAllocated?: (runId: string) => void },
+  ): Promise<Run> {
     return this.#start(
       request,
       await this.providers.createChatModelRuntime(request.providerProfileId),
       this.personas.getActiveSnapshot(),
+      undefined,
+      true,
+      true,
+      true,
+      undefined,
+      options?.onRunAllocated,
     );
   }
 

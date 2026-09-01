@@ -37,6 +37,7 @@ const ShareIdentityProperties = {
   envelopeId: EntityIdSchema,
   expiresAt: TimestampSchema,
   payloadSha256: Sha256Schema,
+  predecessorCursor: Type.Optional(NonBlankStringSchema),
   submissionId: EntityIdSchema,
 };
 
@@ -67,6 +68,7 @@ const CompanionShareImportRecordSchema = Type.Object(
     importedAt: Type.Optional(TimestampSchema),
     messageId: Type.Optional(EntityIdSchema),
     payloadSha256: Sha256Schema,
+    predecessorCursor: Type.Optional(NonBlankStringSchema),
     relayAckedAt: Type.Optional(TimestampSchema),
     relayAssetId: Type.Optional(EntityIdSchema),
     runId: Type.Optional(EntityIdSchema),
@@ -91,7 +93,6 @@ const CompleteShareImportSchema = Type.Object(
   {
     attachmentId: Type.Optional(EntityIdSchema),
     chatId: EntityIdSchema,
-    expectedCursor: Type.Optional(NonBlankStringSchema),
     importedAt: TimestampSchema,
     messageId: EntityIdSchema,
     submissionId: EntityIdSchema,
@@ -258,6 +259,7 @@ interface ShareImportRow {
   readonly imported_at: string | null;
   readonly message_id: string | null;
   readonly payload_sha256: string;
+  readonly predecessor_cursor: string | null;
   readonly relay_acked_at: string | null;
   readonly relay_asset_id: string | null;
   readonly run_id: string | null;
@@ -290,8 +292,9 @@ const DEVICE_COLUMNS = `
 
 const SHARE_IMPORT_COLUMNS = `
   submission_id, device_id, envelope_id, payload_sha256, source_kind,
-  relay_asset_id, cursor, state, run_id, expires_at, chat_id, message_id,
-  attachment_id, claimed_at, imported_at, relay_acked_at, updated_at
+  relay_asset_id, cursor, predecessor_cursor, state, run_id, expires_at,
+  chat_id, message_id, attachment_id, claimed_at, imported_at,
+  relay_acked_at, updated_at
 `;
 
 const MESSAGE_PROJECTION_COLUMNS = `
@@ -345,6 +348,7 @@ function readShareImport(row: ShareImportRow): CompanionShareImportRecord {
     ...optionalProperty("importedAt", row.imported_at),
     ...optionalProperty("messageId", row.message_id),
     payloadSha256: row.payload_sha256,
+    ...optionalProperty("predecessorCursor", row.predecessor_cursor),
     ...optionalProperty("relayAckedAt", row.relay_acked_at),
     ...optionalProperty("relayAssetId", row.relay_asset_id),
     ...optionalProperty("runId", row.run_id),
@@ -383,6 +387,7 @@ function sameShareIdentity(
     current.payloadSha256 === candidate.payloadSha256 &&
     current.sourceKind === candidate.sourceKind &&
     current.cursor === candidate.cursor &&
+    current.predecessorCursor === candidate.predecessorCursor &&
     current.expiresAt === candidate.expiresAt &&
     (current.sourceKind === "text" ||
       (candidate.sourceKind === "attachment" &&
@@ -589,12 +594,12 @@ export class CompanionBridgeRepository {
         .prepare(
           `INSERT INTO companion_share_imports (
              submission_id, device_id, envelope_id, payload_sha256,
-             source_kind, relay_asset_id, cursor, state, run_id, expires_at,
-             chat_id, message_id, attachment_id, claimed_at, imported_at,
-             relay_acked_at, updated_at
+             source_kind, relay_asset_id, cursor, predecessor_cursor, state,
+             run_id, expires_at, chat_id, message_id, attachment_id,
+             claimed_at, imported_at, relay_acked_at, updated_at
            ) VALUES (
-             ?, ?, ?, ?, ?, ?, ?, 'claimed', NULL, ?, NULL, NULL, NULL, ?,
-             NULL, NULL, ?
+             ?, ?, ?, ?, ?, ?, ?, ?, 'claimed', NULL, ?, NULL, NULL, NULL,
+             ?, NULL, NULL, ?
            )`,
         )
         .run(
@@ -605,6 +610,7 @@ export class CompanionBridgeRepository {
           value.sourceKind,
           value.sourceKind === "attachment" ? value.relayAssetId : null,
           value.cursor,
+          value.predecessorCursor ?? null,
           value.expiresAt,
           value.claimedAt,
           value.claimedAt,
@@ -755,7 +761,7 @@ export class CompanionBridgeRepository {
         );
       if (
         !this.advanceDesktopMailboxCursor(
-          value.expectedCursor,
+          record.predecessorCursor,
           record.cursor,
           value.importedAt,
         )
@@ -819,7 +825,14 @@ export class CompanionBridgeRepository {
   pruneExpiredShares(now: string): number {
     const timestamp = parseSchema(TimestampSchema, now);
     return this.database
-      .prepare("DELETE FROM companion_share_imports WHERE expires_at <= ?")
+      .prepare(
+        `DELETE FROM companion_share_imports
+         WHERE expires_at <= ?
+           AND (
+             state = 'claimed' OR
+             (state = 'imported' AND relay_acked_at IS NOT NULL)
+           )`,
+      )
       .run(timestamp).changes;
   }
 
