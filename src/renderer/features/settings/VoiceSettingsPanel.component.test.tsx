@@ -8,9 +8,14 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProviderApi } from "../../../shared/contracts/provider";
+import type { PersonaApi } from "../../../shared/contracts/persona";
 import type { SettingsApi } from "../../../shared/contracts/settings";
 import type { VoiceWakeSettingsApi } from "../../../shared/contracts/voiceWake";
 import type { VoiceStore } from "../voice/voiceStore";
+import {
+  FIXTURE_TIMESTAMPS,
+  personaSnapshotFixture,
+} from "../../../../tests/fixtures/foundationContracts";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 const PROFILE_ID = "10000000-0000-4000-8000-000000000001";
@@ -43,12 +48,18 @@ describe("Voice Settings panel", () => {
             profileDirectory: "/profile",
             screenRecording: "granted",
           },
+          companionInitiative: {
+            level: "balanced",
+            quietHours: {
+              enabled: true,
+              endMinute: 8 * 60,
+              startMinute: 22 * 60,
+            },
+          },
           voice: {
             inputMode: "hands_free",
-            instructions: "自然、简洁地说中文。",
             microphone: "granted",
             providerProfileId: PROFILE_ID,
-            voice: "verse",
           },
         },
       }),
@@ -56,6 +67,7 @@ describe("Voice Settings panel", () => {
       openDataDirectory: vi.fn(),
       openManagedBrowser: vi.fn(),
       saveAgent: vi.fn(),
+      saveCompanionInitiative: vi.fn(),
       saveVoice,
     } satisfies SettingsApi;
     const providerApi = {
@@ -83,6 +95,26 @@ describe("Voice Settings panel", () => {
     } satisfies ProviderApi;
     const preview = vi.fn().mockResolvedValue(undefined);
     const voiceStore = { preview } as unknown as VoiceStore;
+    const personaApi = {
+      copy: vi.fn(),
+      getLibrary: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          activePersonaId: personaSnapshotFixture.personaId,
+          personas: [
+            {
+              createdAt: FIXTURE_TIMESTAMPS.created,
+              kind: "preset",
+              snapshot: personaSnapshotFixture,
+              updatedAt: FIXTURE_TIMESTAMPS.updated,
+            },
+          ],
+        },
+      }),
+      select: vi.fn(),
+      subscribeChanged: vi.fn(() => vi.fn()),
+      update: vi.fn(),
+    } satisfies PersonaApi;
     const setEnabled = vi
       .fn<VoiceWakeSettingsApi["setEnabled"]>()
       .mockResolvedValue({
@@ -110,6 +142,7 @@ describe("Voice Settings panel", () => {
 
     render(
       <VoiceSettingsPanel
+        personaApi={personaApi}
         providerApi={providerApi}
         settingsApi={settingsApi}
         voiceStore={voiceStore}
@@ -126,18 +159,15 @@ describe("Voice Settings panel", () => {
     await waitFor(() => {
       expect(setEnabled).toHaveBeenCalledWith({ enabled: true });
     });
-    fireEvent.change(screen.getByLabelText("音色"), {
-      target: { value: "coral" },
-    });
     fireEvent.change(screen.getByLabelText("输入方式"), {
       target: { value: "push_to_talk" },
     });
     fireEvent.click(screen.getByRole("button", { name: "试听" }));
     await waitFor(() => {
       expect(preview).toHaveBeenCalledWith({
-        instructions: "自然、简洁地说中文。",
+        instructions: personaSnapshotFixture.voiceInstructions,
         providerProfileId: PROFILE_ID,
-        voice: "coral",
+        voice: personaSnapshotFixture.defaultVoice,
       });
     });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -145,9 +175,7 @@ describe("Voice Settings panel", () => {
       expect(saveVoice).toHaveBeenCalledWith({
         voice: {
           inputMode: "push_to_talk",
-          instructions: "自然、简洁地说中文。",
           providerProfileId: PROFILE_ID,
-          voice: "coral",
         },
       });
     });

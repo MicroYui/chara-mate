@@ -9,17 +9,9 @@ import {
 } from "./primitives";
 import { RunExecutionSchema } from "./run";
 import { ProviderSnapshotSchema } from "./provider";
+import { PersonaSnapshotSchema, PersonaVoiceSchema } from "./persona";
 
-export const VoiceNameSchema = Type.Union([
-  Type.Literal("alloy"),
-  Type.Literal("ash"),
-  Type.Literal("ballad"),
-  Type.Literal("coral"),
-  Type.Literal("echo"),
-  Type.Literal("sage"),
-  Type.Literal("shimmer"),
-  Type.Literal("verse"),
-]);
+export const VoiceNameSchema = PersonaVoiceSchema;
 
 export const VoiceInputModeSchema = Type.Union([
   Type.Literal("hands_free"),
@@ -68,6 +60,7 @@ export const VoiceSessionRecordSchema = Type.Object(
     instructions: NonBlankStringSchema,
     lastRunId: Type.Optional(EntityIdSchema),
     muted: Type.Boolean(),
+    persona: PersonaSnapshotSchema,
     protocolSessionId: Type.Optional(NonBlankStringSchema),
     provider: ProviderSnapshotSchema,
     status: VoiceSessionStatusSchema,
@@ -110,6 +103,7 @@ export const VoiceSessionSnapshotSchema = Type.Object(
     generation: Type.Integer({ minimum: 0 }),
     inputMode: VoiceInputModeSchema,
     muted: Type.Boolean(),
+    persona: PersonaSnapshotSchema,
     phase: VoicePhaseSchema,
     runId: Type.Optional(EntityIdSchema),
     sessionId: EntityIdSchema,

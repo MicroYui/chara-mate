@@ -575,6 +575,35 @@
   gap: 10px;
 }
 
+.voicePersona {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-subtle);
+}
+
+.voicePersona > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.voicePersona strong {
+  font-size: 12px;
+}
+
+.voicePersona small {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .capabilityIcon,
 .permissionIcon {
   display: grid;

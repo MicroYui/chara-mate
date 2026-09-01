@@ -208,6 +208,33 @@ describe("Territory World pet animation", () => {
     expect(canvas.dataset["petTextureRow"]).toBe("1");
     expect(sprite?.textureAssignments).toBe(4);
 
+    controller.retarget(null, {
+      ...initialPetState,
+      behavior: "sitting",
+      point: { x: 2, y: 2 },
+    });
+    expect(canvas.dataset["petAnimation"]).toBe("waiting");
+    expect(canvas.dataset["petBehavior"]).toBe("sitting");
+    expect(canvas.dataset["petTextureRow"]).toBe("6");
+
+    controller.retarget(null, {
+      ...initialPetState,
+      behavior: "observing",
+      point: { x: 2, y: 2 },
+    });
+    expect(canvas.dataset["petAnimation"]).toBe("review");
+    expect(canvas.dataset["petBehavior"]).toBe("observing");
+    expect(canvas.dataset["petTextureRow"]).toBe("8");
+
+    controller.retarget(null, {
+      ...initialPetState,
+      behavior: "sleeping",
+      point: { x: 2, y: 2 },
+    });
+    expect(canvas.dataset["petAnimation"]).toBe("idle");
+    expect(canvas.dataset["petBehavior"]).toBe("sleeping");
+    expect(canvas.dataset["petTextureRow"]).toBe("0");
+
     controller.destroy();
   });
 });

@@ -11,6 +11,15 @@ import type {
   PetLibrarySnapshot,
   PetManagementApi,
 } from "../../../shared/contracts/pet";
+import type {
+  PersonaApi,
+  PersonaLibrarySnapshot,
+} from "../../../shared/contracts/persona";
+import type { SettingsApi } from "../../../shared/contracts/settings";
+import {
+  FIXTURE_TIMESTAMPS,
+  personaSnapshotFixture,
+} from "../../../../tests/fixtures/foundationContracts";
 import { CharacterSettingsPanel } from "./CharacterSettingsPanel";
 
 afterEach(cleanup);
@@ -35,6 +44,79 @@ const pets = [
     spriteWidth: 1536,
   },
 ];
+
+const personaLibrary: PersonaLibrarySnapshot = {
+  activePersonaId: personaSnapshotFixture.personaId,
+  personas: [
+    {
+      createdAt: FIXTURE_TIMESTAMPS.created,
+      kind: "preset",
+      snapshot: personaSnapshotFixture,
+      updatedAt: FIXTURE_TIMESTAMPS.updated,
+    },
+  ],
+};
+
+function createPersonaApi() {
+  const getLibrary = vi
+    .fn<PersonaApi["getLibrary"]>()
+    .mockResolvedValue({ ok: true, value: personaLibrary });
+  const api: PersonaApi = {
+    copy: vi.fn(),
+    getLibrary,
+    select: vi.fn(),
+    subscribeChanged: () => () => undefined,
+    update: vi.fn(),
+  };
+  return api;
+}
+
+function createSettingsApi() {
+  const saveCompanionInitiative = vi
+    .fn<SettingsApi["saveCompanionInitiative"]>()
+    .mockImplementation(({ companionInitiative }) =>
+      Promise.resolve({ ok: true, value: companionInitiative }),
+    );
+  const api = {
+    getDataSnapshot: vi.fn(),
+    getSnapshot: vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        agent: {
+          defaultApprovalMode: "request_approval",
+          defaultMode: "chat",
+          workingDirectory: "/workspace",
+        },
+        browserComputer: {
+          accessibility: "granted",
+          browser: "ready",
+          profileDirectory: "/profile",
+          screenRecording: "granted",
+        },
+        companionInitiative: {
+          level: "balanced",
+          quietHours: {
+            enabled: true,
+            endMinute: 8 * 60,
+            startMinute: 22 * 60,
+          },
+        },
+        voice: {
+          inputMode: "hands_free",
+          microphone: "granted",
+          providerProfileId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+      },
+    }),
+    importBrowserCookies: vi.fn(),
+    openDataDirectory: vi.fn(),
+    openManagedBrowser: vi.fn(),
+    saveAgent: vi.fn(),
+    saveCompanionInitiative,
+    saveVoice: vi.fn(),
+  } satisfies SettingsApi;
+  return { api, saveCompanionInitiative };
+}
 
 function createApi(initial: PetLibrarySnapshot) {
   const getLibrary = vi
@@ -82,6 +164,94 @@ function createApi(initial: PetLibrarySnapshot) {
 }
 
 describe("Character Settings", () => {
+  it("copies a preset, selects the new Persona and saves editable fields", async () => {
+    const customId = "90000000-0000-4000-8000-000000000001";
+    let current = personaLibrary;
+    const copy = vi.fn<PersonaApi["copy"]>().mockImplementation((request) => {
+      current = {
+        ...current,
+        personas: [
+          ...current.personas,
+          {
+            createdAt: FIXTURE_TIMESTAMPS.updated,
+            kind: "custom",
+            snapshot: {
+              ...personaSnapshotFixture,
+              displayName: request.displayName,
+              personaId: customId,
+              styleName: request.styleName,
+            },
+            updatedAt: FIXTURE_TIMESTAMPS.updated,
+          },
+        ],
+      };
+      return Promise.resolve({ ok: true, value: current });
+    });
+    const select = vi
+      .fn<PersonaApi["select"]>()
+      .mockImplementation(({ personaId }) => {
+        current = { ...current, activePersonaId: personaId };
+        return Promise.resolve({ ok: true, value: current });
+      });
+    const update = vi
+      .fn<PersonaApi["update"]>()
+      .mockImplementation((request) => {
+        current = {
+          ...current,
+          personas: current.personas.map((record) =>
+            record.snapshot.personaId === request.personaId
+              ? {
+                  ...record,
+                  snapshot: {
+                    ...request.value,
+                    personaId: request.personaId,
+                    revision: request.expectedRevision + 1,
+                    revisionCreatedAt: FIXTURE_TIMESTAMPS.updated,
+                  },
+                }
+              : record,
+          ),
+        };
+        return Promise.resolve({ ok: true, value: current });
+      });
+    const personaApi: PersonaApi = {
+      copy,
+      getLibrary: vi.fn().mockResolvedValue({ ok: true, value: current }),
+      select,
+      subscribeChanged: () => () => undefined,
+      update,
+    };
+    const petApi = createApi({
+      activePetId: null,
+      animationSpeed: 0.75,
+      pets: [],
+      scale: 1,
+    }).api;
+    render(
+      <CharacterSettingsPanel
+        api={petApi}
+        personaApi={personaApi}
+        settingsApi={createSettingsApi().api}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "复制并编辑" }));
+    await waitFor(() =>
+      expect(select).toHaveBeenCalledWith({ personaId: customId }),
+    );
+    const displayName = await screen.findByLabelText("名称");
+    fireEvent.change(displayName, { target: { value: "Lumi" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 Persona" }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledOnce());
+    expect(update.mock.calls[0]?.[0]).toMatchObject({
+      expectedRevision: 1,
+      personaId: customId,
+      value: { displayName: "Lumi" },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Persona 已保存");
+  });
+
   it("lists v1/v2 pets and changes the active pet and scale", async () => {
     const initial: PetLibrarySnapshot = {
       activePetId: "columbinya",
@@ -90,7 +260,13 @@ describe("Character Settings", () => {
       scale: 1,
     };
     const { api, select, setAnimationSpeed, setScale } = createApi(initial);
-    render(<CharacterSettingsPanel api={api} />);
+    render(
+      <CharacterSettingsPanel
+        api={api}
+        personaApi={createPersonaApi()}
+        settingsApi={createSettingsApi().api}
+      />,
+    );
 
     expect(await screen.findByText("Legacy v1 pet")).toBeVisible();
     expect(screen.getByText("1536×1872")).toBeVisible();
@@ -136,11 +312,58 @@ describe("Character Settings", () => {
       },
       ok: false,
     });
-    render(<CharacterSettingsPanel api={api} />);
+    render(
+      <CharacterSettingsPanel
+        api={api}
+        personaApi={createPersonaApi()}
+        settingsApi={createSettingsApi().api}
+      />,
+    );
 
     await screen.findByText("还没有导入桌宠");
     fireEvent.click(screen.getByRole("button", { name: "导入 Codex 桌宠" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("v2 spritesheet 应为 1536×2288。");
+  });
+
+  it("edits proactive level and quiet hours through the settings boundary", async () => {
+    const petApi = createApi({
+      activePetId: null,
+      animationSpeed: 0.75,
+      pets: [],
+      scale: 1,
+    }).api;
+    const settings = createSettingsApi();
+    render(
+      <CharacterSettingsPanel
+        api={petApi}
+        personaApi={createPersonaApi()}
+        settingsApi={settings.api}
+      />,
+    );
+
+    const level = await screen.findByLabelText("主动程度");
+    fireEvent.change(level, { target: { value: "quiet" } });
+    fireEvent.change(screen.getByLabelText("安静时段开始"), {
+      target: { value: "21:30" },
+    });
+    fireEvent.change(screen.getByLabelText("安静时段结束"), {
+      target: { value: "07:30" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存主动陪伴" }));
+
+    await waitFor(() =>
+      expect(settings.saveCompanionInitiative).toHaveBeenCalledWith({
+        companionInitiative: {
+          level: "quiet",
+          quietHours: {
+            enabled: true,
+            endMinute: 7 * 60 + 30,
+            startMinute: 21 * 60 + 30,
+          },
+        },
+      }),
+    );
+    expect(await screen.findByText("主动陪伴设置已保存。")).toBeVisible();
   });
 });

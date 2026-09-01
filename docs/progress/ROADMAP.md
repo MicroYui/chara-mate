@@ -1,7 +1,7 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0 Done；Phase 1 Done；Phase 2 Done；Phase 3 Done；Phase 4 Done；Phase 5 Automations Done；Phase 6 Done；Phase 7 Done
-> 日期：2026-08-14
+> 状态：Phase 0–7 Done；Persona + Character Dialogue 已完成
+> 日期：2026-08-27
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
 本文件记录里程碑依赖、工作包边界和验收，不记录逐命令历史。Phase 编号表示产品集成与验收顺序，不要求所有开发工作全局串行；只有共享契约、Schema、IPC 和同一可变资源的写入必须串行。
@@ -57,6 +57,8 @@ flowchart TD
     MA["并行协作<br/>仅晋级后"]
     SED["SELF-EVOLUTION"]
     SE["自进化<br/>仅晋级后"]
+    CD["CHARACTER-DIALOGUE"]
+    CHAR["P7-CHARACTER<br/>Persona / Character Context"]
 
     PET["P6-PET<br/>桌宠窗口 / 气泡 / 导入"]
     TD["Territory Decisions<br/>SCENE-GENERATION / WORLD-PERFORMANCE"]
@@ -96,6 +98,14 @@ flowchart TD
     MEM --> PRO
     ACT --> PRO
 
+    P2 --> CD
+    MEM --> CD
+    CD --> CHAR
+    P1 --> CHAR
+    VOICE --> CHAR
+    PRO --> CHAR
+    SE --> CHAR
+
     P1 --> PET
     P2 --> PET
     MEM --> TD
@@ -114,6 +124,7 @@ flowchart TD
     MA -.->|若晋级| P7
     SE -.->|若晋级| P7
     P6 --> P7
+    CHAR --> P7
 ```
 
 ## 交付波次
@@ -124,6 +135,7 @@ flowchart TD
 4. **Wave 3 — 多支线并行**：Agent 主干稳定后，Memory 研究、Voice Contract/实验、Automation 基础、桌宠基础与 Multi-agent 实验可并行；Memory 的语义/检索/UI、基础自动形成与跨 Chat 精确更新均已完成，其他支线仍按独立所有权推进，候选代码只在隔离 worktree。
 5. **Wave 4 — 长期理解与领地支线**：Memory 自动形成闭环与 Activity 完成后，主动聊天、Self-evolution 实验和 Territory 沙盒的设计/Decision 可按各自 Gate 与所有权边界推进；Territory 共享合同由单一 integration owner 串行冻结，World runtime、Renderer fixture 和 AI 生成研究随后按所有权拆分。
 6. **Wave 5 — 全产品收口**：只集成已通过 Gate 的路径，运行完整离线、打包、E2E 和明确要求的 Live 检查。
+7. **Wave 6 — Persona 与角色对话补全（已完成）**：`CHARACTER-DIALOGUE` 已选择并实现 A1；生产具有版本化 Persona、唯一 Character Context 及跨 Text/Voice/Automation/主动对话 snapshot。显式叙事与 NPC 行动留作后续独立问题。
 
 ## Phase 0 — 工程基线与稳定契约
 
@@ -387,10 +399,16 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## Phase 7 — 整体体验收口
 
-> 里程碑状态：Done（2026-08-14）。六页与系统窗口、首次配置、Renderer 恢复、主题/自定义背景、Data、开发观测、唯一 Forge DMG 路径以及最终离线/Live/E2E/打包审计均已完成；未提供 Apple 发布凭据与 Image Live 专用环境变量的项目按原因单独报告，不冒充通过。
+> 里程碑状态：Done（2026-08-31）。Persona + Character Dialogue 缺口于 2026-08-27 重新打开，并在 A1 真实 Pilot、唯一生产实现、完整 offline/build/E2E 与 packaged smoke 通过后关闭；2026-08-14 的其他收口项保持原有绿色基线。
 
 ### 工作包
 
+- `P7-CHARACTER-DIALOGUE-DECISION`（`done`）：当前 `main@5be8e28` 的 12 case 真实 Pilot 完成；A1 相对 A0/A2 的角色表现更稳，A2 的单次状态写入应归 Memory，Decision Record 已形成。
+- `P7-PERSONA-CONTRACT`（`done`）：Persona/Revision/Run/Automation/Voice snapshot 的 TypeBox Schema、Main repository/service、数据库边界和 typed IPC/Preload 已由单一 integration owner 完成；没有第二人格存储或模型专用分支。
+- `P7-PERSONA-UI`（`done`）：Settings → Character、侧栏当前 Persona、预设复制/编辑、默认音色与切换语义已完成。普通 UI 不显示实验字段、关系分数或动态状态。
+- `P7-CHARACTER-CONTEXT`（`done`）：A1 Persona revision 已接入同一 Text/Voice/Automation/主动对话上下文；非唤醒场景不再使用固定 Mika 临时接线。
+- `P7-CHARACTER-STATE`（`not-applicable`）：A2 未晋级；生产不创建 Character State 表、Tool、设置或测试分支。
+- `P7-CHARACTER-ACCEPTANCE`（`done`）：角色/开放域 Pilot、跨入口一致性、长 Chat summary/重启、Tool/Approval/任务终局回归、full offline、build、Electron E2E 和 package smoke 已通过。
 - `P7-CONTENT-HIERARCHY`：移除主内容重复 Page Header；Chats 会话动作归左侧会话项，Automations 创建入口归页面列表页头，窄屏侧栏入口不占布局高度。
 - 六个一级页面、Character Window、Tray、Managed Browser 和 Dev Dashboard 的完整旅程；
 - 多会话并发、崩溃恢复、取消、审批、资源引用、获胜存储/索引和 asset 长时观察；
@@ -401,10 +419,23 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ### 退出条件
 
+- `docs/benchmarks/character-dialogue.md` 已形成，明确来源、真实 Pilot、复杂度、胜者和限制；Mock 不被当作模型质量。
+- 用户可以使用版本化 Persona；每个 Run、Automation 和 Voice Session 冻结实际 revision，切换只影响新回答，历史不被改写。
+- Text、Voice、主动气泡、Journey 和长 Chat summary 共享一个 Character Context；不存在 A0/A1/A2 开关、第二 Runtime、角色专用 Memory 或隐藏兼容分支。
+- 生产没有 Character State 表、Tool、设置或隐藏分支；用户事实、共同活动和 Territory 继续由各自现有真源拥有。
+- 角色一致性、知识边界、开放域自然度与人类偏好证据，和 Tool/Approval/任务终局、Token/延迟/复杂度一起报告并满足最终 Decision。
 - 产品设计的所有必测旅程和完成定义满足；
 - full offline、build/package、受影响 Electron E2E 全绿；
 - Live/Benchmark 按功能明确运行并单独报告，未运行项有原因；
 - 文档、共享契约、Schema、Decision Record 和实际产品路径一致。
+
+## 后续 Decision Gate
+
+- `PROACTIVE-POLICY`（`done`）：P2 已在 48 个确定性场景中 48/48 通过并实现为用户主动程度、本地安静时段、最近 3 次结果有界退避和气泡“少一点”的单一生产路径。20 秒 provisional Chat 生命周期不作为 cooldown，用户明确约定的 Automation/Journey 跟进不纳入未请求打扰策略。
+- `NARRATIVE-AGENCY`（`done`）：48 次有效目标模型 Pilot 选择 N0-RULES；保留当前 Chat summary/Journey，只补共享 Agent 的玩家角色所有权、虚构事实隔离和自然出戏规则。结构化 projection 与 boundary director 不进入生产。
+- `TERRITORY-NPC-ACTION`（`done`）：真实 Pilot 选择同一 Agent 按需 `territory.observe → territory.act`；生产已实现 typed affordance、显式动作、宿主碰撞/精确路径/Revision 裁决、Renderer 路径事件与最终行为投影，并通过完整 offline、25/25 Electron E2E、package 与 packaged smoke。全局 World 注入和额外 planner 均未进入生产，也不启动常驻游戏模拟。
+
+`PROACTIVE-POLICY` 的协议与 Arms 已登记在研究设计 §8B，`NARRATIVE-AGENCY` 已登记在 §8C，`TERRITORY-NPC-ACTION` 已登记在 §8D。三项都必须在独立 disposable worktree 比较候选，生产分支只重写最终胜者。
 
 ## 串行化与并行所有权
 

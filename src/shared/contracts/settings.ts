@@ -6,6 +6,10 @@ import type {
   AgentSettingsSchema,
   BrowserActionResponseSchema,
   BrowserComputerSettingsSchema,
+  CompanionInitiativeLevelSchema,
+  CompanionInitiativeSettingsSaveRequestSchema,
+  CompanionInitiativeSettingsSaveResponseSchema,
+  CompanionInitiativeSettingsSchema,
   DataActionResponseSchema,
   DataSettingsSnapshotResponseSchema,
   DataSettingsSnapshotSchema,
@@ -26,12 +30,33 @@ export const SETTINGS_CHANNELS = {
   openDataDirectory: "settings.data.openDirectory",
   openManagedBrowser: "settings.browser.open",
   saveAgent: "settings.agent.save",
+  saveCompanionInitiative: "settings.companionInitiative.save",
   saveVoice: "settings.voice.save",
 } as const;
 
 export type AgentSettings = Static<typeof AgentSettingsSchema>;
 export type BrowserComputerSettings = Static<
   typeof BrowserComputerSettingsSchema
+>;
+export type CompanionInitiativeLevel = Static<
+  typeof CompanionInitiativeLevelSchema
+>;
+export type CompanionInitiativeSettings = Static<
+  typeof CompanionInitiativeSettingsSchema
+>;
+export const DEFAULT_COMPANION_INITIATIVE_SETTINGS = {
+  level: "balanced",
+  quietHours: {
+    enabled: true,
+    endMinute: 8 * 60,
+    startMinute: 22 * 60,
+  },
+} as const satisfies CompanionInitiativeSettings;
+export type CompanionInitiativeSettingsSaveRequest = Static<
+  typeof CompanionInitiativeSettingsSaveRequestSchema
+>;
+export type CompanionInitiativeSettingsSaveResponse = Static<
+  typeof CompanionInitiativeSettingsSaveResponseSchema
 >;
 export type DataUsageCategoryId = Static<typeof DataUsageCategoryIdSchema>;
 export type DataUsageCategory = Static<typeof DataUsageCategorySchema>;
@@ -69,6 +94,9 @@ export interface SettingsApi {
   saveAgent(
     request: AgentSettingsSaveRequest,
   ): Promise<AgentSettingsSaveResponse>;
+  saveCompanionInitiative(
+    request: CompanionInitiativeSettingsSaveRequest,
+  ): Promise<CompanionInitiativeSettingsSaveResponse>;
   saveVoice(
     request: VoiceSettingsSaveRequest,
   ): Promise<VoiceSettingsSaveResponse>;

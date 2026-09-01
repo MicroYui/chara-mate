@@ -296,6 +296,18 @@ export function CharacterApp({
     setProactiveBubble(null);
   };
 
+  const reduceProactiveFrequency = () => {
+    if (!proactiveBubble) return;
+    setReplyError(null);
+    void window.charaMateCharacter
+      .reduceProactiveFrequency({ bubbleId: proactiveBubble.id })
+      .then((response) => {
+        if (response.ok) setProactiveBubble(null);
+        else setReplyError(response.error.message);
+      })
+      .catch(() => setReplyError("没有保存成功，请稍后重试。"));
+  };
+
   const submitBubbleReply = () => {
     if (
       !proactiveBubble ||
@@ -386,6 +398,18 @@ export function CharacterApp({
               {snapshot?.activePet?.displayName ?? "CharaMate"}
             </span>
             <span className={styles["bubbleToolbarActions"]}>
+              <button
+                aria-label="减少主动对话频率"
+                className={styles["bubbleFeedback"]}
+                disabled={
+                  voiceActive || proactiveBubble.replyState === "responding"
+                }
+                onClick={reduceProactiveFrequency}
+                title="以后少一点"
+                type="button"
+              >
+                少一点
+              </button>
               {proactiveBubble.kind === "continuation" ? (
                 <button
                   aria-label="打开完整 Chat"

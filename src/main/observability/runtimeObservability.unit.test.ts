@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { RunEventEnvelope } from "../../shared/contracts/ipc";
 import type { Approval, Run, RunItem } from "../../shared/contracts/run";
 import type { RunRepository } from "../agent/runRepository";
+import { defaultPersonaSnapshot } from "../persona/personaPresets";
 import { DevDashboard } from "./devDashboard";
 import type { AppLogger } from "./logger";
 import { RuntimeObservability } from "./runtimeObservability";
@@ -61,6 +62,7 @@ function fixture() {
     execution: { approvalMode: "request_approval", mode: "agent" },
     id: RUN_ID,
     latestSequence: 1,
+    persona: defaultPersonaSnapshot(NOW),
     provider: {
       apiStyle: "openai-compatible",
       modelId: "gpt-5.6-sol",

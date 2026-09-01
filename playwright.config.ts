@@ -7,6 +7,7 @@ export default defineConfig({
   reporter: [["list"]],
   testDir: "tests/e2e",
   timeout: 60_000,
+  workers: 1,
   use: {
     trace: "retain-on-failure",
   },

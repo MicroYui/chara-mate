@@ -429,6 +429,75 @@ export const TerritoryPetStateSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const TerritoryPetActionSchema = Type.Union([
+  Type.Literal("move"),
+  Type.Literal("observe"),
+  Type.Literal("sit"),
+  Type.Literal("sleep"),
+  Type.Literal("react"),
+]);
+
+export const TerritoryPetActionTargetSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("point"),
+      point: TerritoryGridPointSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      instanceId: TerritoryInstanceIdSchema,
+      kind: Type.Literal("instance"),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const TerritoryPetAffordanceSchema = Type.Object(
+  {
+    actions: Type.Array(TerritoryPetActionSchema, {
+      minItems: 1,
+      uniqueItems: true,
+    }),
+    capabilities: Type.Array(TerritoryCapabilitySchema, {
+      uniqueItems: true,
+    }),
+    description: NonBlankStringSchema,
+    instanceId: TerritoryInstanceIdSchema,
+    name: NonBlankStringSchema,
+    point: TerritoryGridPointSchema,
+    reachable: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryPetActionObservationSchema = Type.Object(
+  {
+    pet: TerritoryPetStateSchema,
+    revisionId: TerritoryWorldRevisionIdSchema,
+    targets: Type.Array(TerritoryPetAffordanceSchema),
+    zone: Type.Object(
+      {
+        bounds: TerritoryBoundsSchema,
+        id: TerritoryZoneIdSchema,
+        name: NonBlankStringSchema,
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export const TerritoryPerformPetActionRequestSchema = Type.Object(
+  {
+    action: TerritoryPetActionSchema,
+    expectedRevisionId: TerritoryWorldRevisionIdSchema,
+    target: TerritoryPetActionTargetSchema,
+  },
+  { additionalProperties: false },
+);
+
 export const TerritoryWorldRevisionSummarySchema = Type.Object(
   {
     createdAt: TimestampSchema,
@@ -854,4 +923,14 @@ export const TerritoryMovePetResultSchema = Type.Object(
 
 export const TerritoryMovePetResponseSchema = operationResponse(
   TerritoryMovePetResultSchema,
+);
+
+export const TerritoryPetActionPerformedSchema = Type.Object(
+  {
+    action: TerritoryPetActionSchema,
+    path: Type.Array(TerritoryGridPointSchema, { minItems: 1 }),
+    snapshot: TerritoryWorldSnapshotSchema,
+    targetInstanceId: Type.Union([TerritoryInstanceIdSchema, Type.Null()]),
+  },
+  { additionalProperties: false },
 );

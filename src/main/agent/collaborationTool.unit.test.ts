@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { Run } from "../../shared/contracts/run";
 import type { ToolResult } from "../../shared/contracts/tool";
+import { defaultPersonaSnapshot } from "../persona/personaPresets";
 import { ToolRegistry, toolEvidenceHash } from "../tools/toolRegistry";
 import {
   COLLABORATION_DISPATCH_TOOL_NAME,
@@ -24,6 +25,7 @@ const run = {
   execution: { approvalMode: "full_access", mode: "agent" },
   id: RUN_ID,
   latestSequence: 1,
+  persona: defaultPersonaSnapshot("2026-08-13T00:00:00.000Z"),
   provider: {
     apiStyle: "openai-compatible",
     modelId: "gpt-test",

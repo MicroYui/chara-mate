@@ -28,6 +28,7 @@ interface VoiceSessionRow {
   instructions: string;
   last_run_id: string | null;
   muted: number;
+  persona_json: string;
   protocol_session_id: string | null;
   provider_json: string;
   status: string;
@@ -56,7 +57,7 @@ interface VoiceTurnRow {
 }
 
 const sessionColumns = `
-  id, chat_id, provider_json, voice, instructions, input_mode, status,
+  id, chat_id, provider_json, persona_json, voice, instructions, input_mode, status,
   generation, muted, protocol_session_id, last_run_id, created_at,
   connected_at, ended_at, error_json
 `;
@@ -85,6 +86,7 @@ function readSession(row: VoiceSessionRow): VoiceSessionRecord {
     instructions: row.instructions,
     ...(row.last_run_id === null ? {} : { lastRunId: row.last_run_id }),
     muted: row.muted === 1,
+    persona: readJson(row.persona_json),
     ...(row.protocol_session_id === null
       ? {}
       : { protocolSessionId: row.protocol_session_id }),
@@ -131,12 +133,13 @@ export class VoiceRepository {
     this.database
       .prepare(
         `INSERT INTO voice_sessions (${sessionColumns})
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         value.id,
         value.chatId,
         serializeForPersistence(value.provider),
+        serializeForPersistence(value.persona),
         value.voice,
         value.instructions,
         value.inputMode,
@@ -163,6 +166,7 @@ export class VoiceRepository {
       current.voice !== value.voice ||
       current.instructions !== value.instructions ||
       current.inputMode !== value.inputMode ||
+      !isDeepStrictEqual(current.persona, value.persona) ||
       !isDeepStrictEqual(current.provider, value.provider)
     ) {
       throw new Error(`Voice session ${value.id} changed immutable identity`);

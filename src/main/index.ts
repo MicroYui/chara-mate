@@ -19,6 +19,7 @@ import { EVOLUTION_CHANNELS } from "../shared/contracts/evolution";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { JOURNEY_CHANNELS } from "../shared/contracts/journey";
 import { PET_CHANNELS } from "../shared/contracts/pet";
+import { PERSONA_CHANNELS } from "../shared/contracts/persona";
 import { TERRITORY_WORLD_CHANNELS } from "../shared/contracts/territoryWorld";
 import { VOICE_CHANNELS } from "../shared/contracts/voice";
 import { VOICE_WAKE_CHANNELS } from "../shared/contracts/voiceWake";
@@ -30,6 +31,7 @@ import {
   ProactiveConversationBubbleReplyResponseSchema,
 } from "../shared/schemas/pet";
 import { ApprovalNavigationTargetSchema } from "../shared/schemas/agent";
+import { PersonaLibrarySnapshotSchema } from "../shared/schemas/persona";
 import { parseSchema } from "../shared/schemas/validation";
 import {
   VoiceClientCommandSchema,
@@ -119,6 +121,7 @@ import {
   ModelCompanionInitiativeDecider,
 } from "./journey/companionInitiative";
 import { CompanionInitiativeRepository } from "./journey/companionInitiativeRepository";
+import { stepDownCompanionInitiativeLevel } from "./journey/companionInitiativePolicy";
 import { registerJourneyIpc } from "./journey/journeyIpc";
 import { JourneyRepository } from "./journey/journeyRepository";
 import { JourneyService } from "./journey/journeyService";
@@ -130,6 +133,10 @@ import { PetLibraryRepository } from "./pet/petLibraryRepository";
 import { registerPetProtocol } from "./pet/petProtocol";
 import { PetService } from "./pet/petService";
 import { PetStateRepository } from "./pet/petStateRepository";
+import { CharacterContextCompiler } from "./persona/characterContext";
+import { registerPersonaIpc } from "./persona/personaIpc";
+import { PersonaRepository } from "./persona/personaRepository";
+import { PersonaService } from "./persona/personaService";
 import { ElectronSafeStorageEncryption } from "./providers/electronSecretEncryption";
 import { registerProviderIpc } from "./providers/providerIpc";
 import { ProviderRepository } from "./providers/providerRepository";
@@ -208,6 +215,7 @@ let unregisterEvolutionIpc: (() => void) | undefined;
 let unregisterFoundationIpc: (() => void) | undefined;
 let unregisterJourneyIpc: (() => void) | undefined;
 let unregisterMemoryIpc: (() => void) | undefined;
+let unregisterPersonaIpc: (() => void) | undefined;
 let unregisterProviderIpc: (() => void) | undefined;
 let unregisterSettingsIpc: (() => void) | undefined;
 let unregisterPetIpc: (() => void) | undefined;
@@ -271,6 +279,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterJourneyIpc = undefined;
     unregisterMemoryIpc?.();
     unregisterMemoryIpc = undefined;
+    unregisterPersonaIpc?.();
+    unregisterPersonaIpc = undefined;
     unregisterProviderIpc?.();
     unregisterProviderIpc = undefined;
     unregisterSettingsIpc?.();
@@ -361,6 +371,28 @@ async function startApplication(): Promise<void> {
   applicationDatabase = openApplicationDatabase(databasePath);
   const idGenerator = new CryptoIdGenerator();
   const clock = new SystemClock();
+  const personaService = new PersonaService(
+    new PersonaRepository(applicationDatabase),
+    idGenerator,
+    clock,
+    {
+      publish(personaSnapshot) {
+        const value = parseSchema(
+          PersonaLibrarySnapshotSchema,
+          personaSnapshot,
+        );
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.webContents.isDestroyed()) {
+            window.webContents.send(PERSONA_CHANNELS.changed, value);
+          }
+        }
+        void trayController?.refresh();
+      },
+    },
+  );
+  personaService.initialize();
+  unregisterPersonaIpc = registerPersonaIpc(personaService);
+  const characterContextCompiler = new CharacterContextCompiler();
   const chatRepository = new ChatRepository(applicationDatabase);
   const companionInitiativeRepository = new CompanionInitiativeRepository(
     applicationDatabase,
@@ -824,6 +856,16 @@ async function startApplication(): Promise<void> {
     clock,
     territoryWorldCandidates,
     territoryWorldAssets,
+    (event) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send(
+            TERRITORY_WORLD_CHANNELS.petActionPerformed,
+            event,
+          );
+        }
+      }
+    },
   );
   const territoryWorldMemoryService = new TerritoryWorldMemoryService(
     territoryWorldRepository,
@@ -909,6 +951,7 @@ async function startApplication(): Promise<void> {
     providerService,
     idGenerator,
     clock,
+    personaService,
     undefined,
     (run) =>
       [
@@ -994,8 +1037,10 @@ async function startApplication(): Promise<void> {
         proactiveConversationSurfaceInstance.publish(bubble),
     },
     companionInitiativeRepository,
+    settingsRepository,
     clock,
     logger,
+    () => personaService.getActiveSnapshot().displayName,
   );
   companionInitiativeService = companionInitiativeServiceInstance;
   const automationServiceInstance = new AutomationService(
@@ -1045,6 +1090,7 @@ async function startApplication(): Promise<void> {
         }
       },
     },
+    personaService,
   );
   automationServiceReference.current = automationServiceInstance;
   journeyServiceInstance.setFollowUpScheduler({
@@ -1081,7 +1127,7 @@ async function startApplication(): Promise<void> {
             ].join("\n"),
             kind: "agent_task",
             modelId: run.provider.modelId,
-            personaId: "00000000-0000-4000-8000-000000000701",
+            personaId: run.persona.personaId,
             providerProfileId: run.provider.profileId,
             targetChatId: journey.homeChatId,
             toolScope: { mode: "selected", toolNames: [] },
@@ -1153,6 +1199,7 @@ async function startApplication(): Promise<void> {
         void trayController?.refresh();
       },
     },
+    personaService,
     (chatId) =>
       [
         skillService.instructions(),
@@ -1178,6 +1225,9 @@ async function startApplication(): Promise<void> {
       );
     },
     voiceMetrics,
+    undefined,
+    undefined,
+    characterContextCompiler,
   );
   registerVoiceTools(toolRegistry, {
     requestEndAfterResponse: (runId) => {
@@ -1351,6 +1401,20 @@ async function startApplication(): Promise<void> {
     (bubbleId) => {
       return proactiveConversationSurfaceInstance.clear(bubbleId);
     },
+    (bubbleId) => {
+      if (proactiveConversationSurfaceInstance.current()?.id !== bubbleId) {
+        throw new Error("The proactive conversation is no longer available");
+      }
+      const current = settingsService.getCompanionInitiative();
+      const saved = settingsService.saveCompanionInitiative({
+        ...current,
+        level: stepDownCompanionInitiativeLevel(current.level),
+      });
+      if (!proactiveConversationSurfaceInstance.clear(bubbleId)) {
+        throw new Error("The proactive conversation is no longer available");
+      }
+      return { ok: true, value: { level: saved.level } };
+    },
     async (request) => {
       try {
         const run = await proactiveConversationSurfaceInstance.reply(request);
@@ -1390,6 +1454,7 @@ async function startApplication(): Promise<void> {
       logger,
       openMainWindow,
       pet: petService,
+      persona: personaService,
       quit: () => app.quit(),
       voice: trayVoice,
       wake: trayWake,

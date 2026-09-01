@@ -3,11 +3,18 @@ import type {
   TerritoryCandidateMutationResult,
   TerritoryCommitChangeSetRequest,
   TerritoryCreateChangeCandidateRequest,
+  TerritoryDefinition,
   TerritoryEditChangeCandidateRequest,
   TerritoryEnterZoneRequest,
   TerritoryGetZoneViewRequest,
+  TerritoryGridPoint,
+  TerritoryInstance,
   TerritoryMovePetRequest,
   TerritoryMovePetResult,
+  TerritoryPerformPetActionRequest,
+  TerritoryPetAction,
+  TerritoryPetActionObservation,
+  TerritoryPetActionPerformed,
   TerritoryPurgeInstanceRequest,
   TerritoryRestoreRevisionRequest,
   TerritoryWorldSnapshot,
@@ -27,12 +34,54 @@ import type {
 } from "./territoryWorldCandidateService";
 import type { TerritoryWorldAssetStore } from "./territoryWorldAssetStore";
 
+interface TerritoryPetMovePlan {
+  readonly destination: TerritoryGridPoint;
+  readonly facing: "left" | "right";
+  readonly interactionDefinition: TerritoryDefinition | undefined;
+  readonly path: readonly TerritoryGridPoint[];
+}
+
+function definitionKey(value: {
+  readonly id: string;
+  readonly revision: number;
+}): string {
+  return `${value.id}@${String(value.revision)}`;
+}
+
+function pointsEqual(
+  left: TerritoryGridPoint | undefined,
+  right: TerritoryGridPoint,
+): boolean {
+  return left?.x === right.x && left.y === right.y;
+}
+
+function actionsForDefinition(
+  definition: TerritoryDefinition,
+): TerritoryPetAction[] {
+  const capabilities = new Set(definition.capabilities);
+  const actions: TerritoryPetAction[] = ["move"];
+  if (capabilities.has("inspectable") || capabilities.has("memory-reveal")) {
+    actions.push("observe");
+  }
+  if (capabilities.has("seatable")) actions.push("sit");
+  if (capabilities.has("sleepable")) actions.push("sleep");
+  if (
+    capabilities.has("light") ||
+    capabilities.has("ambient-animation") ||
+    capabilities.has("memory-reveal")
+  ) {
+    actions.push("react");
+  }
+  return actions;
+}
+
 export class TerritoryWorldService {
   constructor(
     private readonly repository: TerritoryWorldRepository,
     private readonly clock: Clock,
     private readonly candidates?: TerritoryWorldCandidateService,
     private readonly assets?: TerritoryWorldAssetStore,
+    private readonly onPetAction?: (event: TerritoryPetActionPerformed) => void,
   ) {}
 
   getSnapshot(): TerritoryWorldSnapshot {
@@ -41,6 +90,126 @@ export class TerritoryWorldService {
 
   getZoneView(request: TerritoryGetZoneViewRequest): TerritoryZoneView {
     return this.repository.getZoneView(request);
+  }
+
+  observePetActions(): TerritoryPetActionObservation {
+    const snapshot = this.repository.getSnapshot();
+    const { zone, view } = this.activeZoneContext(snapshot);
+    const definitions = new Map(
+      view.definitions.map((definition) => [
+        definitionKey(definition),
+        definition,
+      ]),
+    );
+    const targets = view.instances.flatMap((instance) => {
+      const definition = definitions.get(definitionKey(instance.definition));
+      if (!definition || definition.capabilities.length === 0) return [];
+      const root = this.resolvePlacedRoot(view, instance);
+      if (!root) return [];
+      const rootDefinition = definitions.get(definitionKey(root.definition));
+      if (!rootDefinition || root.placement.kind !== "zone") return [];
+      return [
+        {
+          actions: actionsForDefinition(definition),
+          capabilities: [...definition.capabilities],
+          description: definition.description,
+          instanceId: instance.id,
+          name: definition.name,
+          point: { ...root.placement.point },
+          reachable: Boolean(
+            this.planPetMove(
+              snapshot,
+              {
+                interactionInstanceId: instance.id,
+                requireExactPoint: true,
+              },
+              { view, zone },
+            ),
+          ),
+        },
+      ];
+    });
+    return {
+      pet: snapshot.pet,
+      revisionId: snapshot.world.currentRevision.id,
+      targets,
+      zone: {
+        bounds: zone.bounds,
+        id: zone.id,
+        name: zone.name,
+      },
+    };
+  }
+
+  performPetAction(
+    request: TerritoryPerformPetActionRequest,
+  ): TerritoryPetActionPerformed {
+    const snapshot = this.repository.getSnapshot();
+    if (snapshot.world.currentRevision.id !== request.expectedRevisionId) {
+      throw new TerritoryError(
+        "TERRITORY.REVISION_CONFLICT",
+        "领地刚刚发生了变化，请重新观察后再行动。",
+        false,
+      );
+    }
+    this.activeZoneContext(snapshot);
+    if (request.action === "move" && request.target.kind === "point") {
+      const plan = this.planPetMove(snapshot, {
+        point: request.target.point,
+        requireExactPoint: true,
+      });
+      if (!plan) {
+        throw new TerritoryError(
+          "TERRITORY.NO_PATH",
+          "桌宠暂时无法到达指定位置。",
+          false,
+        );
+      }
+      return this.commitPetAction(snapshot, request.action, plan, null);
+    }
+    if (request.target.kind !== "instance") {
+      throw new TerritoryError(
+        "TERRITORY.CHANGESET_INVALID",
+        "这个动作需要选择领地中的物件。",
+        false,
+      );
+    }
+    const targetInstanceId = request.target.instanceId;
+    const { view } = this.activeZoneContext(snapshot);
+    const instance = view.instances.find(({ id }) => id === targetInstanceId);
+    const definition = instance
+      ? view.definitions.find(
+          (candidate) =>
+            candidate.id === instance.definition.id &&
+            candidate.revision === instance.definition.revision,
+        )
+      : undefined;
+    if (!instance || !definition) {
+      throw new TerritoryError(
+        "TERRITORY.CHANGESET_INVALID",
+        "这个物件已不在当前领地中，请重新观察。",
+        false,
+      );
+    }
+    if (!actionsForDefinition(definition).includes(request.action)) {
+      throw new TerritoryError(
+        "TERRITORY.CHANGESET_INVALID",
+        `“${definition.name}”不支持这个动作。`,
+        false,
+      );
+    }
+    const plan = this.planPetMove(snapshot, {
+      interactionInstanceId: instance.id,
+      requireExactPoint: true,
+    });
+    if (!plan) {
+      throw new TerritoryError(
+        "TERRITORY.NO_PATH",
+        `桌宠暂时无法走到“${definition.name}”旁边。`,
+        false,
+      );
+    }
+    return this.commitPetAction(snapshot, request.action, plan, instance.id);
   }
 
   commitChangeSet(
@@ -85,15 +254,8 @@ export class TerritoryWorldService {
 
   movePet(request: TerritoryMovePetRequest): TerritoryMovePetResult {
     const snapshot = this.repository.getSnapshot();
-    const zone = snapshot.world.zones.find(
-      (candidate) => candidate.id === request.zoneId,
-    );
-    if (
-      !zone ||
-      zone.status !== "active" ||
-      snapshot.world.activeZoneId !== zone.id ||
-      snapshot.pet.zoneId !== zone.id
-    ) {
+    const { zone } = this.activeZoneContext(snapshot);
+    if (zone.id !== request.zoneId) {
       throw new TerritoryError(
         "TERRITORY.ZONE_NOT_FOUND",
         "请先打开这个领地区域。",
@@ -110,37 +272,145 @@ export class TerritoryWorldService {
         false,
       );
     }
-    if (
-      !request.interactionInstanceId &&
-      (request.to.x >= zone.bounds.width || request.to.y >= zone.bounds.height)
-    ) {
+    if (!request.interactionInstanceId && !this.insideZone(request.to, zone)) {
       throw new TerritoryError(
         "TERRITORY.NO_PATH",
         "点击位置不在当前区域内。",
         false,
       );
     }
-
-    const view = this.repository.getZoneView({
-      revisionId: snapshot.world.currentRevision.id,
+    const plan = this.planPetMove(snapshot, {
+      ...(request.interactionInstanceId
+        ? { interactionInstanceId: request.interactionInstanceId }
+        : { point: request.to }),
+      requireExactPoint: Boolean(request.interactionInstanceId),
+    });
+    if (!plan) {
+      throw new TerritoryError(
+        "TERRITORY.NO_PATH",
+        "桌宠暂时走不到那里。",
+        false,
+      );
+    }
+    const behavior = plan.interactionDefinition?.capabilities.includes(
+      "sleepable",
+    )
+      ? "sleeping"
+      : plan.interactionDefinition?.capabilities.includes("seatable")
+        ? "sitting"
+        : request.interactionInstanceId
+          ? "observing"
+          : "idle";
+    this.repository.savePet({
+      behavior,
+      facing: plan.facing,
+      point: plan.destination,
+      updatedAt: this.clock.now(),
       zoneId: zone.id,
     });
+    return { path: [...plan.path], snapshot: this.repository.getSnapshot() };
+  }
+
+  private activeZoneContext(snapshot: TerritoryWorldSnapshot): {
+    readonly view: TerritoryZoneView;
+    readonly zone: TerritoryWorldSnapshot["world"]["zones"][number];
+  } {
+    const zone = snapshot.world.zones.find(
+      (candidate) => candidate.id === snapshot.world.activeZoneId,
+    );
+    if (!zone || zone.status !== "active" || snapshot.pet.zoneId !== zone.id) {
+      throw new TerritoryError(
+        "TERRITORY.ZONE_NOT_FOUND",
+        "请先打开当前领地区域。",
+        false,
+      );
+    }
+    return {
+      view: this.repository.getZoneView({
+        revisionId: snapshot.world.currentRevision.id,
+        zoneId: zone.id,
+      }),
+      zone,
+    };
+  }
+
+  private commitPetAction(
+    snapshot: TerritoryWorldSnapshot,
+    action: TerritoryPetAction,
+    plan: TerritoryPetMovePlan,
+    targetInstanceId: string | null,
+  ): TerritoryPetActionPerformed {
+    const behavior =
+      action === "sit"
+        ? "sitting"
+        : action === "sleep"
+          ? "sleeping"
+          : action === "observe" || action === "react"
+            ? "observing"
+            : "idle";
+    this.repository.savePet({
+      behavior,
+      facing: plan.facing,
+      point: plan.destination,
+      updatedAt: this.clock.now(),
+      zoneId: snapshot.world.activeZoneId,
+    });
+    const event: TerritoryPetActionPerformed = {
+      action,
+      path: [...plan.path],
+      snapshot: this.repository.getSnapshot(),
+      targetInstanceId,
+    };
+    try {
+      this.onPetAction?.(event);
+    } catch {
+      // The persisted Territory action is authoritative; a closed Renderer
+      // must not turn an already-applied action into a retryable Tool failure.
+    }
+    return event;
+  }
+
+  private insideZone(
+    point: TerritoryGridPoint,
+    zone: TerritoryWorldSnapshot["world"]["zones"][number],
+  ): boolean {
+    return (
+      point.x >= 0 &&
+      point.y >= 0 &&
+      point.x < zone.bounds.width &&
+      point.y < zone.bounds.height
+    );
+  }
+
+  private planPetMove(
+    snapshot: TerritoryWorldSnapshot,
+    request: {
+      readonly interactionInstanceId?: string;
+      readonly point?: TerritoryGridPoint;
+      readonly requireExactPoint: boolean;
+    },
+    context?: {
+      readonly view: TerritoryZoneView;
+      readonly zone: TerritoryWorldSnapshot["world"]["zones"][number];
+    },
+  ): TerritoryPetMovePlan | undefined {
+    const { view, zone } = context ?? this.activeZoneContext(snapshot);
+    const definitions = new Map(
+      view.definitions.map((definition) => [
+        definitionKey(definition),
+        definition,
+      ]),
+    );
     const blocked = blockedTerritoryWorldCells(view);
     const interaction = request.interactionInstanceId
       ? view.instances.find(({ id }) => id === request.interactionInstanceId)
       : undefined;
     const interactionDefinition = interaction
-      ? view.definitions.find(
-          ({ id, revision }) =>
-            id === interaction.definition.id &&
-            revision === interaction.definition.revision,
-        )
+      ? definitions.get(definitionKey(interaction.definition))
       : undefined;
     if (
       request.interactionInstanceId &&
-      (!interaction ||
-        !interactionDefinition ||
-        interaction.placement.kind === "collection")
+      (!interaction || !interactionDefinition)
     ) {
       throw new TerritoryError(
         "TERRITORY.CHANGESET_INVALID",
@@ -148,40 +418,64 @@ export class TerritoryWorldService {
         false,
       );
     }
-    const interactionOrigin =
-      interaction?.placement.kind === "zone"
-        ? interaction.placement.point
-        : request.to;
-    const targetPoints = interaction
-      ? [
-          ...new Map(
-            territoryInstanceFootprint(interaction, interactionDefinition!)
-              .flatMap((point) => [
-                { x: point.x - 1, y: point.y },
-                { x: point.x + 1, y: point.y },
-                { x: point.x, y: point.y - 1 },
-                { x: point.x, y: point.y + 1 },
-              ])
-              .filter(
-                (point) =>
-                  point.x >= 0 &&
-                  point.y >= 0 &&
-                  point.x < zone.bounds.width &&
-                  point.y < zone.bounds.height &&
-                  !blocked.has(`${String(point.x)},${String(point.y)}`),
-              )
-              .map((point) => [`${String(point.x)},${String(point.y)}`, point]),
-          ).values(),
-        ]
-      : [request.to];
+    const root = interaction
+      ? this.resolvePlacedRoot(view, interaction)
+      : undefined;
+    const rootDefinition = root
+      ? definitions.get(definitionKey(root.definition))
+      : undefined;
+    if (
+      interaction &&
+      (!root || !rootDefinition || root.placement.kind !== "zone")
+    ) {
+      throw new TerritoryError(
+        "TERRITORY.CHANGESET_INVALID",
+        "这个物件当前不能与桌宠互动。",
+        false,
+      );
+    }
+    if (request.point && !this.insideZone(request.point, zone))
+      return undefined;
+    const targetPoints =
+      root && rootDefinition
+        ? [
+            ...new Map(
+              territoryInstanceFootprint(root, rootDefinition)
+                .flatMap((point) => [
+                  { x: point.x - 1, y: point.y },
+                  { x: point.x + 1, y: point.y },
+                  { x: point.x, y: point.y - 1 },
+                  { x: point.x, y: point.y + 1 },
+                ])
+                .filter(
+                  (point) =>
+                    this.insideZone(point, zone) &&
+                    !blocked.has(`${String(point.x)},${String(point.y)}`),
+                )
+                .map((point) => [
+                  `${String(point.x)},${String(point.y)}`,
+                  point,
+                ]),
+            ).values(),
+          ]
+        : request.point
+          ? [request.point]
+          : [];
     const paths = targetPoints.flatMap((point) => {
       const candidate = findTerritoryWorldPath(
         zone,
-        request.from,
+        snapshot.pet.point,
         point,
         blocked,
       );
-      return candidate ? [candidate] : [];
+      if (!candidate) return [];
+      if (
+        (interaction || request.requireExactPoint) &&
+        !pointsEqual(candidate.at(-1), point)
+      ) {
+        return [];
+      }
+      return [candidate];
     });
     paths.sort(
       (left, right) =>
@@ -191,13 +485,7 @@ export class TerritoryWorldService {
     );
     const path = paths[0];
     const destination = path?.at(-1);
-    if (!path || !destination) {
-      throw new TerritoryError(
-        "TERRITORY.NO_PATH",
-        "桌宠暂时走不到那里。",
-        false,
-      );
-    }
+    if (!path || !destination) return undefined;
     let facing = snapshot.pet.facing;
     for (let index = path.length - 1; index > 0; index -= 1) {
       const current = path[index];
@@ -207,24 +495,32 @@ export class TerritoryWorldService {
         break;
       }
     }
-    if (interaction) {
-      facing = destination.x < interactionOrigin.x ? "right" : "left";
+    if (root?.placement.kind === "zone") {
+      facing = destination.x < root.placement.point.x ? "right" : "left";
     }
-    const behavior = interactionDefinition?.capabilities.includes("sleepable")
-      ? "sleeping"
-      : interactionDefinition?.capabilities.includes("seatable")
-        ? "sitting"
-        : interaction
-          ? "observing"
-          : "idle";
-    this.repository.savePet({
-      behavior,
+    return {
+      destination,
       facing,
-      point: destination,
-      updatedAt: this.clock.now(),
-      zoneId: zone.id,
-    });
-    return { path, snapshot: this.repository.getSnapshot() };
+      interactionDefinition,
+      path,
+    };
+  }
+
+  private resolvePlacedRoot(
+    view: TerritoryZoneView,
+    instance: TerritoryInstance,
+  ): TerritoryInstance | undefined {
+    const instances = new Map(
+      view.instances.map((candidate) => [candidate.id, candidate]),
+    );
+    const seen = new Set<string>();
+    let current: TerritoryInstance | undefined = instance;
+    while (current?.placement.kind === "attachment") {
+      if (seen.has(current.id)) return undefined;
+      seen.add(current.id);
+      current = instances.get(current.placement.parentInstanceId);
+    }
+    return current?.placement.kind === "zone" ? current : undefined;
   }
 
   enterZone(request: TerritoryEnterZoneRequest): TerritoryWorldSnapshot {

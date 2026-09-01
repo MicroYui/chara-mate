@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   TerritoryInstance,
@@ -89,7 +89,7 @@ afterEach(async () => {
   temporaryDirectories = [];
 });
 
-async function createRepository() {
+async function createRepository(seedOverride: TerritoryWorldSeed = seed) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "territory-world-"));
   temporaryDirectories.push(directory);
   const databasePath = path.join(directory, "chara-mate.sqlite");
@@ -98,7 +98,7 @@ async function createRepository() {
     database,
     new QueueIds([...revisionIds]),
   );
-  repository.ensureInitialized(seed);
+  repository.ensureInitialized(seedOverride);
   return { database, databasePath, repository };
 }
 
@@ -554,6 +554,116 @@ describe("Territory World persistence", () => {
     ).toThrowError(
       expect.objectContaining({ code: "TERRITORY.REVISION_CONFLICT" }),
     );
+    database.close();
+  });
+
+  it("observes compact affordances and resolves attached targets through their placed parent", async () => {
+    const { database, repository } = await createRepository();
+    const service = new TerritoryWorldService(
+      repository,
+      new FakeClock("2026-08-13T10:00:00.000Z"),
+    );
+
+    const observation = service.observePetActions();
+    expect(observation).toMatchObject({
+      pet: starterTerritorySnapshot.pet,
+      revisionId: territoryWorldFixtureIds.revision,
+      zone: { id: territoryWorldFixtureIds.zone },
+    });
+    expect(observation.targets).toContainEqual(
+      expect.objectContaining({
+        actions: ["move", "observe", "react"],
+        instanceId: territoryWorldFixtureIds.lampInstance,
+        point: { x: 6, y: 4 },
+        reachable: true,
+      }),
+    );
+    database.close();
+  });
+
+  it("performs explicit sit and sleep actions, rejects stale revisions and never reports a blocked point as reached", async () => {
+    const actionSeed: TerritoryWorldSeed = {
+      ...seed,
+      definitions: seed.definitions.map((definition) =>
+        definition.id === "starter.cabin-desk"
+          ? {
+              ...definition,
+              capabilities: ["inspectable", "seatable", "sleepable"],
+            }
+          : definition,
+      ),
+    };
+    const { database, repository } = await createRepository(actionSeed);
+    const emitted = vi.fn();
+    const service = new TerritoryWorldService(
+      repository,
+      new FakeClock("2026-08-13T10:00:00.000Z"),
+      undefined,
+      undefined,
+      emitted,
+    );
+
+    const sat = service.performPetAction({
+      action: "sit",
+      expectedRevisionId: territoryWorldFixtureIds.revision,
+      target: {
+        instanceId: territoryWorldFixtureIds.deskInstance,
+        kind: "instance",
+      },
+    });
+    expect(sat.snapshot.pet.behavior).toBe("sitting");
+    expect(sat.targetInstanceId).toBe(territoryWorldFixtureIds.deskInstance);
+
+    const slept = service.performPetAction({
+      action: "sleep",
+      expectedRevisionId: territoryWorldFixtureIds.revision,
+      target: {
+        instanceId: territoryWorldFixtureIds.deskInstance,
+        kind: "instance",
+      },
+    });
+    expect(slept.snapshot.pet.behavior).toBe("sleeping");
+    expect(emitted).toHaveBeenCalledTimes(2);
+
+    expect(() =>
+      service.performPetAction({
+        action: "move",
+        expectedRevisionId: territoryWorldFixtureIds.revision,
+        target: { kind: "point", point: { x: 6, y: 5 } },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "TERRITORY.NO_PATH" }));
+    expect(() =>
+      service.performPetAction({
+        action: "observe",
+        expectedRevisionId: "10000000-0000-4000-8000-000000000099",
+        target: {
+          instanceId: territoryWorldFixtureIds.deskInstance,
+          kind: "instance",
+        },
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "TERRITORY.REVISION_CONFLICT" }),
+    );
+
+    const serviceWithClosedRenderer = new TerritoryWorldService(
+      repository,
+      new FakeClock("2026-08-13T10:01:00.000Z"),
+      undefined,
+      undefined,
+      () => {
+        throw new Error("Renderer closed");
+      },
+    );
+    expect(
+      serviceWithClosedRenderer.performPetAction({
+        action: "observe",
+        expectedRevisionId: territoryWorldFixtureIds.revision,
+        target: {
+          instanceId: territoryWorldFixtureIds.deskInstance,
+          kind: "instance",
+        },
+      }).snapshot.pet.behavior,
+    ).toBe("observing");
     database.close();
   });
 

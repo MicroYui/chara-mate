@@ -10,6 +10,7 @@ import {
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
 import type { ApprovalNavigationTarget } from "../../shared/contracts/agent";
 import type { JourneySnapshot } from "../../shared/contracts/journey";
+import type { PersonaLibrarySnapshot } from "../../shared/contracts/persona";
 import { VOICE_CHAT_FALLBACK_TITLE } from "../../shared/contracts/voice";
 import type {
   PetDescriptor,
@@ -64,6 +65,9 @@ export function App() {
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
   const [petLibrary, setPetLibrary] = useState<PetLibrarySnapshot | null>(null);
+  const [personaLibrary, setPersonaLibrary] =
+    useState<PersonaLibrarySnapshot | null>(null);
+  const [personaError, setPersonaError] = useState<string | null>(null);
   const [journeySnapshot, setJourneySnapshot] = useState<JourneySnapshot>({
     journeys: [],
     sessions: [],
@@ -97,6 +101,38 @@ export function App() {
 
   useEffect(() => chatStore.start(), [chatStore]);
   useEffect(() => voiceStore.startListening(), [voiceStore]);
+
+  useEffect(() => {
+    let active = true;
+    let receivedChange = false;
+    const unsubscribe = window.charaMate.persona.subscribeChanged(
+      (snapshot) => {
+        receivedChange = true;
+        if (active) {
+          setPersonaLibrary(snapshot);
+          setPersonaError(null);
+        }
+      },
+    );
+    void window.charaMate.persona
+      .getLibrary()
+      .then((response) => {
+        if (!active || receivedChange) return;
+        if (response.ok) setPersonaLibrary(response.value);
+        else setPersonaError(response.error.message);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setPersonaError(
+            error instanceof Error ? error.message : "无法读取当前 Persona。",
+          );
+        }
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -509,6 +545,8 @@ export function App() {
       foundation={foundation.snapshot}
       journeyError={journeyError}
       journeySnapshot={journeySnapshot}
+      personaError={personaError}
+      personaLibrary={personaLibrary}
       onChatArchive={(chatId) =>
         void chatStore
           .archive(chatId)
@@ -551,6 +589,7 @@ export function App() {
       onClearChatError={() => chatStore.clearError()}
       onClearVoiceError={() => voiceStore.clearError()}
       onClearJourneyError={() => setJourneyError(null)}
+      onClearPersonaError={() => setPersonaError(null)}
       state={uiState}
       onBackgroundSchemeChange={setBackgroundScheme}
       onCustomBackgroundColorsChange={setCustomBackgroundColors}

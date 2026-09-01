@@ -9,7 +9,11 @@ import {
   type FrameObject,
 } from "pixi.js";
 
-import type { PetDescriptor, PetFacing } from "../../../shared/contracts/pet";
+import type {
+  PetAnimation,
+  PetDescriptor,
+  PetFacing,
+} from "../../../shared/contracts/pet";
 import type { TerritoryPetState } from "../../../shared/contracts/territoryWorld";
 import { TERRITORY_WORLD_UNIT_PX } from "../../../shared/pure/territoryWorldScale";
 import {
@@ -29,7 +33,21 @@ export interface TerritoryWorldRenderedPetPosition {
   readonly y: number;
 }
 
-type TerritoryWorldPetAnimation = "idle" | "running-left" | "running-right";
+type TerritoryWorldPetAnimation =
+  "idle" | "review" | "running-left" | "running-right" | "waiting";
+
+type TerritoryWorldStationaryAnimation = Extract<
+  TerritoryWorldPetAnimation,
+  "idle" | "review" | "waiting"
+>;
+
+function stationaryAnimation(
+  behavior: TerritoryPetState["behavior"],
+): TerritoryWorldStationaryAnimation {
+  if (behavior === "sitting") return "waiting";
+  if (behavior === "observing") return "review";
+  return "idle";
+}
 
 export interface TerritoryWorldPetController {
   destroy(): void;
@@ -148,6 +166,9 @@ export async function renderTerritoryWorldPetLayer({
       },
       retarget: (movement, petState) => {
         if (destroyed) return;
+        runtime.app.canvas.dataset["petBehavior"] = movement
+          ? "walking"
+          : petState.behavior;
         if (!movement) {
           applyPosition(petState.point, null);
           return;
@@ -168,9 +189,7 @@ export async function renderTerritoryWorldPetLayer({
   }
 
   const textures: Texture[] = [];
-  const createFrames = (
-    animation: "idle" | "running-left" | "running-right",
-  ): FrameObject[] => {
+  const createFrames = (animation: PetAnimation): FrameObject[] => {
     const atlasFrames = getPetAtlasFrames(animation, pet.spriteVersionNumber);
     const nextTextures = atlasFrames.map(
       ({ column, row }) =>
@@ -190,7 +209,14 @@ export async function renderTerritoryWorldPetLayer({
       time: atlasFrames[index]?.durationMs ?? 140,
     }));
   };
-  const idleFrames = createFrames("idle");
+  const stationaryFrames: Record<
+    TerritoryWorldStationaryAnimation,
+    FrameObject[]
+  > = {
+    idle: createFrames("idle"),
+    review: createFrames("review"),
+    waiting: createFrames("waiting"),
+  };
   const runningFrames: Record<PetFacing, FrameObject[]> = {
     left: createFrames("running-left"),
     right: createFrames("running-right"),
@@ -199,7 +225,7 @@ export async function renderTerritoryWorldPetLayer({
     animationSpeed,
     autoPlay: true,
     loop: true,
-    textures: idleFrames,
+    textures: stationaryFrames.idle,
   });
   sprite.anchor.set(0.5, 1);
   sprite.width = 82;
@@ -235,12 +261,15 @@ export async function renderTerritoryWorldPetLayer({
   const setAnimation = (next: TerritoryWorldPetAnimation) => {
     if (currentAnimation === next) return;
     currentAnimation = next;
-    setFrames(next === "idle" ? idleFrames : runningFrames[currentFacing]);
+    setFrames(
+      next === "running-left" || next === "running-right"
+        ? runningFrames[currentFacing]
+        : stationaryFrames[next],
+    );
     runtime.app.canvas.dataset["petAnimation"] = next;
   };
-  const setFacing = (next: PetFacing, running: boolean) => {
+  const setFacing = (next: PetFacing) => {
     currentFacing = next;
-    setAnimation(running ? `running-${next}` : "idle");
     runtime.app.canvas.dataset["petFacing"] = next;
   };
   const applyPosition = (
@@ -259,7 +288,9 @@ export async function renderTerritoryWorldPetLayer({
   };
   const settle = (petState: TerritoryPetState) => {
     stopTicker();
-    setFacing(petState.facing, false);
+    setFacing(petState.facing);
+    setAnimation(stationaryAnimation(petState.behavior));
+    runtime.app.canvas.dataset["petBehavior"] = petState.behavior;
     applyPosition(petState.point, null);
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       sprite.gotoAndStop(0);
@@ -267,7 +298,7 @@ export async function renderTerritoryWorldPetLayer({
   };
 
   currentFacing = "right";
-  setFacing(currentFacing, false);
+  setFacing(currentFacing);
   applyPosition(currentPosition, null);
 
   return {
@@ -289,13 +320,16 @@ export async function renderTerritoryWorldPetLayer({
       stopTicker();
       const path = continuousPath(currentPosition, movement, petState);
       let facing = firstFacing(path, petState.facing);
-      setFacing(facing, true);
+      setFacing(facing);
+      setAnimation(`running-${facing}`);
+      runtime.app.canvas.dataset["petBehavior"] = "walking";
       applyPosition(currentPosition, movement.id);
 
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
         const destination = path.at(-1) ?? currentPosition;
         facing = firstFacing([...path].reverse(), facing);
-        setFacing(facing, true);
+        setFacing(facing);
+        setAnimation(`running-${facing}`);
         applyPosition(destination, movement.id);
         onMovementComplete(movement.id);
         return;
@@ -321,7 +355,10 @@ export async function renderTerritoryWorldPetLayer({
           ) ?? segments.at(-1);
         if (!segment) return;
         const nextFacing = horizontalFacing(segment.from, segment.to);
-        if (nextFacing) setFacing(nextFacing, true);
+        if (nextFacing) {
+          setFacing(nextFacing);
+          setAnimation(`running-${nextFacing}`);
+        }
         const progress = Math.min(
           1,
           Math.max(0, (elapsed - segment.startsAt) / segment.duration),

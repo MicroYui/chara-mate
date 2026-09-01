@@ -31,6 +31,7 @@ import {
   PetDragPointSchema,
   PetDragResultSchema,
   ProactiveConversationBubbleDismissRequestSchema,
+  ProactiveConversationBubbleFrequencyResponseSchema,
   ProactiveConversationBubbleReplyRequestSchema,
   ProactiveConversationBubbleReplyResponseSchema,
   ProactiveConversationBubbleSchema,
@@ -79,6 +80,19 @@ const characterApi: CharacterWindowApi = Object.freeze({
       parseSchemaWithoutCodeGeneration(
         ProactiveConversationBubbleDismissRequestSchema,
         input,
+      ),
+    ),
+  reduceProactiveFrequency: async (
+    input: ProactiveConversationBubbleDismissRequest,
+  ) =>
+    parseSchemaWithoutCodeGeneration(
+      ProactiveConversationBubbleFrequencyResponseSchema,
+      await ipcRenderer.invoke(
+        PET_CHANNELS.reduceProactiveFrequency,
+        parseSchemaWithoutCodeGeneration(
+          ProactiveConversationBubbleDismissRequestSchema,
+          input,
+        ),
       ),
     ),
   replyProactiveBubble: async (

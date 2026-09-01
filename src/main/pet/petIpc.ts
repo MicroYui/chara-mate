@@ -2,6 +2,7 @@ import { dialog, ipcMain, type BrowserWindow } from "electron";
 
 import {
   PET_CHANNELS,
+  type ProactiveConversationBubbleFrequencyResponse,
   type ProactiveConversationBubbleReplyRequest,
   type ProactiveConversationBubbleReplyResponse,
 } from "../../shared/contracts/pet";
@@ -20,6 +21,7 @@ import {
   PetSelectRequestSchema,
   PetTerritoryPresenceRequestSchema,
   ProactiveConversationBubbleDismissRequestSchema,
+  ProactiveConversationBubbleFrequencyResponseSchema,
   ProactiveConversationBubbleReplyRequestSchema,
   ProactiveConversationBubbleReplyResponseSchema,
 } from "../../shared/schemas/pet";
@@ -45,6 +47,9 @@ export function registerPetIpc(
   onFocusApproval?: (approvalId: string) => void,
   onFocusConversation?: (chatId: string) => void,
   onClearProactiveBubble?: (bubbleId?: string) => boolean,
+  onReduceProactiveFrequency?: (
+    bubbleId: string,
+  ) => ProactiveConversationBubbleFrequencyResponse,
   onReplyProactiveBubble?: (
     request: ProactiveConversationBubbleReplyRequest,
   ) => Promise<ProactiveConversationBubbleReplyResponse>,
@@ -213,6 +218,27 @@ export function registerPetIpc(
       await onReplyProactiveBubble(request),
     );
   });
+  ipcMain.handle(PET_CHANNELS.reduceProactiveFrequency, (event, input) => {
+    try {
+      character.assertCharacterSender(event.sender);
+      const request = parseSchema(
+        ProactiveConversationBubbleDismissRequestSchema,
+        input,
+      );
+      if (!onReduceProactiveFrequency) {
+        throw new Error("Proactive conversation feedback is unavailable");
+      }
+      return parseSchema(
+        ProactiveConversationBubbleFrequencyResponseSchema,
+        onReduceProactiveFrequency(request.bubbleId),
+      );
+    } catch (error) {
+      return parseSchema(ProactiveConversationBubbleFrequencyResponseSchema, {
+        error: toPetAppError(error),
+        ok: false,
+      });
+    }
+  });
   ipcMain.on(PET_CHANNELS.dragMove, (event, input) => {
     try {
       character.moveDrag(event.sender, parseSchema(PetDragPointSchema, input));
@@ -279,6 +305,7 @@ export function registerPetIpc(
       PET_CHANNELS.characterGetSnapshot,
       PET_CHANNELS.dragStart,
       PET_CHANNELS.dragEnd,
+      PET_CHANNELS.reduceProactiveFrequency,
       PET_CHANNELS.replyProactiveBubble,
     ]) {
       ipcMain.removeHandler(channel);

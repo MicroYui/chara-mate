@@ -11,8 +11,10 @@ import {
 } from "../../src/main/db/database";
 import { serializeForPersistence } from "../../src/main/db/persistenceBoundary";
 import { CURRENT_SCHEMA_VERSION } from "../../src/main/db/schema/current";
+import { defaultPersonaSnapshot } from "../../src/main/persona/personaPresets";
 
 const temporaryDirectories: string[] = [];
+const PERSONA_JSON = JSON.stringify(defaultPersonaSnapshot());
 
 afterEach(async () => {
   await Promise.all(
@@ -91,12 +93,13 @@ describe("foundation database", () => {
     database
       .prepare(
         `INSERT INTO runs (
-           id, chat_id, execution_json, provider_json, status,
+           id, chat_id, execution_json, persona_json, provider_json, status,
            latest_sequence, created_at
-         ) VALUES ('run-v4', 'chat-v4', ?, ?, 'interrupted', 1, ?)`,
+         ) VALUES ('run-v4', 'chat-v4', ?, ?, ?, 'interrupted', 1, ?)`,
       )
       .run(
         JSON.stringify({ mode: "chat" }),
+        PERSONA_JSON,
         JSON.stringify({ modelId: "model", profileId: "profile" }),
         "2026-08-08T00:00:00.000Z",
       );
@@ -455,13 +458,15 @@ describe("foundation database", () => {
       .prepare(
         `INSERT INTO automation_runs (
            id, automation_id, automation_revision, definition_json,
-           trigger_json, status, requested_at, created_at, updated_at
+           persona_json, trigger_json, status, requested_at, created_at,
+           updated_at
          ) VALUES (
-           'automation-run-1', 'automation-1', 1, ?, ?, 'queued', ?, ?, ?
+           'automation-run-1', 'automation-1', 1, ?, ?, ?, 'queued', ?, ?, ?
          )`,
       )
       .run(
         definitionV1,
+        PERSONA_JSON,
         JSON.stringify({ kind: "scheduled", scheduledFor }),
         timestamp,
         timestamp,
@@ -489,14 +494,16 @@ describe("foundation database", () => {
         .prepare(
           `INSERT INTO automation_runs (
              id, automation_id, automation_revision, definition_json,
-             trigger_json, status, requested_at, created_at, updated_at
+             persona_json, trigger_json, status, requested_at, created_at,
+             updated_at
            ) VALUES (
-             'automation-run-duplicate', 'automation-1', 2, ?, ?,
+             'automation-run-duplicate', 'automation-1', 2, ?, ?, ?,
              'queued', ?, ?, ?
            )`,
         )
         .run(
           definitionV2,
+          PERSONA_JSON,
           JSON.stringify({ kind: "scheduled", scheduledFor }),
           timestamp,
           timestamp,
@@ -508,14 +515,16 @@ describe("foundation database", () => {
         .prepare(
           `INSERT INTO automation_runs (
              id, automation_id, automation_revision, definition_json,
-             trigger_json, status, requested_at, created_at, updated_at
+             persona_json, trigger_json, status, requested_at, created_at,
+             updated_at
            ) VALUES (
-             'automation-run-invalid-trigger', 'automation-1', 2, ?, ?,
+             'automation-run-invalid-trigger', 'automation-1', 2, ?, ?, ?,
              'queued', ?, ?, ?
            )`,
         )
         .run(
           definitionV2,
+          PERSONA_JSON,
           JSON.stringify({ kind: "manual", scheduledFor }),
           timestamp,
           timestamp,
@@ -539,15 +548,16 @@ describe("foundation database", () => {
         .prepare(
           `INSERT INTO automation_runs (
              id, automation_id, automation_revision, definition_json,
-             trigger_json, status, requested_at, started_at, ended_at,
-             created_at, updated_at
+             persona_json, trigger_json, status, requested_at, started_at,
+             ended_at, created_at, updated_at
            ) VALUES (
-             'automation-run-invalid-error', 'automation-1', 2, ?, ?,
+             'automation-run-invalid-error', 'automation-1', 2, ?, ?, ?,
              'failed', ?, ?, ?, ?, ?
            )`,
         )
         .run(
           definitionV2,
+          PERSONA_JSON,
           JSON.stringify({ kind: "manual" }),
           timestamp,
           timestamp,

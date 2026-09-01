@@ -32,6 +32,7 @@ import type {
   PetStoredStateSchema,
   PetTerritoryPresenceRequestSchema,
   ProactiveConversationBubbleDismissRequestSchema,
+  ProactiveConversationBubbleFrequencyResponseSchema,
   ProactiveConversationBubbleKindSchema,
   ProactiveConversationBubbleReplyRequestSchema,
   ProactiveConversationBubbleReplyResponseSchema,
@@ -56,6 +57,7 @@ export const PET_CHANNELS = {
   openConversation: "pet.main.openConversation",
   proactiveBubbleChanged: "pet.character.proactiveBubbleChanged",
   dismissProactiveBubble: "pet.character.dismissProactiveBubble",
+  reduceProactiveFrequency: "pet.character.reduceProactiveFrequency",
   replyProactiveBubble: "pet.character.replyProactiveBubble",
   select: "pet.library.select",
   setAnimationSpeed: "pet.library.setAnimationSpeed",
@@ -85,6 +87,9 @@ export type ProactiveConversationBubbleKind = Static<
 >;
 export type ProactiveConversationBubbleDismissRequest = Static<
   typeof ProactiveConversationBubbleDismissRequestSchema
+>;
+export type ProactiveConversationBubbleFrequencyResponse = Static<
+  typeof ProactiveConversationBubbleFrequencyResponseSchema
 >;
 export type ProactiveConversationBubbleReplyRequest = Static<
   typeof ProactiveConversationBubbleReplyRequestSchema
@@ -140,6 +145,9 @@ export interface CharacterWindowApi {
   dismissProactiveBubble(
     request: ProactiveConversationBubbleDismissRequest,
   ): void;
+  reduceProactiveFrequency(
+    request: ProactiveConversationBubbleDismissRequest,
+  ): Promise<ProactiveConversationBubbleFrequencyResponse>;
   replyProactiveBubble(
     request: ProactiveConversationBubbleReplyRequest,
   ): Promise<ProactiveConversationBubbleReplyResponse>;

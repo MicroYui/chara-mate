@@ -148,6 +148,19 @@ export type {
 } from "./ipc";
 export type { EntityId, JsonValue, Timestamp } from "./primitives";
 export type {
+  PersonaApi,
+  PersonaCopyRequest,
+  PersonaKind,
+  PersonaLibraryResponse,
+  PersonaLibrarySnapshot,
+  PersonaRecord,
+  PersonaRevisionInput,
+  PersonaSelectRequest,
+  PersonaSnapshot,
+  PersonaUpdateRequest,
+  PersonaVoice,
+} from "./persona";
+export type {
   CharacterWindowApi,
   CodexPetManifest,
   PetAnimation,
@@ -283,6 +296,10 @@ export type {
   AgentSettingsSaveResponse,
   BrowserActionResponse,
   BrowserComputerSettings,
+  CompanionInitiativeLevel,
+  CompanionInitiativeSettings,
+  CompanionInitiativeSettingsSaveRequest,
+  CompanionInitiativeSettingsSaveResponse,
   SettingsApi,
   SettingsSnapshot,
   SettingsSnapshotResponse,

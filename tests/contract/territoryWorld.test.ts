@@ -11,6 +11,9 @@ import {
   TerritoryCommitChangeSetRequestSchema,
   TerritoryCreateChangeCandidateRequestSchema,
   TerritoryGetZoneViewRequestSchema,
+  TerritoryPerformPetActionRequestSchema,
+  TerritoryPetActionObservationSchema,
+  TerritoryPetActionPerformedSchema,
   TerritoryWorldSnapshotResponseSchema,
   TerritoryWorldSnapshotSchema,
   TerritoryZoneViewResponseSchema,
@@ -55,6 +58,66 @@ describe("Territory World contracts", () => {
           value: starterTerritoryZoneView,
         }),
       ).toMatchObject({ ok: true });
+    },
+  );
+
+  it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
+    "accepts typed Territory observations, actions and renderer events through %s",
+    (parse) => {
+      const observation = {
+        pet: starterTerritorySnapshot.pet,
+        revisionId: territoryWorldFixtureIds.revision,
+        targets: [
+          {
+            actions: ["move", "observe", "react"],
+            capabilities: ["light", "inspectable"],
+            description: "会在暮色里留下一圈暖光的小灯。",
+            instanceId: territoryWorldFixtureIds.lampInstance,
+            name: "琥珀桌灯",
+            point: { x: 6, y: 4 },
+            reachable: true,
+          },
+        ],
+        zone: {
+          bounds: starterTerritoryZoneView.zone.bounds,
+          id: territoryWorldFixtureIds.zone,
+          name: starterTerritoryZoneView.zone.name,
+        },
+      };
+      expect(parse(TerritoryPetActionObservationSchema, observation)).toEqual(
+        observation,
+      );
+      expect(
+        parse(TerritoryPerformPetActionRequestSchema, {
+          action: "react",
+          expectedRevisionId: territoryWorldFixtureIds.revision,
+          target: {
+            instanceId: territoryWorldFixtureIds.lampInstance,
+            kind: "instance",
+          },
+        }),
+      ).toMatchObject({ action: "react" });
+      expect(
+        parse(TerritoryPetActionPerformedSchema, {
+          action: "react",
+          path: [starterTerritorySnapshot.pet.point, { x: 6, y: 6 }],
+          snapshot: starterTerritorySnapshot,
+          targetInstanceId: territoryWorldFixtureIds.lampInstance,
+        }),
+      ).toMatchObject({ action: "react" });
+    },
+  );
+
+  it.each([parseSchema, parseSchemaWithoutCodeGeneration])(
+    "rejects malformed Territory pet actions through %s",
+    (parse) => {
+      expect(() =>
+        parse(TerritoryPerformPetActionRequestSchema, {
+          action: "sleep",
+          expectedRevisionId: territoryWorldFixtureIds.revision,
+          target: { kind: "point", point: { x: -1, y: 0 } },
+        }),
+      ).toThrow();
     },
   );
 

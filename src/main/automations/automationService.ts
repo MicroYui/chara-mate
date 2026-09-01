@@ -18,6 +18,7 @@ import type { RunEventEnvelope } from "../../shared/contracts/ipc";
 import type { Run } from "../../shared/contracts/run";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
+import type { PersonaSnapshot } from "../../shared/contracts/persona";
 import {
   AutomationCreateRequestSchema,
   AutomationEventEnvelopeSchema,
@@ -48,6 +49,7 @@ interface AutomationAgentRuntime {
     options: {
       readonly modelId: string;
       readonly onStarted?: (run: Run) => void;
+      readonly persona: PersonaSnapshot;
       readonly toolNames?: readonly string[];
     },
   ): Promise<Run>;
@@ -55,6 +57,7 @@ interface AutomationAgentRuntime {
     request: StartRunRequest,
     options: {
       readonly modelId: string;
+      readonly persona: PersonaSnapshot;
       readonly toolNames?: readonly string[];
     },
   ): Promise<Run>;
@@ -64,6 +67,11 @@ export interface AutomationRunProjectionReader {
   getRun(runId: string): Run | undefined;
   listChatRuns(chatId: string): readonly Run[];
   readCompletedAssistantMessage(runId: string): string | undefined;
+}
+
+export interface AutomationPersonaReader {
+  getActiveSnapshot(): PersonaSnapshot;
+  getSnapshot(personaId: string): PersonaSnapshot;
 }
 
 const ACTIVE_AUTOMATION_RUN_STATUSES = [
@@ -123,6 +131,7 @@ function runFields(run: AutomationRun): Record<string, unknown> {
     ...(run.status === "failed" ? { error: run.error } : {}),
     ...(runEndedAt(run) ? { endedAt: runEndedAt(run) } : {}),
     id: run.id,
+    persona: run.persona,
     requestedAt: run.requestedAt,
     status: run.status,
     ...(run.summary === undefined ? {} : { summary: run.summary }),
@@ -153,6 +162,7 @@ export class AutomationService {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly events: AutomationEventPublisher,
+    private readonly personas: AutomationPersonaReader,
   ) {}
 
   setScheduleChangedListener(listener: () => void): void {
@@ -297,6 +307,7 @@ export class AutomationService {
     const run = this.repository.insertManualRun({
       automation,
       createdAt: this.clock.now(),
+      persona: this.#personaFor(automation.definition),
       requestedAt: request.requestedAt,
       runId: this.ids.generate(),
     });
@@ -325,6 +336,7 @@ export class AutomationService {
         expectedNextRunAt: due.nextRunAt,
         expectedRevision: due.revision,
         ...(nextRunAt ? { nextRunAt } : {}),
+        persona: this.#personaFor(due.definition),
         runId: this.ids.generate(),
       });
       if (!claimed) continue;
@@ -436,6 +448,7 @@ export class AutomationService {
     } satisfies StartRunRequest;
     const options = {
       modelId: task.modelId,
+      persona: current.persona,
       ...(task.toolScope.mode === "selected"
         ? { toolNames: task.toolScope.toolNames }
         : {}),
@@ -484,6 +497,12 @@ export class AutomationService {
       current,
       this.runProjections.getRun(runtimeRun.id) ?? runtimeRun,
     );
+  }
+
+  #personaFor(definition: Automation["definition"]): PersonaSnapshot {
+    return definition.task.kind === "agent_task"
+      ? this.personas.getSnapshot(definition.task.personaId)
+      : this.personas.getActiveSnapshot();
   }
 
   #synchronizeRun(current: AutomationRun, run: Run): AutomationRun {

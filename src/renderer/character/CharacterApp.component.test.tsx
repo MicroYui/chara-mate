@@ -16,7 +16,10 @@ import type {
   VoiceApi,
   VoiceSessionSnapshot,
 } from "../../shared/contracts/voice";
-import { approvalFixture } from "../../../tests/fixtures/foundationContracts";
+import {
+  approvalFixture,
+  personaSnapshotFixture,
+} from "../../../tests/fixtures/foundationContracts";
 import { CharacterApp } from "./CharacterApp";
 
 vi.mock("../features/voice/WebRtcVoiceDriver", () => ({
@@ -50,6 +53,7 @@ const ACTIVE_VOICE: VoiceSessionSnapshot = {
   generation: 0,
   inputMode: "hands_free",
   muted: false,
+  persona: personaSnapshotFixture,
   phase: "listening",
   sessionId: "10000000-0000-4000-8000-000000000002",
   userTranscript: "",
@@ -136,6 +140,9 @@ function renderCharacter(
       ok: true,
       value: { runId: "20000000-0000-4000-8000-000000000099" },
     });
+  const reduceProactiveFrequency = vi
+    .fn<CharacterWindowApi["reduceProactiveFrequency"]>()
+    .mockResolvedValue({ ok: true, value: { level: "quiet" } });
   const focusConversation = vi.fn<CharacterWindowApi["focusConversation"]>();
   const voice: VoiceApi = {
     end,
@@ -170,6 +177,7 @@ function renderCharacter(
     }),
     markReady: vi.fn(),
     moveDrag: vi.fn(),
+    reduceProactiveFrequency,
     replyProactiveBubble,
     resolveApproval,
     showContextMenu: vi.fn(),
@@ -225,6 +233,7 @@ function renderCharacter(
     end,
     focusConversation,
     quickStart,
+    reduceProactiveFrequency,
     replyProactiveBubble,
     resolveApproval,
     setPaused,
@@ -454,6 +463,31 @@ describe("Character chat control", () => {
     expect(
       screen.getByRole("button", { name: "打开完整 Chat" }),
     ).toBeInTheDocument();
+  });
+
+  it("lets the user lower proactive frequency directly from the bubble", async () => {
+    const { emitProactive, reduceProactiveFrequency } =
+      renderCharacter("conversation");
+    const bubble = {
+      chatId: "20000000-0000-4000-8000-000000000007",
+      content: "要不要一起看看这份提纲？",
+      createdAt: "2026-08-13T09:00:00.000Z",
+      id: "20000000-0000-4000-8000-000000000008",
+      kind: "invitation",
+      replyState: "ready",
+    } satisfies ProactiveConversationBubble;
+
+    act(() => emitProactive(bubble));
+    fireEvent.click(screen.getByRole("button", { name: "减少主动对话频率" }));
+
+    await waitFor(() =>
+      expect(reduceProactiveFrequency).toHaveBeenCalledWith({
+        bubbleId: bubble.id,
+      }),
+    );
+    expect(
+      screen.queryByRole("region", { name: "角色发起的对话" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens the exact bound Chat only when the user chooses the full surface", () => {

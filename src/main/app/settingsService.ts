@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   AgentSettings,
   BrowserComputerSettings,
+  CompanionInitiativeSettings,
   DataSettingsSnapshot,
   DataUsageCategoryId,
   SettingsSnapshot,
@@ -87,6 +88,7 @@ export class SettingsService {
         profileDirectory: this.browser.profileDirectory,
         screenRecording: this.permissions.readScreenRecording(),
       },
+      companionInitiative: this.getCompanionInitiative(),
       voice: this.getVoice(),
     };
   }
@@ -141,6 +143,22 @@ export class SettingsService {
       await this.onWorkingDirectoryChanged(saved.workingDirectory);
     }
     return saved;
+  }
+
+  getCompanionInitiative(): CompanionInitiativeSettings {
+    return this.repository.getCompanionInitiative();
+  }
+
+  saveCompanionInitiative(
+    settings: CompanionInitiativeSettings,
+  ): CompanionInitiativeSettings {
+    if (
+      settings.quietHours.enabled &&
+      settings.quietHours.startMinute === settings.quietHours.endMinute
+    ) {
+      throw new Error("安静时段的开始和结束时间不能相同。");
+    }
+    return this.repository.saveCompanionInitiative(settings, this.clock.now());
   }
 
   getVoice(): VoiceSettings {

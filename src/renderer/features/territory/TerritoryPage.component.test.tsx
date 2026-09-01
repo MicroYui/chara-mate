@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -21,20 +22,24 @@ import {
   territoryWorldFixtureIds,
 } from "../../../../tests/fixtures/territoryWorld";
 import { TerritoryPage } from "./TerritoryPage";
+import type { TerritoryWorldMovement } from "./territoryWorldPetLayer";
 
 vi.mock("./PixiTerritoryWorldCanvas", () => ({
   PixiTerritoryWorldCanvas: ({
     onInstanceMove,
+    movement,
     onPetMove,
     onPlaceCollection,
     onSelectionChange,
     selectedCollectionInstance,
+    petState,
     view,
   }: {
     readonly onInstanceMove: (
       instance: TerritoryInstance,
       point: { readonly x: number; readonly y: number },
     ) => Promise<boolean>;
+    readonly movement: TerritoryWorldMovement | null;
     readonly onPetMove: (point: {
       readonly x: number;
       readonly y: number;
@@ -48,11 +53,16 @@ vi.mock("./PixiTerritoryWorldCanvas", () => ({
       additive: boolean,
     ) => void;
     readonly selectedCollectionInstance: TerritoryInstance | null;
+    readonly petState: TerritoryWorldSnapshot["pet"];
     readonly view: typeof starterTerritoryZoneView;
   }) => (
     <div data-testid="world-canvas">
       <span>{view.zone.name}</span>
       <span>{selectedCollectionInstance?.id ?? "nothing-held"}</span>
+      <span data-testid="pet-motion">
+        {movement?.path.at(-1)?.x ?? petState.point.x},
+        {movement?.path.at(-1)?.y ?? petState.point.y}:{petState.behavior}
+      </span>
       <button
         type="button"
         onClick={() =>
@@ -169,6 +179,16 @@ function createApi() {
       };
     },
   );
+  let petActionListener:
+    Parameters<TerritoryWorldApi["subscribePetAction"]>[0] | null = null;
+  const subscribePetAction = vi.fn<TerritoryWorldApi["subscribePetAction"]>(
+    (listener) => {
+      petActionListener = listener;
+      return () => {
+        petActionListener = null;
+      };
+    },
+  );
   const api: TerritoryWorldApi = {
     applyCandidate,
     cancelCandidate,
@@ -183,6 +203,7 @@ function createApi() {
     purgeInstance,
     restoreRevision,
     subscribeChanged,
+    subscribePetAction,
   };
   return {
     api,
@@ -197,6 +218,13 @@ function createApi() {
     restoreRevision,
     publishChanged: (snapshot: TerritoryWorldSnapshot) =>
       changedListener?.(snapshot),
+    publishPetAction: (
+      event: Parameters<TerritoryWorldApi["subscribePetAction"]>[0] extends (
+        value: infer TValue,
+      ) => void
+        ? TValue
+        : never,
+    ) => petActionListener?.(event),
   };
 }
 
@@ -585,5 +613,41 @@ describe("TerritoryPage World workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "选择书桌" }));
     expect(await screen.findByText("窗边书桌")).toBeVisible();
     expect(movePet).not.toHaveBeenCalled();
+  });
+
+  it("animates a typed Agent action event and publishes its final pet state", async () => {
+    const { api, publishPetAction } = createApi();
+    render(
+      <TerritoryPage
+        activePet={undefined}
+        animationSpeed={0.75}
+        api={api}
+        providerApi={providerApi}
+      />,
+    );
+    await screen.findByTestId("world-canvas");
+    const nextSnapshot: TerritoryWorldSnapshot = structuredClone(
+      starterTerritorySnapshot,
+    );
+    nextSnapshot.pet = {
+      ...nextSnapshot.pet,
+      behavior: "observing",
+      point: { x: 6, y: 6 },
+    };
+
+    act(() => {
+      publishPetAction({
+        action: "observe",
+        path: [starterTerritorySnapshot.pet.point, { x: 6, y: 6 }],
+        snapshot: nextSnapshot,
+        targetInstanceId: territoryWorldFixtureIds.deskInstance,
+      });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pet-motion")).toHaveTextContent(
+        "6,6:observing",
+      ),
+    );
   });
 });

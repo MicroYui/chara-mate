@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "17";
+export const CURRENT_SCHEMA_VERSION = "19";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -27,6 +27,28 @@ export const CURRENT_SCHEMA_SQL = `
     CHECK (
       api_style = 'azure-openai' OR api_version IS NULL
     )
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS personas (
+    id TEXT PRIMARY KEY NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('preset', 'custom')),
+    current_revision INTEGER NOT NULL CHECK (current_revision >= 1),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS persona_revisions (
+    persona_id TEXT NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (persona_id, revision)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS persona_settings (
+    settings_id TEXT PRIMARY KEY NOT NULL CHECK (settings_id = 'persona'),
+    active_persona_id TEXT NOT NULL REFERENCES personas(id),
+    updated_at TEXT NOT NULL
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS chats (
@@ -269,6 +291,7 @@ export const CURRENT_SCHEMA_SQL = `
     id TEXT PRIMARY KEY NOT NULL,
     chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
     execution_json TEXT NOT NULL CHECK (json_valid(execution_json)),
+    persona_json TEXT NOT NULL CHECK (json_valid(persona_json)),
     provider_json TEXT NOT NULL CHECK (json_valid(provider_json)),
     source TEXT NOT NULL DEFAULT 'text' CHECK (source IN ('text', 'voice')),
     status TEXT NOT NULL CHECK (
@@ -311,6 +334,7 @@ export const CURRENT_SCHEMA_SQL = `
       REFERENCES automations(id) ON DELETE CASCADE,
     automation_revision INTEGER NOT NULL CHECK (automation_revision >= 1),
     definition_json TEXT NOT NULL CHECK (json_valid(definition_json)),
+    persona_json TEXT NOT NULL CHECK (json_valid(persona_json)),
     trigger_json TEXT NOT NULL CHECK (json_valid(trigger_json)),
     status TEXT NOT NULL CHECK (
       status IN (
@@ -920,12 +944,6 @@ export const CURRENT_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS voice_settings (
     settings_id TEXT PRIMARY KEY NOT NULL CHECK (settings_id = 'voice'),
     provider_profile_id TEXT NOT NULL,
-    voice TEXT NOT NULL CHECK (
-      voice IN (
-        'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'
-      )
-    ),
-    instructions TEXT NOT NULL,
     input_mode TEXT NOT NULL CHECK (
       input_mode IN ('hands_free', 'push_to_talk')
     ),
@@ -933,10 +951,28 @@ export const CURRENT_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   ) STRICT;
 
+  CREATE TABLE IF NOT EXISTS companion_initiative_settings (
+    settings_id TEXT PRIMARY KEY NOT NULL CHECK (settings_id = 'companion'),
+    level TEXT NOT NULL CHECK (
+      level IN ('off', 'quiet', 'balanced', 'lively')
+    ),
+    quiet_hours_enabled INTEGER NOT NULL CHECK (
+      quiet_hours_enabled IN (0, 1)
+    ),
+    quiet_hours_start_minute INTEGER NOT NULL CHECK (
+      quiet_hours_start_minute BETWEEN 0 AND 1439
+    ),
+    quiet_hours_end_minute INTEGER NOT NULL CHECK (
+      quiet_hours_end_minute BETWEEN 0 AND 1439
+    ),
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
   CREATE TABLE IF NOT EXISTS voice_sessions (
     id TEXT PRIMARY KEY NOT NULL,
     chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
     provider_json TEXT NOT NULL CHECK (json_valid(provider_json)),
+    persona_json TEXT NOT NULL CHECK (json_valid(persona_json)),
     voice TEXT NOT NULL CHECK (
       voice IN (
         'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'
@@ -1051,4 +1087,6 @@ export const CURRENT_SCHEMA_SQL = `
     ON voice_turns(session_id, generation, id);
   CREATE INDEX IF NOT EXISTS voice_turns_run_idx
     ON voice_turns(run_id, id);
+  CREATE INDEX IF NOT EXISTS persona_revisions_created_idx
+    ON persona_revisions(persona_id, revision DESC);
 `;

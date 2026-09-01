@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RunEventEnvelope } from "../../src/shared/contracts/ipc";
+import type { PersonaSnapshot } from "../../src/shared/contracts/persona";
 import type { JsonValue } from "../../src/shared/contracts/primitives";
 import type { ApprovalMode } from "../../src/shared/contracts/run";
 import type { ToolResult } from "../../src/shared/contracts/tool";
@@ -38,6 +39,7 @@ import { ChatRepository } from "../../src/main/chat/chatRepository";
 import { ChatService } from "../../src/main/chat/chatService";
 import type { ChatTitleGenerator } from "../../src/main/chat/chatTitleService";
 import { openApplicationDatabase } from "../../src/main/db/database";
+import { defaultPersonaSnapshot } from "../../src/main/persona/personaPresets";
 import { registerCompanionshipTool } from "../../src/main/journey/companionshipTool";
 import type { JourneyService } from "../../src/main/journey/journeyService";
 import { LexicalRetrievalPipeline } from "../../src/main/memory/lexicalRetrievalPipeline";
@@ -303,6 +305,7 @@ async function createFixture(
   chatTitles?: ChatTitleGenerator,
   images?: ImageInputProvider,
   contextLimits?: ModelContextLimits,
+  persona?: PersonaSnapshot,
 ): Promise<RuntimeFixture> {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "chara-mate-agent-runtime-"),
@@ -341,10 +344,12 @@ async function createFixture(
     },
     ids,
     clock,
+    { getActiveSnapshot: () => persona ?? defaultPersonaSnapshot(clock.now()) },
     undefined,
     undefined,
     chatTitles,
     images,
+    undefined,
   );
   return {
     chatId: chat.id,
@@ -403,6 +408,7 @@ function createRuntimeFor(
     },
     ids,
     clock,
+    { getActiveSnapshot: () => defaultPersonaSnapshot(clock.now()) },
     undefined,
     undefined,
     undefined,
@@ -500,6 +506,43 @@ async function waitForStatus(
 }
 
 describe("Agent Runtime production path", () => {
+  it("stamps one Persona snapshot on the Run and compiles that same snapshot into model instructions", async () => {
+    const persona = {
+      ...defaultPersonaSnapshot(REQUESTED_AT),
+      displayName: "Lumi",
+      speechStyle: "先回应事实，再给一小句有温度的观察。",
+      styleName: "清醒温暖",
+    };
+    const fixture = await createFixture(
+      [finalTurn("已按当前角色完成回应")],
+      new SystemClock(),
+      undefined,
+      undefined,
+      undefined,
+      persona,
+    );
+
+    const run = await fixture.runtime.start({
+      attachments: [],
+      chatId: fixture.chatId,
+      content: "介绍一下你自己",
+      execution: { mode: "chat" },
+      providerProfileId: PROFILE_ID,
+      requestedAt: REQUESTED_AT,
+    });
+    await waitForStatus(fixture, run.id, "completed");
+
+    expect(run.persona).toEqual(persona);
+    expect(fixture.runs.getRun(run.id)?.persona).toEqual(persona);
+    expect(fixture.provider.requests[0]?.instructions).toContain(
+      "displayName: Lumi",
+    );
+    expect(fixture.provider.requests[0]?.instructions).toContain(
+      persona.speechStyle,
+    );
+    fixture.database.close();
+  });
+
   it("lets the Agent choose two validated read-only children and rejoins the same parent Run", async () => {
     const dispatch = collaborationDispatch();
     const fixture = await createFixture([

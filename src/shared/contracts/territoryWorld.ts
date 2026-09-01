@@ -29,6 +29,12 @@ import type {
   TerritoryMovePetRequestSchema,
   TerritoryMovePetResponseSchema,
   TerritoryMovePetResultSchema,
+  TerritoryPerformPetActionRequestSchema,
+  TerritoryPetActionObservationSchema,
+  TerritoryPetActionPerformedSchema,
+  TerritoryPetActionSchema,
+  TerritoryPetActionTargetSchema,
+  TerritoryPetAffordanceSchema,
   TerritoryPetStateSchema,
   TerritoryPurgeInstanceRequestSchema,
   TerritoryRestoreRevisionRequestSchema,
@@ -61,6 +67,7 @@ export const TERRITORY_WORLD_CHANNELS = {
   getSnapshot: "territory.world.snapshot.get",
   getZoneView: "territory.world.zone.get",
   movePet: "territory.world.pet.move",
+  petActionPerformed: "territory.world.pet.action-performed",
   purgeInstance: "territory.world.instance.purge",
   restoreRevision: "territory.world.revision.restore",
   snapshotChanged: "territory.world.snapshot.changed",
@@ -97,6 +104,22 @@ export type TerritoryInstancePlacement = Static<
 export type TerritoryInstance = Static<typeof TerritoryInstanceSchema>;
 export type TerritoryGroup = Static<typeof TerritoryGroupSchema>;
 export type TerritoryPetState = Static<typeof TerritoryPetStateSchema>;
+export type TerritoryPetAction = Static<typeof TerritoryPetActionSchema>;
+export type TerritoryPetActionTarget = Static<
+  typeof TerritoryPetActionTargetSchema
+>;
+export type TerritoryPetAffordance = Static<
+  typeof TerritoryPetAffordanceSchema
+>;
+export type TerritoryPetActionObservation = Static<
+  typeof TerritoryPetActionObservationSchema
+>;
+export type TerritoryPerformPetActionRequest = Static<
+  typeof TerritoryPerformPetActionRequestSchema
+>;
+export type TerritoryPetActionPerformed = Static<
+  typeof TerritoryPetActionPerformedSchema
+>;
 export type TerritoryWorldRevisionSummary = Static<
   typeof TerritoryWorldRevisionSummarySchema
 >;
@@ -205,5 +228,8 @@ export interface TerritoryWorldApi {
   ): Promise<TerritoryWorldSnapshotResponse>;
   subscribeChanged(
     listener: (snapshot: TerritoryWorldSnapshot) => void,
+  ): () => void;
+  subscribePetAction(
+    listener: (event: TerritoryPetActionPerformed) => void,
   ): () => void;
 }

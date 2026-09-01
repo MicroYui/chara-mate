@@ -26,6 +26,10 @@ import type {
   PetMainTarget,
 } from "../../shared/contracts/pet";
 import type {
+  PersonaApi,
+  PersonaLibrarySnapshot,
+} from "../../shared/contracts/persona";
+import type {
   VoiceApi,
   VoiceSessionSnapshot,
 } from "../../shared/contracts/voice";
@@ -34,6 +38,7 @@ import {
   chatFixture,
   FIXTURE_IDS,
   FIXTURE_TIMESTAMPS,
+  personaSnapshotFixture,
   runFixture,
 } from "../../../tests/fixtures/foundationContracts";
 import {
@@ -101,6 +106,19 @@ function renderApp({
     scale: 1,
   };
   let petLibraryListener: ((snapshot: PetLibrarySnapshot) => void) | undefined;
+  let personaLibrary: PersonaLibrarySnapshot = {
+    activePersonaId: personaSnapshotFixture.personaId,
+    personas: [
+      {
+        createdAt: FIXTURE_TIMESTAMPS.created,
+        kind: "preset",
+        snapshot: personaSnapshotFixture,
+        updatedAt: FIXTURE_TIMESTAMPS.updated,
+      },
+    ],
+  };
+  let personaLibraryListener:
+    ((snapshot: PersonaLibrarySnapshot) => void) | undefined;
   let petMainListener: ((target: PetMainTarget) => void) | undefined;
   let chatChangedListener: ((chat: Chat) => void) | undefined;
   let journeyChangedListener: ((snapshot: JourneySnapshot) => void) | undefined;
@@ -365,6 +383,22 @@ function renderApp({
       revise: vi.fn(),
       setPinned: vi.fn(),
     },
+    persona: {
+      copy: vi.fn(),
+      getLibrary: vi.fn().mockResolvedValue({
+        ok: true,
+        value: personaLibrary,
+      }),
+      select: vi.fn(),
+      subscribeChanged: vi.fn<PersonaApi["subscribeChanged"]>((listener) => {
+        personaLibraryListener = listener;
+        return () => {
+          if (personaLibraryListener === listener)
+            personaLibraryListener = undefined;
+        };
+      }),
+      update: vi.fn(),
+    },
     pet: {
       getLibrary: vi.fn(() =>
         Promise.resolve({ ok: true as const, value: petLibrary }),
@@ -426,6 +460,7 @@ function renderApp({
       purgeInstance: vi.fn(),
       restoreRevision: vi.fn(),
       subscribeChanged: vi.fn(() => () => undefined),
+      subscribePetAction: vi.fn(() => () => undefined),
     },
     settings: {
       getDataSnapshot: vi.fn().mockResolvedValue({
@@ -456,6 +491,14 @@ function renderApp({
             profileDirectory: "/browser/profile",
             screenRecording: "unavailable",
           },
+          companionInitiative: {
+            level: "balanced",
+            quietHours: {
+              enabled: true,
+              endMinute: 8 * 60,
+              startMinute: 22 * 60,
+            },
+          },
           voice: {
             inputMode: "hands_free",
             instructions: "使用自然、简洁的中文口语。",
@@ -469,6 +512,7 @@ function renderApp({
       openDataDirectory: vi.fn(),
       openManagedBrowser: vi.fn(),
       saveAgent: vi.fn(),
+      saveCompanionInitiative: vi.fn(),
       saveVoice: vi.fn(),
     },
     voice: {
@@ -521,6 +565,10 @@ function renderApp({
     listProfiles,
     markRendererReady,
     openMain: (target: PetMainTarget) => petMainListener?.(target),
+    selectPersona: (snapshot: PersonaLibrarySnapshot) => {
+      personaLibrary = snapshot;
+      personaLibraryListener?.(personaLibrary);
+    },
     selectPet: (petId: string) => {
       petLibrary = { ...petLibrary, activePetId: petId };
       petLibraryListener?.(petLibrary);
@@ -533,6 +581,32 @@ function renderApp({
 }
 
 describe("application shell", () => {
+  it("projects the active Persona into the sidebar", async () => {
+    const { selectPersona } = renderApp();
+    expect(await screen.findByText("元气开朗")).toBeVisible();
+
+    act(() =>
+      selectPersona({
+        activePersonaId: personaSnapshotFixture.personaId,
+        personas: [
+          {
+            createdAt: FIXTURE_TIMESTAMPS.created,
+            kind: "custom",
+            snapshot: {
+              ...personaSnapshotFixture,
+              displayName: "Lumi",
+              styleName: "清醒温暖",
+            },
+            updatedAt: FIXTURE_TIMESTAMPS.updated,
+          },
+        ],
+      }),
+    );
+
+    expect(await screen.findByText("Lumi")).toBeVisible();
+    expect(screen.getByText("清醒温暖")).toBeVisible();
+  });
+
   it("shows the persisted Chat after validating runtime and reports readiness", async () => {
     const { markRendererReady } = renderApp({ seeded: true });
 
@@ -714,7 +788,8 @@ describe("application shell", () => {
     expect(screen.getByRole("region", { name: "Chats" })).toBeVisible();
 
     act(() => openMain("character"));
-    expect(screen.getByRole("heading", { name: "桌面角色" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "角色人格" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "桌面形象" })).toBeVisible();
   });
 
   it("keeps New Chat as a right-side draft until the first send", async () => {
@@ -758,6 +833,7 @@ describe("application shell", () => {
         generation: 0,
         inputMode: "hands_free",
         muted: false,
+        persona: personaSnapshotFixture,
         phase: "listening",
         sessionId: "20000000-0000-4000-8000-000000000001",
         userTranscript: "",
@@ -818,6 +894,7 @@ describe("application shell", () => {
         generation: 0,
         inputMode: "hands_free",
         muted: false,
+        persona: personaSnapshotFixture,
         phase: "listening",
         sessionId: "20000000-0000-4000-8000-000000000001",
         userTranscript: "",
@@ -846,6 +923,7 @@ describe("application shell", () => {
         generation: 0,
         inputMode: "hands_free",
         muted: false,
+        persona: personaSnapshotFixture,
         phase: "paused",
         sessionId: "20000000-0000-4000-8000-000000000001",
         userTranscript: "",

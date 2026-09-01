@@ -87,12 +87,18 @@ const settingsSnapshot = {
     profileDirectory: "/profile",
     screenRecording: "not_determined",
   },
+  companionInitiative: {
+    level: "balanced",
+    quietHours: {
+      enabled: true,
+      endMinute: 8 * 60,
+      startMinute: 22 * 60,
+    },
+  },
   voice: {
     inputMode: "hands_free",
-    instructions: "自然、简洁地说中文。",
     microphone: "granted",
     providerProfileId: FIXTURE_IDS.provider,
-    voice: "verse",
   },
 } as const;
 const toolDescriptor = {

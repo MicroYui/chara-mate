@@ -5,6 +5,8 @@ import {
   AgentSettingsSaveRequestSchema,
   AgentSettingsSaveResponseSchema,
   BrowserActionResponseSchema,
+  CompanionInitiativeSettingsSaveRequestSchema,
+  CompanionInitiativeSettingsSaveResponseSchema,
   DataActionResponseSchema,
   DataSettingsSnapshotResponseSchema,
   SettingsEmptyRequestSchema,
@@ -78,6 +80,23 @@ export function registerSettingsIpc(
       });
     } catch (error) {
       return parseSchema(AgentSettingsSaveResponseSchema, {
+        error: appError(error),
+        ok: false,
+      });
+    }
+  });
+  ipcMain.handle(SETTINGS_CHANNELS.saveCompanionInitiative, (_event, input) => {
+    try {
+      const request = parseSchema(
+        CompanionInitiativeSettingsSaveRequestSchema,
+        input,
+      );
+      return parseSchema(CompanionInitiativeSettingsSaveResponseSchema, {
+        ok: true,
+        value: service.saveCompanionInitiative(request.companionInitiative),
+      });
+    } catch (error) {
+      return parseSchema(CompanionInitiativeSettingsSaveResponseSchema, {
         error: appError(error),
         ok: false,
       });

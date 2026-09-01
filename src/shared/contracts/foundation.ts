@@ -11,6 +11,7 @@ import type { LocalFilesApi } from "./files";
 import type { RunEventsApi } from "./ipc";
 import type { SettingsApi } from "./settings";
 import type { PetManagementApi } from "./pet";
+import type { PersonaApi } from "./persona";
 import type { ProviderApi } from "./provider";
 import type { TerritoryWorldApi } from "./territoryWorld";
 import type { MemoryApi } from "./memory";
@@ -43,6 +44,7 @@ export interface DesktopApi {
   foundation: FoundationApi;
   journey: JourneyApi;
   memory: MemoryApi;
+  persona: PersonaApi;
   pet: PetManagementApi;
   provider: ProviderApi;
   settings: SettingsApi;

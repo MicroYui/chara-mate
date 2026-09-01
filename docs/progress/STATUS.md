@@ -1,10 +1,20 @@
 # CharaMate 当前状态
 
-> 更新日期：2026-08-28
+> 更新日期：2026-08-31
 
 ## 当前里程碑
 
-**Phase 7 — Done；核心工具发现边界维护包 done**
+**智能角色体验收口 — CHARACTER-DIALOGUE、PROACTIVE-POLICY、NARRATIVE-AGENCY、TERRITORY-NPC-ACTION 均已完成**
+
+`PROACTIVE-POLICY` 已完成。48 个确定性时机场景中，P2（显式主动程度/安静时段 + 最近 3 次结果的有界退避）以 48/48 通过，P0/P1 分别为 18/48、34/48；生产已加入单一持久策略、Settings → Character 控件和气泡“少一点”，既有模型语义门、Persona、Journey 路由与统一 Agent Runtime 保持不变。
+
+`NARRATIVE-AGENCY` 已完成。8 个回答场景与 4 个压缩样本的 48 次有效 `gpt-5.6-sol` Pilot 选择 N0-RULES：保留现有 Chat summary/Journey，只在 Text/Voice 共用 instructions 中补角色控制权、虚构事实边界和自然出戏。当前摘要 4/4 保住叙事语义，结构化 projection 为 3/4 且约翻倍摘要成本；boundary director 相对当前路径为 3 胜、4 负、1 平并使请求数翻倍，因此不进入生产。
+
+`TERRITORY-NPC-ACTION` 已完成。27 个有效样本、79 次 `gpt-5.6-sol` Provider 请求中，T0/T1/T2 均为 9/9 且无虚报成功；T1 相比额外 planner 少 6 次请求、少约 13.0% input Token、少约 66.9% output Token、总延迟低约 20.3%，因此选择同一 Agent 按需 `observe → act`。生产已实现 typed affordance、显式动作、World Revision/能力/精确路径裁决、Renderer 路径事件和最终行为投影；全量 offline、build、25/25 Electron E2E、package 与 packaged smoke 已通过，不启动常驻 tick、需求/经济/体力系统或多 NPC 社会模拟。
+
+2026-08-27 的产品设计/源码对照曾确认，`REFACTOR_PRODUCT_DESIGN.md` §3.4 与 Phase 7 要求的可编辑 Persona、默认音色和“切换只影响新回答”尚未形成真实领域、revision snapshot 和运行时上下文。该缺口已在 2026-08-31 完成；既有 Phase 0–7 功能保持同一绿色基线。
+
+`CHARACTER-DIALOGUE` 已用当前 `main@5be8e28` 完成 A0/A1/A2 真实 Pilot，并选择、实现 A1：版本化 Persona Core。生产现在只有一个 Character Context Compiler，Text、Voice、Automation、主动对话和 inline continuation 都消费启动时的 Persona revision snapshot。第一阶段以真实生活中的长期个人角色为主；显式虚构叙事与 Territory NPC 继续作为后续独立问题。
 
 `MAINT-CORE-TOOL-BOUNDARY` 已完成：文件与命令的 7 个稳定核心原语按执行模式 always-loaded，并从 Tool Discovery 候选中排除；deferred 长尾能力继续使用单一 `T2-CLIENT-BM25`。本变更不改变 Chat/Agent effect 过滤或 Approval Policy。
 
@@ -27,10 +37,9 @@
 `VOICE-WAKE-ERROR-DISMISS` 已修复桌宠上的连接失败提示：沿用 Character Renderer 已有 `VoiceStore.clearError()` 增加明确关闭入口，点击只清本地展示态，不启动、结束或伪造 VoiceSession，也不改变 `wake_enabled`。下一次语音尝试仍按真实结果更新；没有新增未经验证的自动消失阈值。
 
 `VOICE-WAKE` 已在独立 worktree 中完成固定短语 `Hi Mika` 的本地自动唤醒：待机音频只进入 Character Renderer 的 AudioWorklet/Web Worker，命中后复用现有桌宠 `Agent + full_access` Voice Runtime，不打开主窗口、不创建第二套 Voice/Run/Tool 状态机。ready cue 只确认本地命中；Realtime 就绪后立即进入回应，并由 Mika 通过 `conversation: "none"` 的 out-of-band response 说“我在，请说。”。真人复测发现并修正欢迎语被 10 秒静默计时截断的问题；现在连接、生成和播报都不占用回答窗口，欢迎语完整结束后才开始计时。
-
 `MAINT-CHAT-CONTEXT-SNAPSHOT` 已完成：Chat 完整消息继续作为界面与审计真源，Schema v15 另行持久化滚动摘要、覆盖水位和同模型实际用量标定。Text、Automation、主动对话、inline conversation 与 Voice 统一读取“摘要 + 水位后已完成原文”；Run 内执行压缩和长期 Memory 保持各自边界。新 Run 不再重放已覆盖的全量历史，也不会因 terminal checkpoint 删除而丢失跨 Run 摘要。
 
-Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations 的“新建任务”固定归页面列表页头，窄屏侧栏入口不占常驻布局高度。
+Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项，Automations 的“新建任务”固定归页面列表页头，窄屏侧栏入口不占常驻布局高度。
 
 2026-08-14 按产品设计 §18/§20、UI 可用性验收与 ROADMAP 完成最终收口：同一组件树支持跟随系统/浅色/深色、三套预设和可编辑自定义背景；Settings → Data 可进入并读取真实分类占用、打开目录和复用 Activity 安全清理。首次无模型可直接进入 Models；React 错误提供恢复面，Renderer 进程崩溃会重建主窗口一次。Dev Dashboard 可查询 Memory/Storage/Image 聚合，唯一 Forge 路径可产出带应用图标的 arm64 `.app` 与 ULFO DMG。
 
@@ -38,7 +47,15 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 自由领地使用可扩建 2.5D World。探索态左键只选择/查看，右键从当前插值位置平滑移动；实际 atlas running 行、抵达后的 idle 行和连续改道均已覆盖。主窗口可见且停留 Territory 时只显示场景桌宠，切页、隐藏、最小化或关闭主窗口后恢复桌面 Character Window。
 
-当前集成退出条件：
+当前 Persona/Character Dialogue 退出条件：
+
+- [x] 当前 `main@5be8e28` 上的 4 Persona / 12 case、A0/A1/A2 协议测试 16/16 通过；Manifest SHA-256 为 `c29f0b2ff69e89fdd497df55c2528b5a3fb253fa01db8a002d28147ce3309ac9`。
+- [x] `copilot_api / gpt-5.6-sol` 真实 Pilot 完成：36/36 样本成功，实际 37 次 Provider 请求，无失败或自动重试。
+- [x] `docs/benchmarks/character-dialogue.md` 已选择 A1；A2 只有 1/12 状态写入、无稳定可见收益，且比 A1 多约 19.0% input Token 与一套状态复杂度。
+- [x] 生产具有版本化 Persona、Run/Automation/Voice snapshot，以及 Text/Voice/主动对话共用的唯一角色上下文。
+- [x] Pilot 中的角色一致性、知识边界与开放域自然度收益不以 Tool/Approval/任务终局回归为代价；完整 offline/build/E2E 与 package smoke 通过。
+
+2026-08-18 既有绿色基线：
 
 - [x] Journey/Together Session 状态与用户可见 Chat/Run/Voice 共用既有 Runtime，不增加管理页面或第二套执行链。
 - [x] 主动气泡绑定唯一 `chatId`，主窗口关闭时可连续文字/语音回复；临时邀请不进入最近、搜索或归档列表，也不显示倒计时或进度条。
@@ -56,6 +73,15 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
+| `TERRITORY-NPC-ACTION-DECISION` | `codex/character-dialogue-roadmap` | `done` | 选择 T1；生产 `territory.observe → territory.act`、宿主裁决与 Renderer event 已通过完整 offline、25/25 Electron E2E、package 与 packaged smoke |
+| `TERRITORY-NPC-ACTION-EXPERIMENT` | `codex/territory-npc-action-experiment` | `done` | node:test 4/4；27 样本/79 次有效 Provider 请求，T0/T1/T2 均 9/9，raw 仅保存在仓库外 |
+| `NARRATIVE-AGENCY-DECISION` | `codex/character-dialogue-roadmap` | `done` | 48 次有效 Pilot 选择 N0-RULES；生产只补同一 Agent 的角色控制权与虚构事实边界，无 projection/director/新状态 |
+| `PROACTIVE-POLICY-DECISION` | `codex/character-dialogue-roadmap` | `done` | P2 以 48/48 胜出；单一持久策略、设置 UI、气泡反馈与完整受影响验收通过 |
+| `PROACTIVE-POLICY-EXPERIMENT` | `codex/proactive-policy-experiment` | `done` | node:test 3/3；P0 18/48、P1 34/48、P2 48/48；raw 仅保存在仓库外 |
+| `P7-CHARACTER-DIALOGUE-DECISION` | `codex/character-dialogue-roadmap` | `done` | 当前 main 上的 12 case 真实 Pilot 完成；A1 以更自然的角色表现和更低复杂度胜出，中文 Decision Record 已形成 |
+| `P7-CHARACTER-DIALOGUE-EXPERIMENT` | `codex/character-dialogue-experiment` | `done` | 16/16 离线协议测试与 36/36 真实样本完成；37 次 Provider 请求，无失败；候选代码不进入生产分支 |
+| `P7-PERSONA-CONTRACT/CONTEXT` | `codex/character-dialogue-roadmap` | `done` | Persona revision、Run/Automation/Voice snapshot、typed IPC 与唯一 Character Context Compiler 已完成；A2 状态模块不存在 |
+| `P7-PERSONA-UI` | `codex/character-dialogue-roadmap` | `done` | Settings → Character、侧栏当前 Persona、预设复制/编辑、默认音色归属与切换语义已完成 |
 | `MAINT-CORE-TOOL-BOUNDARY` | `main` | `done` | 文件/命令核心原语常驻且不参与 Discovery；长尾 T2、执行模式过滤与 Approval 保持单路径 |
 | `MAINT-PROACTIVE-FREQUENCY` | `main` | `done` | 5 分钟展示后全局冷却、最近 3 次有结果记录、重启恢复与 Agent 语义重复判断完成；无关键词/字符串规则 |
 | `MAINT-CHAT-MESSAGE-ACTIONS` | `main` | `done` | 原生剪贴板 typed preload、消息正文选择，以及用户消息回填 Composer 后重新发送完成；历史记录保持 append-first |
@@ -91,6 +117,9 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 ## 依赖、边界与已知问题
 
+- `PROACTIVE-POLICY` 当前只覆盖未经用户明确请求的 Activity 主动开场。用户已约定的 Automation/Journey 跟进仍按其显式承诺投递，不被安静时段或负反馈退避悄悄吞掉。
+- `CHARACTER-DIALOGUE` 已选择并实现 A1。它复用现有 Agent Runtime、Memory、Journey、Voice 与已接受 `CONTEXT-RECIPE`；实验 Arm 和 A2 状态只留在 disposable worktree，不进入生产路径。
+- Persona、revision snapshot 与 Character Context Compiler 已成为唯一生产路径；固定 `Hi Mika` 只保留为当前产品定义的唤醒短语，不再承担非唤醒场景的人格配置。
 - `VOICE-WAKE` 只接受固定短语 `Hi Mika`。Realtime `server_vad` 只在已建立的 Realtime Session 内划分语音边界，不承担待机唤醒；唤醒命中与 out-of-band 连接欢迎语都不写 Chat/Run/Memory，只有后续非空 Realtime 用户转写才进入现有 Voice Run。
 - 自动唤醒与桌宠通用声波入口相同，固定使用 `Agent + full_access`。误唤醒后的无语音激活会自动结束，但 10 秒窗口只从欢迎语完整停止并回到 listening 后开始；该等待值是 CharaMate 可用性启发式，不是 OpenAI/Azure 或 sherpa-onnx 协议限制。
 - 当前 KWS 选择证据来自 macOS 合成语料与实际生产 Worker，不代表真实麦克风、多说话人、噪声房间或全天候 FAR/FRR 已通过；功能因此保持默认关闭，限制见 `docs/benchmarks/voice-wake.md`。
@@ -106,6 +135,9 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 ## 最近绿色验证
 
+- 2026-08-31 智能角色体验收口：`TERRITORY-NPC-ACTION` 的 27 个有效样本、79 次目标模型请求（加格式探针与链路 smoke 共 84 次 Provider 请求）完成，T0/T1/T2 均 9/9 且无虚报成功，选择 T1。生产 `npm run verify:offline` 通过（contract 112/112、focused/component 430/430、integration 200/200），`npm run test:e2e` 含 production build 在串行 Electron 生命周期下通过 25/25，arm64 `npm run package` 与 `npm run smoke:package` 通过；packaged smoke 确认 `databaseRoundTrip=true`、`browserRoundTrip=true`、`rendererReady=true`、`characterRendererReady=true`、`singleInstance=true`、`trayReady=true`、`visibleWindowCount=0`、`wakeAssetsReady=true`。`npm run test:benchmark` 返回 `not-applicable`；保留两条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示，未运行 `make`、签名或公证。
+- 2026-08-31 PROACTIVE-POLICY：disposable 48-case 结果为 P0 18/48、P1 34/48、P2 48/48，Decision Record 选择 P2。生产 `npm run check:fast` 通过（contract 108/108，仅 2 条既有 TanStack Virtual warning），`npm run test:focused` 424/424、`npm run test:integration` 198/198、`npm run build`、受影响 Electron E2E 2/2、arm64 `npm run package` 与 `npm run smoke:package` 通过；未运行新 Provider Live，因为三个 Arm 不改变模型语义门或话术。
+- 2026-08-31 Persona + Character Dialogue：真实 Pilot 使用 `copilot_api / gpt-5.6-sol`，36/36 样本成功、实际 37 次 Provider 请求；A1 Decision Record 已形成。`npm run verify:offline` 通过（contract 108/108、focused/component 417/417、integration 198/198，约 25 秒），`npm run build` 通过（约 9 秒），完整 Electron E2E 24/24 通过（30.5 秒），arm64 `npm run package` 与 `npm run smoke:package` 通过；packaged smoke 确认 `databaseRoundTrip=true`、`rendererReady=true`、`characterRendererReady=true`、`singleInstance=true`、`visibleWindowCount=0`、`wakeAssetsReady=true`。保留 2 条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示；未运行 `make`、签名、公证或新的 Voice/Image Live。
 - 2026-08-28 核心 Tool Discovery 边界修复：`npm run check:fast` 通过（contract 108/108，仅 2 条既有 TanStack Virtual warning），`npm run test:focused` 通过 412/412，`npm run test:integration` 通过 196/196，`npm run build`、arm64 `npm run package` 与 `npm run smoke:package` 通过。新增回归覆盖核心文件/命令 Schema 首轮常驻、无需搜索直接调用、写能力仍需审批、Chat 只暴露只读核心、核心不进入 BM25 搜索结果，以及长尾搜索收窄后核心仍可调用。未运行 Live Provider、Electron E2E 或 make；新 packaged App 已重启为 PID 99660。
 - 2026-08-28 主动陪伴频率收口：全量 typecheck、受影响文件 ESLint/Prettier、contract 108/108、focused/component 412/412、integration 192/192、production build、arm64 package 与 packaged smoke 通过；新增回归覆盖成功展示后 5 分钟边界、重启恢复、最近 3 条有界存储、模型输入不含记录 ID，以及回复/关闭/20 秒到期/应用中断结果。`npm run check:fast` 仅被未跟踪且不属于本工作包的 `docs/presentation/charamate-product/capture/capture.spec.ts` 既有 `only-throw-error` 阻断；本次未改动该文件。真实 packaged App 已重启为 PID 92235，用户数据库从 Schema v16 升级为 v17，新表存在且初始记录为 0。未运行 Live Provider、完整 Electron E2E 或 make。
 - 2026-08-28 主动陪伴标题竞态收口：`npm run check:fast` 通过（contract 108/108，保留 2 条既有 TanStack Virtual warning），`npm run test:focused` 通过 408/408，`npm run test:integration` 通过 192/192；`npm run build`、arm64 `npm run package` 与 `npm run smoke:package` 通过。新增回归覆盖同一应用从无标题升级为真实标题，以及主动陪伴在延迟标题到达后进入语义判断。实际启动新 packaged App 后，Activity 数据库连续写入 `CharaMate / CharaMate`、`ChatGPT / ChatGPT` 与 `Google Chrome / index - Google Chrome`；无文档窗口的 TextEdit 保持无标题。未运行独立 Live/benchmark/E2E 套件；真实应用保持运行供用户复测。
@@ -133,12 +165,15 @@ Phase 0–7 已完成。Chats 会话管理统一归左侧会话项，Automations
 
 ## 当前来源快照
 
+- 2026-08-31 `codex/character-dialogue-roadmap` 与 disposable 实验均已同步到 `main@5be8e28`。真实 Pilot manifest 为 `c29f0b…09ac9`，36/36 样本成功、实际 37 次 Provider 请求；A1 已选为生产路径。
 - 2026-08-28 复核锁定 `openai@6.49.0` Responses 类型与当前 `OpenAIResponsesModelProvider`/`AgentRuntime`/`approvalPolicy`：`defer_loading` 是逐 Tool 可选字段，`tool_search` 服务 deferred Tools；Adapter 已支持一个请求同时携带 always-loaded core 与 deferred 长尾。核心 pack 的 7 个名称属于 CharaMate correctness 边界，不是 Provider 硬限制；Chat/Agent 可见性和 Approval 执行授权继续分层。
 - 2026-08-28 复核 Apple [`NSWorkspace.didActivateApplicationNotification`](https://developer.apple.com/documentation/appkit/nsworkspace/didactivateapplicationnotification)、[`AXObserverAddNotification`](https://developer.apple.com/documentation/applicationservices/1462089-axobserveraddnotification) 与 [`kAXFocusedWindowAttribute`](https://developer.apple.com/documentation/applicationservices/kaxfocusedwindowattribute)：激活通知给出目标 `NSRunningApplication`，聚焦窗口与标题由独立 Accessibility 属性/通知提供，官方未承诺二者在同一时刻就绪。激活后的下一主队列轮次及 50/150/300 ms 有界补采是 CharaMate 针对实测竞态的恢复启发式，不是 macOS 协议限制；每次补采绑定当前应用代次，切换或停止后旧结果失效。
 - 2026-08-28 复核 Apple [`AXIsProcessTrusted`](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted)、代码签名/嵌套代码要求、Electron `43.2.0` `systemPreferences.isTrustedAccessibilityClient` 与 Forge macOS 签名路径：辅助功能信任检查属于调用进程，隐私授权依赖代码身份。当前旧独立 helper 在 Main 显示已授权时持续缺少窗口标题，且本地 ad-hoc 包中二者身份分离；生产因此收敛为 Main 内 Node-API 模块。没有窗口标题时直接静默、邀请过期后允许后续充分证据再次触发属于 CharaMate 产品规则，不是平台协议限制。
 - 2026-08-28 复核基线提交 `f7122f23e1ce3b6cce3008b9e0c59d43343c23f2` 的 Activity/Memory/Tool Search 与 Territory 全部 Definition 创建入口：`activity.search` 使用既有 deferred Tool Discovery，跨周候选来源固定为最近两个完成周；Territory 的展示故事与 Image prompt 分离，既有系统首版描述只通过幂等 Revision 升级。8 条检索结果和 180/120/240 字符守卫均为 CharaMate 产品边界，不是 Provider 协议限制。
 - 2026-08-27 复核 OpenAI Realtime conversations、Realtime client events 与 Microsoft Azure GPT Realtime audio（页面更新于 2026-07-29）：`response.create` 可用 `conversation: "none"` 创建不进入默认 conversation 的 out-of-band response，并以 metadata 关联事件、自定义 input 提供临时上下文；response 级 instructions 只覆盖本次 response 的 Session 默认配置。VOICE-WAKE 因此在 Session ready 后用紧凑指令生成 Mika 连接欢迎语，不伪造持久消息或重复完整 Agent 上下文。
 - 2026-08-25 复核 OpenAI Realtime VAD/WebRTC 指南：`speech_started/stopped` 属于已建立 Realtime Session，不是常驻 wake-word detector；客户端音频继续使用现有 WebRTC 路径。复核 sherpa-onnx `v1.13.6`（commit `1cb484af5e69d3c7803c1eb0b3b5ab8041e0e911`）的官方 WASM KWS/C API，以及当前 HEAD `34eba5a27220026b5981b633981c53205515067d`；固定英文短语使用 GigaSpeech 3.3M INT8 模型，下载包 SHA-256 为 `f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a`，包内 README 明示 Apache-2.0。选择、结果与外推限制见 `docs/benchmarks/voice-wake.md`。
+- 2026-08-31 `CHARACTER-DIALOGUE` 参考 PersonaForge、Memory-Driven Role-Playing、PersonaGym、LD-Agent 与 LoCoMo-Plus，并在当前代码基线上完成 4 Persona / 12 case 的 A0/A1/A2 比较。来源只用于组织 Persona、Memory 边界和评审维度，不复制论文阈值或框架。
+- 2026-08-31 真实目标为 `copilot_api / gpt-5.6-sol`。A1 对 A0 的逐例产品评审为 6 胜、3 负、3 平；A1 对 A2 为 7 胜、1 负、4 平。限制与产物 hash 见 `docs/benchmarks/character-dialogue.md`。
 - 2026-08-18 复核 OpenAI Compaction 指南、Codex `f47f77ada6699460bf13b0b7278e710692e0ea34` 与 LangChain `9f2d56e376ea926d334f8f99ed7c67b154c2f0bf`：成熟实现都让压缩结果替代已覆盖旧输入并成为后续上下文，而不是每个新执行重新注入全量原文。CharaMate 采用自己的 Chat 级滚动摘要与覆盖水位；既有 90% 触发比例、Provider 限额和实际 usage 标定不变，不复制外部默认消息数、重试数或固定窗口。
 - 2026-08-15 复核 Apple [`NSWorkspace.didActivateApplicationNotification`](https://developer.apple.com/documentation/appkit/nsworkspace/didactivateapplicationnotification)、[`frontmostApplication`](https://developer.apple.com/documentation/appkit/nsworkspace/frontmostapplication)、Accessibility `AXUIElementCreateApplication`/焦点窗口与标题通知；复核锁定 `electron@43.2.0` 的 [`desktopCapturer.thumbnailSize`](https://www.electronjs.org/docs/latest/api/desktop-capturer)、`Display.size/scaleFactor`、`NativeImage.toPNG/getSize`，以及锁定 `pixi.js@8.19.0` 的 [Application/Ticker](https://pixijs.com/8.x/guides/components/ticker)、`AnimatedSprite.autoUpdate=false` 与 Assets cache。操作系统/库能力与 CharaMate 的 15 秒 idle 采样、15 分钟截图、15 FPS 桌宠上限已分别记录。
 - 2026-08-14 复核锁定 `electron@43.2.0` 包内 `render-process-gone` reason 与 `forcefullyCrashRenderer`；主窗口只自动重建一次是 CharaMate 恢复策略。

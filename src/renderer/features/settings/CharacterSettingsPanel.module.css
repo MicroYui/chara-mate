@@ -1,7 +1,327 @@
 .panel {
   display: grid;
+  gap: 30px;
+  max-width: 920px;
+}
+
+.personaSection,
+.initiativeSection,
+.petSection {
+  display: grid;
   gap: 14px;
-  max-width: 760px;
+}
+
+.initiativeSection,
+.petSection {
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.sectionHeading h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.sectionIcon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-raised));
+  color: var(--accent);
+}
+
+.personaWorkspace {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.personaList {
+  display: grid;
+  gap: 4px;
+  padding: 5px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-raised);
+  list-style: none;
+}
+
+.personaChoice {
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.personaChoice:hover {
+  background: var(--surface-subtle);
+}
+
+.personaChoice[aria-current="true"] {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-raised));
+}
+
+.personaChoice strong {
+  font-size: 12px;
+}
+
+.personaChoice span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.personaChoice small {
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.personaChoice[data-active] small {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.personaEditor {
+  display: grid;
+  min-width: 0;
+  gap: 13px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-raised);
+}
+
+.personaEditorHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.personaEditorHeader > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.personaEditorHeader strong {
+  font-size: 14px;
+}
+
+.personaEditorHeader span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.personaActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.personaActions button,
+.savePersona {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.personaActions button:disabled,
+.savePersona:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.personaPreview {
+  display: grid;
+  gap: 12px;
+}
+
+.personaPreview > p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.personaPreview dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.personaPreview dl > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 9px;
+}
+
+.personaPreview dt,
+.personaPreview dd,
+.personaPreview small {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.personaPreview dt,
+.personaPreview small {
+  color: var(--text-tertiary);
+}
+
+.personaPreview dd {
+  color: var(--text-secondary);
+}
+
+.personaForm {
+  display: grid;
+  gap: 10px;
+}
+
+.personaGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.personaForm label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.personaForm input,
+.personaForm select,
+.personaForm textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.personaForm input,
+.personaForm select {
+  min-height: 31px;
+  padding: 0 8px;
+}
+
+.personaForm textarea {
+  min-height: 58px;
+  padding: 7px 8px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.personaForm input:focus,
+.personaForm select:focus,
+.personaForm textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.savePersona {
+  justify-self: start;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.feedback {
+  min-height: 16px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.initiativeForm {
+  display: grid;
+  max-width: 520px;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-raised);
+}
+
+.initiativeForm > label:not(.initiativeToggle),
+.initiativeTimes label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.initiativeForm select,
+.initiativeForm input[type="time"] {
+  min-height: 31px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.initiativeToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.initiativeTimes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.initiativeHint {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .headingRow {
@@ -282,5 +602,25 @@
 
   .rangeField {
     grid-template-columns: 72px minmax(120px, 1fr);
+  }
+
+  .personaWorkspace {
+    grid-template-columns: 1fr;
+  }
+
+  .personaList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .personaGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .personaEditorHeader {
+    flex-direction: column;
+  }
+
+  .personaActions {
+    justify-content: flex-start;
   }
 }

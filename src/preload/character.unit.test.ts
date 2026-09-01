@@ -72,6 +72,7 @@ describe("Character Window typed preload boundary", () => {
         "getSnapshot",
         "markReady",
         "moveDrag",
+        "reduceProactiveFrequency",
         "replyProactiveBubble",
         "resolveApproval",
         "showContextMenu",
@@ -195,6 +196,12 @@ describe("Character Window typed preload boundary", () => {
   it("routes proactive conversation actions through their narrow typed channels", async () => {
     electron.ipcRenderer.invoke.mockImplementation(
       (channel: string, input: unknown) => {
+        if (channel === PET_CHANNELS.reduceProactiveFrequency) {
+          expect(input).toEqual({
+            bubbleId: "20000000-0000-4000-8000-000000000002",
+          });
+          return Promise.resolve({ ok: true, value: { level: "quiet" } });
+        }
         expect(channel).toBe(PET_CHANNELS.replyProactiveBubble);
         expect(input).toEqual({
           bubbleId: "20000000-0000-4000-8000-000000000002",
@@ -218,6 +225,12 @@ describe("Character Window typed preload boundary", () => {
 
     api.focusConversation(navigation);
     api.dismissProactiveBubble(dismissRequest);
+    await expect(api.reduceProactiveFrequency(dismissRequest)).resolves.toEqual(
+      {
+        ok: true,
+        value: { level: "quiet" },
+      },
+    );
     await expect(
       api.replyProactiveBubble({
         ...dismissRequest,

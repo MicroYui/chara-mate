@@ -24,6 +24,11 @@ import type {
   CompanionInitiativeHistory,
   CompanionInitiativeRecord,
 } from "./companionInitiativeRepository";
+import {
+  evaluateCompanionInitiativePolicy,
+  localMinuteOfDay,
+  type CompanionInitiativePolicyReader,
+} from "./companionInitiativePolicy";
 
 const NullableIdSchema = Type.Union([EntityIdSchema, Type.Null()]);
 const NullableTextSchema = Type.Union([NonBlankStringSchema, Type.Null()]);
@@ -97,8 +102,6 @@ interface PendingInitiativeRun {
   readonly journeyId?: string;
   readonly windowTitle: string;
 }
-
-export const COMPANION_INITIATIVE_COOLDOWN_MS = 5 * 60 * 1_000;
 
 const DECISION_INSTRUCTIONS = `You are CharaMate's companionship initiative gate. You do not chat with the user, call tools, mutate state, or create a Journey. Decide whether one new foreground Activity observation justifies letting the conversational Agent open a lightweight conversation.
 
@@ -291,7 +294,6 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
   #abort = new AbortController();
   #drainTask: Promise<void> | undefined;
   #latestObservation: ForegroundActivityObservation | undefined;
-  #lastShownAtMs: number | undefined;
   #pendingRuns = new Map<string, PendingInitiativeRun>();
   #stopping = false;
 
@@ -303,22 +305,21 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
     private readonly runs: CompanionInitiativeRunReader,
     private readonly bubbles: CompanionInitiativeBubbleTarget,
     private readonly history: CompanionInitiativeHistory,
+    private readonly policy: CompanionInitiativePolicyReader,
     private readonly clock: Clock,
     private readonly logger: Pick<AppLogger, "warn">,
-  ) {
-    const lastShownAt = this.history.listRecent()[0]?.shownAt;
-    const lastShownAtMs = lastShownAt ? Date.parse(lastShownAt) : Number.NaN;
-    this.#lastShownAtMs = Number.isFinite(lastShownAtMs)
-      ? lastShownAtMs
-      : undefined;
-  }
+    private readonly personaName: () => string = () => "Mika",
+    private readonly readLocalMinuteOfDay: (
+      timestamp: string,
+    ) => number = localMinuteOfDay,
+  ) {}
 
   observeForeground(observation: ForegroundActivityObservation): void {
     if (
       this.#stopping ||
       this.#pendingRuns.size > 0 ||
       this.bubbles.hasOutstandingBubble() ||
-      this.#isCoolingDown()
+      !this.#policyAllowsInitiative()
     ) {
       return;
     }
@@ -349,7 +350,6 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
         });
         if (delivered) {
           const shownAt = this.clock.now();
-          this.#lastShownAtMs = Date.parse(shownAt);
           try {
             this.history.recordShown({
               ...(pending.appId ? { appId: pending.appId } : {}),
@@ -404,7 +404,7 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
           this.#latestObservation &&
           this.#pendingRuns.size === 0 &&
           !this.bubbles.hasOutstandingBubble() &&
-          !this.#isCoolingDown()
+          this.#policyAllowsInitiative()
         ) {
           this.#scheduleDrain();
         }
@@ -416,7 +416,7 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
       if (
         this.#pendingRuns.size > 0 ||
         this.bubbles.hasOutstandingBubble() ||
-        this.#isCoolingDown()
+        !this.#policyAllowsInitiative()
       ) {
         this.#latestObservation = undefined;
         return;
@@ -440,7 +440,7 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
         currentSnapshot.activeSession ||
         this.#pendingRuns.size > 0 ||
         this.bubbles.hasOutstandingBubble() ||
-        this.#isCoolingDown()
+        !this.#policyAllowsInitiative()
       ) {
         return;
       }
@@ -460,7 +460,8 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
       const chat = journey
         ? this.chats.getSnapshot({ chatId: journey.homeChatId })?.chat
         : this.chats.createProvisional({
-            title: evaluation.decision.chatTitle ?? "和 Mika 聊聊",
+            title:
+              evaluation.decision.chatTitle ?? `和 ${this.personaName()} 聊聊`,
           });
       if (!chat) continue;
       if (chat.status === "archived") {
@@ -518,11 +519,13 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
     }
   }
 
-  #isCoolingDown(): boolean {
-    if (this.#lastShownAtMs === undefined) return false;
-    return (
-      Date.parse(this.clock.now()) - this.#lastShownAtMs <
-      COMPANION_INITIATIVE_COOLDOWN_MS
-    );
+  #policyAllowsInitiative(): boolean {
+    const now = this.clock.now();
+    return evaluateCompanionInitiativePolicy({
+      localMinuteOfDay: this.readLocalMinuteOfDay(now),
+      now,
+      recentInitiatives: this.history.listRecent(),
+      settings: this.policy.getCompanionInitiative(),
+    }).eligible;
   }
 }

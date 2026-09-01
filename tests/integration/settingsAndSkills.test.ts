@@ -119,13 +119,18 @@ describe("Phase 2 Agent Settings", () => {
         profileDirectory: path.join(root, "browser-profile"),
         screenRecording: "not_determined",
       },
+      companionInitiative: {
+        level: "balanced",
+        quietHours: {
+          enabled: true,
+          endMinute: 8 * 60,
+          startMinute: 22 * 60,
+        },
+      },
       voice: {
         inputMode: "hands_free",
-        instructions:
-          "使用用户当前使用的语言自然、简洁地回应，并在用户切换语言时跟随；中文使用简体中文。角色整体开朗、有温度，处理任务时保持清楚可靠。允许自然停顿，不朗读命令、代码、JSON 和日志；涉及工具执行时只用一句短话说明正在做什么。",
         microphone: "granted",
         providerProfileId: "d0197d17-a231-41e0-afe2-664791a531ec",
-        voice: "verse",
       },
     });
     await expect(
@@ -175,10 +180,37 @@ describe("Phase 2 Agent Settings", () => {
         workingDirectory: path.join(root, "missing"),
       }),
     ).rejects.toThrow("工作目录不存在");
+    expect(
+      service.saveCompanionInitiative({
+        level: "quiet",
+        quietHours: {
+          enabled: true,
+          endMinute: 7 * 60 + 30,
+          startMinute: 21 * 60 + 30,
+        },
+      }),
+    ).toEqual({
+      level: "quiet",
+      quietHours: {
+        enabled: true,
+        endMinute: 7 * 60 + 30,
+        startMinute: 21 * 60 + 30,
+      },
+    });
+    expect(() =>
+      service.saveCompanionInitiative({
+        level: "balanced",
+        quietHours: {
+          enabled: true,
+          endMinute: 9 * 60,
+          startMinute: 9 * 60,
+        },
+      }),
+    ).toThrow("开始和结束时间不能相同");
     expect(repository.getVoiceWakeEnabled()).toBe(false);
     expect(repository.saveVoiceWakeEnabled(true, NOW)).toBe(true);
     repository.saveVoice(
-      { ...repository.getVoice(), instructions: "保持自然回应。" },
+      { ...repository.getVoice(), inputMode: "push_to_talk" },
       NOW,
     );
     expect(repository.getVoiceWakeEnabled()).toBe(true);
@@ -192,7 +224,15 @@ describe("Phase 2 Agent Settings", () => {
       workingDirectory: secondWorkspace,
     });
     expect(reopenedSettings.getVoiceWakeEnabled()).toBe(true);
-    expect(reopenedSettings.getVoice().instructions).toBe("保持自然回应。");
+    expect(reopenedSettings.getVoice().inputMode).toBe("push_to_talk");
+    expect(reopenedSettings.getCompanionInitiative()).toEqual({
+      level: "quiet",
+      quietHours: {
+        enabled: true,
+        endMinute: 7 * 60 + 30,
+        startMinute: 21 * 60 + 30,
+      },
+    });
     reopened.close();
   });
 });

@@ -4,7 +4,11 @@ import type {
   AutomationEventEnvelope,
   AutomationRun,
 } from "../../src/shared/contracts/automation";
-import { FIXTURE_IDS, FIXTURE_TIMESTAMPS } from "./foundationContracts";
+import {
+  FIXTURE_IDS,
+  FIXTURE_TIMESTAMPS,
+  personaSnapshotFixture,
+} from "./foundationContracts";
 
 export const AUTOMATION_FIXTURE_IDS = {
   automation: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -55,6 +59,7 @@ export const automationRunFixture = {
   createdAt: FIXTURE_TIMESTAMPS.created,
   definition: automationDefinitionFixture,
   id: AUTOMATION_FIXTURE_IDS.run,
+  persona: personaSnapshotFixture,
   requestedAt: FIXTURE_TIMESTAMPS.created,
   runId: FIXTURE_IDS.run,
   startedAt: FIXTURE_TIMESTAMPS.created,

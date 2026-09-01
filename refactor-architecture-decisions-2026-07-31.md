@@ -264,6 +264,7 @@ Manifest 在运行前冻结并计算 hash。结果只引用该 hash，防止实�
 | `MEMORY-RETRIEVAL` | §7 | 唯一模型/召回/排序/索引配方 |
 | `CONTEXT-RECIPE` | §8 | 唯一内容组合、顺序、预算与裁剪规则 |
 | `MEMORY-FORMATION` | §8.6 | Chat/Agent 使用期形成、修订或候选化 Memory 的唯一流程 |
+| `CHARACTER-DIALOGUE` | §8A | 版本化 Persona Core 与选择性 Character State 的唯一对话路径，以及跨 Text/Voice/Automation/主动对话的一致性 |
 | `ACTIVITY-DISTILLATION` | §9 | 唯一 Episode/Digest/候选生成流程 |
 | `ACTIVITY-RETENTION` | §9 | 唯一保留、容量与清理策略 |
 | `TERRITORY-SCENE-GENERATION` | 产品设计 §10.4 | 单物件、协调 Asset Pack、选区/Zone/扩建与局部 Edit 的唯一生成、归一化、修复和验收流程 |
@@ -312,6 +313,8 @@ flowchart TD
     V["Phase 4 Voice"]
 
     SE["SELF-EVOLUTION"]
+    CD["CHARACTER-DIALOGUE"]
+    PERS["Phase 7 Persona<br/>+ Character Dialogue"]
 
     F --> H
     F --> T
@@ -358,11 +361,21 @@ flowchart TD
 
     A --> SE
     MF --> SE
+
+    A --> CD
+    C --> CD
+    M --> CD
+    CD --> PERS
+    V --> PERS
+    ACT --> PERS
+    SE --> PERS
 ```
 
 `MEMORY-STORAGE` 是一个分阶段 Decision：journal 阶段可在 Retrieval 质量实验前运行；向量/compute 阶段只有 dense lane 证明有晋级价值后才触发。最终仍只产生一份完整 Decision Record 和一套生产存储配置。若 dense 未晋级，`SV` 节点视为“不触发”，不是缺失实验，也不会创建向量 worker/segment/service。
 
 Voice Architecture 与 Transport 在 Azure Contract Test 后可以并行研究；Tool Join 必须使用稳定 Agent Scheduler 和仍有竞争力的 Architecture。Multi-agent 只在单 Agent Harness 稳定后研究；Self-evolution 必须同时拥有稳定 Run evidence、Memory/Revision 和 Skills 生命周期。
+
+`CHARACTER-DIALOGUE` 在单一 Agent Runtime、已接受 Context Recipe 与 Memory 生产路径稳定后启动。它先选择稳定 Persona Core 是否需要附加选择性 Character State，再进入 Phase 7 的 Persona/角色上下文生产补全；Voice、Activity 主动对话和 Self-evolution 的 Persona preference 只消费同一获胜合同，不各自实现人格分支。
 
 Territory 的产品方向、World/Zone 与组合合同由用户选择，不作为实验 Arm。`TERRITORY-SCENE-GENERATION` 只比较怎样把同一产品意图可靠编译为结构化 change set 与统一视觉资产；`TERRITORY-WORLD-PERFORMANCE` 只比较在不删除或自动收回用户内容的前提下如何渲染同一个 World。两项已接受，失败候选和一次性 runner 均已删除，最终产品各自只保留一个胜者。
 
@@ -1528,6 +1541,148 @@ Persona、最近原文、会话摘要、长期 Memory evidence、Activity Digest
 
 ---
 
+## 8A. `CHARACTER-DIALOGUE` 角色一致性与开放域对话
+
+本 Decision 比较现有通用指令、稳定 Persona Core，以及 Persona Core 加动态 Character State。目标是在既有 Run/Item、Memory、Journey、Voice 和 Tool/Approval 边界内，选出一条足够自然且实现简单的生产路径。
+
+### 8A.1 参考来源
+
+- [PersonaForge](https://aclanthology.org/2026.findings-acl.386/)：稳定 Persona 与动态状态可以分层讨论。
+- [Memory-Driven Role-Playing](https://aclanthology.org/2026.findings-acl.1175/)：角色知识需要正确选择、使用并保持边界。
+- [PersonaGym](https://aclanthology.org/2025.findings-emnlp.368/)：评审应同时看预期行为、语言习惯和 Persona 一致性。
+- [LD-Agent](https://aclanthology.org/2025.naacl-long.272/) 与 [LoCoMo-Plus](https://aclanthology.org/2026.acl-long.1150/)：长期互动需要区分稳定角色、用户事实和当前情境。
+
+这些来源用于组织问题，不直接复制字段、阈值、对话长度或第二套 Agent/Memory 框架。
+
+### 8A.2 比较边界
+
+使用覆盖情绪支持、技术问答、创作协作、事实纠正、知识边界、Agent 操作边界和长上下文的原创 Persona 案例，比较：
+
+| Arm | 变化 |
+| --- | --- |
+| `A0-CURRENT` | 当前通用 Agent instructions |
+| `A1-PERSONA-CORE` | A0 加稳定、版本化 Persona Core |
+| `A2-SELECTIVE-STATE` | A1 再加可选 Character State 与状态 delta |
+
+三组使用相同 Provider、模型、Memory/Journey/Chat 上下文和 Tool scope。自动规则只检查协议、禁用表达和明确任务边界；自然度与角色感由逐例产品评审判断。结果必须同时报告角色一致性、知识边界、开放域自然度、任务正确性、Provider 用量和实现复杂度，并只在 `docs/benchmarks/character-dialogue.md` 形成生产选择；本研究总纲不保存实验结果或生产默认。
+
+---
+
+## 8B. `PROACTIVE-POLICY` 主动时机与打扰控制
+
+本 Decision 只决定一条主动消息在已有 Activity 语义门之前是否有资格继续判断，以及用户怎样直接降低频率。它不重做话术生成、Journey 路由、20 秒 provisional Chat 生命周期，也不把用户明确约定的 Automation/Journey 跟进当作未请求打扰。
+
+### 8B.1 参考来源与当前边界
+
+- [Towards Human-centered Proactive Conversational Agents](https://arxiv.org/abs/2404.12670)（SIGIR 2024）把主动系统拆为 intelligence、adaptivity 与 civility；时机、节奏和边界尊重需要单独评价，不能只看回答质量。
+- [Need Help? Designing Proactive AI Assistants for Programming](https://arxiv.org/abs/2410.04596)（CHI 2025）报告用户希望建议容易判断、采用与关闭，并能调节频率；持续出现的建议会被感知为过频。该研究也提示显式反馈会增加交互负担，因此 CharaMate 只保留一个直接的“少一点”，不要求每条消息评分。
+- [ProactiveEval](https://aclanthology.org/2026.acl-long.1906/)（ACL 2026）把目标规划和对话引导分开，并观察到一次塞入过多目标或过强开场会降低主动对话质量。CharaMate 因此继续让单次语义门只选择沉默、一个新话题或一个既有 Journey。
+- [GUIDE](https://research.google/pubs/guide-a-benchmark-for-user-context-understanding-and-assistance-in-gui-workflow-videos/)（CVPR 2026）表明开放 GUI 工作流中的行为状态、意图和帮助时机仍很困难，结构化上下文能改善帮助判断。CharaMate 当前只有应用与非空窗口标题事实，不把更丰富的屏幕/意图能力假装为已实现。
+
+当前权威源码基线为 `main@5be8e28`：宿主已在气泡存在、主动 Run 进行中、无窗口标题、活跃 Journey Session 和成功展示后 5 分钟内静默；模型读取最近 3 条实际主动消息与结果做语义重复判断。缺口是没有用户可见的主动程度、安静时段、跨重启的较长频率预算和确定性的负反馈退避。5 分钟是已有 CharaMate 保护值，20 秒只是未回复邀请的生命周期；两者都不是 Provider 协议限制或论文给出的通用最优值。
+
+### 8B.2 Arms 与唯一变量
+
+| Arm | 宿主资格策略 | 用户控制 |
+| --- | --- | --- |
+| `P0-CURRENT` | 仅现有 5 分钟全局冷却；其余交给同一个语义门 | 无 |
+| `P1-EXPLICIT` | P0 加 `off/quiet/balanced/lively`、本地安静时段和按等级的持久最小间隔 | Settings 调节 |
+| `P2-FEEDBACK` | P1 加最近 3 条中连续 `dismissed/expired` 的有界线性退避 | Settings 调节；气泡“少一点”只把等级下调一档 |
+
+三组都保留同一个模型语义门、同一 Persona/Context、最近 3 条语义去重、单气泡真源和统一 Agent Runtime。候选不得增加学习型用户画像、情绪推断、隐藏兴趣分数、常驻调度器或第二套主动消息系统。
+
+实验等级间隔为 `quiet=240`、`balanced=60`、`lively=15` 分钟，并继续保留 5 分钟绝对下限；默认 `balanced`，本地 `22:00–08:00` 安静时段默认开启。P2 的连续负结果只使用已存在的最近 3 条历史，把等级间隔乘以 `1 + negativeCount`；`replied` 清空负结果连续段，`interrupted` 不被解释为用户反感。“少一点”按 `lively → balanced → quiet` 下调，`quiet` 不隐式变为 `off`，完全关闭只在 Settings 明确完成。所有数值都是待本 Decision 验证的 CharaMate 产品启发式，不是论文或平台硬限制。
+
+### 8B.3 数据集、指标与晋级规则
+
+在 disposable worktree 冻结 48 个原创时机场景，等量覆盖：关闭、跨午夜/日内安静时段、等级间隔边界、单次与连续关闭/到期、回复后的恢复、应用中断、跨重启持久历史，以及“少一点”逐档变化。每个场景固定当前时刻、设置、最近记录与期望的 `eligible/reason`；上游语义门一律视为同一个已批准机会，从而只比较宿主资格策略。
+
+主要指标为用户硬控制违反数、场景决策正确率、回复后合格机会保留率、负反馈后的过早再打扰数，以及状态/分支复杂度。晋级要求用户关闭和安静时段违反为 0、跨重启结果一致、回复后不额外惩罚，并且相对更简单 Arm 明确减少过早打扰；若 P2 相对 P1 没有场景收益，则选择 P1。该阶段不调用真实 Provider，因为 Arm 不改变模型输入、话术或语义判断；Mock/离线结果只证明确定性资格策略，不能声称真实用户满意度、最优分钟数或开放世界长期打扰率。
+
+胜者必须重写为生产中的一个纯策略模块和一个持久设置真源，接入现有 `CompanionInitiativeService`；失败 Arm、runner 和候选开关不进入生产。普通 UI 只展示主动程度、安静时段和气泡“少一点”，不展示冷却分钟、退避倍数、recent outcome 或实验指标。
+
+---
+
+## 8C. `NARRATIVE-AGENCY` 叙事连续性与用户能动性
+
+本 Decision 研究已有 Persona、Journey/Together Session 与 Chat 长上下文怎样支持生活叙事和用户明确发起的虚构角色扮演。它不新增第三种 Composer 模式，不建立常驻导演、多 NPC 社会模拟或第二套 Run/Memory；普通开放域对话仍是默认路径。
+
+### 8C.1 参考来源与当前边界
+
+- [Towards Enhanced Immersion and Agency for LLM-based Interactive Drama](https://aclanthology.org/2025.acl-long.546/)（ACL 2025）把 immersion 与 agency 分开评价，并报告 bounded plot-based reflection 可让角色反应更贴合玩家意图；其 director-actor 路径需要更多推理调用，轻量 one-for-all 路径成本更低。论文中的固定剧情链、周期 `k=5` 与多角色架构都不是 CharaMate 默认。
+- [“Naked and on Fire”: Examining Player Agency Experiences in Narrative-Focused Gameplay](https://dl.acm.org/doi/10.1145/3411764.3445540)（CHI 2021）表明玩家感知到的 agency 是主观且多因素的，不能只用分支数或状态变化次数替代；评审因此同时观察输入是否被承认、角色/关系投入、表达空间和后果兑现。
+- [Drama Llama](https://arxiv.org/abs/2501.09099) 与 [Dramamancer](https://doi.org/10.1145/3746058.3758995)（2025）以 storylet/scene 边界连接作者意图与开放输入。其实现要求 NPC 行动与对白只属于非玩家角色，玩家角色的动作和对白只能来自玩家输入；CharaMate 借用这条能动性边界，不复制作者工具或完整 storylet 引擎。
+- [Can LLM Agents Stick to the Script?](https://arxiv.org/abs/2608.08160)（2026-08 预印本）把长程叙事拆为事实账本、承诺和轨迹，并将“忽略或重写玩家输入”单列为冲突。其结果说明即使强模型在长程开放交互中也容易出现事实冲突；CharaMate 因此只保留当前场景所需的可见事实和开放线索，不引入强制剧情承诺。
+- [Generative Agents](https://doi.org/10.1145/3586183.3606763)（UIST 2023）证明观察、检索、反思与规划可以产生可信的持续行为，同时也指出长程规划与连贯性仍是挑战。CharaMate 已有 Memory、Journey 和 Chat summary，不复制全量 memory stream、周期反思或常驻模拟 tick。
+
+当前权威源码基线为 `main@5be8e28` 加本 worktree 已完成的 Persona 单路径：Journey 只保存长期事项的 purpose/current position/next step、Session recap 和稀疏 moment；Chat Context Snapshot 的摘要只要求目标、约束、已完成事项与未决问题；Agent instructions 没有显式规定角色扮演开始/结束、玩家角色所有权、scene 事实与选择后果。因而当前模型可以临场演绎，但跨压缩连续性与“不替用户演”没有稳定合同。
+
+### 8C.2 Arms 与唯一变量
+
+| Arm | 长程叙事上下文 | 生成路径 |
+| --- | --- | --- |
+| `N0-CURRENT` | 当前 Journey + 任务型 Chat summary | 既有同一 Agent 回答 |
+| `N0-RULES` | 与 N0 相同 | 同一 Agent 增加玩家角色所有权、虚构事实边界、自然退出和生活不游戏化的显式规则 |
+| `N1-SAME-AGENT-PROJECTION` | N0-RULES 再增加可重建的 Narrative continuity 区块：当前 scene/角色控制权、已成立事实、用户选择及后果、开放线索与 active/closed 状态 | 仍由既有摘要调用和同一 Agent 回答；不增加每轮或边界模型调用 |
+| `N2-BOUNDARY-DIRECTOR` | 与 N1 相同 | 在明确 scene/episode 边界额外调用一次无 Tool 的结构化 director，再由同一 Agent 回答 |
+
+四组共用同一 Persona revision、Memory/Journey evidence、近期原文、Provider、模型和 Tool/Approval 边界。N0-RULES 是 N1/N2 的共同正确性基线，从而把“显式行为规则”与“新增状态表示”分开比较。N1 的 projection 是 Chat working memory 的一个结构化区块，不拥有事实真源：生活事实仍归 Journey/Memory，虚构事实只在当前 Chat 生效；关闭场景后不再作为现实上下文，也不得进入 `memory.record`。任何路径都不得替用户编写动作、对白、决定或感受；角色可以阻止一个动作，但必须承认用户意图并给出场内原因和可继续回应的结果。
+
+### 8C.3 数据集、指标与晋级规则
+
+在 disposable worktree 使用 8 个原创长上下文场景，覆盖生活共同创作/复盘/长期事项续接，以及侦探、奇幻、角色知识边界和显式退出虚构场景。每例固定 Persona、普通摘要、同事实的 Narrative projection、近期原文和当前用户输入。N0/N0-RULES/N1 各运行一次回答；N2 先运行一次 director projection 再运行一次回答，共 40 次目标模型请求。另用 4 个压缩样本比较当前摘要与候选结构化摘要能否忠实恢复 scene、角色控制权、事实、选择后果和开放线索，共 8 次请求；不自动重试。
+
+逐例报告：用户输入承认/改写、角色控制权侵犯、事实或视角冲突、选择的可见后果、开放线索回收、自然结束/退出、Persona 一致性、无意义戏剧化、总体自然度，以及请求数、input/output Token、TTFT、总延迟和状态复杂度。自动规则只检查明确禁项和结构合法；产品评审负责自然度与 agency，不能把字符串命中率当成人类偏好。
+
+N2 只有在 agency/连续性上相对 N1 出现稳定、可解释的配对收益时才晋级；质量相当时选择 N1。N1 只有在不增加事实混淆、角色控制权侵犯或任务语义损伤的前提下优于 N0-RULES，且候选摘要能从原始对话忠实重建 projection 时才进入生产。N0-RULES 只有在相对 N0 减少明确边界错误或稳定改善表达时才保留；质量相当则不增加指令。胜者必须重写成一个生产路径；实验 prompt、director、runner、Arm 标识和原始输出不进入生产仓库。
+
+---
+
+## 8D. `TERRITORY-NPC-ACTION` 领地角色行动与环境落地
+
+本 Decision 研究当前同一个角色怎样在用户明确要求时读取活动 Zone、选择有限的类型化行动，并让 Territory 宿主以真实 World Revision、碰撞、寻路与物件能力裁决结果。它不建立常驻 tick、需求/体力/经济、自动日程、多 NPC 社会模拟、第二套 Agent Runtime 或每件物品的独立状态机。
+
+### 8D.1 参考来源与当前边界
+
+- [SayCan v2](https://arxiv.org/abs/2204.01691v2)（2022-08-16）把语言模型提出的高层动作与真实 embodiment 的可执行能力分开：语言相关不等于环境可行。CharaMate 借用“模型选择、宿主落地”的边界，但使用现有确定性 capability、路径与碰撞校验，不引入学习型 value function。
+- [Voyager v2](https://arxiv.org/abs/2305.16291v2)（2023-10-19）通过环境反馈、执行错误和自校验继续行动。CharaMate 只复用“真实 Tool Result 回到同一 Run”这一闭环，不生成可执行代码、不建立自动 curriculum 或永久 skill library。
+- [Generative Agents](https://doi.org/10.1145/3586183.3606763)（UIST 2023）说明观察、记忆、反思与规划可以增强可信的持续行为，但长程规划和一致性仍有代价。CharaMate 已有 Persona、Memory、Journey 与 Chat summary，本 Decision 不再复制 memory stream、周期反思或模拟时钟。
+- [Efficient Tool-Calling Multi-Expert NPC Agent](https://arxiv.org/abs/2511.01720v1)（2025-11-03）把 NPC 对话与环境动作放进同一交互任务，并以多个 specialist 提升 Tool 路由。CharaMate 把“额外 planner 是否值得”作为 Arm 实测；没有稳定收益就保留现有同一 Agent，不引入 LoRA specialist 或额外模型服务。
+
+2026-08-31 复核的权威源码基线为 `main@5be8e28b12b5a563eb339456b8e10685992cabc2` 加本 worktree 已完成的 Persona/Narrative 单路径。Territory Definition 已声明 `seatable/sleepable/light/ambient-animation/inspectable/memory-reveal`；`TerritoryWorldService.movePet` 已从当前 pet point 计算路径、阻止 stale movement，并能在传入 `interactionInstanceId` 时保存 `sitting/sleeping/observing`。但当前 UI 只用右键移动，Agent 侧只有 `territory.generate_item`：没有只读 World observation、显式 action/target 合同、能力不匹配结果或 Agent 动作路径事件。现有 `movePet` 还会按能力优先级隐式决定最终姿态，使同一张床上的“坐下”和“睡觉”无法由角色明确选择。
+
+### 8D.2 固定行动合同与 Arms
+
+三组只允许以下动作；目标和可用性都来自同一活动 World Revision：
+
+| Action | 目标 | 宿主合法性 |
+| --- | --- | --- |
+| `move` | Zone 内坐标或当前实例 | 边界、Revision、碰撞与可达路径 |
+| `observe` | 当前实例 | `inspectable` 或 `memory-reveal` |
+| `sit` | 当前实例 | `seatable` |
+| `sleep` | 当前实例 | `sleepable` |
+| `react` | 当前实例 | `light`、`ambient-animation` 或 `memory-reveal` |
+
+模型不能提交路径、碰撞结论、最终坐标、World mutation、Pixi animation 或用户事实；宿主根据 frozen revision 解析目标、计算路径、保存最终 pet state，并把真实成功、歧义、能力不匹配、Revision 冲突或不可达结果返回同一 Run。行动只改变 Territory 自己的 pet state，不写 Memory/Journey，不把虚构动作当现实事实。
+
+| Arm | World 上下文 | 选择路径 |
+| --- | --- | --- |
+| `T0-INJECTED-AFFORDANCE` | 每个回答都预注入同一份紧凑活动 Zone/affordance snapshot | 当前 Agent 直接调用 typed `act` |
+| `T1-OBSERVE-ACT` | 只有相关请求才调用只读 `observe` Tool 取得同一 snapshot | 当前 Agent 在后续 step 调用 typed `act`，真实结果继续回到同一 Run |
+| `T2-PLANNER-ACT` | 与 T1 相同 | 先额外调用一次无 Tool 的结构化 planner 选择 action/target，再由当前 Agent 执行和回答 |
+
+三组使用同一 Persona revision、用户输入、Provider/模型、Tool Schema、宿主执行器和最终回复规则。既有 Tool Discovery 结果视为共同前置条件，不在本 Decision 重测。T0 的唯一变化是动态 World 信息进入所有相关/无关 Run；T1 的唯一变化是把相同信息改为按需 observation；T2 只比 T1 多一个 planner 调用。
+
+### 8D.3 数据集、指标与晋级规则
+
+在 disposable worktree 使用 9 个原创场景，覆盖坐下、睡觉、观察、光源/环境反应、坐标移动、重名目标歧义、不可达、stale Revision 恢复，以及没有行动意图/要求模拟饥饿经济的普通对话。每例固定 Persona、用户输入、活动 Zone snapshot、预期 action/target、能力与宿主结果；同一 snapshot 在 T0 直接注入，在 T1/T2 由 observation 返回。调用按 case 轮换 Arm 顺序，不自动重试；协议与 scorer 先以确定性 Mock 验证，真实模型输出才进入行动质量比较。
+
+主要指标为：行动意图/target 正确、非法 action 尝试、歧义时克制、失败后不虚报完成、最终回答与真实 Tool Result 一致。逐例产品评审再比较 Persona 自然度、语言与动作衔接和是否出现不必要的游戏化。成本同时报告 Provider 请求数、input/output Token、延迟、无关对话的额外 World Token，以及生产模块/Schema/event 数量。
+
+出现能力越权、错误 target 或失败后声称成功的 Arm 不晋级。T2 只有相对 T1 出现稳定、可解释的配对行动/回复收益才保留；质量相当时删除 planner。T1 与 T0 行动质量相当则比较按需额外 step 与每轮动态注入成本，并选择对普通对话侵入更小、生产状态更少的一条。最终胜者必须复用现有 Agent Harness、Tool/Approval、Territory Repository 与 Pixi renderer；失败 Arm、planner、实验 prompt、runner、Arm 标识和原始输出不进入生产仓库。
+
+---
+
 ## 9. Activity 蒸馏与用户画像实验
 
 ### 9.1 研究问题
@@ -2030,6 +2185,7 @@ Stage 0 只证明工程宿主可用，不证明 Harness、Storage、Retrieval、
 3. better-sqlite3 journal、候选向量 Manifest 与崩溃一致性。
 4. Realtime event、generation、打断、Tool/continuation 的确定性协议。
 5. 结构化日志、Trace 与实验 Manifest。
+6. `CHARACTER-DIALOGUE` 的 Persona/State 候选 Schema、Context 编译、响应解析、case/rubric 与 scorer smoke；不进入质量分母。
 
 ### Stage B：离线质量
 
@@ -2038,6 +2194,7 @@ Stage 0 只证明工程宿主可用，不证明 Harness、Storage、Retrieval、
 3. Activity A0–A4 与 Retention K0–K3。
 4. 图谱从 G0 开始，G1/G2 只在有图关系困难子集证明继续实验有价值时实现。
 5. Embedding 按小集筛选 → 长程集 finalist → 目标设备 finalist 的顺序运行，不做全笛卡尔积。
+6. `CHARACTER-DIALOGUE` 使用版本化案例、稳定请求顺序和逐例产品评审；Mock 只验证协议与确定性 scorer，不计模型质量，不额外制造 selection/holdout 仪式。
 
 ### Stage C：真实模型 Harness
 
@@ -2047,6 +2204,7 @@ Stage 0 只证明工程宿主可用，不证明 Harness、Storage、Retrieval、
 4. 2026-08-07 owner waive 专用 H7 Timing 100；Quality C12 延迟只作描述性运行遥测，不能表述为 timing Gate 通过。性能验证转入最终单一 compiler 的生产集成/E2E 与实际遥测，不恢复候选路径。
 5. `MULTI-AGENT` 先比较 M0/M2R；通过后才运行更高并行度。
 6. Realtime V0–V2 与 Tool Join J0–J2；先过协议 Contract Test，再跑真实语音。
+7. `CHARACTER-DIALOGUE` 在独立 disposable worktree 按 A0/A1/A2 配对运行；在当前任务授权和 Provider 额度边界内直接完成调用并记录实际用量，不为同一范围重复设置人工确认门，也不以 Mock 宣布胜者。
 
 ### Stage D：自进化
 
@@ -2104,10 +2262,11 @@ Stage 0 只证明工程宿主可用，不证明 Harness、Storage、Retrieval、
 6. Activity 以长期候选 precision、压缩比和磁盘有界为核心，不以写入数量为成绩。
 7. Realtime 同时比较自然度、首音频、Agent 正确率、打断与持久化一致性；Transport 和 Tool Join 各只选一个实现。
 8. 自进化以未来任务成功率和错误迁移率为核心，不以产生多少 Skill 为成绩。
-9. 质量相当时选择实现更小、状态更少、资源更低的方案。
-10. 没有达到统计可分辨时保留最简单基线。
-11. 实验结束后每个问题只输出一个产品 Decision Record；以胜者重写生产实现，并删除未获胜 Arm、Adapter、开关、依赖和临时 Schema，不建立生产兼容矩阵。
-12. 所有最终参数都由目标设备与真实使用复核，不把预注册阈值包装成永久真理。
+9. Character Dialogue 同时报告 Persona fidelity、开放域社交质量、角色知识边界、长程漂移、Agent 任务保真和跨入口一致性；动态状态只有在相对稳定 Persona Core 有净收益时存在。
+10. 质量相当时选择实现更小、状态更少、资源更低的方案。
+11. 没有达到统计可分辨时保留最简单基线。
+12. 实验结束后每个问题只输出一个产品 Decision Record；以胜者重写生产实现，并删除未获胜 Arm、Adapter、开关、依赖和临时 Schema，不建立生产兼容矩阵。
+13. 所有最终参数都由目标设备与真实使用复核，不把预注册阈值包装成永久真理。
 
 ---
 
@@ -2140,6 +2299,11 @@ Stage 0 只证明工程宿主可用，不证明 Harness、Storage、Retrieval、
 - [LongMemEval](https://github.com/xiaowu0162/LongMemEval)
 - [LongMemEval-V2](https://github.com/xiaowu0162/LongMemEval-V2)
 - [LoCoMo](https://github.com/snap-research/locomo)
+- [PersonaForge](https://aclanthology.org/2026.findings-acl.386/)
+- [Memory-Driven Role-Playing](https://aclanthology.org/2026.findings-acl.1175/)
+- [PersonaGym](https://aclanthology.org/2025.findings-emnlp.368/)
+- [LD-Agent](https://aclanthology.org/2025.naacl-long.272/)
+- [LoCoMo-Plus](https://aclanthology.org/2026.acl-long.1150/)
 - [OpenAI Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations)
 - [OpenAI Realtime VAD](https://developers.openai.com/api/docs/guides/realtime-vad)
 - [OpenAI Voice agents](https://developers.openai.com/api/docs/guides/voice-agents)

@@ -142,6 +142,7 @@ test("launches through the typed preload boundary", async () => {
       foundationKeys: Object.keys(window.charaMate.foundation).sort(),
       journeyKeys: Object.keys(window.charaMate.journey).sort(),
       memoryKeys: Object.keys(window.charaMate.memory).sort(),
+      personaKeys: Object.keys(window.charaMate.persona).sort(),
       petKeys: Object.keys(window.charaMate.pet).sort(),
       providerKeys: Object.keys(window.charaMate.provider).sort(),
       rootKeys: Object.keys(window.charaMate).sort(),
@@ -239,6 +240,13 @@ test("launches through the typed preload boundary", async () => {
         "revise",
         "setPinned",
       ],
+      personaKeys: [
+        "copy",
+        "getLibrary",
+        "select",
+        "subscribeChanged",
+        "update",
+      ],
       providerKeys: [
         "deleteProfile",
         "discoverModels",
@@ -269,6 +277,7 @@ test("launches through the typed preload boundary", async () => {
         "foundation",
         "journey",
         "memory",
+        "persona",
         "pet",
         "provider",
         "runEvents",
@@ -285,6 +294,7 @@ test("launches through the typed preload boundary", async () => {
         "openDataDirectory",
         "openManagedBrowser",
         "saveAgent",
+        "saveCompanionInitiative",
         "saveVoice",
       ],
       territoryKeys: [
@@ -301,6 +311,7 @@ test("launches through the typed preload boundary", async () => {
         "purgeInstance",
         "restoreRevision",
         "subscribeChanged",
+        "subscribePetAction",
       ],
       voiceKeys: [
         "end",
@@ -368,6 +379,7 @@ test("launches through the typed preload boundary", async () => {
       "getSnapshot",
       "markReady",
       "moveDrag",
+      "reduceProactiveFrequency",
       "replyProactiveBubble",
       "resolveApproval",
       "showContextMenu",
@@ -712,40 +724,23 @@ description: Verify editing, saving, and permanent deletion through Settings.
     await expect(
       page.getByRole("switch", { name: /Hi Mika/u }),
     ).toHaveAttribute("aria-checked", "false");
-    const voiceSelect = page.getByLabel("音色");
     const previewButton = page.getByRole("button", { name: "试听" });
-    const [voiceSelectBox, previewButtonBox] = await Promise.all([
-      voiceSelect.boundingBox(),
-      previewButton.boundingBox(),
-    ]);
-    expect(voiceSelectBox).not.toBeNull();
-    expect(previewButtonBox).not.toBeNull();
-    expect(
-      Math.abs(
-        voiceSelectBox!.y +
-          voiceSelectBox!.height -
-          (previewButtonBox!.y + previewButtonBox!.height),
-      ),
-    ).toBeLessThanOrEqual(1);
-    await expect(voiceSelect).toHaveValue("verse");
-    await voiceSelect.selectOption("coral");
+    await expect(page.getByText("Mika · 元气开朗 · verse")).toBeVisible();
+    await expect(previewButton).toBeEnabled();
     await page.getByLabel("输入方式").selectOption("push_to_talk");
-    await page
-      .getByLabel("Realtime instructions")
-      .fill("  使用简洁自然的中文回答。  ");
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page.getByRole("status")).toHaveText("Voice 设置已保存。");
-    await expect(
-      page.evaluate(() => window.charaMate.settings.getSnapshot()),
-    ).resolves.toMatchObject({
-      ok: true,
-      value: {
-        voice: {
-          inputMode: "push_to_talk",
-          instructions: "使用简洁自然的中文回答。",
-          voice: "coral",
-        },
-      },
+    const savedVoice = await page.evaluate(async () => {
+      const response = await window.charaMate.settings.getSnapshot();
+      if (!response.ok) return response;
+      return {
+        keys: Object.keys(response.value.voice).sort(),
+        value: response.value.voice,
+      };
+    });
+    expect(savedVoice).toMatchObject({
+      keys: ["inputMode", "microphone", "providerProfileId"],
+      value: { inputMode: "push_to_talk" },
     });
     await page.getByRole("button", { exact: true, name: "Appearance" }).click();
     await page
@@ -816,11 +811,8 @@ description: Verify editing, saving, and permanent deletion through Settings.
     await expect(page.getByText(messageFixture.content)).toBeVisible();
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByRole("button", { exact: true, name: "Voice" }).click();
-    await expect(page.getByLabel("音色")).toHaveValue("coral");
+    await expect(page.getByText("Mika · 元气开朗 · verse")).toBeVisible();
     await expect(page.getByLabel("输入方式")).toHaveValue("push_to_talk");
-    await expect(page.getByLabel("Realtime instructions")).toHaveValue(
-      "使用简洁自然的中文回答。",
-    );
     await page.getByRole("button", { name: "Chats" }).click();
     const snapshotAfterReload = await page.evaluate(
       (chatId) => window.charaMate.chat.getSnapshot({ chatId }),

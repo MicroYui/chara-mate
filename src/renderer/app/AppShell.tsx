@@ -31,6 +31,10 @@ import type { Chat } from "../../shared/contracts/chat";
 import type { FoundationSnapshot } from "../../shared/contracts/foundation";
 import type { JourneySnapshot } from "../../shared/contracts/journey";
 import type { MemorySource } from "../../shared/contracts/memory";
+import type {
+  PersonaLibrarySnapshot,
+  PersonaSnapshot,
+} from "../../shared/contracts/persona";
 import type { PetDescriptor } from "../../shared/contracts/pet";
 import type { AgentSettings } from "../../shared/contracts/settings";
 import type { UserInputResolution } from "../../shared/contracts/run";
@@ -80,10 +84,13 @@ const pageItems = [
   readonly label: string;
 }[];
 
-const currentPersona = {
-  id: "00000000-0000-4000-8000-000000000701",
-  label: "Mika",
-} as const;
+function activePersonaFrom(
+  library: PersonaLibrarySnapshot | null,
+): PersonaSnapshot | undefined {
+  return library?.personas.find(
+    ({ snapshot }) => snapshot.personaId === library.activePersonaId,
+  )?.snapshot;
+}
 
 interface AppShellProps {
   readonly activeChat: ChatView | undefined;
@@ -96,6 +103,8 @@ interface AppShellProps {
   readonly foundation: FoundationSnapshot;
   readonly journeyError: string | null;
   readonly journeySnapshot: JourneySnapshot;
+  readonly personaError: string | null;
+  readonly personaLibrary: PersonaLibrarySnapshot | null;
   readonly onChatArchive: (chatId: string) => void;
   readonly onChatCreate: () => void;
   readonly onChatDelete: (chatId: string) => void;
@@ -104,6 +113,7 @@ interface AppShellProps {
   readonly onChatSetPinned: (chatId: string, pinned: boolean) => void;
   readonly onClearChatError: () => void;
   readonly onClearJourneyError: () => void;
+  readonly onClearPersonaError: () => void;
   readonly onClearVoiceError: () => void;
   readonly onBackgroundSchemeChange: (scheme: BackgroundScheme) => void;
   readonly onCustomBackgroundColorsChange: (
@@ -252,6 +262,7 @@ function Sidebar({
   onChatRestore,
   onChatSetPinned,
   onSettingsOpen,
+  personaLibrary,
   state,
 }: Pick<
   AppShellProps,
@@ -265,6 +276,7 @@ function Sidebar({
   | "onChatRestore"
   | "onChatSetPinned"
   | "onSettingsOpen"
+  | "personaLibrary"
   | "state"
 >) {
   const chats = chatDomain.chats;
@@ -279,6 +291,7 @@ function Sidebar({
     readonly left: number;
     readonly top: number;
   } | null>(null);
+  const persona = activePersonaFrom(personaLibrary);
 
   const openContextMenu = (
     chat: Chat,
@@ -548,8 +561,8 @@ function Sidebar({
       <div className={styles["sidebarFooter"]}>
         {!collapsed ? (
           <div className={styles["persona"]}>
-            <span>Mika</span>
-            <small>元气开朗</small>
+            <span>{persona?.displayName ?? "正在读取角色"}</span>
+            <small>{persona?.styleName ?? "Persona"}</small>
           </div>
         ) : null}
         <div className={styles["footerActions"]}>
@@ -587,23 +600,29 @@ function SharedPresenceHint({
   dispatch,
   journeySnapshot,
   onNaturalCorrection,
+  personaLibrary,
   state,
-}: Pick<AppShellProps, "dispatch" | "journeySnapshot" | "state"> & {
+}: Pick<
+  AppShellProps,
+  "dispatch" | "journeySnapshot" | "personaLibrary" | "state"
+> & {
   readonly onNaturalCorrection: (chatId: string, title: string) => void;
 }) {
   const session = journeySnapshot.activeSession;
   if (!session) return null;
+  const personaName =
+    activePersonaFrom(personaLibrary)?.displayName ?? "CharaMate";
   const showingSessionChat =
     state.activePage === "chats" && state.activeChatId === session.chatId;
   return (
     <section
       className={styles["sharedPresenceHint"]}
-      aria-label="Mika 正在和你一起"
+      aria-label={`${personaName} 正在和你一起`}
     >
       <HeartHandshake aria-hidden="true" size={15} />
       <div>
         <strong>{session.title}</strong>
-        <span>Mika 正和你一起</span>
+        <span>{personaName} 正和你一起</span>
       </div>
       {showingSessionChat ? null : (
         <button
@@ -878,6 +897,8 @@ export function AppShell({
   foundation,
   journeyError,
   journeySnapshot,
+  personaError,
+  personaLibrary,
   onChatArchive,
   onChatCreate,
   onChatDelete,
@@ -886,6 +907,7 @@ export function AppShell({
   onChatSetPinned,
   onClearChatError,
   onClearJourneyError,
+  onClearPersonaError,
   onClearVoiceError,
   onBackgroundSchemeChange,
   onCustomBackgroundColorsChange,
@@ -917,6 +939,12 @@ export function AppShell({
   const [memoryTargetId, setMemoryTargetId] = useState<string | null>(null);
   const [territoryTargetId, setTerritoryTargetId] = useState<string | null>(
     null,
+  );
+  const personaOptions = (personaLibrary?.personas ?? []).map(
+    ({ snapshot }) => ({
+      id: snapshot.personaId,
+      label: `${snapshot.displayName} · ${snapshot.styleName}`,
+    }),
   );
 
   const focusComposer = () => {
@@ -983,6 +1011,7 @@ export function AppShell({
         onChatRestore={onChatRestore}
         onChatSetPinned={onChatSetPinned}
         onSettingsOpen={onSettingsOpen}
+        personaLibrary={personaLibrary}
         state={state}
       />
       <main className={styles["main"]}>
@@ -999,15 +1028,22 @@ export function AppShell({
             dispatch={dispatch}
             journeySnapshot={journeySnapshot}
             onNaturalCorrection={correctCompanionshipScope}
+            personaLibrary={personaLibrary}
             state={state}
           />
         </div>
-        {chatDomain.error || journeyError || voiceError ? (
+        {chatDomain.error || journeyError || personaError || voiceError ? (
           <div className={styles["errorBanner"]} role="alert">
             <span>
-              {chatDomain.error ?? journeyError ?? voiceError?.message}
+              {chatDomain.error ??
+                journeyError ??
+                personaError ??
+                voiceError?.message}
             </span>
-            {!chatDomain.error && !journeyError && voiceError?.retryable ? (
+            {!chatDomain.error &&
+            !journeyError &&
+            !personaError &&
+            voiceError?.retryable ? (
               <button
                 type="button"
                 onClick={() => {
@@ -1023,6 +1059,7 @@ export function AppShell({
               onClick={() => {
                 onClearChatError();
                 onClearJourneyError();
+                onClearPersonaError();
                 onClearVoiceError();
               }}
             >
@@ -1099,7 +1136,7 @@ export function AppShell({
                 modelId: model.provider.modelId,
                 providerProfileId: model.provider.profileId,
               }))}
-              personas={[currentPersona]}
+              personas={personaOptions}
               onOpenChatRun={(chatId, runId) =>
                 dispatch({
                   chatId,

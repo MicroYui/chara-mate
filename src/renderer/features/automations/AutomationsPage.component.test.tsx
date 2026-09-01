@@ -23,6 +23,7 @@ import {
 import {
   FIXTURE_IDS,
   FIXTURE_TIMESTAMPS,
+  personaSnapshotFixture,
 } from "../../../../tests/fixtures/foundationContracts";
 import { AutomationsPage } from "./AutomationsPage";
 
@@ -153,6 +154,7 @@ function makeApi({
       createdAt: request.requestedAt,
       definition: current.definition,
       id: MANUAL_RUN_ID,
+      persona: personaSnapshotFixture,
       requestedAt: request.requestedAt,
       status: "queued",
       trigger: { kind: "manual" },

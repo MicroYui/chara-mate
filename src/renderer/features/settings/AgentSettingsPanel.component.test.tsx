@@ -35,6 +35,14 @@ function createApi() {
           profileDirectory: "/browser/profile",
           screenRecording: "granted",
         },
+        companionInitiative: {
+          level: "balanced",
+          quietHours: {
+            enabled: true,
+            endMinute: 8 * 60,
+            startMinute: 22 * 60,
+          },
+        },
         voice: {
           inputMode: "hands_free",
           instructions: "使用自然、简洁的中文口语。",
@@ -48,6 +56,7 @@ function createApi() {
     openDataDirectory: vi.fn(),
     openManagedBrowser: vi.fn(),
     saveAgent,
+    saveCompanionInitiative: vi.fn(),
     saveVoice: vi.fn(),
   };
   return { api, saveAgent };

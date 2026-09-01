@@ -34,6 +34,7 @@ import { ChatService } from "../../src/main/chat/chatService";
 import { openApplicationDatabase } from "../../src/main/db/database";
 import { JourneyRepository } from "../../src/main/journey/journeyRepository";
 import { JourneyService } from "../../src/main/journey/journeyService";
+import { defaultPersonaSnapshot } from "../../src/main/persona/personaPresets";
 import { SystemClock } from "../../src/shared/pure/clock";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { createPng } from "../fixtures/png";
@@ -111,6 +112,34 @@ function finalAnswer(responseId: string, text: string) {
   ];
 }
 
+function objectValue(
+  value: unknown,
+): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+}
+
+function toolModelContent(
+  body: string,
+  callId: string,
+): Readonly<Record<string, unknown>> | undefined {
+  const payload: unknown = JSON.parse(body);
+  const input = objectValue(payload)?.["input"];
+  if (!Array.isArray(input)) return undefined;
+  const item = input
+    .map((value) => objectValue(value))
+    .find(
+      (value) =>
+        value?.["type"] === "function_call_output" &&
+        value["call_id"] === callId,
+    );
+  const output = item?.["output"];
+  if (typeof output !== "string") return undefined;
+  const result: unknown = JSON.parse(output);
+  return objectValue(objectValue(result)?.["modelContent"]);
+}
+
 const evolutionReviewMarker =
   "asynchronous Experience Review candidate generator";
 
@@ -167,6 +196,7 @@ async function startFakeProvider(browserUrl?: string) {
       const planFailureTask = body.includes("计划失败测试");
       const planTask = body.includes("计划测试");
       const structuredInputTask = body.includes("结构化输入测试");
+      const territoryActionTask = body.includes("领地行动端到端验收");
       const territoryTask = body.includes("Agent 端到端验收");
       if (evolutionReviewTask) {
         const requestPayload = JSON.parse(body) as {
@@ -367,6 +397,62 @@ async function startFakeProvider(browserUrl?: string) {
                 },
               ],
             }),
+            completed(responseId),
+          ]);
+        }
+      } else if (territoryActionTask) {
+        if (
+          body.includes('"call_id":"territory-act"') &&
+          body.includes("function_call_output")
+        ) {
+          writeSse(response, finalAnswer(responseId, "已经在小窝里睡下了"));
+        } else if (
+          body.includes('"call_id":"territory-observe"') &&
+          body.includes("function_call_output")
+        ) {
+          const observation = toolModelContent(body, "territory-observe");
+          const revisionId = observation?.["revisionId"];
+          const targets = observation?.["targets"];
+          const bed = Array.isArray(targets)
+            ? targets
+                .map((value) => objectValue(value))
+                .find(
+                  (value) =>
+                    typeof value?.["name"] === "string" &&
+                    value["name"].includes("桌宠小窝") &&
+                    value["reachable"] === true,
+                )
+            : undefined;
+          const instanceId = bed?.["instanceId"];
+          if (
+            typeof revisionId !== "string" ||
+            typeof instanceId !== "string"
+          ) {
+            response.writeHead(400, { "content-type": "application/json" });
+            response.end(
+              JSON.stringify({ error: { message: "missing Territory bed" } }),
+            );
+            return;
+          }
+          writeSse(response, [
+            functionCall("territory-act", "act", "territory", {
+              action: "sleep",
+              expectedRevisionId: revisionId,
+              target: { instanceId, kind: "instance" },
+            }),
+            completed(responseId),
+          ]);
+        } else if (body.includes("tool_search_output")) {
+          writeSse(response, [
+            functionCall("territory-observe", "observe", "territory", {}),
+            completed(responseId),
+          ]);
+        } else {
+          writeSse(response, [
+            searchCall(
+              "territory-action-search",
+              "observe the current Territory and let the pet sleep in its bed",
+            ),
             completed(responseId),
           ]);
         }
@@ -639,6 +725,10 @@ function seedJourneyFollowUp(
       ids,
       clock,
       { publish: () => undefined },
+      {
+        getActiveSnapshot: () => defaultPersonaSnapshot(clock.now()),
+        getSnapshot: () => defaultPersonaSnapshot(clock.now()),
+      },
     );
     const journeys = new JourneyService(
       new JourneyRepository(database),
@@ -670,6 +760,7 @@ function seedJourneyFollowUp(
       execution: { mode: "chat" },
       id: sourceRunId,
       latestSequence: 1,
+      persona: defaultPersonaSnapshot(now),
       provider: {
         apiStyle: "openai-compatible",
         modelId: "gpt-5.6-sol",
@@ -1183,6 +1274,75 @@ test("generates a structured Territory candidate through the Agent Tool", async 
       imageServer.closeAllConnections();
       imageServer.close(() => resolve());
     });
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("observes and performs one explicit Territory pet action through the Agent", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-agent-territory-action-e2e-"),
+  );
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+
+  try {
+    const launched = await launchApplication(userData, workspace);
+    application = launched.application;
+    await saveProvider(launched.main, provider.baseUrl);
+    await selectAgent(launched.main, "完全访问");
+    await launched.main
+      .getByRole("textbox", { name: "消息" })
+      .fill("领地行动端到端验收：请先看看当前领地，再去桌宠小窝睡觉");
+    await launched.main.getByRole("button", { name: "发送" }).click();
+
+    await expect(launched.main.getByText("已经在小窝里睡下了")).toBeVisible();
+    const snapshot = await launched.main.evaluate(async () => {
+      const response = await window.charaMate.territory.getSnapshot();
+      return response.ok ? response.value : null;
+    });
+    expect(snapshot?.pet.behavior).toBe("sleeping");
+    expect(
+      provider.bodies.some((body) =>
+        body.includes('"call_id":"territory-action-search"'),
+      ),
+    ).toBe(true);
+    expect(
+      provider.bodies.some((body) =>
+        body.includes('"call_id":"territory-observe"'),
+      ),
+    ).toBe(true);
+    const actionOutput = provider.bodies
+      .map((body) => toolModelContent(body, "territory-act"))
+      .find((value) => value !== undefined);
+    expect(actionOutput?.["petBehavior"]).toBe("sleeping");
+
+    await launched.main.getByRole("button", { name: "Territory" }).click();
+    await expect(
+      launched.main.getByTestId("territory-world-canvas"),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        launched.main.evaluate(() => {
+          const canvas = document.querySelector<HTMLCanvasElement>(
+            '[data-testid="territory-world-canvas"] canvas',
+          );
+          return {
+            animation: canvas?.dataset["petAnimation"],
+            behavior: canvas?.dataset["petBehavior"],
+          };
+        }),
+      )
+      .toEqual({ animation: "idle", behavior: "sleeping" });
+
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(launched.stderr);
+  } finally {
+    await application?.close();
+    await provider.close();
     await rm(root, { force: true, recursive: true });
   }
 });

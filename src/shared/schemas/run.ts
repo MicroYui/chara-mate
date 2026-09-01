@@ -10,6 +10,7 @@ import {
 } from "./primitives";
 import { AppErrorSchema } from "./error";
 import { ProviderSnapshotSchema } from "./provider";
+import { PersonaSnapshotSchema } from "./persona";
 
 export { AppErrorSchema } from "./error";
 
@@ -85,6 +86,7 @@ export const RunSchema = Type.Object(
     execution: RunExecutionSchema,
     id: EntityIdSchema,
     latestSequence: Type.Integer({ minimum: 0 }),
+    persona: PersonaSnapshotSchema,
     provider: ProviderSnapshotSchema,
     source: Type.Union([Type.Literal("text"), Type.Literal("voice")]),
     startedAt: Type.Optional(TimestampSchema),

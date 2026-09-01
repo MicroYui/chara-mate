@@ -7,6 +7,7 @@ import { EXTENSION_CHANNELS } from "../shared/contracts/extensions";
 import { EVOLUTION_CHANNELS } from "../shared/contracts/evolution";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { MEMORY_CHANNELS } from "../shared/contracts/memory";
+import { PERSONA_CHANNELS } from "../shared/contracts/persona";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { SETTINGS_CHANNELS } from "../shared/contracts/settings";
 import { TERRITORY_WORLD_CHANNELS } from "../shared/contracts/territoryWorld";
@@ -16,6 +17,7 @@ import {
   chatDataSnapshotFixture,
   FIXTURE_IDS,
   FIXTURE_TIMESTAMPS,
+  personaSnapshotFixture,
   runEventEnvelopeFixture,
 } from "../../tests/fixtures/foundationContracts";
 import {
@@ -80,6 +82,50 @@ beforeEach(() => {
 });
 
 describe("Phase 1 typed preload data boundary", () => {
+  it("validates Persona snapshots and changed events across the preload boundary", async () => {
+    const snapshot = {
+      activePersonaId: personaSnapshotFixture.personaId,
+      personas: [
+        {
+          createdAt: FIXTURE_TIMESTAMPS.created,
+          kind: "preset" as const,
+          snapshot: personaSnapshotFixture,
+          updatedAt: FIXTURE_TIMESTAMPS.updated,
+        },
+      ],
+    };
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(PERSONA_CHANNELS.getLibrary);
+        expect(input).toEqual({});
+        return Promise.resolve({ ok: true, value: snapshot });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(api.persona.getLibrary()).resolves.toEqual({
+      ok: true,
+      value: snapshot,
+    });
+    await expect(
+      api.persona.select({ personaId: "not-an-id" }),
+    ).rejects.toThrow();
+
+    const listener = vi.fn();
+    const dispose = api.persona.subscribeChanged(listener);
+    const registration = electron.ipcRenderer.on.mock.calls.find(
+      ([channel]) => channel === PERSONA_CHANNELS.changed,
+    ) as [string, IpcListener] | undefined;
+    expect(registration).toBeDefined();
+    registration?.[1]({}, snapshot);
+    expect(listener).toHaveBeenCalledWith(snapshot);
+    dispose();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      PERSONA_CHANNELS.changed,
+      registration?.[1],
+    );
+  });
+
   it("copies text through the narrow native clipboard boundary", async () => {
     const api = await loadApi();
 
@@ -204,6 +250,41 @@ describe("Phase 1 typed preload data boundary", () => {
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });
 
+  it("validates companion initiative settings on save", async () => {
+    const companionInitiative = {
+      level: "quiet" as const,
+      quietHours: {
+        enabled: true,
+        endMinute: 7 * 60 + 30,
+        startMinute: 21 * 60 + 30,
+      },
+    };
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(SETTINGS_CHANNELS.saveCompanionInitiative);
+        expect(input).toEqual({ companionInitiative });
+        return Promise.resolve({ ok: true, value: companionInitiative });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(
+      api.settings.saveCompanionInitiative({ companionInitiative }),
+    ).resolves.toEqual({ ok: true, value: companionInitiative });
+    await expect(
+      api.settings.saveCompanionInitiative({
+        companionInitiative: {
+          ...companionInitiative,
+          quietHours: {
+            ...companionInitiative.quietHours,
+            startMinute: -1,
+          },
+        },
+      }),
+    ).rejects.toThrow();
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
   it("validates permanent Skill deletion on both sides", async () => {
     electron.ipcRenderer.invoke.mockImplementation(
       (channel: string, input: unknown) => {
@@ -304,6 +385,7 @@ describe("Phase 1 typed preload data boundary", () => {
       generation: 0,
       inputMode: "hands_free" as const,
       muted: false,
+      persona: personaSnapshotFixture,
       phase: "paused" as const,
       sessionId,
       userTranscript: "",
@@ -628,6 +710,41 @@ describe("Phase 1 typed preload data boundary", () => {
     expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
       TERRITORY_WORLD_CHANNELS.snapshotChanged,
       changedListener,
+    );
+  });
+
+  it("validates Territory pet action events before notifying the Renderer", async () => {
+    let actionListener: IpcListener | undefined;
+    electron.ipcRenderer.on.mockImplementation(
+      (channel: string, listener: IpcListener) => {
+        expect(channel).toBe(TERRITORY_WORLD_CHANNELS.petActionPerformed);
+        actionListener = listener;
+      },
+    );
+    const api = await loadApi();
+    const listener = vi.fn();
+    const unsubscribe = api.territory.subscribePetAction(listener);
+    const event = {
+      action: "observe" as const,
+      path: [starterTerritorySnapshot.pet.point, { x: 6, y: 6 }],
+      snapshot: {
+        ...starterTerritorySnapshot,
+        pet: {
+          ...starterTerritorySnapshot.pet,
+          behavior: "observing" as const,
+          point: { x: 6, y: 6 },
+        },
+      },
+      targetInstanceId: territoryWorldFixtureIds.deskInstance,
+    };
+
+    actionListener?.({}, event);
+    expect(listener).toHaveBeenCalledWith(event);
+    expect(() => actionListener?.({}, { action: "teleport" })).toThrow();
+    unsubscribe();
+    expect(electron.ipcRenderer.off).toHaveBeenCalledWith(
+      TERRITORY_WORLD_CHANNELS.petActionPerformed,
+      actionListener,
     );
   });
 

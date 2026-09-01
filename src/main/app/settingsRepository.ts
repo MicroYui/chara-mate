@@ -2,10 +2,13 @@ import type Database from "better-sqlite3";
 
 import type {
   AgentSettings,
+  CompanionInitiativeSettings,
   VoiceSettingsConfig,
 } from "../../shared/contracts/settings";
+import { DEFAULT_COMPANION_INITIATIVE_SETTINGS } from "../../shared/contracts/settings";
 import type { Timestamp } from "../../shared/contracts/primitives";
 import { AgentSettingsSchema } from "../../shared/schemas/settings";
+import { CompanionInitiativeSettingsSchema } from "../../shared/schemas/settings";
 import { VoiceSettingsConfigSchema } from "../../shared/schemas/settings";
 import { parseSchema } from "../../shared/schemas/validation";
 
@@ -18,17 +21,19 @@ interface AgentSettingsRow {
 
 interface VoiceSettingsRow {
   input_mode: VoiceSettingsConfig["inputMode"];
-  instructions: string;
   provider_profile_id: string;
-  voice: VoiceSettingsConfig["voice"];
 }
 
 interface VoiceWakeSettingsRow {
   wake_enabled: 0 | 1;
 }
 
-export const DEFAULT_VOICE_INSTRUCTIONS =
-  "使用用户当前使用的语言自然、简洁地回应，并在用户切换语言时跟随；中文使用简体中文。角色整体开朗、有温度，处理任务时保持清楚可靠。允许自然停顿，不朗读命令、代码、JSON 和日志；涉及工具执行时只用一句短话说明正在做什么。";
+interface CompanionInitiativeSettingsRow {
+  level: CompanionInitiativeSettings["level"];
+  quiet_hours_enabled: 0 | 1;
+  quiet_hours_end_minute: number;
+  quiet_hours_start_minute: number;
+}
 
 const DEFAULT_VOICE_PROVIDER_PROFILE_ID =
   "d0197d17-a231-41e0-afe2-664791a531ec";
@@ -80,10 +85,65 @@ export class SettingsRepository {
     return this.getAgent();
   }
 
+  getCompanionInitiative(): CompanionInitiativeSettings {
+    const row = this.database
+      .prepare(
+        `SELECT level, quiet_hours_enabled, quiet_hours_start_minute,
+                quiet_hours_end_minute
+         FROM companion_initiative_settings
+         WHERE settings_id = 'companion'`,
+      )
+      .get() as CompanionInitiativeSettingsRow | undefined;
+    return parseSchema(
+      CompanionInitiativeSettingsSchema,
+      row
+        ? {
+            level: row.level,
+            quietHours: {
+              enabled: row.quiet_hours_enabled === 1,
+              endMinute: row.quiet_hours_end_minute,
+              startMinute: row.quiet_hours_start_minute,
+            },
+          }
+        : DEFAULT_COMPANION_INITIATIVE_SETTINGS,
+    );
+  }
+
+  saveCompanionInitiative(
+    settings: CompanionInitiativeSettings,
+    updatedAt: Timestamp,
+  ): CompanionInitiativeSettings {
+    const value = parseSchema(CompanionInitiativeSettingsSchema, settings);
+    this.database
+      .prepare(
+        `INSERT INTO companion_initiative_settings (
+           settings_id, level, quiet_hours_enabled,
+           quiet_hours_start_minute, quiet_hours_end_minute, updated_at
+         ) VALUES (
+           'companion', @level, @quietHoursEnabled,
+           @quietHoursStartMinute, @quietHoursEndMinute, @updatedAt
+         )
+         ON CONFLICT(settings_id) DO UPDATE SET
+           level = excluded.level,
+           quiet_hours_enabled = excluded.quiet_hours_enabled,
+           quiet_hours_start_minute = excluded.quiet_hours_start_minute,
+           quiet_hours_end_minute = excluded.quiet_hours_end_minute,
+           updated_at = excluded.updated_at`,
+      )
+      .run({
+        level: value.level,
+        quietHoursEnabled: value.quietHours.enabled ? 1 : 0,
+        quietHoursEndMinute: value.quietHours.endMinute,
+        quietHoursStartMinute: value.quietHours.startMinute,
+        updatedAt,
+      });
+    return this.getCompanionInitiative();
+  }
+
   getVoice(): VoiceSettingsConfig {
     const row = this.database
       .prepare(
-        `SELECT provider_profile_id, voice, instructions, input_mode
+        `SELECT provider_profile_id, input_mode
          FROM voice_settings WHERE settings_id = 'voice'`,
       )
       .get() as VoiceSettingsRow | undefined;
@@ -92,15 +152,11 @@ export class SettingsRepository {
       row
         ? {
             inputMode: row.input_mode,
-            instructions: row.instructions,
             providerProfileId: row.provider_profile_id,
-            voice: row.voice,
           }
         : {
             inputMode: "hands_free",
-            instructions: DEFAULT_VOICE_INSTRUCTIONS,
             providerProfileId: DEFAULT_VOICE_PROVIDER_PROFILE_ID,
-            voice: "verse",
           },
     );
   }
@@ -113,16 +169,12 @@ export class SettingsRepository {
     this.database
       .prepare(
         `INSERT INTO voice_settings (
-           settings_id, provider_profile_id, voice, instructions,
-           input_mode, updated_at
+           settings_id, provider_profile_id, input_mode, updated_at
          ) VALUES (
-           'voice', @providerProfileId, @voice, @instructions,
-           @inputMode, @updatedAt
+           'voice', @providerProfileId, @inputMode, @updatedAt
          )
          ON CONFLICT(settings_id) DO UPDATE SET
            provider_profile_id = excluded.provider_profile_id,
-           voice = excluded.voice,
-           instructions = excluded.instructions,
            input_mode = excluded.input_mode,
            updated_at = excluded.updated_at`,
       )
@@ -144,11 +196,10 @@ export class SettingsRepository {
     this.database
       .prepare(
         `INSERT INTO voice_settings (
-           settings_id, provider_profile_id, voice, instructions,
-           input_mode, wake_enabled, updated_at
+           settings_id, provider_profile_id, input_mode, wake_enabled,
+           updated_at
          ) VALUES (
-           'voice', @providerProfileId, @voice, @instructions,
-           @inputMode, @wakeEnabled, @updatedAt
+           'voice', @providerProfileId, @inputMode, @wakeEnabled, @updatedAt
          )
          ON CONFLICT(settings_id) DO UPDATE SET
            wake_enabled = excluded.wake_enabled,

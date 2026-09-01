@@ -48,6 +48,7 @@ import type {
   TerritoryGridPoint,
   TerritoryInstance,
   TerritoryLayer,
+  TerritoryPetActionPerformed,
   TerritoryPetState,
   TerritoryRotation,
   TerritoryWorldApi,
@@ -147,11 +148,11 @@ function candidateStatusLabel(
 
 function petBehaviorLabel(behavior: TerritoryPetState["behavior"]): string {
   const labels: Record<TerritoryPetState["behavior"], string> = {
-    idle: "正在它身边安静停留",
-    observing: "正在好奇地观察它",
-    sitting: "正在这里坐下休息",
-    sleeping: "正在这里安心睡觉",
-    walking: "正在向它走近",
+    idle: "正在领地里安静停留",
+    observing: "正在好奇地观察四周",
+    sitting: "正在坐下休息",
+    sleeping: "正在安心睡觉",
+    walking: "正在领地里走动",
   };
   return labels[behavior];
 }
@@ -424,6 +425,82 @@ export function TerritoryPage({
         void loadView(nextSnapshot);
       }),
     [api, loadView],
+  );
+
+  const installPetMovement = useCallback(
+    (
+      path: TerritoryPetActionPerformed["path"],
+      nextSnapshot: TerritoryWorldSnapshot,
+    ) => {
+      const currentView = viewRef.current;
+      const currentSnapshot = snapshotRef.current;
+      if (
+        !currentView ||
+        !currentSnapshot ||
+        currentView.zone.id !== nextSnapshot.pet.zoneId ||
+        currentView.revisionId !== nextSnapshot.world.currentRevision.id
+      ) {
+        setMovement(null);
+        snapshotRef.current = nextSnapshot;
+        setSnapshot(nextSnapshot);
+        void loadView(nextSnapshot);
+        return;
+      }
+
+      const renderedFrom = {
+        ...(renderedPetPosition.current ?? currentSnapshot.pet.point),
+      };
+      const renderedCell = {
+        x: Math.max(
+          0,
+          Math.min(
+            currentView.zone.bounds.width - 1,
+            Math.round(renderedFrom.x),
+          ),
+        ),
+        y: Math.max(
+          0,
+          Math.min(
+            currentView.zone.bounds.height - 1,
+            Math.round(renderedFrom.y),
+          ),
+        ),
+      };
+      const destination = path.at(-1) ?? renderedCell;
+      const reroutedPath = findTerritoryWorldPath(
+        currentView.zone,
+        renderedCell,
+        destination,
+        blockedTerritoryWorldCells(currentView),
+      );
+      const pathFromRenderedPosition = reroutedPath ?? path;
+      const nextPath =
+        pathFromRenderedPosition.length > 1
+          ? [renderedFrom, ...pathFromRenderedPosition.slice(1)]
+          : [renderedFrom, destination];
+      snapshotRef.current = nextSnapshot;
+      if (
+        renderedFrom.x === destination.x &&
+        renderedFrom.y === destination.y
+      ) {
+        setMovement(null);
+      } else {
+        movementSequence.current += 1;
+        setMovement({ id: movementSequence.current, path: nextPath });
+      }
+      // Publish the persisted final state in the same render as the movement
+      // path so the Pixi controller can animate from its actual screen point.
+      setSnapshot(nextSnapshot);
+    },
+    [loadView],
+  );
+
+  useEffect(
+    () =>
+      api.subscribePetAction((event) => {
+        installPetMovement(event.path, event.snapshot);
+      }),
+    [api, installPetMovement],
   );
 
   useEffect(() => {
@@ -702,48 +779,7 @@ export function TerritoryPage({
           const nextSnapshot = snapshotRef.current
             ? { ...snapshotRef.current, pet: serverSnapshot.pet }
             : serverSnapshot;
-          const renderedFrom = {
-            ...(renderedPetPosition.current ?? currentSnapshot.pet.point),
-          };
-          const renderedCell = {
-            x: Math.max(
-              0,
-              Math.min(
-                currentView.zone.bounds.width - 1,
-                Math.round(renderedFrom.x),
-              ),
-            ),
-            y: Math.max(
-              0,
-              Math.min(
-                currentView.zone.bounds.height - 1,
-                Math.round(renderedFrom.y),
-              ),
-            ),
-          };
-          const destination = response.value.path.at(-1) ?? renderedCell;
-          const reroutedPath = findTerritoryWorldPath(
-            currentView.zone,
-            renderedCell,
-            destination,
-            blockedTerritoryWorldCells(currentView),
-          );
-          const pathFromRenderedPosition = reroutedPath ?? response.value.path;
-          const nextPath =
-            pathFromRenderedPosition.length > 1
-              ? [renderedFrom, ...pathFromRenderedPosition.slice(1)]
-              : [renderedFrom, destination];
-          movementSequence.current += 1;
-          setMovement({
-            id: movementSequence.current,
-            path: nextPath,
-          });
-          // Start the visual movement before publishing the persisted
-          // destination. If React ever commits these updates separately, the
-          // controller must not settle at the server endpoint in an idle frame
-          // before it receives the path.
-          snapshotRef.current = nextSnapshot;
-          setSnapshot(nextSnapshot);
+          installPetMovement(response.value.path, nextSnapshot);
         }
       } catch {
         setError("桌宠暂时走不到那里。");
@@ -754,7 +790,7 @@ export function TerritoryPage({
         }
       }
     })();
-  }, [api]);
+  }, [api, installPetMovement]);
 
   useEffect(() => {
     drainPetMovesRef.current = drainPetMoves;

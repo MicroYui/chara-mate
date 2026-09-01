@@ -6,6 +6,7 @@ import {
   NonBlankStringSchema,
   TimestampSchema,
 } from "./primitives";
+import { CompanionInitiativeLevelSchema } from "./settings";
 
 export const PetIdSchema = Type.String({
   maxLength: 64,
@@ -151,6 +152,14 @@ export const ProactiveConversationBubbleDismissRequestSchema = Type.Object(
   { bubbleId: EntityIdSchema },
   { additionalProperties: false },
 );
+
+export const ProactiveConversationBubbleFrequencyResponseSchema =
+  operationResponse(
+    Type.Object(
+      { level: CompanionInitiativeLevelSchema },
+      { additionalProperties: false },
+    ),
+  );
 
 export const ProactiveConversationBubbleReplyRequestSchema = Type.Object(
   {

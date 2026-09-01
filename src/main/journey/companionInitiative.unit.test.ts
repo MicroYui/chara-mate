@@ -5,6 +5,7 @@ import type { Journey, JourneySnapshot } from "../../shared/contracts/journey";
 import type { RunEventEnvelope } from "../../shared/contracts/ipc";
 import type { ProviderSnapshot } from "../../shared/contracts/provider";
 import type { Run } from "../../shared/contracts/run";
+import { defaultPersonaSnapshot } from "../persona/personaPresets";
 import type { Clock } from "../../shared/pure/clock";
 import type { ChatService } from "../chat/chatService";
 import type {
@@ -15,13 +16,13 @@ import type {
 } from "../agent/modelProvider";
 import type { ProviderService } from "../providers/providerService";
 import {
-  COMPANION_INITIATIVE_COOLDOWN_MS,
   CompanionInitiativeService,
   ModelCompanionInitiativeDecider,
   type AssistantInitiatedRunLauncher,
   type CompanionInitiativeDecider,
   type CompanionInitiativeEvaluation,
 } from "./companionInitiative";
+import { COMPANION_INITIATIVE_LEVEL_INTERVAL_MS } from "./companionInitiativePolicy";
 import type {
   CompanionInitiativeRecord,
   NewCompanionInitiativeRecord,
@@ -125,6 +126,7 @@ function run(chatId: string, status: Run["status"] = "running"): Run {
     execution: { mode: "chat" },
     id: RUN_ID,
     latestSequence: 1,
+    persona: defaultPersonaSnapshot(NOW),
     provider: providerSnapshot,
     source: "text",
     startedAt: NOW,
@@ -244,8 +246,20 @@ function serviceHarness(
       listRecent: () => historyRecords,
       recordShown,
     },
+    {
+      getCompanionInitiative: () => ({
+        level: "lively",
+        quietHours: {
+          enabled: false,
+          endMinute: 8 * 60,
+          startMinute: 22 * 60,
+        },
+      }),
+    },
     { now: () => currentTime } satisfies Clock,
     logger,
+    () => "Mika",
+    () => 12 * 60,
   );
   return {
     archivedChats,
@@ -570,7 +584,7 @@ describe("CompanionInitiativeService", () => {
     expect(fixture.launched).toEqual([]);
   });
 
-  it("enforces five minutes from delivery before another semantic evaluation", async () => {
+  it("enforces the selected level interval from delivery before another semantic evaluation", async () => {
     const fixture = serviceHarness({
       decision: {
         action: "new_conversation",
@@ -595,7 +609,7 @@ describe("CompanionInitiativeService", () => {
     fixture.setOutstanding(false);
     fixture.setNow(
       new Date(
-        Date.parse(NOW) + COMPANION_INITIATIVE_COOLDOWN_MS - 1,
+        Date.parse(NOW) + COMPANION_INITIATIVE_LEVEL_INTERVAL_MS.lively - 1,
       ).toISOString(),
     );
     fixture.service.observeForeground({
@@ -607,7 +621,7 @@ describe("CompanionInitiativeService", () => {
 
     fixture.setNow(
       new Date(
-        Date.parse(NOW) + COMPANION_INITIATIVE_COOLDOWN_MS,
+        Date.parse(NOW) + COMPANION_INITIATIVE_LEVEL_INTERVAL_MS.lively,
       ).toISOString(),
     );
     fixture.service.observeForeground({
@@ -618,7 +632,7 @@ describe("CompanionInitiativeService", () => {
     expect(fixture.decider.decide).toHaveBeenCalledTimes(2);
   });
 
-  it("restores the cooldown and recent-three evidence from persisted history", async () => {
+  it("restores outcome-aware timing and recent-three evidence from persisted history", async () => {
     const fixture = serviceHarness(
       {
         decision: {
@@ -639,7 +653,7 @@ describe("CompanionInitiativeService", () => {
 
     fixture.setNow(
       new Date(
-        Date.parse(NOW) + COMPANION_INITIATIVE_COOLDOWN_MS,
+        Date.parse(NOW) + COMPANION_INITIATIVE_LEVEL_INTERVAL_MS.lively * 2,
       ).toISOString(),
     );
     fixture.service.observeForeground({

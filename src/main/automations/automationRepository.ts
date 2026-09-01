@@ -11,6 +11,7 @@ import type {
   AutomationRunTrigger,
 } from "../../shared/contracts/automation";
 import type { Timestamp } from "../../shared/contracts/primitives";
+import type { PersonaSnapshot } from "../../shared/contracts/persona";
 import type { AppError } from "../../shared/contracts/run";
 import {
   AutomationDefinitionSchema,
@@ -19,6 +20,7 @@ import {
   AutomationSchema,
 } from "../../shared/schemas/automation";
 import { AppErrorSchema } from "../../shared/schemas/error";
+import { PersonaSnapshotSchema } from "../../shared/schemas/persona";
 import { parseSchema } from "../../shared/schemas/validation";
 import {
   sanitizeForPersistence,
@@ -45,6 +47,7 @@ interface AutomationRunRow {
   readonly ended_at: string | null;
   readonly error_json: string | null;
   readonly id: string;
+  readonly persona_json: string;
   readonly requested_at: string;
   readonly run_id: string | null;
   readonly started_at: string | null;
@@ -60,6 +63,7 @@ export interface ScheduledClaimInput {
   readonly expectedNextRunAt: Timestamp;
   readonly expectedRevision: number;
   readonly nextRunAt?: Timestamp;
+  readonly persona: PersonaSnapshot;
   readonly runId: string;
 }
 
@@ -76,7 +80,7 @@ const AUTOMATION_SELECT = `
 
 const AUTOMATION_RUN_SELECT = `
   SELECT id, automation_id, automation_revision, definition_json,
-         trigger_json, status, chat_id, run_id, summary, error_json,
+         persona_json, trigger_json, status, chat_id, run_id, summary, error_json,
          requested_at, started_at, ended_at, created_at, updated_at
   FROM automation_runs
 `;
@@ -109,6 +113,7 @@ function readAutomationRun(row: AutomationRunRow): AutomationRun {
       ? { error: parseSchema(AppErrorSchema, JSON.parse(row.error_json)) }
       : {}),
     id: row.id,
+    persona: parseSchema(PersonaSnapshotSchema, JSON.parse(row.persona_json)),
     requestedAt: row.requested_at,
     ...(row.run_id ? { runId: row.run_id } : {}),
     ...(row.started_at ? { startedAt: row.started_at } : {}),
@@ -144,6 +149,7 @@ function assertRunIdentity(current: AutomationRun, next: AutomationRun): void {
     current.createdAt !== next.createdAt ||
     current.requestedAt !== next.requestedAt ||
     !isDeepStrictEqual(current.definition, next.definition) ||
+    !isDeepStrictEqual(current.persona, next.persona) ||
     !isDeepStrictEqual(current.trigger, next.trigger)
   ) {
     throw new AutomationError(
@@ -165,6 +171,7 @@ function storedRunValues(run: AutomationRun): readonly unknown[] {
     value.automationId,
     value.automationRevision,
     serializeForPersistence(value.definition),
+    serializeForPersistence(value.persona),
     serializeForPersistence(value.trigger),
     value.status,
     chatId ?? null,
@@ -338,6 +345,7 @@ export class AutomationRepository {
   insertManualRun(input: {
     readonly automation: Automation;
     readonly createdAt: Timestamp;
+    readonly persona: PersonaSnapshot;
     readonly requestedAt: Timestamp;
     readonly runId: string;
   }): AutomationRun {
@@ -347,6 +355,7 @@ export class AutomationRepository {
       createdAt: input.createdAt,
       definition: input.automation.definition,
       id: input.runId,
+      persona: input.persona,
       requestedAt: input.requestedAt,
       status: "queued",
       trigger: { kind: "manual" },
@@ -403,6 +412,7 @@ export class AutomationRepository {
         createdAt: input.claimedAt,
         definition: current.definition,
         id: input.runId,
+        persona: input.persona,
         requestedAt: input.claimedAt,
         status: "queued",
         trigger,
@@ -451,14 +461,14 @@ export class AutomationRepository {
          WHERE id = ?`,
       )
       .run(
-        values[5],
         values[6],
         values[7],
         values[8],
         values[9],
-        values[11],
+        values[10],
         values[12],
-        values[14],
+        values[13],
+        values[15],
         values[0],
       );
     if (result.changes !== 1) {
@@ -475,10 +485,10 @@ export class AutomationRepository {
     this.database
       .prepare(
         `INSERT INTO automation_runs (
-           id, automation_id, automation_revision, definition_json,
+           id, automation_id, automation_revision, definition_json, persona_json,
            trigger_json, status, chat_id, run_id, summary, error_json,
            requested_at, started_at, ended_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(...storedRunValues(input));
   }

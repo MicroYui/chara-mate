@@ -3,7 +3,7 @@ import { Type, type TSchema } from "@sinclair/typebox";
 import { ApprovalModeSchema } from "./run";
 import { AppErrorSchema } from "./error";
 import { EntityIdSchema, NonBlankStringSchema } from "./primitives";
-import { VoiceInputModeSchema, VoiceNameSchema } from "./voice";
+import { VoiceInputModeSchema } from "./voice";
 
 export const AgentSettingsSchema = Type.Object(
   {
@@ -25,9 +25,7 @@ export const PermissionStatusSchema = Type.Union([
 export const VoiceSettingsConfigSchema = Type.Object(
   {
     inputMode: VoiceInputModeSchema,
-    instructions: NonBlankStringSchema,
     providerProfileId: EntityIdSchema,
-    voice: VoiceNameSchema,
   },
   { additionalProperties: false },
 );
@@ -36,6 +34,30 @@ export const VoiceSettingsSchema = Type.Object(
   {
     ...VoiceSettingsConfigSchema.properties,
     microphone: PermissionStatusSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const CompanionInitiativeLevelSchema = Type.Union([
+  Type.Literal("off"),
+  Type.Literal("quiet"),
+  Type.Literal("balanced"),
+  Type.Literal("lively"),
+]);
+
+export const QuietHoursSchema = Type.Object(
+  {
+    enabled: Type.Boolean(),
+    endMinute: Type.Integer({ maximum: 1_439, minimum: 0 }),
+    startMinute: Type.Integer({ maximum: 1_439, minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+
+export const CompanionInitiativeSettingsSchema = Type.Object(
+  {
+    level: CompanionInitiativeLevelSchema,
+    quietHours: QuietHoursSchema,
   },
   { additionalProperties: false },
 );
@@ -58,6 +80,7 @@ export const SettingsSnapshotSchema = Type.Object(
   {
     agent: AgentSettingsSchema,
     browserComputer: BrowserComputerSettingsSchema,
+    companionInitiative: CompanionInitiativeSettingsSchema,
     voice: VoiceSettingsSchema,
   },
   { additionalProperties: false },
@@ -112,6 +135,11 @@ export const VoiceSettingsSaveRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const CompanionInitiativeSettingsSaveRequestSchema = Type.Object(
+  { companionInitiative: CompanionInitiativeSettingsSchema },
+  { additionalProperties: false },
+);
+
 export const BrowserActionResultSchema = Type.Object(
   {
     importedCookies: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -138,6 +166,9 @@ export const SettingsSnapshotResponseSchema = operationResponse(
 );
 export const AgentSettingsSaveResponseSchema =
   operationResponse(AgentSettingsSchema);
+export const CompanionInitiativeSettingsSaveResponseSchema = operationResponse(
+  CompanionInitiativeSettingsSchema,
+);
 export const VoiceSettingsSaveResponseSchema =
   operationResponse(VoiceSettingsSchema);
 export const BrowserActionResponseSchema = operationResponse(

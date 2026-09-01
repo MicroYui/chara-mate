@@ -17,6 +17,7 @@ import { parseSchemaWithoutCodeGeneration } from "../../src/shared/schemas/value
 import {
   FIXTURE_IDS,
   FIXTURE_TIMESTAMPS,
+  personaSnapshotFixture,
 } from "../fixtures/foundationContracts";
 
 const parsers = [parseSchema, parseSchemaWithoutCodeGeneration] as const;
@@ -32,6 +33,7 @@ const session = {
   inputMode: "hands_free",
   instructions: "自然、简洁地说中文。",
   muted: false,
+  persona: personaSnapshotFixture,
   protocolSessionId: "session-protocol",
   provider: {
     apiStyle: "azure-openai",
@@ -204,6 +206,7 @@ describe("Phase 4 Voice boundary contracts", () => {
               generation: 0,
               inputMode: "hands_free",
               muted: false,
+              persona: personaSnapshotFixture,
               phase: "paused",
               sessionId,
               userTranscript: "",

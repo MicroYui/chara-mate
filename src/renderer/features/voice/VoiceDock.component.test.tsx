@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { VoiceSessionSnapshot } from "../../../shared/contracts/voice";
+import { personaSnapshotFixture } from "../../../../tests/fixtures/foundationContracts";
 import { VoiceDock } from "./VoiceDock";
 import type { VoiceStore } from "./voiceStore";
 
@@ -13,6 +14,7 @@ const snapshot: VoiceSessionSnapshot = {
   generation: 1,
   inputMode: "push_to_talk",
   muted: false,
+  persona: personaSnapshotFixture,
   phase: "speaking",
   sessionId: "10000000-0000-4000-8000-000000000002",
   turnId: "10000000-0000-4000-8000-000000000003",

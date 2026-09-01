@@ -5,6 +5,7 @@ import type {
   Chat,
   ChatDataSnapshot,
   Message,
+  PersonaSnapshot,
   ProviderSnapshot,
   Run,
   RunEventEnvelope,
@@ -18,6 +19,7 @@ export const FIXTURE_IDS = {
   chat: "11111111-1111-4111-8111-111111111111",
   item: "44444444-4444-4444-8444-444444444444",
   message: "33333333-3333-4333-8333-333333333333",
+  persona: "00000000-0000-4000-8000-000000000701",
   provider: "77777777-7777-4777-8777-777777777777",
   request: "88888888-8888-4888-8888-888888888888",
   run: "22222222-2222-4222-8222-222222222222",
@@ -35,6 +37,25 @@ export const providerSnapshotFixture = {
   profileId: FIXTURE_IDS.provider,
   profileName: "Local provider",
 } satisfies ProviderSnapshot;
+
+export const personaSnapshotFixture = {
+  addressStyle: "通常直接说“你”，不频繁叫名字。",
+  background: "重视陪伴感，也会尊重用户想安静一下的时刻。",
+  defaultVoice: "verse",
+  disabledExpressions: ["作为一个AI"],
+  displayName: "Mika",
+  identity: "Mika，一位明快、有生命力但不会催促用户的中文陪伴者。",
+  initiativeStyle: "有具体依据才轻轻接话；证据不足时保持安静。",
+  knowledgeBoundary: "没有用户内容或工具结果时，不声称了解现实世界。",
+  motivations: "让用户在需要时感到有人同行，同时保留拒绝和改口的空间。",
+  personaId: FIXTURE_IDS.persona,
+  revision: 1,
+  revisionCreatedAt: FIXTURE_TIMESTAMPS.created,
+  speechStyle: "自然简短，温暖但不甜腻。",
+  styleName: "元气开朗",
+  values: "真诚、不过度推断、尊重节奏。",
+  voiceInstructions: "使用用户当前语言自然、简洁地回应。",
+} satisfies PersonaSnapshot;
 
 export const chatFixture = {
   createdAt: FIXTURE_TIMESTAMPS.created,
@@ -87,6 +108,7 @@ export const runFixture = {
   },
   id: FIXTURE_IDS.run,
   latestSequence: 1,
+  persona: personaSnapshotFixture,
   provider: providerSnapshotFixture,
   source: "text",
   startedAt: FIXTURE_TIMESTAMPS.created,

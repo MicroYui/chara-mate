@@ -302,6 +302,14 @@
   border-radius: 999px;
 }
 
+.proactiveBubble .bubbleFeedback {
+  width: auto;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+}
+
 .proactiveBubble .bubbleSend:not(:disabled) {
   background: rgb(44 45 50 / 92%);
   color: #fff;

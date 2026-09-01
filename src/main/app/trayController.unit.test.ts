@@ -5,6 +5,7 @@ import type { MenuItemConstructorOptions } from "electron";
 import type { PetCharacterSnapshot } from "../../shared/contracts/pet";
 import type { VoiceSessionSnapshot } from "../../shared/contracts/voice";
 import type { VoiceWakeSnapshot } from "../../shared/contracts/voiceWake";
+import { defaultPersonaSnapshot } from "../persona/personaPresets";
 import { TrayController, trayIconPath } from "./trayController";
 
 const electron = vi.hoisted(() => {
@@ -70,6 +71,7 @@ const voiceSnapshot: VoiceSessionSnapshot = {
   generation: 1,
   inputMode: "hands_free",
   muted: false,
+  persona: defaultPersonaSnapshot("2026-08-14T08:00:00.000Z"),
   phase: "listening",
   sessionId: "22222222-2222-4222-8222-222222222222",
   userTranscript: "",
@@ -163,6 +165,11 @@ describe("TrayController", () => {
           petListener = listener;
           return disposePet;
         }),
+      },
+      persona: {
+        getActiveSnapshot: vi.fn(() =>
+          defaultPersonaSnapshot("2026-08-14T08:00:00.000Z"),
+        ),
       },
       quit,
       voice: {

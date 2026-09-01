@@ -19,6 +19,7 @@ import {
 } from "../fixtures/automations";
 import {
   FIXTURE_IDS,
+  personaSnapshotFixture,
   providerSnapshotFixture,
 } from "../fixtures/foundationContracts";
 
@@ -71,6 +72,7 @@ function sourceRun(chatId: string): Run {
     execution: { mode: "chat" },
     id: FIXTURE_IDS.run,
     latestSequence: 2,
+    persona: personaSnapshotFixture,
     provider: providerSnapshotFixture,
     source: "text",
     startedAt: NOW,

@@ -388,8 +388,31 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
     await first.main.getByRole("button", { name: "Settings" }).click();
     await first.main.getByRole("button", { name: "Character" }).click();
     await expect(
-      first.main.getByRole("heading", { name: "桌面角色" }),
+      first.main.getByRole("heading", { name: "桌面形象" }),
     ).toBeVisible();
+    await expect(
+      first.main.getByRole("heading", { name: "主动陪伴" }),
+    ).toBeVisible();
+    await first.main.getByLabel("主动程度").selectOption("quiet");
+    await first.main.getByLabel("安静时段开始").fill("21:30");
+    await first.main.getByLabel("安静时段结束").fill("07:30");
+    await first.main.getByRole("button", { name: "保存主动陪伴" }).click();
+    await expect(first.main.getByText("主动陪伴设置已保存。")).toBeVisible();
+    await expect
+      .poll(() =>
+        first.main.evaluate(async () => {
+          const response = await window.charaMate.settings.getSnapshot();
+          return response.ok ? response.value.companionInitiative : null;
+        }),
+      )
+      .toEqual({
+        level: "quiet",
+        quietHours: {
+          enabled: true,
+          endMinute: 7 * 60 + 30,
+          startMinute: 21 * 60 + 30,
+        },
+      });
     await expect(
       first.main.getByRole("button", { name: "Columbinya 已选" }),
     ).toBeDisabled();

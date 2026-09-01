@@ -9,6 +9,7 @@ import type {
 import type { VoiceSessionSnapshot } from "../../shared/contracts/voice";
 import type { VoiceStore, VoiceUiState } from "../features/voice/voiceStore";
 import type { MicrophoneLease } from "./MicrophoneLease";
+import { personaSnapshotFixture } from "../../../tests/fixtures/foundationContracts";
 import {
   VoiceWakeController,
   VOICE_WAKE_NO_SPEECH_TIMEOUT_MS,
@@ -21,6 +22,7 @@ const activeVoice: VoiceSessionSnapshot = {
   generation: 1,
   inputMode: "hands_free",
   muted: false,
+  persona: personaSnapshotFixture,
   phase: "listening",
   sessionId: "20000000-0000-4000-8000-000000000001",
   userTranscript: "",

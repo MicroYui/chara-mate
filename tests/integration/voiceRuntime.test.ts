@@ -27,7 +27,9 @@ import {
 import type { RealtimeSessionIssuer } from "../../src/main/voice/azureWebRtcSession";
 import { VoiceRepository } from "../../src/main/voice/voiceRepository";
 import { VoiceService } from "../../src/main/voice/voiceService";
+import { defaultPersonaSnapshot } from "../../src/main/persona/personaPresets";
 import { registerVoiceTools } from "../../src/main/voice/voiceTool";
+import type { PersonaSnapshot } from "../../src/shared/contracts/persona";
 import type {
   VoiceClientCommand,
   VoiceDriverEvent,
@@ -155,12 +157,11 @@ async function fixture(options?: {
     summarize: (input) =>
       `保存便签：${typeof input["text"] === "string" ? input["text"] : ""}`,
   });
-  let voiceSettings: VoiceSettingsConfig = {
+  const voiceSettings: VoiceSettingsConfig = {
     inputMode: "hands_free",
-    instructions: "使用自然、简洁的中文口语。",
     providerProfileId: PROFILE_ID,
-    voice: "verse",
   };
+  let persona = defaultPersonaSnapshot(NOW);
   const settings = {
     getVoice: () => voiceSettings,
   } as unknown as SettingsRepository;
@@ -221,9 +222,14 @@ async function fixture(options?: {
       command: (command) => commands.push(command),
       snapshot: (snapshot) => snapshots.push(snapshot),
     },
+    { getActiveSnapshot: () => persona },
     () => "Workspace skill instructions.",
     options?.title,
     memory,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
   );
   registerVoiceTools(tools, {
     requestEndAfterResponse: (runId) => service.requestEndAfterResponse(runId),
@@ -243,8 +249,13 @@ async function fixture(options?: {
     repository,
     runs,
     service,
-    setVoiceSettings: (value: Partial<VoiceSettingsConfig>) => {
-      voiceSettings = { ...voiceSettings, ...value };
+    setPersona: (value: Partial<PersonaSnapshot>) => {
+      persona = {
+        ...persona,
+        ...value,
+        revision: persona.revision + 1,
+        revisionCreatedAt: NOW,
+      };
     },
     snapshots,
     tools,
@@ -345,10 +356,15 @@ describe("Realtime native Voice runtime", () => {
       type: "preference",
     });
 
-    const { connection } = await startTurn(
+    const { connection, run } = await startTurn(
       value,
       { mode: "chat" },
       "我有什么爱好？",
+    );
+    expect(run.persona).toEqual(defaultPersonaSnapshot(NOW));
+    expect(value.service.getActive()?.persona).toEqual(run.persona);
+    expect(value.repository.getSession(connection.sessionId)?.persona).toEqual(
+      run.persona,
     );
     const response = value.commands.findLast(
       (command) => command.type === "response.create",
@@ -393,6 +409,7 @@ describe("Realtime native Voice runtime", () => {
         execution: { mode: "chat" },
         id: runId,
         latestSequence: 1,
+        persona: defaultPersonaSnapshot(NOW),
         provider: {
           apiStyle: "openai-compatible",
           modelId: "gpt-5.6",
@@ -524,7 +541,7 @@ describe("Realtime native Voice runtime", () => {
       false,
     );
 
-    value.setVoiceSettings({ instructions: "恢复后优先给出简短结论。" });
+    value.setPersona({ voiceInstructions: "恢复后优先给出简短结论。" });
     const resumed = await value.service.setPaused({
       paused: false,
       requestedAt: NOW,
@@ -543,7 +560,8 @@ describe("Realtime native Voice runtime", () => {
       sessionId: connection.sessionId,
       type: "session.refresh",
     });
-    expect(refresh.instructions).toContain("恢复后优先给出简短结论。");
+    expect(refresh.instructions).not.toContain("恢复后优先给出简短结论。");
+    expect(refresh.instructions).toContain("语气明快、有温度但不催促");
     expect(refresh.tools.length).toBeGreaterThan(0);
     await report(value.service, connection.sessionId, {
       requestId: refresh.requestId,
@@ -566,7 +584,7 @@ describe("Realtime native Voice runtime", () => {
     value.database.close();
   });
 
-  it("cold reconnects into a new Voice session when the configured voice changes", async () => {
+  it("keeps the original Persona voice when the active Persona changes while paused", async () => {
     const value = await fixture();
     const connection = await value.service.start({
       chatId: CHAT_ID,
@@ -583,7 +601,7 @@ describe("Realtime native Voice runtime", () => {
       requestedAt: NOW,
       sessionId: connection.sessionId,
     });
-    value.setVoiceSettings({ voice: "coral" });
+    value.setPersona({ defaultVoice: "coral" });
 
     const resumed = await value.service.setPaused({
       origin: "voice_wake",
@@ -591,35 +609,32 @@ describe("Realtime native Voice runtime", () => {
       requestedAt: NOW,
       sessionId: connection.sessionId,
     });
-    expect(resumed.connection).toMatchObject({ voice: "coral" });
     expect(resumed.snapshot).toMatchObject({
       chatId: CHAT_ID,
-      phase: "connecting",
-      voice: "coral",
+      phase: "resuming",
+      sessionId: connection.sessionId,
+      voice: "verse",
     });
-    expect(resumed.snapshot.sessionId).not.toBe(connection.sessionId);
-    expect(value.issue).toHaveBeenCalledTimes(2);
+    expect(resumed).not.toHaveProperty("connection");
+    expect(value.issue).toHaveBeenCalledOnce();
     expect(value.repository.getSession(connection.sessionId)?.status).toBe(
-      "completed",
+      "active",
     );
-    expect(
-      value.commands.some(
-        (command) =>
-          command.type === "session.close" &&
-          command.sessionId === connection.sessionId,
-      ),
-    ).toBe(true);
-    await report(value.service, resumed.connection!.sessionId, {
-      protocolSessionId: "wake-cold-resume-session",
-      type: "session.ready",
+    const refresh = value.commands.findLast(
+      (command) => command.type === "session.refresh",
+    );
+    if (refresh?.type !== "session.refresh") {
+      throw new Error("Session refresh command was not emitted");
+    }
+    await report(value.service, connection.sessionId, {
+      requestId: refresh.requestId,
+      type: "session.refreshed",
     });
-    expect(
-      value.commands.some(
-        (command) =>
-          command.type === "wake.greeting.create" &&
-          command.sessionId === resumed.connection!.sessionId,
-      ),
-    ).toBe(true);
+    expect(value.service.getActive()).toMatchObject({
+      persona: { defaultVoice: "verse" },
+      phase: "thinking",
+      sessionId: connection.sessionId,
+    });
     value.database.close();
   });
 
@@ -1378,7 +1393,7 @@ describe("Realtime native Voice runtime", () => {
       sessionId: connection.sessionId,
       type: "wake.greeting.create",
     });
-    expect(greeting?.instructions).toContain("使用自然、简洁的中文口语。");
+    expect(greeting?.instructions).toContain("语气明快、有温度但不催促");
     expect(greeting?.instructions).toContain('say exactly "我在，请说。"');
     expect(greeting?.instructions).not.toContain(
       "Workspace skill instructions.",

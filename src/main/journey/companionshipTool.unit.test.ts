@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { Run } from "../../shared/contracts/run";
+import { defaultPersonaSnapshot } from "../persona/personaPresets";
 import { ToolRegistry } from "../tools/toolRegistry";
 import {
   COMPANIONSHIP_UPDATE_TOOL_NAME,
@@ -21,6 +22,7 @@ const run: Run = {
   execution: { mode: "chat" },
   id: RUN_ID,
   latestSequence: 1,
+  persona: defaultPersonaSnapshot(NOW),
   provider: {
     apiStyle: "openai-compatible",
     modelId: "gpt-example",

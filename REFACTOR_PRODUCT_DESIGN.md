@@ -315,6 +315,8 @@ LLM 如果在 Chat 中发现任务需要执行，只能回复建议并给出“�
 
 Chat 与 Agent 使用同一个 Agent Runtime、Tool Registry、Context 和标题链路，只在 Tool 执行边界按 `effect=read && idempotency=idempotent` 限制 Chat。两种模式都加载计划能力和 Provider 原生网页搜索；简单问答或一次查询直接回答，不为展示流程而创建计划，只有真正的多步骤任务才调用计划工具。Voice 从 Composer 进入时继承当前 Chat/Agent 与 Agent 权限，从桌宠声波入口进入时创建 `Agent + 完全访问` 会话；开始后不再改写权限语义。
 
+用户明确发起虚构角色扮演时，仍使用普通 Chat 和同一 Agent Runtime，不新增第三种 Composer 模式。用户独占其玩家角色的动作、对白、决定和感受；CharaMate 只扮演非玩家角色与环境，承认用户输入并给出局部可见后果，不为推进预设剧情改写用户选择。用户明确出戏后立即停止演绎。虚构事件只属于当前 Chat 上下文，不写成用户现实 Memory、Journey、Activity 或 Tool 事实；这条边界不限制用户明确要求的共同写作、续写或改稿。
+
 当模型需要少量、明确且会改变后续执行的信息时，可以调用宿主直接提供的结构化 `request_user_input`，由 Chat 内卡片收集选项或自由文本，再继续同一个 Run。它不是外部副作用，不走 Approval，也不应先经 Tool Search；普通对话式追问仍可直接使用自然语言，不强迫所有问题结构化。
 
 ### 4.3 执行权限
@@ -1225,6 +1227,10 @@ Territory 只有两个用户交互状态：
 ### 10.7 活世界与桌宠
 
 桌宠使用 World 的通行、深度和类型化物件能力，而不是另一套场景状态。它可以在合法位置行走、坐下、睡觉、靠近光源、观察新物件，并根据时间、天气和 Zone 类型播放少量上下文行为。移动结构或应用 AI 提案后，通行图与可用交互从同一个已接受 Revision 重建。
+
+当用户在 Text 或 Voice 中明确邀请角色进入领地行动时，同一 Agent Runtime 按需发现并调用两个 Territory Tool：先以只读 `territory.observe` 取得活动 Zone、当前 World Revision、桌宠位置和紧凑的类型化物件 affordance，再用 `territory.act` 显式选择 `move`、`observe`、`sit`、`sleep` 或 `react`。普通对话不预注入动态 World snapshot，也不经过额外 planner。除 `move` 坐标外，目标互动自身已经包含走近过程，Agent 不应先发出重复移动。
+
+模型只选择高层动作和 observation 中的目标；Territory 宿主独占 Revision、能力、边界、碰撞、精确可达路径、最终位置与行为状态的裁决。Revision 冲突时 Agent 必须重新观察，能力不匹配或不可达时必须按真实 Tool Result 回答，不能虚报成功。执行成功后，Main 发布同一份类型化路径/最终状态事件：Territory 页面可见时沿现有 Pixi 路径播放，页面未挂载时只持久化最终 pet state，之后打开页面直接显示真实状态。
 
 Zone 可呈现昼夜光照、天气、季节、窗外景色、水面、树叶、火焰、蒸汽和前后景视差。它们用于生活感和视觉叙事，不建立饥饿、体力、生产或收益数值。
 

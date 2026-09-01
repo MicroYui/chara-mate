@@ -9,6 +9,7 @@ import type {
 } from "../../shared/contracts/agent";
 import type { Message } from "../../shared/contracts/chat";
 import type { JsonValue } from "../../shared/contracts/primitives";
+import type { PersonaSnapshot } from "../../shared/contracts/persona";
 import type {
   Approval,
   AppError,
@@ -74,6 +75,7 @@ import {
   materializeMemoryContextInput,
 } from "./memoryContext";
 import { TEXT_AGENT_BASE_INSTRUCTIONS } from "./agentInstructions";
+import { CharacterContextCompiler } from "../persona/characterContext";
 import { COLLABORATION_DISPATCH_TOOL_NAME } from "./collaborationTool";
 import type { RunRepository } from "./runRepository";
 import type { RunEventWriter } from "./runEventWriter";
@@ -772,6 +774,7 @@ function initialCheckpoint(
 
 export class AgentRuntime {
   readonly #active = new Map<string, ActiveRun>();
+  readonly #characterContext = new CharacterContextCompiler();
   readonly #chatContext: ChatContextService;
 
   constructor(
@@ -784,6 +787,9 @@ export class AgentRuntime {
     private readonly providers: ProviderRuntimeFactory,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    private readonly personas: {
+      getActiveSnapshot(): PersonaSnapshot;
+    },
     private readonly contextCompiler = new ContextCompiler(),
     private readonly additionalInstructions: (run: Run) => string = () => "",
     private readonly chatTitles?: ChatTitleGenerator,
@@ -865,6 +871,7 @@ export class AgentRuntime {
     return this.#start(
       request,
       await this.providers.createChatModelRuntime(request.providerProfileId),
+      this.personas.getActiveSnapshot(),
     );
   }
 
@@ -872,6 +879,7 @@ export class AgentRuntime {
     request: StartRunRequest,
     options: {
       readonly modelId: string;
+      readonly persona: PersonaSnapshot;
       readonly toolNames?: readonly string[];
     },
   ): Promise<Run> {
@@ -881,6 +889,7 @@ export class AgentRuntime {
         request.providerProfileId,
         options.modelId,
       ),
+      options.persona,
       options.toolNames,
     );
   }
@@ -890,6 +899,7 @@ export class AgentRuntime {
     options: {
       readonly modelId: string;
       readonly onStarted?: (run: Run) => void;
+      readonly persona: PersonaSnapshot;
       readonly toolNames?: readonly string[];
     },
   ): Promise<Run> {
@@ -899,6 +909,7 @@ export class AgentRuntime {
         request.providerProfileId,
         options.modelId,
       ),
+      options.persona,
       options.toolNames ?? [],
       false,
       false,
@@ -914,6 +925,7 @@ export class AgentRuntime {
     return this.#start(
       request,
       await this.providers.createChatModelRuntime(request.providerProfileId),
+      this.personas.getActiveSnapshot(),
       undefined,
       true,
       false,
@@ -926,6 +938,7 @@ export class AgentRuntime {
   async #start(
     request: StartRunRequest,
     modelRuntime: ChatModelRuntime,
+    persona: PersonaSnapshot,
     toolNames?: readonly string[],
     recordTriggerMessage = true,
     interactionEnabled = true,
@@ -1010,6 +1023,7 @@ export class AgentRuntime {
         execution: request.execution,
         id: runId,
         latestSequence: 1,
+        persona,
         provider: modelRuntime.snapshot,
         source: "text",
         startedAt: now,
@@ -1653,7 +1667,13 @@ export class AgentRuntime {
         this.#toolSelected(active, IMAGE_INSPECT_TOOL_NAME)
           ? withImageInspectTool(baseToolNamespaces)
           : baseToolNamespaces;
-      const extra = this.additionalInstructions(run).trim();
+      const extra = [
+        this.#characterContext.compile(run.persona),
+        this.additionalInstructions(run),
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+        .trim();
       const instructions = [
         TEXT_AGENT_BASE_INSTRUCTIONS,
         `Current timestamp: ${this.clock.now()}. User system time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}. Interpret relative dates such as today in that time zone.`,

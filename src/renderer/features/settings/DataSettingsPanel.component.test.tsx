@@ -42,6 +42,7 @@ function createApis() {
     openDataDirectory,
     openManagedBrowser: vi.fn(),
     saveAgent: vi.fn(),
+    saveCompanionInitiative: vi.fn(),
     saveVoice: vi.fn(),
   } satisfies SettingsApi;
   const cleanupActivity = vi.fn<ActivityApi["cleanup"]>().mockResolvedValue({

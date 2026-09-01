@@ -4,6 +4,7 @@ import type { ProactiveConversationBubble } from "../../shared/contracts/pet";
 import type { RunEventEnvelope } from "../../shared/contracts/ipc";
 import type { ProviderSnapshot } from "../../shared/contracts/provider";
 import type { Run } from "../../shared/contracts/run";
+import { defaultPersonaSnapshot } from "../persona/personaPresets";
 import {
   ProactiveConversationSurface,
   type InlineConversationAgent,
@@ -45,6 +46,7 @@ function run(
     execution: { mode: "chat" },
     id,
     latestSequence: status === "running" ? 1 : 4,
+    persona: defaultPersonaSnapshot(NOW),
     provider,
     source,
     startedAt: NOW,

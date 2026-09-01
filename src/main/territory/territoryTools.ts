@@ -4,12 +4,21 @@ import type { JsonValue } from "../../shared/contracts/primitives";
 import type {
   TerritoryCandidateMutationResult,
   TerritoryCreateChangeCandidateRequest,
+  TerritoryPerformPetActionRequest,
 } from "../../shared/contracts/territoryWorld";
 import type { ToolResult } from "../../shared/contracts/tool";
+import {
+  TerritoryEmptyRequestSchema,
+  TerritoryPerformPetActionRequestSchema,
+} from "../../shared/schemas/territoryWorld";
 import { parseSchema } from "../../shared/schemas/validation";
 import type { ToolRegistry } from "../tools/toolRegistry";
+import { toTerritoryAppError } from "./territoryError";
 import type { TerritoryWorldCandidateService } from "./territoryWorldCandidateService";
 import type { TerritoryWorldService } from "./territoryWorldService";
+
+export const TERRITORY_OBSERVE_TOOL_NAME = "territory.observe";
+export const TERRITORY_ACT_TOOL_NAME = "territory.act";
 
 const TerritoryGenerateItemToolInputSchema = Type.Object(
   {
@@ -35,7 +44,10 @@ const TerritoryGenerateItemToolInputSchema = Type.Object(
 
 interface TerritoryToolDependencies {
   readonly candidates: Pick<TerritoryWorldCandidateService, "create">;
-  readonly territory: Pick<TerritoryWorldService, "getSnapshot">;
+  readonly territory: Pick<
+    TerritoryWorldService,
+    "getSnapshot" | "observePetActions" | "performPetAction"
+  >;
 }
 
 function summarizeInput(input: Readonly<Record<string, JsonValue>>): string {
@@ -70,6 +82,38 @@ function failedResult(
     retryable: error.retryable,
     status: error.retryable ? "error" : "needs_input",
     summary: `领地候选生成失败：${error.message}`,
+  };
+}
+
+function actionLabel(
+  action: TerritoryPerformPetActionRequest["action"],
+): string {
+  const labels: Record<TerritoryPerformPetActionRequest["action"], string> = {
+    move: "移动",
+    observe: "观察",
+    react: "回应",
+    sit: "坐下",
+    sleep: "睡下",
+  };
+  return labels[action];
+}
+
+function actionFailure(error: unknown): ToolResult {
+  const appError = toTerritoryAppError(error);
+  return {
+    artifacts: [],
+    error: appError,
+    modelContent: {
+      error: appError,
+      nextAction:
+        appError.code === "TERRITORY.REVISION_CONFLICT"
+          ? `Call ${TERRITORY_OBSERVE_TOOL_NAME} again before choosing another action.`
+          : "Use the reported Territory result; do not claim that the action succeeded.",
+      status: "failed",
+    },
+    retryable: appError.retryable,
+    status: "error",
+    summary: `领地动作未完成：${appError.message}`,
   };
 }
 
@@ -140,5 +184,83 @@ export function registerTerritoryTools(
       };
     },
     summarize: summarizeInput,
+  });
+
+  registry.register({
+    descriptor: {
+      description:
+        "Read the current active Territory zone before choosing a pet action. Returns the current World revision, pet state, and compact typed affordances for reachable and unreachable objects. Call this only when the user asks about or invites an in-world Territory action; do not use it for ordinary conversation.",
+      effect: "read",
+      idempotency: "idempotent",
+      inputSchema: TerritoryEmptyRequestSchema,
+      itemKind: "tool_call",
+      name: TERRITORY_OBSERVE_TOOL_NAME,
+      namespace: "territory",
+      source: "builtin",
+      summary: "观察当前领地与可行动作",
+    },
+    execute: (input) => {
+      parseSchema(TerritoryEmptyRequestSchema, input);
+      try {
+        const observation = dependencies.territory.observePetActions();
+        return Promise.resolve({
+          artifacts: [],
+          modelContent: observation,
+          retryable: false,
+          status: "success",
+          summary: `已观察「${observation.zone.name}」的 ${String(observation.targets.length)} 个可互动目标`,
+        });
+      } catch (error) {
+        return Promise.resolve(actionFailure(error));
+      }
+    },
+    summarize: () => "观察当前领地",
+  });
+
+  registry.register({
+    descriptor: {
+      description: `Perform one explicit pet action in the active Territory using a revision and target returned by ${TERRITORY_OBSERVE_TOOL_NAME}. For sit, sleep, observe, or react, pass the object directly: the host action already includes walking to it, so never call move first. The Territory host validates the current revision, capability, collision and exact reachable path; report success only from this Tool result.`,
+      effect: "write",
+      idempotency: "non_idempotent",
+      inputSchema: TerritoryPerformPetActionRequestSchema,
+      itemKind: "tool_call",
+      name: TERRITORY_ACT_TOOL_NAME,
+      namespace: "territory",
+      source: "builtin",
+      summary: "让角色在领地中行动",
+    },
+    execute: (input, context) => {
+      const request = parseSchema(
+        TerritoryPerformPetActionRequestSchema,
+        input,
+      );
+      context.onDelta(`正在领地中${actionLabel(request.action)}…`);
+      try {
+        const performed = dependencies.territory.performPetAction(request);
+        return Promise.resolve({
+          artifacts: [],
+          modelContent: {
+            action: performed.action,
+            destination: performed.snapshot.pet.point,
+            petBehavior: performed.snapshot.pet.behavior,
+            revisionId: performed.snapshot.world.currentRevision.id,
+            status: "performed",
+            targetInstanceId: performed.targetInstanceId,
+          },
+          retryable: false,
+          status: "success",
+          summary: `角色已在领地中${actionLabel(request.action)}`,
+        });
+      } catch (error) {
+        return Promise.resolve(actionFailure(error));
+      }
+    },
+    summarize: (input) => {
+      const action = input["action"];
+      return typeof action === "string" &&
+        ["move", "observe", "sit", "sleep", "react"].includes(action)
+        ? `领地动作：${action}`
+        : "执行领地动作";
+    },
   });
 }

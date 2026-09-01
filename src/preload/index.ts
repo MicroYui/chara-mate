@@ -54,6 +54,14 @@ import {
   type MemorySetPinnedRequest,
 } from "../shared/contracts/memory";
 import {
+  PERSONA_CHANNELS,
+  type PersonaApi,
+  type PersonaCopyRequest,
+  type PersonaLibrarySnapshot,
+  type PersonaSelectRequest,
+  type PersonaUpdateRequest,
+} from "../shared/contracts/persona";
+import {
   ACTIVITY_CHANNELS,
   type ActivityApi,
   type ActivityCleanupRequest,
@@ -94,6 +102,7 @@ import {
 import type { RunCancelRequest } from "../shared/contracts/run";
 import {
   type AgentSettingsSaveRequest,
+  type CompanionInitiativeSettingsSaveRequest,
   SETTINGS_CHANNELS,
   type SettingsApi,
   type VoiceSettingsSaveRequest,
@@ -127,6 +136,7 @@ import {
   type TerritoryEnterZoneRequest as TerritoryWorldEnterZoneRequest,
   type TerritoryGetZoneViewRequest as TerritoryWorldGetZoneViewRequest,
   type TerritoryMovePetRequest as TerritoryWorldMovePetRequest,
+  type TerritoryPetActionPerformed as TerritoryWorldPetActionPerformed,
   type TerritoryPurgeInstanceRequest as TerritoryWorldPurgeInstanceRequest,
   type TerritoryRestoreRevisionRequest as TerritoryWorldRestoreRevisionRequest,
   type TerritoryWorldApi,
@@ -192,6 +202,13 @@ import {
   MemorySetPinnedRequestSchema,
 } from "../shared/schemas/memory";
 import {
+  PersonaCopyRequestSchema,
+  PersonaLibraryResponseSchema,
+  PersonaLibrarySnapshotSchema,
+  PersonaSelectRequestSchema,
+  PersonaUpdateRequestSchema,
+} from "../shared/schemas/persona";
+import {
   ActivityCleanupRequestSchema,
   ActivityCleanupResponseSchema,
   ActivityEpisodeIdRequestSchema,
@@ -243,6 +260,8 @@ import {
   BrowserActionResponseSchema,
   DataActionResponseSchema,
   DataSettingsSnapshotResponseSchema,
+  CompanionInitiativeSettingsSaveRequestSchema,
+  CompanionInitiativeSettingsSaveResponseSchema,
   SettingsSnapshotResponseSchema,
   VoiceSettingsSaveRequestSchema,
   VoiceSettingsSaveResponseSchema,
@@ -280,6 +299,7 @@ import {
   TerritoryGetZoneViewRequestSchema as TerritoryWorldGetZoneViewRequestSchema,
   TerritoryMovePetRequestSchema as TerritoryWorldMovePetRequestSchema,
   TerritoryMovePetResponseSchema as TerritoryWorldMovePetResponseSchema,
+  TerritoryPetActionPerformedSchema as TerritoryWorldPetActionPerformedSchema,
   TerritoryPurgeInstanceRequestSchema as TerritoryWorldPurgeInstanceRequestSchema,
   TerritoryRestoreRevisionRequestSchema as TerritoryWorldRestoreRevisionRequestSchema,
   TerritoryWorldSnapshotResponseSchema,
@@ -822,6 +842,19 @@ const settingsApi: SettingsApi = Object.freeze({
         parseSchemaWithoutCodeGeneration(AgentSettingsSaveRequestSchema, input),
       ),
     ),
+  saveCompanionInitiative: async (
+    input: CompanionInitiativeSettingsSaveRequest,
+  ) =>
+    parseSchemaWithoutCodeGeneration(
+      CompanionInitiativeSettingsSaveResponseSchema,
+      await ipcRenderer.invoke(
+        SETTINGS_CHANNELS.saveCompanionInitiative,
+        parseSchemaWithoutCodeGeneration(
+          CompanionInitiativeSettingsSaveRequestSchema,
+          input,
+        ),
+      ),
+    ),
   saveVoice: async (input: VoiceSettingsSaveRequest) =>
     parseSchemaWithoutCodeGeneration(
       VoiceSettingsSaveResponseSchema,
@@ -1121,6 +1154,31 @@ const territoryWorldApi: TerritoryWorldApi = Object.freeze({
       );
     };
   },
+  subscribePetAction: (
+    listener: (event: TerritoryWorldPetActionPerformed) => void,
+  ) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown,
+    ) => {
+      listener(
+        parseSchemaWithoutCodeGeneration(
+          TerritoryWorldPetActionPerformedSchema,
+          payload,
+        ),
+      );
+    };
+    ipcRenderer.on(
+      TERRITORY_WORLD_CHANNELS.petActionPerformed,
+      wrappedListener,
+    );
+    return () => {
+      ipcRenderer.off(
+        TERRITORY_WORLD_CHANNELS.petActionPerformed,
+        wrappedListener,
+      );
+    };
+  },
 });
 
 const memoryApi: MemoryApi = Object.freeze({
@@ -1246,6 +1304,50 @@ const memoryApi: MemoryApi = Object.freeze({
   },
 });
 
+const personaApi: PersonaApi = Object.freeze({
+  copy: async (input: PersonaCopyRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      PersonaLibraryResponseSchema,
+      await ipcRenderer.invoke(
+        PERSONA_CHANNELS.copy,
+        parseSchemaWithoutCodeGeneration(PersonaCopyRequestSchema, input),
+      ),
+    ),
+  getLibrary: async () =>
+    parseSchemaWithoutCodeGeneration(
+      PersonaLibraryResponseSchema,
+      await ipcRenderer.invoke(PERSONA_CHANNELS.getLibrary, {}),
+    ),
+  select: async (input: PersonaSelectRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      PersonaLibraryResponseSchema,
+      await ipcRenderer.invoke(
+        PERSONA_CHANNELS.select,
+        parseSchemaWithoutCodeGeneration(PersonaSelectRequestSchema, input),
+      ),
+    ),
+  subscribeChanged(listener: (snapshot: PersonaLibrarySnapshot) => void) {
+    const wrappedListener = (_event: unknown, snapshot: unknown) => {
+      listener(
+        parseSchemaWithoutCodeGeneration(
+          PersonaLibrarySnapshotSchema,
+          snapshot,
+        ),
+      );
+    };
+    ipcRenderer.on(PERSONA_CHANNELS.changed, wrappedListener);
+    return () => ipcRenderer.off(PERSONA_CHANNELS.changed, wrappedListener);
+  },
+  update: async (input: PersonaUpdateRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      PersonaLibraryResponseSchema,
+      await ipcRenderer.invoke(
+        PERSONA_CHANNELS.update,
+        parseSchemaWithoutCodeGeneration(PersonaUpdateRequestSchema, input),
+      ),
+    ),
+});
+
 const activityApi: ActivityApi = Object.freeze({
   cleanup: async (input: ActivityCleanupRequest) =>
     parseSchemaWithoutCodeGeneration(
@@ -1331,6 +1433,7 @@ const desktopApi: CharaMateApi = Object.freeze({
   }),
   journey: journeyApi,
   memory: memoryApi,
+  persona: personaApi,
   pet: petApi,
   provider: providerApi,
   runEvents: runEventsApi,

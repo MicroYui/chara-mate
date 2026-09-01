@@ -9,6 +9,7 @@ import type {
   AutomationEventEnvelope,
 } from "../../src/shared/contracts/automation";
 import type { RunEventEnvelope } from "../../src/shared/contracts/ipc";
+import type { PersonaSnapshot } from "../../src/shared/contracts/persona";
 import type {
   EntityId,
   Timestamp,
@@ -37,6 +38,7 @@ import {
   ToolRegistry,
   toolEvidenceHash,
 } from "../../src/main/tools/toolRegistry";
+import { defaultPersonaSnapshot } from "../../src/main/persona/personaPresets";
 
 const PROFILE_ID = "10000000-0000-4000-8000-000000000001";
 const PERSONA_ID = "20000000-0000-4000-8000-000000000002";
@@ -130,6 +132,7 @@ interface Fixture {
     readonly modelId?: string;
     readonly profileId: string;
   }>;
+  readonly persona: PersonaSnapshot;
   readonly provider: ScriptedProvider;
   readonly runs: RunRepository;
   readonly tools: ToolRegistry;
@@ -152,6 +155,10 @@ async function createFixture(turns: Turn[] = []): Promise<Fixture> {
   temporaryDirectories.push(root);
   const database = openApplicationDatabase(path.join(root, "app.sqlite"));
   const clock = new MutableClock("2026-08-11T00:00:00.000Z");
+  const persona = {
+    ...defaultPersonaSnapshot(clock.now()),
+    personaId: PERSONA_ID,
+  };
   const ids = new SequentialIds();
   const chats = new ChatRepository(database);
   const runs = new RunRepository(database);
@@ -192,6 +199,7 @@ async function createFixture(turns: Turn[] = []): Promise<Fixture> {
     },
     ids,
     clock,
+    { getActiveSnapshot: () => persona },
   );
   const automationRepository = new AutomationRepository(database);
   const automationService = new AutomationService(
@@ -212,6 +220,10 @@ async function createFixture(turns: Turn[] = []): Promise<Fixture> {
     ids,
     clock,
     { publish: automationEvents.publish },
+    {
+      getActiveSnapshot: () => persona,
+      getSnapshot: () => persona,
+    },
   );
   automationServiceReference.current = automationService;
   const fixture = {
@@ -223,6 +235,7 @@ async function createFixture(turns: Turn[] = []): Promise<Fixture> {
     clock,
     database,
     modelRuntimeCalls,
+    persona,
     provider,
     runs,
     tools,
@@ -524,6 +537,11 @@ describe("Automations Core", () => {
     });
     expect("chatId" in completed && completed.chatId).toBeTruthy();
     expect("runId" in completed && completed.runId).toBeTruthy();
+    expect(completed.persona).toEqual(fixture.persona);
+    if (!("runId" in completed)) throw new Error("Missing linked Run");
+    expect(fixture.runs.getRun(completed.runId)?.persona).toEqual(
+      fixture.persona,
+    );
     expect(execute).toHaveBeenCalledOnce();
     expect(
       fixture.automationEvents.events.filter(finishedFor(queued.id)),
@@ -653,6 +671,7 @@ describe("Automations Core", () => {
     const queued = fixture.automationRepository.insertManualRun({
       automation,
       createdAt: fixture.clock.now(),
+      persona: defaultPersonaSnapshot(fixture.clock.now()),
       requestedAt: fixture.clock.now(),
       runId: "30000000-0000-4000-8000-000000000003",
     });

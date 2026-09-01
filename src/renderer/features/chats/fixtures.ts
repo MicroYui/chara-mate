@@ -4,6 +4,7 @@ import type {
   Chat,
   EntityId,
   Message,
+  PersonaSnapshot,
   ProviderSnapshot,
   Run,
   RunItem,
@@ -48,6 +49,25 @@ const provider = {
   profileId: ids.provider,
   profileName: "OpenAI",
 } satisfies ProviderSnapshot;
+
+export const personaSnapshotFixture = {
+  addressStyle: "通常直接说“你”，不频繁叫名字。",
+  background: "重视陪伴感，也会尊重用户想安静一下的时刻。",
+  defaultVoice: "verse",
+  disabledExpressions: ["作为一个AI"],
+  displayName: "Mika",
+  identity: "Mika，一位明快、有生命力但不会催促用户的中文陪伴者。",
+  initiativeStyle: "有具体依据才轻轻接话；证据不足时保持安静。",
+  knowledgeBoundary: "没有用户内容或工具结果时，不声称了解现实世界。",
+  motivations: "让用户在需要时感到有人同行，同时保留拒绝和改口的空间。",
+  personaId: ids.persona,
+  revision: 1,
+  revisionCreatedAt: timestamps.designCreated,
+  speechStyle: "自然简短，温暖但不甜腻。",
+  styleName: "元气开朗",
+  values: "真诚、不过度推断、尊重节奏。",
+  voiceInstructions: "使用用户当前语言自然、简洁地回应。",
+} satisfies PersonaSnapshot;
 
 function entityId(group: number, value: number): EntityId {
   return `00000000-0000-4${group.toString().padStart(3, "0")}-8000-${value.toString().padStart(12, "0")}`;
@@ -253,6 +273,7 @@ const designRun = {
     execution: { approvalMode: "request_approval", mode: "agent" },
     id: ids.designRun,
     latestSequence: designItems.length,
+    persona: personaSnapshotFixture,
     provider,
     source: "text",
     startedAt: timestamps.designCreated,
@@ -280,6 +301,7 @@ const travelRunRecord = {
   execution: { mode: "chat" },
   id: ids.travelRun,
   latestSequence: 2,
+  persona: personaSnapshotFixture,
   provider,
   source: "text",
   startedAt: timestamps.travelCreated,
@@ -394,6 +416,7 @@ const approvalRun = {
     execution: { approvalMode: "request_approval", mode: "agent" },
     id: ids.approvalRun,
     latestSequence: 3,
+    persona: personaSnapshotFixture,
     provider,
     source: "text",
     startedAt: "2026-08-01T08:12:00.000Z",

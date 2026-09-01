@@ -4,6 +4,7 @@ import type {
 } from "../../shared/contracts/agent";
 import type { Message } from "../../shared/contracts/chat";
 import type { JsonValue } from "../../shared/contracts/primitives";
+import type { PersonaSnapshot } from "../../shared/contracts/persona";
 import type {
   Approval,
   AppError,
@@ -57,6 +58,7 @@ import { CHAT_CONTEXT_SUMMARY_PREFIX } from "../chat/chatContext";
 import type { ChatService } from "../chat/chatService";
 import type { ChatTitleGenerator } from "../chat/chatTitleService";
 import type { MemoryService } from "../memory/memoryService";
+import { CharacterContextCompiler } from "../persona/characterContext";
 import type {
   ProviderService,
   RealtimeProviderRuntime,
@@ -85,9 +87,13 @@ interface PreparedRealtimeTools {
 
 interface PreparedVoiceConfiguration {
   readonly chatContextSummary?: string;
-  readonly configured: VoiceSettingsConfig;
+  readonly configured: VoiceSettingsConfig & {
+    readonly instructions: string;
+    readonly voice: PersonaSnapshot["defaultVoice"];
+  };
   readonly defaultInstructions: string;
   readonly history: readonly VoiceHistoryMessage[];
+  readonly persona: PersonaSnapshot;
   readonly providerRuntime: RealtimeProviderRuntime;
   readonly realtimeTools: PreparedRealtimeTools;
 }
@@ -424,6 +430,9 @@ export class VoiceService {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly publisher: VoiceServicePublisher,
+    private readonly personas: {
+      getActiveSnapshot(): PersonaSnapshot;
+    },
     private readonly skillInstructions: (chatId?: string) => string = () => "",
     private readonly chatTitles?: ChatTitleGenerator,
     private readonly memory?: MemoryService,
@@ -433,6 +442,7 @@ export class VoiceService {
     private readonly metrics?: VoiceMetrics,
     private readonly monotonicNow: () => number = () => performance.now(),
     chatContext?: ChatContextService,
+    private readonly characterContext = new CharacterContextCompiler(),
   ) {
     this.#chatContext = chatContext ?? new ChatContextService(chats, clock);
   }
@@ -633,8 +643,14 @@ export class VoiceService {
     execution: RunExecution,
     chatId?: string,
     chatProviderProfileId?: string,
+    persona = this.personas.getActiveSnapshot(),
   ): Promise<PreparedVoiceConfiguration> {
-    const configured = this.settings.getVoice();
+    const saved = this.settings.getVoice();
+    const configured = {
+      ...saved,
+      instructions: persona.voiceInstructions,
+      voice: persona.defaultVoice,
+    };
     const providerRuntime = await this.providers.createRealtimeProviderRuntime(
       configured.providerProfileId,
     );
@@ -656,12 +672,14 @@ export class VoiceService {
       undefined,
       chatId,
       chatContextSummary,
+      persona,
     );
     return {
       ...(chatContextSummary ? { chatContextSummary } : {}),
       configured,
       defaultInstructions,
       history: history(projection?.messages ?? []),
+      persona,
       providerRuntime,
       realtimeTools,
     };
@@ -705,6 +723,7 @@ export class VoiceService {
       inputMode: prepared.configured.inputMode,
       instructions: prepared.defaultInstructions,
       muted: false,
+      persona: prepared.persona,
       provider: prepared.providerRuntime.snapshot,
       status: "connecting",
       voice: prepared.configured.voice,
@@ -716,6 +735,7 @@ export class VoiceService {
       generation: 0,
       inputMode: prepared.configured.inputMode,
       muted: false,
+      persona: prepared.persona,
       phase: "connecting",
       sessionId: id,
       userTranscript: "",
@@ -938,6 +958,7 @@ export class VoiceService {
         active.execution,
         active.record.chatId,
         active.chatProviderProfileId,
+        active.record.persona,
       );
       this.#assertResumeTarget(active);
       if (this.#canReuseConnection(active, prepared)) {
@@ -1306,6 +1327,7 @@ export class VoiceService {
       active.execution,
       active.record.chatId,
       active.chatProviderProfileId,
+      active.record.persona,
     );
     const issued = await this.#issueConfiguration(prepared);
     if (!this.#sameConnectionIdentity(active, prepared)) {
@@ -1365,8 +1387,10 @@ export class VoiceService {
     context?: string,
     chatId?: string,
     chatContext?: string,
+    persona = this.personas.getActiveSnapshot(),
   ): string {
     return realtimeAgentInstructions({
+      characterContext: this.characterContext.compile(persona),
       ...(chatContext === undefined ? {} : { chatContext }),
       configured,
       execution,
@@ -1465,6 +1489,7 @@ export class VoiceService {
       evidence.content,
       active.record.chatId,
       active.chatContextSummary,
+      active.record.persona,
     );
     let turn = this.repository.updateTurn({
       ...current,
@@ -1493,6 +1518,7 @@ export class VoiceService {
         execution: active.execution,
         id: runId,
         latestSequence: 1,
+        persona: active.record.persona,
         provider: active.record.provider,
         source: "voice",
         startedAt: occurredAt,

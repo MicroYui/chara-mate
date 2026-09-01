@@ -8,6 +8,7 @@ import {
   TimeZoneIdSchema,
 } from "./primitives";
 import { RunExecutionSchema } from "./run";
+import { PersonaSnapshotSchema } from "./persona";
 import { ToolDescriptorSchema } from "./tool";
 
 export const AutomationLocalTimeSchema = Type.String({
@@ -178,6 +179,7 @@ const automationRunRecordProperties = {
   createdAt: TimestampSchema,
   definition: AutomationDefinitionSchema,
   id: EntityIdSchema,
+  persona: PersonaSnapshotSchema,
   requestedAt: TimestampSchema,
   summary: Type.Optional(Type.String()),
   trigger: AutomationRunTriggerSchema,

@@ -13,6 +13,7 @@ import type { ActivityService } from "../activity/activityService";
 import type { AppLogger } from "../observability/logger";
 import type { CharacterWindowController } from "../pet/characterWindowController";
 import type { PetService } from "../pet/petService";
+import type { PersonaService } from "../persona/personaService";
 import type { VoiceService } from "../voice/voiceService";
 import type { VoiceWakeService } from "../voice/voiceWakeService";
 
@@ -36,6 +37,7 @@ interface TrayControllerDependencies {
   readonly logger: Pick<AppLogger, "warn">;
   readonly openMainWindow: () => void;
   readonly pet: Pick<PetService, "getCharacterSnapshot" | "subscribe">;
+  readonly persona: Pick<PersonaService, "getActiveSnapshot">;
   readonly quit: () => void;
   readonly voice: Pick<VoiceService, "getActive" | "setMuted">;
   readonly wake: Pick<
@@ -56,6 +58,7 @@ export function trayIconPath({
 
 function voiceStatusLabel(snapshot: VoiceSessionSnapshot | null): string {
   if (!snapshot) return "当前没有语音对话";
+  const name = snapshot.persona.displayName;
   const labels: Record<VoiceSessionSnapshot["phase"], string> = {
     connecting: "语音正在连接",
     failed: "语音连接已结束",
@@ -63,8 +66,8 @@ function voiceStatusLabel(snapshot: VoiceSessionSnapshot | null): string {
     listening: "语音中 · 正在听你说",
     paused: "语音已暂停",
     resuming: "语音正在恢复",
-    speaking: "语音中 · Mika 正在说话",
-    thinking: "语音中 · Mika 正在回应",
+    speaking: `语音中 · ${name} 正在说话`,
+    thinking: `语音中 · ${name} 正在回应`,
     using_tool: "语音中 · 正在帮你处理",
     waiting_approval: "语音中 · 等待你的确认",
   };
@@ -150,11 +153,13 @@ export class TrayController {
       const petVisible = hasPet && this.dependencies.character.isUserVisible();
       const voiceSnapshot = this.dependencies.voice.getActive();
       const wakeSnapshot = this.dependencies.wake.getSnapshot();
+      const personaName =
+        this.dependencies.persona.getActiveSnapshot().displayName;
       const statusLabel = !hasPet
         ? "还没有启用桌宠 · 0 个"
         : petVisible
-          ? "Mika 正在陪你 · 1 个桌宠"
-          : "Mika 已暂时隐藏 · 1 个桌宠";
+          ? `${personaName} 正在陪你 · 1 个桌宠`
+          : `${personaName} 已暂时隐藏 · 1 个桌宠`;
       const template: MenuItemConstructorOptions[] = [
         { enabled: false, label: statusLabel },
         { enabled: false, label: voiceStatusLabel(voiceSnapshot) },
