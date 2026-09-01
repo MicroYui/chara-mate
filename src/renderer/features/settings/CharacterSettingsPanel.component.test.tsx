@@ -94,6 +94,8 @@ function createSettingsApi() {
           screenRecording: "granted",
         },
         companionInitiative: {
+          importantMomentOutreachEnabled: false,
+          importantMomentOutreachPrompted: false,
           level: "balanced",
           quietHours: {
             enabled: true,
@@ -344,6 +346,7 @@ describe("Character Settings", () => {
 
     const level = await screen.findByLabelText("主动程度");
     fireEvent.change(level, { target: { value: "quiet" } });
+    fireEvent.click(screen.getByLabelText("重要时刻主动联系我"));
     fireEvent.change(screen.getByLabelText("安静时段开始"), {
       target: { value: "21:30" },
     });
@@ -355,6 +358,8 @@ describe("Character Settings", () => {
     await waitFor(() =>
       expect(settings.saveCompanionInitiative).toHaveBeenCalledWith({
         companionInitiative: {
+          importantMomentOutreachEnabled: true,
+          importantMomentOutreachPrompted: true,
           level: "quiet",
           quietHours: {
             enabled: true,
@@ -365,5 +370,42 @@ describe("Character Settings", () => {
       }),
     );
     expect(await screen.findByText("主动陪伴设置已保存。")).toBeVisible();
+  });
+
+  it("does not treat saving unrelated initiative settings as an outreach refusal", async () => {
+    const petApi = createApi({
+      activePetId: null,
+      animationSpeed: 0.75,
+      pets: [],
+      scale: 1,
+    }).api;
+    const settings = createSettingsApi();
+    render(
+      <CharacterSettingsPanel
+        api={petApi}
+        personaApi={createPersonaApi()}
+        settingsApi={settings.api}
+      />,
+    );
+
+    expect(
+      await screen.findByLabelText("重要时刻主动联系我"),
+    ).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "保存主动陪伴" }));
+
+    await waitFor(() =>
+      expect(settings.saveCompanionInitiative).toHaveBeenCalledWith({
+        companionInitiative: {
+          importantMomentOutreachEnabled: false,
+          importantMomentOutreachPrompted: false,
+          level: "balanced",
+          quietHours: {
+            enabled: true,
+            endMinute: 8 * 60,
+            startMinute: 22 * 60,
+          },
+        },
+      }),
+    );
   });
 });

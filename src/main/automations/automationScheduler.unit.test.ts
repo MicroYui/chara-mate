@@ -23,6 +23,81 @@ describe("AutomationScheduler", () => {
     vi.useRealTimers();
   });
 
+  it("uses one timer for the earliest of multiple persistent sources", async () => {
+    vi.useFakeTimers();
+    let now = "2026-08-13T09:00:00.000Z";
+    const first = {
+      earliestNextRunAt: () => "2026-08-13T09:30:00.000Z",
+      runDue: vi.fn(() => Promise.resolve()),
+    };
+    let secondNext: string | undefined = "2026-08-13T09:10:00.000Z";
+    const second = {
+      earliestNextRunAt: () => secondNext,
+      runDue: vi.fn(() => {
+        if (now >= "2026-08-13T09:10:00.000Z") secondNext = undefined;
+        return Promise.resolve();
+      }),
+    };
+    const scheduler = new AutomationScheduler([first, second], {
+      now: () => now,
+    });
+
+    scheduler.start();
+    vi.runAllTicks();
+    await settle();
+    expect(first.runDue).toHaveBeenCalledTimes(1);
+    expect(second.runDue).toHaveBeenCalledTimes(1);
+
+    now = "2026-08-13T09:10:00.000Z";
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(first.runDue).toHaveBeenCalledTimes(2);
+    expect(second.runDue).toHaveBeenCalledTimes(2);
+    await scheduler.stop();
+  });
+
+  it("isolates one runner failure and still schedules healthy persisted work", async () => {
+    vi.useFakeTimers();
+    let now = "2026-08-13T09:00:00.000Z";
+    const error = new Error("runner unavailable");
+    const failing = {
+      earliestNextRunAt: () => "2026-08-13T08:59:00.000Z",
+      runDue: vi.fn<() => Promise<void>>().mockRejectedValue(error),
+    };
+    let healthyNext: string | undefined = "2026-08-13T09:01:00.000Z";
+    const healthy = {
+      earliestNextRunAt: () => healthyNext,
+      runDue: vi.fn(() => {
+        if (now >= "2026-08-13T09:01:00.000Z") healthyNext = undefined;
+        return Promise.resolve();
+      }),
+    };
+    const onError = vi.fn();
+    const scheduler = new AutomationScheduler(
+      [failing, healthy],
+      { now: () => now },
+      undefined,
+      onError,
+    );
+
+    scheduler.start();
+    await settle();
+
+    expect(onError).toHaveBeenCalledWith(error);
+    expect(failing.runDue).toHaveBeenCalledTimes(1);
+    expect(healthy.runDue).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(failing.runDue).toHaveBeenCalledTimes(1);
+
+    now = "2026-08-13T09:01:00.000Z";
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(failing.runDue).toHaveBeenCalledTimes(2);
+    expect(healthy.runDue).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+    await scheduler.stop();
+  });
+
   it("treats the timer as a wake-up signal and checks persisted due work", async () => {
     vi.useFakeTimers();
     const clock = new MutableClock("2026-08-11T00:00:00.000Z");

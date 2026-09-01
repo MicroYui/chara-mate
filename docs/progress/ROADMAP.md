@@ -1,7 +1,7 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0–7 Done；Persona + Character Dialogue 已完成
-> 日期：2026-08-27
+> 状态：Phase 0–7 Done；“经历回响与跨设备陪伴”增量已完成产品定义，等待 Decision/Contract
+> 日期：2026-09-01
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
 本文件记录里程碑依赖、工作包边界和验收，不记录逐命令历史。Phase 编号表示产品集成与验收顺序，不要求所有开发工作全局串行；只有共享契约、Schema、IPC 和同一可变资源的写入必须串行。
@@ -65,6 +65,11 @@ flowchart TD
     TERR["P6-TERRITORY<br/>World / Zone / 建造 / AI 创作"]
     P6["Phase 6<br/>桌宠与领地集成"]
     P7["Phase 7<br/>整体体验收口"]
+    EET["EXPERIENCE-ECHO-TIMING"]
+    TMS["TERRITORY-MOMENT-SELECTION"]
+    ECHO["ECHO-PROACTIVE<br/>未来事件重判"]
+    MOBILE["ECHO-MOBILE<br/>Android / Relay / Desktop Bridge"]
+    MOMENT["ECHO-TERRITORY<br/>Chat Moment Candidate"]
 
     P0 --> UI
     P0 --> DB
@@ -125,6 +130,16 @@ flowchart TD
     SE -.->|若晋级| P7
     P6 --> P7
     CHAR --> P7
+
+    P7 --> EET
+    MEM --> EET
+    PRO --> EET
+    EET --> ECHO
+    ECHO --> MOBILE
+    TERR --> TMS
+    CHAR --> TMS
+    TMS --> MOMENT
+    MOBILE --> MOMENT
 ```
 
 ## 交付波次
@@ -136,6 +151,7 @@ flowchart TD
 5. **Wave 4 — 长期理解与领地支线**：Memory 自动形成闭环与 Activity 完成后，主动聊天、Self-evolution 实验和 Territory 沙盒的设计/Decision 可按各自 Gate 与所有权边界推进；Territory 共享合同由单一 integration owner 串行冻结，World runtime、Renderer fixture 和 AI 生成研究随后按所有权拆分。
 6. **Wave 5 — 全产品收口**：只集成已通过 Gate 的路径，运行完整离线、打包、E2E 和明确要求的 Live 检查。
 7. **Wave 6 — Persona 与角色对话补全（已完成）**：`CHARACTER-DIALOGUE` 已选择并实现 A1；生产具有版本化 Persona、唯一 Character Context 及跨 Text/Voice/Automation/主动对话 snapshot。显式叙事与 NPC 行动留作后续独立问题。
+8. **Wave 7 — 经历回响与跨设备陪伴（已定义）**：先完成未来事件时机和领地时刻选择两个窄 Decision，再串行冻结桌面跨设备合同；随后 Android/Relay 可在独立仓库并行实现，桌面 Bridge 由当前仓库单一 owner 接入，最后让 Chat Moment 复用既有 Territory Candidate。任何阶段都不建立云端 Agent、第二 Chat 真源或固定纪念品模板。
 
 ## Phase 0 — 工程基线与稳定契约
 
@@ -429,13 +445,56 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - Live/Benchmark 按功能明确运行并单独报告，未运行项有原因；
 - 文档、共享契约、Schema、Decision Record 和实际产品路径一致。
 
+## 后续产品增量 — 经历回响与跨设备陪伴
+
+> 当前状态：`implementing`。`EXPERIENCE-ECHO-TIMING` 已按用户要求以最小验证选择固定提前 30 分钟的一次性机会；第一个父工作包已经完成，下一步是 `ECHO-MOBILE-CONTRACT`。共享 Schema、IPC、数据库迁移和跨设备 Envelope 由当前仓库的一个 integration owner 串行冻结。Android Companion 与 Relay 属于独立仓库/部署单元，不把当前桌面单 package 改造成 monorepo。
+
+### 1. `ECHO-PROACTIVE-OPPORTUNITY`
+
+- **状态**：`done`（2026-09-01）。Schema v20、Memory 明确时间、类别许可、持久机会、启动/恢复重查、取消/恢复、同一 Chat Run 与气泡投影均已完成并通过完整离线层、build 和 25/25 Electron E2E。
+- **Outcome / authority**：落实产品设计 §4.9、§6.3、§9.2 与 UI §4.4。用户一次允许“重要时刻主动联系我”后，明确未来 `event/commitment` 可以形成一个持久、可取消、到点仍会重判的机会；消息继续由同一 Persona、Chat Run 和 P2 主动策略产生。
+- **Scope / owner**：`main` 是 Memory/Settings/Journey shared contract、Schema/migration 和集成 owner；范围包含 `occursAt/timeZone`、许可状态、`ProactiveOpportunity` repository/service、启动/恢复重查、同一语义门、单一消息投影结果合同和 Settings 最小开关。
+- **Dependencies / Gate**：依赖既有 Memory Formation、Chat Context、Automation 已验证的“数据库 claim 是真源、timer 只唤醒”语义、P2 Policy 和 Journey/Home Chat；`EXPERIENCE-ECHO-TIMING` 已完成并写入中文 Decision Record。
+- **Non-goals**：不从模糊日期或纯模型推断创建机会，不预写通知，不承诺精确到秒，不增加日历 recurrence、事件管理页、长期外呼状态机、云端 Agent 或新的主动频率策略。
+- **Acceptance / tests**：fake clock 覆盖形成、改期、取消、删除、关闭许可、许可重新开启或 Memory 恢复时仍在未来的同 Revision 重开、到点静默/发送、休眠恢复和重复 claim；每个有效 Revision 至多一个开放机会，旧机会不发送；消息先写唯一 Chat/Run，再交付一个表面；运行 shared contract、DB/integration、Settings component、focused、full offline、build 和受影响 Electron E2E。
+- **Candidate deletion**：Decision 的失败 timing Arm、窗口参数、runner、临时字段和设置全部删除；生产只保留一个机会创建器，不把 Arm 变成运行时模式。
+
+### 2. `ECHO-MOBILE-COMPANION`
+
+- **Outcome / authority**：落实产品设计 §5.2、§9.2.1 与 UI §4.4/§5.6/§11.5。Android 能收到同一 Assistant Message 的普通通知，并把单个图片或受支持文档及附文送入用户确认的 Chat；Desktop 仍是唯一 Agent/Memory/Run/Territory 真源。
+- **Scope / ownership**：父包依次包含 `ECHO-MOBILE-CONTRACT`（当前仓库 integration owner 冻结 pairing、device、Mailbox Envelope、upload、notification、cursor/ack v1 Schema）、`ECHO-MAILBOX-PUSH-RELAY`（独立 Relay）、`ECHO-ANDROID-COMPANION`（独立 Android）、`ECHO-DESKTOP-BRIDGE`（当前仓库 `src/main/companion/`）与 `ECHO-MOBILE-ACCEPTANCE`（三部署单元联合验收）。Contract 完成后 Relay/Android 可并行；Desktop Bridge 在冻结合同上实现。
+- **Dependencies**：依赖前一父包的单一消息投影结果合同、现有 Chat/Attachment/Run/Persona，以及 Android/FCM 2026-09-01 来源快照。跨设备附件统一复制到 CharaMate 管理资产，手机临时 URI、PC 绝对路径和 Relay URL 不成为持久真源。
+- **Non-goals**：不做完整移动 Chat、移动桌宠、Voice、移动端 Agent/Memory/Provider、全量 Chat 同步、多设备矩阵、大文件传输、Office 全格式解析或 PC 离线云端推理。通知只打开精确消息的只读轻量详情，不在手机继续多轮 Run。MVP 支持单图片、附文、UTF-8 文本/Markdown 与 PDF；其他格式只作为未解析文件，不声称理解。
+- **PC-online boundary**：PC 唤醒、Main 运行且在线时可以重新判断事件、分析附件并回复；PC 睡眠/离线时 Relay 只排队上传或投递此前已生成消息。Android/FCM 延迟不承诺准确到秒。最近动作来自 Android 时回复 Android；否则 Desktop 活跃用气泡，Desktop idle/锁屏且 Android 可用时投递手机，任何消息不双发。
+- **Acceptance / tests**：Android 13+ 权限流程、通知深链 `chatId/messageId`、`ACTION_SEND` 临时 URI 私有缓存、WorkManager 断网恢复、Relay 幂等/cursor/ack、Desktop 重启恢复、相同 User/Assistant Message 不重复；分别报告 desktop offline regression、Relay contract/integration、Android unit/instrumentation 和经用户授权后的真实 FCM smoke。
+- **Candidate deletion**：开发 fake 只进入测试；如果比较传输实现，失败 adapter、临时协议版本和部署脚本在 v1 冻结后删除，不在客户端保留 fallback。
+
+### 3. `ECHO-TERRITORY-MOMENT`
+
+- **Outcome / authority**：落实产品设计 §4.9、§10.4/§10.6/§10.8 与 UI §11.1。获得领地惊喜许可后，少量显著 Chat Moment 可以稀疏准备现有 `TerritoryChangeCandidate`；Territory 自主决定生成什么，用户应用前不改变 World。
+- **Scope / owner**：当前仓库 Territory integration owner 串行扩展 `chat_moment` 来源快照、宿主绑定的 `momentKey`、Run/Message/Attachment/Memory provenance、候选幂等、“换一种表达 / 放进领地 / 这次不要”和桌宠待查看提示；复用现有 Image Adapter、compiler、Preview、Asset Pack 与 World Revision。
+- **Dependencies / Gate**：依赖跨设备 Attachment ingress 和既有 Territory 生成路径；`TERRITORY-MOMENT-SELECTION` 先决定唯一选择位置。共享 Territory Source Schema 由该包单一 owner 修改，其他消费者只在合同冻结后接入。
+- **Non-goals**：不增加拍立得、奖杯或纪念品模板，不创建第二生成器、新页面、奖励/稀有度/关系分数，不自动扩建、移动/删除现有内容或永久保存原始附件；自主候选最多新增一个普通物件或附件 Preview。领地惊喜许可只授权同一 Candidate service 准备候选资产，不增加 Composer 权限档位、不绕过普通 Run 的 Tool Approval，也不授权应用 World。
+- **Acceptance / tests**：真实图片字节与附件 hash 一致，文档使用实际解析正文；同一 `momentKey` 恢复/重试不重复；候选准备、通知、取消、失败、stale 和来源删除不改变 World；只有应用产生一个原子 Revision；删除原 Chat 后生成物仍可用但来源不可打开且无秘密原图副本；运行 contract、Territory unit/integration、Renderer component、full offline、build、受影响 E2E，真实 Image Live 仅在用户明确授权后运行。
+- **Candidate deletion**：失败 selection Arm、reviewer、实验 prompt/runner 和样本原图删除；生产只保留一个选择位置与既有 Territory Candidate 路径。
+
+### 增量退出条件
+
+- 用户故事可以从“明天下午有重要 presentation”形成有来源的未来事件；在获准的时机只获得一次重判机会，可能静默，也可能经同一 Chat/Persona 产生一条消息。
+- Android 只投影已持久化消息和投递用户明确分享的素材；PC 离线边界诚实，三部署单元没有第二 Agent/Memory/Chat 真源。
+- 手机分享的图片/文档和 Desktop 拖放进入同一 Attachment/Run 路径；图片读取真实像素，未解析文档不伪称理解。
+- Territory 可以根据显著经历自主提出不同合理物件，但没有固定模板；用户确认前 World 不变，来源、拒绝、重试、删除和恢复均可解释且幂等。
+- 两个 Decision Record、跨部署合同、默认离线回归、build/E2E 和经授权的 Live 项分开报告；失败 Arm、候选协议和隐藏兼容路径不存在。
+
 ## 后续 Decision Gate
 
 - `PROACTIVE-POLICY`（`done`）：P2 已在 48 个确定性场景中 48/48 通过并实现为用户主动程度、本地安静时段、最近 3 次结果有界退避和气泡“少一点”的单一生产路径。20 秒 provisional Chat 生命周期不作为 cooldown，用户明确约定的 Automation/Journey 跟进不纳入未请求打扰策略。
 - `NARRATIVE-AGENCY`（`done`）：48 次有效目标模型 Pilot 选择 N0-RULES；保留当前 Chat summary/Journey，只补共享 Agent 的玩家角色所有权、虚构事实隔离和自然出戏规则。结构化 projection 与 boundary director 不进入生产。
 - `TERRITORY-NPC-ACTION`（`done`）：真实 Pilot 选择同一 Agent 按需 `territory.observe → territory.act`；生产已实现 typed affordance、显式动作、宿主碰撞/精确路径/Revision 裁决、Renderer 路径事件与最终行为投影，并通过完整 offline、25/25 Electron E2E、package 与 packaged smoke。全局 World 注入和额外 planner 均未进入生产，也不启动常驻游戏模拟。
+- `EXPERIENCE-ECHO-TIMING`（`done`）：按用户要求不开展大规模 Arm/Pilot，选择固定提前 30 分钟的一次性机会；只做确定性边界、恢复和投影验证，不重做 P2、话术、Chat 路由或设备投递。
+- `TERRITORY-MOMENT-SELECTION`（`pending`）：只选择哪些有真实来源的 Chat Moment 值得调用既有 Candidate，以及判断位于同一 Run 还是额外 Review；不重做 Territory 生图/World 架构或固定物件形态。
 
-`PROACTIVE-POLICY` 的协议与 Arms 已登记在研究设计 §8B，`NARRATIVE-AGENCY` 已登记在 §8C，`TERRITORY-NPC-ACTION` 已登记在 §8D。三项都必须在独立 disposable worktree 比较候选，生产分支只重写最终胜者。
+`PROACTIVE-POLICY`、`NARRATIVE-AGENCY` 与 `TERRITORY-NPC-ACTION` 已完成。`EXPERIENCE-ECHO-TIMING` 在 §8E 按用户要求收窄为轻量选择并已完成；`TERRITORY-MOMENT-SELECTION` 仍登记在 §8F，待进入第三个父工作包时再处理。
 
 ## 串行化与并行所有权
 

@@ -680,7 +680,7 @@ export function CharacterSettingsPanel({
             <p className={styles["eyebrow"]}>Initiative</p>
             <h2>主动陪伴</h2>
             <p className={styles["summary"]}>
-              控制基于当前 Activity 的未请求搭话；你明确约定的跟进不受影响。
+              主动程度控制未请求搭话的频率；安静时段也适用于重要时刻联系。你明确约定的跟进不受影响。
             </p>
           </div>
         </div>
@@ -717,6 +717,30 @@ export function CharacterSettingsPanel({
                 <option value="lively">活跃</option>
               </select>
             </label>
+            <label className={styles["initiativeToggle"]}>
+              <input
+                aria-label="重要时刻主动联系我"
+                checked={initiativeDraft.importantMomentOutreachEnabled}
+                type="checkbox"
+                onChange={(event) => {
+                  const importantMomentOutreachEnabled =
+                    event.currentTarget.checked;
+                  setInitiativeDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          importantMomentOutreachEnabled,
+                          importantMomentOutreachPrompted: true,
+                        }
+                      : current,
+                  );
+                }}
+              />
+              <span>重要时刻主动联系我</span>
+            </label>
+            <p className={styles["initiativeHint"]}>
+              只对你明确说过、时间明确且尚未发生的重要事情形成一次重新判断的机会；不保证发送，也不会创建闹钟。
+            </p>
             <label className={styles["initiativeToggle"]}>
               <input
                 aria-label="启用安静时段"

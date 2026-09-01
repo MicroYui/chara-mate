@@ -53,14 +53,35 @@ export type MemorySource = Static<typeof MemorySourceSchema>;
 export type MemoryUsageConsumer = Static<typeof MemoryUsageConsumerSchema>;
 export type MemoryUsage = Static<typeof MemoryUsageSchema>;
 export type MemoryRecord = Static<typeof MemoryRecordSchema>;
-export type MemoryRevision = Static<typeof MemoryRevisionSchema>;
-export type MemoryHit = Static<typeof MemoryHitSchema>;
-export type MemoryDetail = Static<typeof MemoryDetailSchema>;
+interface MemoryRevisionEventMetadata {
+  readonly importantMoment?: boolean;
+  readonly occursAt?: string;
+  readonly timeZone?: string;
+}
+export type MemoryRevision = Static<typeof MemoryRevisionSchema> &
+  MemoryRevisionEventMetadata;
+export type MemoryHit = Omit<Static<typeof MemoryHitSchema>, "revision"> & {
+  readonly revision: MemoryRevision;
+};
+export type MemoryDetail = Omit<
+  Static<typeof MemoryDetailSchema>,
+  "revisions"
+> & {
+  readonly revisions: MemoryRevision[];
+};
 export type MemoryCandidateStatus = Static<typeof MemoryCandidateStatusSchema>;
 export type MemoryClaimOperation = Static<typeof MemoryClaimOperationSchema>;
 export type MemoryClaimSlot = Static<typeof MemoryClaimSlotSchema>;
-export type MemoryCandidate = Static<typeof MemoryCandidateSchema>;
-export type MemorySnapshot = Static<typeof MemorySnapshotSchema>;
+export type MemoryCandidate = Static<typeof MemoryCandidateSchema> &
+  MemoryRevisionEventMetadata;
+export type MemorySnapshot = Omit<
+  Static<typeof MemorySnapshotSchema>,
+  "candidates" | "memories" | "profile"
+> & {
+  readonly candidates: MemoryCandidate[];
+  readonly memories: MemoryHit[];
+  readonly profile: MemoryHit[];
+};
 export type MemoryListRequest = Static<typeof MemoryListRequestSchema>;
 export type MemoryIdRequest = Static<typeof MemoryIdRequestSchema>;
 export type MemoryCreateRequest = Static<typeof MemoryCreateRequestSchema>;

@@ -29,6 +29,8 @@ interface VoiceWakeSettingsRow {
 }
 
 interface CompanionInitiativeSettingsRow {
+  important_moment_outreach_enabled: 0 | 1;
+  important_moment_outreach_prompted: 0 | 1;
   level: CompanionInitiativeSettings["level"];
   quiet_hours_enabled: 0 | 1;
   quiet_hours_end_minute: number;
@@ -88,7 +90,9 @@ export class SettingsRepository {
   getCompanionInitiative(): CompanionInitiativeSettings {
     const row = this.database
       .prepare(
-        `SELECT level, quiet_hours_enabled, quiet_hours_start_minute,
+        `SELECT important_moment_outreach_enabled,
+                important_moment_outreach_prompted, level,
+                quiet_hours_enabled, quiet_hours_start_minute,
                 quiet_hours_end_minute
          FROM companion_initiative_settings
          WHERE settings_id = 'companion'`,
@@ -98,6 +102,10 @@ export class SettingsRepository {
       CompanionInitiativeSettingsSchema,
       row
         ? {
+            importantMomentOutreachEnabled:
+              row.important_moment_outreach_enabled === 1,
+            importantMomentOutreachPrompted:
+              row.important_moment_outreach_prompted === 1,
             level: row.level,
             quietHours: {
               enabled: row.quiet_hours_enabled === 1,
@@ -117,13 +125,19 @@ export class SettingsRepository {
     this.database
       .prepare(
         `INSERT INTO companion_initiative_settings (
-           settings_id, level, quiet_hours_enabled,
+           settings_id, important_moment_outreach_enabled,
+           important_moment_outreach_prompted, level,
+           quiet_hours_enabled,
            quiet_hours_start_minute, quiet_hours_end_minute, updated_at
          ) VALUES (
-           'companion', @level, @quietHoursEnabled,
+           'companion', @importantMomentOutreachEnabled,
+           @importantMomentOutreachPrompted, @level,
+           @quietHoursEnabled,
            @quietHoursStartMinute, @quietHoursEndMinute, @updatedAt
          )
          ON CONFLICT(settings_id) DO UPDATE SET
+           important_moment_outreach_enabled = excluded.important_moment_outreach_enabled,
+           important_moment_outreach_prompted = excluded.important_moment_outreach_prompted,
            level = excluded.level,
            quiet_hours_enabled = excluded.quiet_hours_enabled,
            quiet_hours_start_minute = excluded.quiet_hours_start_minute,
@@ -131,6 +145,12 @@ export class SettingsRepository {
            updated_at = excluded.updated_at`,
       )
       .run({
+        importantMomentOutreachEnabled: value.importantMomentOutreachEnabled
+          ? 1
+          : 0,
+        importantMomentOutreachPrompted: value.importantMomentOutreachPrompted
+          ? 1
+          : 0,
         level: value.level,
         quietHoursEnabled: value.quietHours.enabled ? 1 : 0,
         quietHoursEndMinute: value.quietHours.endMinute,

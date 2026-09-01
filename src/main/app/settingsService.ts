@@ -69,6 +69,10 @@ export class SettingsService {
     ) => Promise<void>,
     private readonly dataDirectory: string,
     private readonly openPath: (target: string) => Promise<string>,
+    private readonly onCompanionInitiativeChanged?: (
+      current: CompanionInitiativeSettings,
+      previous: CompanionInitiativeSettings,
+    ) => void,
   ) {}
 
   getAgent(): AgentSettings {
@@ -158,7 +162,24 @@ export class SettingsService {
     ) {
       throw new Error("安静时段的开始和结束时间不能相同。");
     }
-    return this.repository.saveCompanionInitiative(settings, this.clock.now());
+    const previous = this.getCompanionInitiative();
+    const saved = this.repository.saveCompanionInitiative(
+      settings,
+      this.clock.now(),
+    );
+    if (
+      saved.importantMomentOutreachEnabled !==
+        previous.importantMomentOutreachEnabled ||
+      saved.importantMomentOutreachPrompted !==
+        previous.importantMomentOutreachPrompted ||
+      saved.level !== previous.level ||
+      saved.quietHours.enabled !== previous.quietHours.enabled ||
+      saved.quietHours.startMinute !== previous.quietHours.startMinute ||
+      saved.quietHours.endMinute !== previous.quietHours.endMinute
+    ) {
+      this.onCompanionInitiativeChanged?.(saved, previous);
+    }
+    return saved;
   }
 
   getVoice(): VoiceSettings {

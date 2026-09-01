@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "19";
+export const CURRENT_SCHEMA_VERSION = "20";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -131,6 +131,9 @@ export const CURRENT_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS companion_initiative_records (
     id TEXT PRIMARY KEY NOT NULL,
+    source_kind TEXT NOT NULL DEFAULT 'activity' CHECK (
+      source_kind IN ('activity', 'memory_event')
+    ),
     kind TEXT NOT NULL CHECK (kind IN ('invitation', 'continuation')),
     app_id TEXT,
     app_name TEXT NOT NULL CHECK (length(trim(app_name)) > 0),
@@ -497,6 +500,11 @@ export const CURRENT_SCHEMA_SQL = `
     id TEXT PRIMARY KEY NOT NULL,
     memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     content TEXT NOT NULL CHECK (length(trim(content)) > 0),
+    occurs_at TEXT,
+    time_zone TEXT,
+    important_moment INTEGER NOT NULL DEFAULT 0 CHECK (
+      important_moment IN (0, 1)
+    ),
     source_type TEXT NOT NULL CHECK (
       source_type IN (
         'chat', 'voice', 'activity', 'tool', 'user_edit', 'distillation'
@@ -504,6 +512,10 @@ export const CURRENT_SCHEMA_SQL = `
     ),
     reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
     created_at TEXT NOT NULL,
+    CHECK (
+      (occurs_at IS NULL AND time_zone IS NULL) OR
+      (occurs_at IS NOT NULL AND length(trim(time_zone)) > 0)
+    ),
     UNIQUE (id, memory_id)
   ) STRICT;
 
@@ -563,12 +575,21 @@ export const CURRENT_SCHEMA_SQL = `
     confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     importance REAL NOT NULL CHECK (importance >= 0 AND importance <= 1),
     novelty REAL NOT NULL CHECK (novelty >= 0 AND novelty <= 1),
+    occurs_at TEXT,
+    time_zone TEXT,
+    important_moment INTEGER NOT NULL DEFAULT 0 CHECK (
+      important_moment IN (0, 1)
+    ),
     valid_from TEXT,
     valid_to TEXT,
     supersedes_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
     accepted_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    CHECK (
+      (occurs_at IS NULL AND time_zone IS NULL) OR
+      (occurs_at IS NOT NULL AND length(trim(time_zone)) > 0)
+    ),
     CHECK (valid_from IS NULL OR valid_to IS NULL OR valid_from < valid_to)
   ) STRICT;
 
@@ -965,7 +986,34 @@ export const CURRENT_SCHEMA_SQL = `
     quiet_hours_end_minute INTEGER NOT NULL CHECK (
       quiet_hours_end_minute BETWEEN 0 AND 1439
     ),
+    important_moment_outreach_enabled INTEGER NOT NULL DEFAULT 0 CHECK (
+      important_moment_outreach_enabled IN (0, 1)
+    ),
+    important_moment_outreach_prompted INTEGER NOT NULL DEFAULT 0 CHECK (
+      important_moment_outreach_prompted IN (0, 1)
+    ),
     updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS proactive_opportunities (
+    id TEXT PRIMARY KEY NOT NULL,
+    source_memory_id TEXT NOT NULL,
+    source_revision_id TEXT NOT NULL UNIQUE,
+    target_chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    evaluate_at TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (
+      state IN ('pending', 'evaluating', 'resolved', 'cancelled')
+    ),
+    outcome TEXT CHECK (outcome IN ('silent', 'delivered', 'failed')),
+    reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+    run_id TEXT UNIQUE REFERENCES runs(id) ON DELETE SET NULL,
+    message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    claimed_at TEXT,
+    resolved_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_revision_id, source_memory_id)
+      REFERENCES memory_revisions(id, memory_id) ON DELETE CASCADE
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS voice_sessions (
@@ -1038,6 +1086,10 @@ export const CURRENT_SCHEMA_SQL = `
     ON memory_usage(memory_id, used_at DESC, id);
   CREATE INDEX IF NOT EXISTS memory_candidates_status_idx
     ON memory_candidates(status, created_at DESC, id);
+  CREATE INDEX IF NOT EXISTS proactive_opportunities_due_idx
+    ON proactive_opportunities(state, evaluate_at, id);
+  CREATE INDEX IF NOT EXISTS proactive_opportunities_memory_idx
+    ON proactive_opportunities(source_memory_id, created_at DESC, id);
   CREATE INDEX IF NOT EXISTS activity_events_time_idx
     ON activity_events(started_at, id);
   CREATE INDEX IF NOT EXISTS activity_events_episode_idx

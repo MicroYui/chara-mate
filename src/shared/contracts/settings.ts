@@ -45,6 +45,8 @@ export type CompanionInitiativeSettings = Static<
   typeof CompanionInitiativeSettingsSchema
 >;
 export const DEFAULT_COMPANION_INITIATIVE_SETTINGS = {
+  importantMomentOutreachEnabled: false,
+  importantMomentOutreachPrompted: false,
   level: "balanced",
   quietHours: {
     enabled: true,

@@ -2,7 +2,7 @@ import type { Clock } from "../../shared/pure/clock";
 
 const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
 
-interface AutomationScheduleRunner {
+export interface PersistentScheduleRunner {
   earliestNextRunAt(): string | undefined;
   runDue(now?: string): Promise<void>;
 }
@@ -10,6 +10,12 @@ interface AutomationScheduleRunner {
 export interface ResumeEventSource {
   on(event: "resume", listener: () => void): unknown;
   removeListener(event: "resume", listener: () => void): unknown;
+}
+
+function isScheduleRunnerList(
+  value: PersistentScheduleRunner | readonly PersistentScheduleRunner[],
+): value is readonly PersistentScheduleRunner[] {
+  return Array.isArray(value);
 }
 
 export class AutomationScheduler {
@@ -23,11 +29,15 @@ export class AutomationScheduler {
   };
 
   constructor(
-    private readonly service: AutomationScheduleRunner,
+    service: PersistentScheduleRunner | readonly PersistentScheduleRunner[],
     private readonly clock: Clock,
     private readonly resumeEvents?: ResumeEventSource,
     private readonly onError: (error: unknown) => void = () => undefined,
-  ) {}
+  ) {
+    this.services = isScheduleRunnerList(service) ? [...service] : [service];
+  }
+
+  private readonly services: readonly PersistentScheduleRunner[];
 
   start(): void {
     if (this.#started) return;
@@ -58,21 +68,37 @@ export class AutomationScheduler {
   }
 
   async #runChecks(): Promise<void> {
+    let failedServices = new Set<PersistentScheduleRunner>();
     while (this.#started && this.#checkRequested) {
       this.#checkRequested = false;
-      try {
-        await this.service.runDue(this.clock.now());
-      } catch (error) {
-        this.onError(error);
-        return;
+      failedServices = new Set<PersistentScheduleRunner>();
+      const now = this.clock.now();
+      for (const service of this.services) {
+        try {
+          await service.runDue(now);
+        } catch (error) {
+          failedServices.add(service);
+          this.onError(error);
+        }
       }
     }
-    if (this.#started) this.#armNext();
+    if (this.#started) this.#armNext(failedServices);
   }
 
-  #armNext(): void {
+  #armNext(failedServices: ReadonlySet<PersistentScheduleRunner>): void {
     this.#clearTimer();
-    const nextRunAt = this.service.earliestNextRunAt();
+    const nextRunAt = this.services
+      .flatMap((service) => {
+        if (failedServices.has(service)) return [];
+        try {
+          const value = service.earliestNextRunAt();
+          return value ? [value] : [];
+        } catch (error) {
+          this.onError(error);
+          return [];
+        }
+      })
+      .sort()[0];
     if (!nextRunAt) return;
     const delay = Math.max(
       0,

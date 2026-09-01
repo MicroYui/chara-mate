@@ -26,6 +26,8 @@ function createApi() {
       screenRecording: "denied" as const,
     },
     companionInitiative: {
+      importantMomentOutreachEnabled: false,
+      importantMomentOutreachPrompted: false,
       level: "balanced" as const,
       quietHours: {
         enabled: true,

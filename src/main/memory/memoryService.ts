@@ -17,6 +17,7 @@ import type {
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
 import { redactText } from "../../shared/pure/redaction";
+import { isTimeZoneId, isUtcTimestamp } from "../../shared/schemas/primitives";
 import { memoryClaimDefinition } from "./memoryClaim";
 import { MemoryError } from "./memoryError";
 import type { MemoryRepository } from "./memoryRepository";
@@ -31,7 +32,6 @@ interface MemoryFormationBase {
   readonly basis: MemoryFormationBasis;
   readonly content: string;
   readonly memoryId?: string;
-  readonly operation: MemoryClaimOperation;
   readonly source: {
     readonly id: string;
     readonly label: string;
@@ -44,13 +44,33 @@ interface MemoryFormationBase {
 
 export type MemoryFormationInput = MemoryFormationBase &
   (
-    | { readonly claimSlot: MemoryClaimSlot; readonly type?: never }
+    | {
+        readonly claimSlot: MemoryClaimSlot;
+        readonly operation: MemoryClaimOperation;
+        readonly type?: never;
+      }
     | {
         readonly claimSlot?: never;
-        readonly type: Extract<
-          MemoryType,
-          "commitment" | "event" | "procedure" | "project"
-        >;
+        readonly operation: MemoryClaimOperation;
+        readonly type: Extract<MemoryType, "procedure" | "project">;
+      }
+    | {
+        readonly claimSlot?: never;
+        readonly importantMoment: boolean;
+        readonly occursAt?: string | null;
+        readonly operation: "create";
+        readonly targetHint?: never;
+        readonly timeZone?: string | null;
+        readonly type: Extract<MemoryType, "commitment" | "event">;
+      }
+    | {
+        readonly claimSlot?: never;
+        readonly importantMoment: boolean;
+        readonly occursAt?: string | null;
+        readonly operation: Exclude<MemoryClaimOperation, "create">;
+        readonly targetHint: string;
+        readonly timeZone?: string | null;
+        readonly type: Extract<MemoryType, "commitment" | "event">;
       }
   );
 
@@ -91,6 +111,115 @@ export interface ActivityMemoryPatternReconciliation {
 
 function normalizeFormedContent(content: string): string {
   return redactText(content).normalize("NFKC").replaceAll(/\s+/gu, " ").trim();
+}
+
+interface RevisionMetadataInput {
+  readonly importantMoment?: boolean;
+  readonly occursAt?: string | null;
+  readonly timeZone?: string | null;
+}
+
+interface ResolvedRevisionMetadata {
+  readonly importantMoment: boolean;
+  readonly occursAt?: string;
+  readonly timeZone?: string;
+}
+
+function revisionMetadataInput(input: object): RevisionMetadataInput {
+  const importantMoment =
+    "importantMoment" in input ? input.importantMoment : undefined;
+  const occursAt = "occursAt" in input ? input.occursAt : undefined;
+  const timeZone = "timeZone" in input ? input.timeZone : undefined;
+  return {
+    ...(typeof importantMoment === "boolean" ? { importantMoment } : {}),
+    ...(typeof occursAt === "string" || occursAt === null ? { occursAt } : {}),
+    ...(typeof timeZone === "string" || timeZone === null ? { timeZone } : {}),
+  };
+}
+
+function resolvedRevisionMetadata(
+  input: RevisionMetadataInput,
+): ResolvedRevisionMetadata {
+  return {
+    importantMoment: input.importantMoment ?? false,
+    ...(typeof input.occursAt === "string" && typeof input.timeZone === "string"
+      ? { occursAt: input.occursAt, timeZone: input.timeZone }
+      : {}),
+  };
+}
+
+function resolveRevisionMetadata(
+  type: MemoryType,
+  input: RevisionMetadataInput,
+  current?: ResolvedRevisionMetadata,
+): ResolvedRevisionMetadata {
+  const supportsEventTime = type === "event" || type === "commitment";
+  if (!supportsEventTime && input.importantMoment) {
+    throw new MemoryError(
+      "MEMORY.CONFLICT",
+      "只有事件或承诺可以标记为重要时刻。",
+      false,
+    );
+  }
+  if (
+    !supportsEventTime &&
+    (input.occursAt !== undefined || input.timeZone !== undefined)
+  ) {
+    throw new MemoryError(
+      "MEMORY.CONFLICT",
+      "只有事件或承诺可以记录发生时间。",
+      false,
+    );
+  }
+  if ((input.occursAt === undefined) !== (input.timeZone === undefined)) {
+    throw new TypeError("occursAt and timeZone must be provided together");
+  }
+  if ((input.occursAt === null) !== (input.timeZone === null)) {
+    throw new TypeError("occursAt and timeZone must be cleared together");
+  }
+
+  const importantMoment = supportsEventTime
+    ? (input.importantMoment ?? current?.importantMoment ?? false)
+    : false;
+  if (input.occursAt === undefined && input.timeZone === undefined) {
+    return {
+      importantMoment,
+      ...(current?.occursAt && current.timeZone
+        ? { occursAt: current.occursAt, timeZone: current.timeZone }
+        : {}),
+    };
+  }
+  if (input.occursAt === null && input.timeZone === null) {
+    return { importantMoment };
+  }
+  if (
+    typeof input.occursAt !== "string" ||
+    typeof input.timeZone !== "string"
+  ) {
+    throw new TypeError("occursAt and timeZone must be strings");
+  }
+  if (!isUtcTimestamp(input.occursAt)) {
+    throw new TypeError("occursAt must be a canonical UTC timestamp");
+  }
+  if (!isTimeZoneId(input.timeZone)) {
+    throw new TypeError("timeZone must be recognized by the packaged runtime");
+  }
+  return {
+    importantMoment,
+    occursAt: input.occursAt,
+    timeZone: input.timeZone,
+  };
+}
+
+function sameRevisionMetadata(
+  left: ResolvedRevisionMetadata,
+  right: ResolvedRevisionMetadata,
+): boolean {
+  return (
+    left.importantMoment === right.importantMoment &&
+    left.occursAt === right.occursAt &&
+    left.timeZone === right.timeZone
+  );
 }
 
 function sameStrings(
@@ -161,12 +290,18 @@ function redactSources(sources: readonly MemorySource[]): MemorySource[] {
 }
 
 export class MemoryService {
+  #changed: (memoryId: string) => void = () => undefined;
+
   constructor(
     private readonly repository: MemoryRepository,
     private readonly retrieval: RetrievalPipeline,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
   ) {}
+
+  setChangedListener(listener: (memoryId: string) => void): void {
+    this.#changed = listener;
+  }
 
   list(request: MemoryListRequest): MemorySnapshot {
     const memories = this.retrieval.search(request);
@@ -246,26 +381,56 @@ export class MemoryService {
         false,
       );
     }
-    return this.repository.create({
+    const revisionMetadata = resolveRevisionMetadata(
+      request.type,
+      revisionMetadataInput(request),
+    );
+    const created = this.repository.create({
       ...request,
       content: redactText(request.content),
+      ...revisionMetadata,
       memoryId: this.ids.generate(),
       now: this.clock.now(),
       reason: redactText(request.reason),
       revisionId: this.ids.generate(),
       sources: redactSources(request.sources),
     });
+    this.#changed(created.memory.id);
+    return created;
   }
 
   revise(request: MemoryReviseRequest): MemoryDetail {
-    return this.repository.revise({
-      ...request,
+    const current = this.repository.requireDetail(request.memoryId);
+    const currentRevision = current.revisions.find(
+      ({ id }) => id === current.memory.currentRevisionId,
+    );
+    if (!currentRevision) {
+      throw new TypeError("Current memory revision is unavailable");
+    }
+    const revisionMetadata = resolveRevisionMetadata(
+      current.memory.type,
+      revisionMetadataInput(request),
+      resolvedRevisionMetadata(currentRevision),
+    );
+    const revised = this.repository.revise({
+      ...(request.confidence === undefined
+        ? {}
+        : { confidence: request.confidence }),
       content: redactText(request.content),
+      ...revisionMetadata,
+      ...(request.importance === undefined
+        ? {}
+        : { importance: request.importance }),
+      memoryId: request.memoryId,
       now: this.clock.now(),
       reason: redactText(request.reason),
       revisionId: this.ids.generate(),
       sources: redactSources(request.sources),
+      ...(request.validFrom ? { validFrom: request.validFrom } : {}),
+      ...(request.validTo ? { validTo: request.validTo } : {}),
     });
+    this.#changed(revised.memory.id);
+    return revised;
   }
 
   setPinned(memoryId: string, pinned: boolean): MemoryDetail {
@@ -273,29 +438,48 @@ export class MemoryService {
   }
 
   archive(memoryId: string): MemoryDetail {
-    return this.repository.archive(memoryId, this.clock.now());
+    const archived = this.repository.archive(memoryId, this.clock.now());
+    this.#changed(memoryId);
+    return archived;
   }
 
   delete(memoryId: string): MemoryDetail {
-    return this.repository.softDelete(memoryId, this.clock.now());
+    const deleted = this.repository.softDelete(memoryId, this.clock.now());
+    this.#changed(memoryId);
+    return deleted;
   }
 
   restore(memoryId: string): MemoryDetail {
-    return this.repository.restore(memoryId, this.clock.now());
+    const restored = this.repository.restore(memoryId, this.clock.now());
+    this.#changed(memoryId);
+    return restored;
   }
 
   purge(memoryId: string): void {
     this.repository.purge(memoryId);
+    this.#changed(memoryId);
   }
 
   propose(input: MemoryProposalInput): MemoryCandidate {
     if (input.sourceIds.length !== input.sourceLabels.length) {
       throw new TypeError("Memory candidate sources and labels must align");
     }
+    const superseded = input.supersedesMemoryId
+      ? this.repository.getDetail(input.supersedesMemoryId, false)
+      : undefined;
+    const currentRevision = superseded?.revisions.find(
+      ({ id }) => id === superseded.memory.currentRevisionId,
+    );
+    const revisionMetadata = resolveRevisionMetadata(
+      input.type,
+      revisionMetadataInput(input),
+      currentRevision ? resolvedRevisionMetadata(currentRevision) : undefined,
+    );
     return this.repository.propose({
       ...input,
       candidateId: this.ids.generate(),
       content: redactText(input.content),
+      ...revisionMetadata,
       now: this.clock.now(),
       reason: redactText(input.reason),
       sourceLabels: input.sourceLabels.map(redactText),
@@ -444,6 +628,9 @@ export class MemoryService {
 
   acceptCandidate(candidateId: string): MemoryDetail {
     const candidate = this.repository.requireCandidate(candidateId);
+    const candidateMetadata = resolvedRevisionMetadata(
+      revisionMetadataInput(candidate),
+    );
     const now = this.clock.now();
     const sources = candidate.sourceIds.map((referenceId, index) => ({
       createdAt: now,
@@ -453,7 +640,7 @@ export class MemoryService {
       type: candidate.sourceType,
     }));
     if (candidate.claimOperation && candidate.supersedesMemoryId) {
-      return this.repository.acceptCandidateAsRevision(
+      const accepted = this.repository.acceptCandidateAsRevision(
         candidateId,
         {
           confidence: candidate.confidence,
@@ -461,14 +648,23 @@ export class MemoryService {
           importance: candidate.importance,
           memoryId: candidate.supersedesMemoryId,
           now,
+          importantMoment: candidateMetadata.importantMoment,
           reason: candidate.reason,
           revisionId: this.ids.generate(),
           sources,
           ...(candidate.validFrom ? { validFrom: candidate.validFrom } : {}),
           ...(candidate.validTo ? { validTo: candidate.validTo } : {}),
+          ...(candidateMetadata.occursAt && candidateMetadata.timeZone
+            ? {
+                occursAt: candidateMetadata.occursAt,
+                timeZone: candidateMetadata.timeZone,
+              }
+            : {}),
         },
         candidate.claimSlot,
       );
+      this.#changed(accepted.memory.id);
+      return accepted;
     }
     if (
       candidate.claimSlot &&
@@ -480,11 +676,12 @@ export class MemoryService {
         false,
       );
     }
-    return this.repository.acceptCandidate(candidateId, {
+    const accepted = this.repository.acceptCandidate(candidateId, {
       ...(candidate.claimSlot ? { claimSlot: candidate.claimSlot } : {}),
       confidence: candidate.confidence,
       content: candidate.content,
       importance: candidate.importance,
+      importantMoment: candidateMetadata.importantMoment,
       memoryId: this.ids.generate(),
       now,
       reason: candidate.reason,
@@ -494,9 +691,17 @@ export class MemoryService {
         ? { supersedesMemoryId: candidate.supersedesMemoryId }
         : {}),
       type: candidate.type,
+      ...(candidateMetadata.occursAt && candidateMetadata.timeZone
+        ? {
+            occursAt: candidateMetadata.occursAt,
+            timeZone: candidateMetadata.timeZone,
+          }
+        : {}),
       ...(candidate.validFrom ? { validFrom: candidate.validFrom } : {}),
       ...(candidate.validTo ? { validTo: candidate.validTo } : {}),
     });
+    this.#changed(accepted.memory.id);
+    return accepted;
   }
 
   rejectCandidate(candidateId: string): MemoryCandidate {
@@ -528,7 +733,7 @@ export class MemoryService {
           { id: legacy.memory.id, label: "用户确认合并：旧版未绑定记忆" },
         ]
       : [{ id: legacy.memory.id, label: "用户确认绑定：旧版未绑定记忆" }];
-    return this.repository.resolveClaim({
+    const resolved = this.repository.resolveClaim({
       claimSlot: request.claimSlot,
       content: redactText(request.content),
       memoryId: request.memoryId,
@@ -545,6 +750,8 @@ export class MemoryService {
         type: "user_edit" as const,
       })),
     });
+    this.#changed(resolved.memory.id);
+    return resolved;
   }
 
   confirmPreference(input: {
@@ -603,6 +810,23 @@ export class MemoryService {
       : undefined;
     const type = definition?.type ?? input.type;
     if (!type) throw new TypeError("Memory formation type is unavailable");
+    const eventLike = type === "event" || type === "commitment";
+    if (
+      eventLike &&
+      (!("importantMoment" in input) ||
+        typeof input.importantMoment !== "boolean")
+    ) {
+      throw new TypeError(
+        "Event and commitment formation requires importantMoment",
+      );
+    }
+    if (input.operation === "create" && "targetHint" in input) {
+      throw new MemoryError(
+        "MEMORY.CONFLICT",
+        "新建事件或承诺时不能指定更新目标提示。",
+        false,
+      );
+    }
     if (input.operation === "create" && input.memoryId) {
       throw new MemoryError(
         "MEMORY.CONFLICT",
@@ -641,6 +865,33 @@ export class MemoryService {
       }
     }
 
+    let hintedTarget: MemoryDetail | undefined;
+    if ("targetHint" in input) {
+      const targetHint = normalizeFormedContent(input.targetHint);
+      if (!targetHint) {
+        throw new TypeError("Memory targetHint must not be blank");
+      }
+      const matches = [...allowedSet]
+        .map((memoryId) => this.repository.getDetail(memoryId, false))
+        .filter((detail): detail is MemoryDetail => {
+          if (
+            !detail ||
+            detail.memory.status !== "active" ||
+            detail.memory.type !== type
+          ) {
+            return false;
+          }
+          const revision = detail.revisions.find(
+            ({ id }) => id === detail.memory.currentRevisionId,
+          );
+          return (
+            revision !== undefined &&
+            normalizeFormedContent(revision.content) === targetHint
+          );
+        });
+      if (matches.length === 1) hintedTarget = matches[0];
+    }
+
     const slotTarget = input.claimSlot
       ? this.repository.findDetailByClaimSlot(input.claimSlot)
       : undefined;
@@ -651,6 +902,17 @@ export class MemoryService {
       throw new MemoryError(
         "MEMORY.INVALID_STATE",
         "这个稳定字段对应的记忆已归档，请先在 Memory 中处理。",
+        false,
+      );
+    }
+    if (
+      providedTarget &&
+      hintedTarget &&
+      providedTarget.memory.id !== hintedTarget.memory.id
+    ) {
+      throw new MemoryError(
+        "MEMORY.CONFLICT",
+        "内部更新目标与当前内容提示不一致。",
         false,
       );
     }
@@ -679,23 +941,40 @@ export class MemoryService {
 
     const resolvedTarget =
       providedTarget ??
+      hintedTarget ??
       (slotTarget && allowedSet.has(slotTarget.memory.id)
         ? slotTarget
         : undefined);
-    const comparisonTarget = providedTarget ?? slotTarget;
+    const comparisonTarget = providedTarget ?? hintedTarget ?? slotTarget;
     const currentRevision = comparisonTarget?.revisions.find(
       ({ id }) => id === comparisonTarget.memory.currentRevisionId,
     );
     if (comparisonTarget && !currentRevision) {
       throw new TypeError("Current memory revision is unavailable");
     }
+    const revisionMetadata = resolveRevisionMetadata(
+      type,
+      revisionMetadataInput(input),
+      currentRevision ? resolvedRevisionMetadata(currentRevision) : undefined,
+    );
     if (
       comparisonTarget &&
       currentRevision &&
-      normalizeFormedContent(currentRevision.content) === content
+      normalizeFormedContent(currentRevision.content) === content &&
+      sameRevisionMetadata(
+        resolvedRevisionMetadata(currentRevision),
+        revisionMetadata,
+      )
     ) {
       const pending = this.repository.findPendingCandidateByContent(content, {
+        importantMoment: revisionMetadata.importantMoment,
         operation: input.operation,
+        ...(revisionMetadata.occursAt && revisionMetadata.timeZone
+          ? {
+              occursAt: revisionMetadata.occursAt,
+              timeZone: revisionMetadata.timeZone,
+            }
+          : {}),
         ...(input.claimSlot ? { slot: input.claimSlot } : {}),
         supersedesMemoryId: comparisonTarget.memory.id,
       });
@@ -721,6 +1000,12 @@ export class MemoryService {
       }
       const duplicate = this.repository.findActiveDetailByContent(content);
       if (duplicate) {
+        const duplicateRevision = duplicate.revisions.find(
+          ({ id }) => id === duplicate.memory.currentRevisionId,
+        );
+        if (!duplicateRevision) {
+          throw new TypeError("Current memory revision is unavailable");
+        }
         if (
           input.claimSlot &&
           !duplicate.memory.claimSlot &&
@@ -754,11 +1039,18 @@ export class MemoryService {
             "ambiguous_identity",
           );
         }
-        return {
-          memoryId: duplicate.memory.id,
-          outcome: "duplicate",
-          revisionId: duplicate.memory.currentRevisionId,
-        };
+        if (
+          sameRevisionMetadata(
+            resolvedRevisionMetadata(duplicateRevision),
+            revisionMetadata,
+          )
+        ) {
+          return {
+            memoryId: duplicate.memory.id,
+            outcome: "duplicate",
+            revisionId: duplicate.memory.currentRevisionId,
+          };
+        }
       }
       if (
         input.claimSlot &&
@@ -789,6 +1081,7 @@ export class MemoryService {
         content,
         importance: 0.5,
         reason: formationReason(input.basis),
+        ...revisionMetadata,
         sources: [
           {
             ...input.source,
@@ -801,7 +1094,14 @@ export class MemoryService {
         ...(input.validTo ? { validTo: input.validTo } : {}),
       });
       const pending = this.repository.findPendingCandidateByContent(content, {
+        importantMoment: revisionMetadata.importantMoment,
         operation: input.operation,
+        ...(revisionMetadata.occursAt && revisionMetadata.timeZone
+          ? {
+              occursAt: revisionMetadata.occursAt,
+              timeZone: revisionMetadata.timeZone,
+            }
+          : {}),
         ...(input.claimSlot ? { slot: input.claimSlot } : {}),
       });
       if (pending) this.repository.discardPendingCandidate(pending.id);
@@ -857,6 +1157,10 @@ export class MemoryService {
       content,
       memoryId: resolvedTarget.memory.id,
       reason: formationReason(input.basis),
+      ...revisionMetadata,
+      ...("occursAt" in input && input.occursAt === null
+        ? { occursAt: null, timeZone: null }
+        : {}),
       sources: [
         {
           ...input.source,
@@ -867,7 +1171,14 @@ export class MemoryService {
       ...(input.validTo ? { validTo: input.validTo } : {}),
     });
     const pending = this.repository.findPendingCandidateByContent(content, {
+      importantMoment: revisionMetadata.importantMoment,
       operation: input.operation,
+      ...(revisionMetadata.occursAt && revisionMetadata.timeZone
+        ? {
+            occursAt: revisionMetadata.occursAt,
+            timeZone: revisionMetadata.timeZone,
+          }
+        : {}),
       ...(input.claimSlot ? { slot: input.claimSlot } : {}),
       supersedesMemoryId: resolvedTarget.memory.id,
     });
@@ -902,8 +1213,26 @@ export class MemoryService {
     cause: FormationCandidateCause,
     supersedesMemoryId?: string,
   ): MemoryFormationResult {
+    const superseded = supersedesMemoryId
+      ? this.repository.getDetail(supersedesMemoryId, false)
+      : undefined;
+    const currentRevision = superseded?.revisions.find(
+      ({ id }) => id === superseded.memory.currentRevisionId,
+    );
+    const revisionMetadata = resolveRevisionMetadata(
+      type,
+      revisionMetadataInput(input),
+      currentRevision ? resolvedRevisionMetadata(currentRevision) : undefined,
+    );
     const existing = this.repository.findPendingCandidateByContent(content, {
+      importantMoment: revisionMetadata.importantMoment,
       operation: input.operation,
+      ...(revisionMetadata.occursAt && revisionMetadata.timeZone
+        ? {
+            occursAt: revisionMetadata.occursAt,
+            timeZone: revisionMetadata.timeZone,
+          }
+        : {}),
       ...(input.claimSlot ? { slot: input.claimSlot } : {}),
       ...(supersedesMemoryId ? { supersedesMemoryId } : {}),
     });
@@ -922,6 +1251,7 @@ export class MemoryService {
         ...(input.claimSlot ? { slot: input.claimSlot } : {}),
       },
       importance: 0.5,
+      ...revisionMetadata,
       novelty: 1,
       now: this.clock.now(),
       reason: formationCandidateReason(input.basis, cause),

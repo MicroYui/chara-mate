@@ -1,11 +1,52 @@
-import { Type, type TSchema } from "@sinclair/typebox";
+import { Type, type TProperties, type TSchema } from "@sinclair/typebox";
 
 import { AppErrorSchema } from "./error";
 import {
   EntityIdSchema,
   NonBlankStringSchema,
+  TimeZoneIdSchema,
   TimestampSchema,
 } from "./primitives";
+
+function withOptionalEventTime<TPropertiesValue extends TProperties>(
+  properties: TPropertiesValue,
+) {
+  return Type.Union([
+    Type.Object(properties, { additionalProperties: false }),
+    Type.Object(
+      {
+        ...properties,
+        occursAt: TimestampSchema,
+        timeZone: TimeZoneIdSchema,
+      },
+      { additionalProperties: false },
+    ),
+  ]);
+}
+
+function withMutableEventTime<TPropertiesValue extends TProperties>(
+  properties: TPropertiesValue,
+) {
+  return Type.Union([
+    Type.Object(properties, { additionalProperties: false }),
+    Type.Object(
+      {
+        ...properties,
+        occursAt: TimestampSchema,
+        timeZone: TimeZoneIdSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        ...properties,
+        occursAt: Type.Null(),
+        timeZone: Type.Null(),
+      },
+      { additionalProperties: false },
+    ),
+  ]);
+}
 
 export const MemoryTypeSchema = Type.Union([
   Type.Literal("profile"),
@@ -109,18 +150,16 @@ export const MemoryRecordSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const MemoryRevisionSchema = Type.Object(
-  {
-    content: NonBlankStringSchema,
-    createdAt: TimestampSchema,
-    id: EntityIdSchema,
-    memoryId: EntityIdSchema,
-    reason: NonBlankStringSchema,
-    sourceIds: Type.Array(EntityIdSchema),
-    sourceType: MemorySourceTypeSchema,
-  },
-  { additionalProperties: false },
-);
+export const MemoryRevisionSchema = withOptionalEventTime({
+  content: NonBlankStringSchema,
+  createdAt: TimestampSchema,
+  id: EntityIdSchema,
+  importantMoment: Type.Optional(Type.Boolean({ default: false })),
+  memoryId: EntityIdSchema,
+  reason: NonBlankStringSchema,
+  sourceIds: Type.Array(EntityIdSchema),
+  sourceType: MemorySourceTypeSchema,
+});
 
 export const MemoryHitSchema = Type.Object(
   {
@@ -148,29 +187,27 @@ export const MemoryCandidateStatusSchema = Type.Union([
   Type.Literal("rejected"),
 ]);
 
-export const MemoryCandidateSchema = Type.Object(
-  {
-    claimOperation: Type.Optional(MemoryClaimOperationSchema),
-    claimSlot: Type.Optional(MemoryClaimSlotSchema),
-    confidence: Type.Number({ maximum: 1, minimum: 0 }),
-    content: NonBlankStringSchema,
-    createdAt: TimestampSchema,
-    id: EntityIdSchema,
-    importance: Type.Number({ maximum: 1, minimum: 0 }),
-    novelty: Type.Number({ maximum: 1, minimum: 0 }),
-    reason: NonBlankStringSchema,
-    sourceIds: Type.Array(EntityIdSchema, { minItems: 1 }),
-    sourceLabels: Type.Array(NonBlankStringSchema, { minItems: 1 }),
-    sourceType: MemorySourceTypeSchema,
-    status: MemoryCandidateStatusSchema,
-    supersedesMemoryId: Type.Optional(EntityIdSchema),
-    type: MemoryTypeSchema,
-    updatedAt: TimestampSchema,
-    validFrom: Type.Optional(TimestampSchema),
-    validTo: Type.Optional(TimestampSchema),
-  },
-  { additionalProperties: false },
-);
+export const MemoryCandidateSchema = withOptionalEventTime({
+  claimOperation: Type.Optional(MemoryClaimOperationSchema),
+  claimSlot: Type.Optional(MemoryClaimSlotSchema),
+  confidence: Type.Number({ maximum: 1, minimum: 0 }),
+  content: NonBlankStringSchema,
+  createdAt: TimestampSchema,
+  id: EntityIdSchema,
+  importantMoment: Type.Optional(Type.Boolean({ default: false })),
+  importance: Type.Number({ maximum: 1, minimum: 0 }),
+  novelty: Type.Number({ maximum: 1, minimum: 0 }),
+  reason: NonBlankStringSchema,
+  sourceIds: Type.Array(EntityIdSchema, { minItems: 1 }),
+  sourceLabels: Type.Array(NonBlankStringSchema, { minItems: 1 }),
+  sourceType: MemorySourceTypeSchema,
+  status: MemoryCandidateStatusSchema,
+  supersedesMemoryId: Type.Optional(EntityIdSchema),
+  type: MemoryTypeSchema,
+  updatedAt: TimestampSchema,
+  validFrom: Type.Optional(TimestampSchema),
+  validTo: Type.Optional(TimestampSchema),
+});
 
 export const MemoryListRequestSchema = Type.Object(
   {
@@ -191,21 +228,19 @@ export const MemoryIdRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const MemoryCreateRequestSchema = Type.Object(
-  {
-    claimSlot: Type.Optional(MemoryClaimSlotSchema),
-    confidence: Type.Number({ maximum: 1, minimum: 0 }),
-    content: NonBlankStringSchema,
-    importance: Type.Number({ maximum: 1, minimum: 0 }),
-    reason: NonBlankStringSchema,
-    sources: Type.Array(MemorySourceSchema),
-    supersedesMemoryId: Type.Optional(EntityIdSchema),
-    type: MemoryTypeSchema,
-    validFrom: Type.Optional(TimestampSchema),
-    validTo: Type.Optional(TimestampSchema),
-  },
-  { additionalProperties: false },
-);
+export const MemoryCreateRequestSchema = withOptionalEventTime({
+  claimSlot: Type.Optional(MemoryClaimSlotSchema),
+  confidence: Type.Number({ maximum: 1, minimum: 0 }),
+  content: NonBlankStringSchema,
+  importantMoment: Type.Optional(Type.Boolean({ default: false })),
+  importance: Type.Number({ maximum: 1, minimum: 0 }),
+  reason: NonBlankStringSchema,
+  sources: Type.Array(MemorySourceSchema),
+  supersedesMemoryId: Type.Optional(EntityIdSchema),
+  type: MemoryTypeSchema,
+  validFrom: Type.Optional(TimestampSchema),
+  validTo: Type.Optional(TimestampSchema),
+});
 
 export const MemoryResolveClaimRequestSchema = Type.Object(
   {
@@ -216,19 +251,17 @@ export const MemoryResolveClaimRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const MemoryReviseRequestSchema = Type.Object(
-  {
-    confidence: Type.Optional(Type.Number({ maximum: 1, minimum: 0 })),
-    content: NonBlankStringSchema,
-    importance: Type.Optional(Type.Number({ maximum: 1, minimum: 0 })),
-    memoryId: EntityIdSchema,
-    reason: NonBlankStringSchema,
-    sources: Type.Array(MemorySourceSchema),
-    validFrom: Type.Optional(TimestampSchema),
-    validTo: Type.Optional(TimestampSchema),
-  },
-  { additionalProperties: false },
-);
+export const MemoryReviseRequestSchema = withMutableEventTime({
+  confidence: Type.Optional(Type.Number({ maximum: 1, minimum: 0 })),
+  content: NonBlankStringSchema,
+  importantMoment: Type.Optional(Type.Boolean()),
+  importance: Type.Optional(Type.Number({ maximum: 1, minimum: 0 })),
+  memoryId: EntityIdSchema,
+  reason: NonBlankStringSchema,
+  sources: Type.Array(MemorySourceSchema),
+  validFrom: Type.Optional(TimestampSchema),
+  validTo: Type.Optional(TimestampSchema),
+});
 
 export const MemorySetPinnedRequestSchema = Type.Object(
   { memoryId: EntityIdSchema, pinned: Type.Boolean() },
@@ -240,23 +273,21 @@ export const MemoryCandidateIdRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const MemoryProposalInputSchema = Type.Object(
-  {
-    confidence: Type.Number({ maximum: 1, minimum: 0 }),
-    content: NonBlankStringSchema,
-    importance: Type.Number({ maximum: 1, minimum: 0 }),
-    novelty: Type.Number({ maximum: 1, minimum: 0 }),
-    reason: NonBlankStringSchema,
-    sourceIds: Type.Array(EntityIdSchema, { minItems: 1 }),
-    sourceLabels: Type.Array(NonBlankStringSchema, { minItems: 1 }),
-    sourceType: MemorySourceTypeSchema,
-    supersedesMemoryId: Type.Optional(EntityIdSchema),
-    type: MemoryTypeSchema,
-    validFrom: Type.Optional(TimestampSchema),
-    validTo: Type.Optional(TimestampSchema),
-  },
-  { additionalProperties: false },
-);
+export const MemoryProposalInputSchema = withOptionalEventTime({
+  confidence: Type.Number({ maximum: 1, minimum: 0 }),
+  content: NonBlankStringSchema,
+  importantMoment: Type.Optional(Type.Boolean({ default: false })),
+  importance: Type.Number({ maximum: 1, minimum: 0 }),
+  novelty: Type.Number({ maximum: 1, minimum: 0 }),
+  reason: NonBlankStringSchema,
+  sourceIds: Type.Array(EntityIdSchema, { minItems: 1 }),
+  sourceLabels: Type.Array(NonBlankStringSchema, { minItems: 1 }),
+  sourceType: MemorySourceTypeSchema,
+  supersedesMemoryId: Type.Optional(EntityIdSchema),
+  type: MemoryTypeSchema,
+  validFrom: Type.Optional(TimestampSchema),
+  validTo: Type.Optional(TimestampSchema),
+});
 
 export const MemorySnapshotSchema = Type.Object(
   {

@@ -449,6 +449,8 @@ CharaMate 的陪伴叙事是“**一起做，一起经历，一起记住**”。
 - **同行事项（Journey）**：持续数天到数月，表达一件对用户重要的事如何被用户和角色共同走过；一个同行事项拥有一个由系统管理的 Home Chat，可以包含多次共处会话、会话间的续接、稀疏阶段节点、一次明确约定的跟进以及最终回望。
 - **共处会话（Together Session）**：持续数十分钟到数小时，表达一次围绕具体活动的共同在场；可以跨文字、Voice、Browser、文档和普通 Agent Run，但不拥有另一套模型循环、Tool、审批或消息系统。
 
+“**经历回响**”是这套叙事从一次对话延伸到现实时间和领地的因果闭环：角色先在普通 Chat 中记住用户明确在意的未来事件，在合适时机重新判断是否值得出现；用户随后带回文字、图片或文档时，同一 Agent Runtime 在原 Chat 的新 Run 中结合来源与相关 Memory 回应；少量显著时刻还可以成为一个待确认的 Territory 提案。它不是第三种会话、任务类型或成长数值，也不为演示故事建立 presentation、夕阳或拍立得模板。
+
 系统不要求用户先说“陪我做什么”，也不把显式创建入口作为常规起点。常规入口是：Activity 提供有来源的当前活动观察，陪伴 Agent 依据完整语境语义判断“不打扰 / 发起一段新对话 / 回到某个既有 Journey”，再通过普通 Chat Run 发出一句轻量、具体且有依据的对话邀请。全新话题的开场 Run 暂存在一个不进入最近或已归档列表的 provisional Chat 中；气泡可见后的 20 秒内，用户第一次文字回复或明确启动该气泡的语音回复才把它原子转为普通 Chat，超时或关闭则连同开场 Run 与消息级联删除。已有 Chat 的续接与约定跟进已经属于正式历史，不使用这套短时删除规则。Activity 不负责判断陪伴意图，也不创建 Journey 或 Together Session；语义门不使用应用名、论文、电影等关键词表或正则硬编码。每条 Activity 主动消息成功投影后，宿主执行 5 分钟全局冷却；仅持久化最近 3 次主动消息的观察依据、实际话术和回应/关闭/到期结果，冷却结束后由 Agent 基于这 3 条记录判断新开场是否在语义上重复，宿主不增加标题、关键词或字面相似度规则。20 秒与 5 分钟都是仓库所有者明确选择的 CharaMate 产品启发式，分别负责临时 Chat 转正和全局打扰节流，不是 Provider 或操作系统协议限制。
 
 主动开场本身仍是普通对话，不自动代表共同在场。用户接住话题并让角色实际参与当前活动后，Agent 才可根据语义开始 Together Session，不要求用户说出固定邀约句；只闲聊、忽略或关闭气泡都不产生 Session。对话进一步表明这是一件会持续数天到数月、且对用户重要的事时，Agent 可以自然提议把它作为 Journey 一起走；Journey 仍只能由用户明确提出，或由 Agent 提议并获得用户确认后创建，绝不因 Activity 匹配而静默创建。若新 Journey 正是从当前对话里尚未结束的共处生长出来，宿主在同一事务中完成创建与关联，不让用户重新选择或搬运 Chat。Agent 只提交带候选 ID 的语义动作，宿主负责 ID、Home Chat、路由和全部状态不变量。
@@ -473,17 +475,17 @@ Activity 再次观察到与既有 Journey 语义一致的活动时，陪伴 Agen
 
 共处期间角色拥有**局部、可撤销的语境主动性**：只在当前活动已有内容、Tool 结果或自然边界提供帮助；用户说“安静陪我”后，除审批、错误和重要结果外不制造闲聊。沉默本身是有效陪伴，时间流逝不能触发“还在吗”“加油”等空洞关心；没有真实文档、页面、音视频或 Tool 观察时，角色不得声称看见或听见。共处不会扩大当前 Run 的执行权限，也不会把主动性带到会话外。
 
-创建 Journey 只授予跨会话连续性，不授予外呼权限。会话外默认只记住并在用户回来时自然续接；主动跟进必须有 Journey 范围内的明确自然语言约定。MVP 把约定具体化为一个可见的下一次一次性跟进，复用 Automation 的 Agent Task 并投递到 Home Chat；同一条已完成的助手消息再投影到桌宠气泡，不另存一份“提醒事实”。
+创建 Journey 本身仍不授予外呼权限。会话外默认只记住并在用户回来时自然续接；用户明确约定某次跟进时，继续用一个可见的一次性 Automation Agent Task 投递到 Home Chat。除此之外，用户可以通过一次自然确认或 Settings 中的单一开关授予“重要时刻可以主动联系我”：许可生效后，只有用户直接陈述、时间明确、尚未发生且语境表明对自己重要的现实事件，才可以为该事件派生至多一个待重判机会；不要求每个事件再次确认。这个许可不等于闹钟或长期外呼授权，不允许从模糊时间、纯模型推断、普通 Journey、沉默或暂停时长派生机会，也不允许自动周期化。用户说“不用提醒这件事”、改期、取消、关闭该许可或删除来源 Memory 时，未消费机会立即失效。
 
 气泡是目标 Chat 的轻量第二界面，不是新的 Runtime、提醒卡或共处控制器。每个气泡创建时已经绑定一个精确 `chatId`：Activity 全新话题绑定宿主自动创建但尚未转正的 provisional Chat，匹配既有 Journey 或 Journey 跟进时绑定其正式 Home Chat；它不跟随主窗口当前正在浏览的 Chat，也不要求用户选择归属。provisional Chat 只为统一 Run/Item 和准确回复路由提供短暂内部归属，不出现在 Chat 列表、搜索或归档记录中；用户第一次回复后沿用同一个 `chatId` 转正，不搬运、不复制消息。用户可以完全不打开主窗口，在气泡内连续发送短文字；每轮用户消息和助手回答仍由统一 Agent Runtime 写入这个 Chat 的普通 Run/Item，回答完成后投影回同一个气泡。语音入口同样固定绑定该 Chat，并使用 `Chat` 权限。文字或语音媒介都不会自动恢复 Together Session，也不会继承桌宠通用声波入口的 `Agent + 完全访问` 语义。
 
 气泡只承担轻量文字往返：完整历史、附件、富内容精读、结构化输入、审批和复杂执行过程继续在“打开完整 Chat”后处理；切换界面不复制消息或迁移 Run。全新话题在用户回复前不提供“打开完整 Chat”，不显示倒计时、进度条或“保存会话”；20 秒超时或关闭气泡会撤下投影并删除 provisional Chat，应用退出或崩溃留下的 provisional Chat 在下一次启动时清理。第一次文字回复，或从该气泡明确发起语音回复，代表用户接住对话：宿主先转正原 Chat、取消到期清理，再运行回复；即使后续 Provider 失败，用户已经接住的 Chat 也继续保留。已有 Chat 的气泡关闭只关闭投影，不删除 Chat、消息或已启动的 Run，也不改变 Journey/Session 状态；用户已接住的气泡不会被另一条主动开场替换。回复后只要完整语义表明角色已经实际加入当前活动，Agent 即可开始或恢复，无需“继续陪我”等固定表述。关闭或忽略气泡不产生追问，暂停状态本身绝不触发提醒。后续才评估有界开放式“偶尔问问”，不在 MVP 中建立无限调度。
 
-每次暂停或结束都保存可纠正的续接记录（当前位置、下次切入点和短回顾），但不自动制造长期 Memory。Journey 时间线只保存有意义的决定、转折、结果、完成/重开节点和已关联的共享 Memory。用户明确说“记住”时沿用 `memory.record`；Agent 只可对少量显著时刻语义判断并清楚告知记住了什么、如何纠正或忘记。Territory 物件只在重要里程碑或完成回望时提出，仍需用户选择，不按每次共处自动生成。
+每次暂停或结束都保存可纠正的续接记录（当前位置、下次切入点和短回顾），但不自动制造长期 Memory。Journey 时间线只保存有意义的决定、转折、结果、完成/重开节点和已关联的共享 Memory。用户明确说“记住”时沿用 `memory.record`；Agent 只可对少量显著时刻语义判断并清楚告知记住了什么、如何纠正或忘记。用户一次允许“重要时刻可以偶尔为领地准备惊喜”后，少量重要里程碑、完成回望或有新证据的经历可以稀疏生成一个尚未应用的 `TerritoryChangeCandidate`；现有 Territory 生成能力根据图片、文字、相关 Memory、Persona 和当前 Style Profile 自主决定表达什么，不固定物件种类或模板。该许可只授权同一 Territory Candidate service 在后台调用已配置的 Image Provider、生成候选资产和 Preview，不是 Composer 第四档权限，也不授权应用 World；用户在普通 Run 中明确要求 `territory.generate_item` 时仍遵循该 Run 原有的 Chat/Agent 与三档 Approval。用户仍需查看 Preview 并选择应用、换一种表达或这次不要；候选生成、通知和回到电脑都不得自动改变当前 World。
 
 项目、考试、求职和内容共赏使用同一组状态与数据结构，不成为模板或场景状态机。差异只进入 Agent 的语境姿态、证据和里程碑表达：项目不变成看板，考试不变成打卡监督，求职不变成 CRM，单次电影或文章共赏默认可以只是独立共处。
 
-MVP 要验证的核心承诺是：用户经历多次切换和间隔后，角色仍能回到正确的事情及准确续接点，用户无需重新解释、挑选 Chat 或管理 Journey/Session；同时只收到一次自己同意的跟进，并能在结束时得到自然回望与可见记忆。成功指标关注范围理解、自动路由、纠正/重述次数、主动介入是否有依据且不打扰，以及用户是否感到“被陪着”而不是“被项目管理”，不以任务完成率代替陪伴价值。可用性验收必须直接检查普通界面和 Agent 文案中不存在内部名词与状态管理控件，不能只证明底层状态正确。
+MVP 要验证的核心承诺是：用户经历多次切换和间隔后，角色仍能回到正确的事情及准确续接点，用户无需重新解释、挑选 Chat 或管理 Journey/Session；会话外只在用户逐次约定，或用户已经授予的重要时刻类别许可内获得一次重判机会，并能在结束时得到自然回望与可见记忆。成功指标关注范围理解、自动路由、纠正/重述次数、主动介入是否有依据且不打扰，以及用户是否感到“被陪着”而不是“被项目管理”，不以任务完成率代替陪伴价值。可用性验收必须直接检查普通界面和 Agent 文案中不存在内部名词与状态管理控件，不能只证明底层状态正确。
 
 2026-08-13 的触发语义复核参考了 OpenAI 官方 [Chronicle 文档](https://learn.chatgpt.com/docs/customization/chronicle)（当日访问）：Chronicle 使用近期屏幕上下文理解用户当前所见、补足用户未显式写入提示词的信息并识别相关来源。CharaMate 只采用这一“上下文依据”边界；官方文档没有定义主动搭话策略，因此“不打扰 / 新对话 / 既有 Journey”的选择、气泡投影和 Session/Journey 生命周期均是 CharaMate 自身的产品语义，不冒充 Chronicle 行为。
 
@@ -537,6 +539,8 @@ Tool 的模型可见性分为固定核心与 deferred 长尾两层。`file.list`
 当前公开信息在 Adapter 已确认 Provider 支持时优先使用原生 Web Search；需要页面交互、已登录状态或可复现 DOM/AX 证据时使用 Managed Browser；网页结构化能力不足时才退到 Computer Use。原生搜索、受管浏览器与 Computer 分别承担检索、交互和兜底职责，不构成同一能力的运行时模式或失败回退链。
 
 图片输入只有一条 Main-owned 媒体路径。用户在 Composer 明确附加的图片直接成为 Provider 多模态 message content；Agent 已经知道某个本地图片、截图或图片 artifact 时，通过按模型/环境能力条件直载的 `image.inspect` 请求同一路径读取。Renderer 缩略图、文件名、路径或 OCR 文本都不能单独作为“模型已经看过图片”的证据；目标模型不支持视觉输入时明确返回能力不可用，不暗中切换未验证的识别方案。
+
+桌面拖放和 Android 分享最终都进入同一条 Attachment ingress：外部 URI 或本机路径先复制为 CharaMate 管理的附件资产，再由同一 Chat/User Message 引用。图片驱动的回复或 Territory 候选必须读取真实像素；文档只有在受支持的解析器或 Tool 实际取得正文/明确片段后才能声称理解，只有文件名、MIME 或上传成功不足以形成内容结论。跨设备来源不会把手机临时 URI、PC 绝对路径或 Relay 临时 URL 持久化为产品真源。
 
 ### 5.3 Browser
 
@@ -677,6 +681,8 @@ interface MemoryRevision {
   sourceType: 'chat' | 'voice' | 'activity' | 'tool' | 'user_edit' | 'distillation'
   sourceIds: string[]
   reason: string
+  occursAt?: string
+  timeZone?: string
   createdAt: string
 }
 ```
@@ -686,6 +692,7 @@ interface MemoryRevision {
 - 用户手动纠正具有最高事实优先级。
 - Memory 页面可查看时间线、来源消息/Activity/Run、相关实体与被使用记录。
 - 删除进入可恢复状态；用户明确永久删除时清除 Revision、索引引用和相关展示投影。
+- `occursAt` 只表示 `event`/`commitment` 在现实中预计发生的明确 instant，`timeZone` 保存解释原始自然语言时间时使用的 IANA 时区；它们与事实是否有效的 `validFrom/validTo` 分离。时间仍有歧义时只保存正文，不创建主动机会。改期或取消创建新 Revision，并使旧 Revision 派生的机会失效；Memory 保存事实，不负责计时、投递或通知文案。
 
 ### 6.3.1 使用期自动形成
 
@@ -693,7 +700,7 @@ interface MemoryRevision {
 
 唯一生效规则是：
 
-- 用户在当前输入中明确陈述、且预计在本轮之后仍有用的画像、偏好、项目、事件、方法或承诺，直接创建 active Memory；
+- 用户在当前输入中明确陈述、且预计在本轮之后仍有用的画像、偏好、项目、事件、方法或承诺，直接创建 active Memory；未来 `event`/`commitment` 只有在时间表达可无歧义解析时才保存 `occursAt/timeZone`，模型推断出的日期、重要性或情绪仍只进入待确认候选；
 - profile/preference 必须使用产品闭集 `claimSlot` 作为稳定字段身份，Tool 不接受裸 profile/preference type；模型按语义选择字段并提交 `create/replace/append/remove`，宿主派生 Memory type 与单值/集合基数，字段名不随“喜欢 A → 喜欢 B”变化；
 - Memory、Revision 与来源 ID 只存在于宿主私有 checkpoint、持久化和 Memory 详情追溯中，不注入模型可见证据，不要求模型复制，也不得出现在普通聊天回复；
 - profile/preference 更新由模型提交稳定 `claimSlot` 和 operation，宿主只在该字段唯一 active 目标属于当前 Run 私有 allowlist 时解析并修订同一 Memory；内部调用若显式携带 `memoryId`，仍必须交叉校验 ID、type、slot、active 状态和 operation；
@@ -1097,13 +1104,31 @@ Automation Run 的 `queued/running/waiting_approval/needs_input/interrupted/comp
 - 当日行为摘要出现值得交流的模式；
 - 长时间专注后的轻量关心；
 - 领地产生新物件候选；
-- 用户明确要求后续跟进。
+- 用户明确要求后续跟进；
+- 在“重要时刻可以主动联系我”许可范围内，由明确未来 `event/commitment` Memory 派生的一次性经历回响机会。
 
 Activity 只发布事实，不调用 Journey/Session 写入，也不自行生成话术。陪伴语义门把带有非空窗口标题的观察、当前 Journey 候选以及最近 3 次已展示主动消息的紧凑记录一起交给模型，模型可以选择保持沉默、开一段新对话或准确回到某个既有 Journey，并负责判断新话题、意图或搭话方式是否在语义上重复；只有应用名而没有窗口标题时，宿主直接视为证据不足，不发送 Provider 请求。宿主只校验候选 ID、用户 actor、单次进行中的主动 Run、现有气泡和成功展示后 5 分钟全局冷却等结构与时间条件，不用应用名、主题关键词或字面相似度替 Agent 做语义决定。前台切换过程中只保留最新尚未判断的观察，避免把采样流变成排队提醒；失败或证据不足静默退出，不降级为模板问候。
 
 主动聊天由统一 Agent Runtime 在目标 Chat 先写入一条真实助手消息，再投影为气泡；新话题使用普通 Chat，匹配既有 Journey 时使用其 Home Chat。气泡保存并只使用发起时的精确 `chatId`，不会根据当前窗口、Activity 或后续话题重新猜测归属。气泡本身是“当前是否已有主动对话”的唯一真源，不再额外维护一个跨气泡生命周期的等待用户状态：气泡存在或开场 Run 进行中时拒绝并发开场，用户回复后继续同一 Chat，用户关闭或 20 秒临时邀请过期后只释放当前气泡；从消息成功展示起的 5 分钟全局冷却结束后，新的充分 Activity 证据才可再次进入语义门。最近记录只保留 3 条并随回复、主动关闭、到期或应用中断更新结果，不形成无限增长日志，也不暴露给普通 UI。用户可以在气泡内连续短文字回复，用户消息与助手回答都持久化到该 Chat 的普通 Chat-mode Run，回答再回到同一气泡；“打开完整 Chat”只切换到同一事实源。气泡中的语音入口也固定绑定该 Chat，并默认使用 `Chat` 权限；回复媒介不等于执行授权。仅打开或切换文字/语音媒介不创建或恢复状态；回复内容让 Agent 实际参与当前活动后，才按整体语义开始或恢复 Together Session，长期 Journey 仍必须获得确认。用户可设置主动程度和安静时段，也可以对单类气泡说“少一点”。
 
 Journey 跟进是本节的受限特例：只有用户明确约定后才能创建；使用一次性 Agent Task、固定投递到该 Journey 的 Home Chat，并继续复用普通 Run/Item、Tool 与 Approval。完成消息可以投影为桌宠气泡，但气泡只承载该消息、短文字输入、语音、打开完整 Chat 和关闭，不承载完成率、截止时间、续接开关或执行权限。Journey 或 Together Session 的存在、暂停时长和沉默都不是触发条件。MVP 不把“偶尔问问”解释成无限周期任务，而是在每次确认后只保留一个可见的下一次跟进。
+
+`ProactiveOpportunity` 是主动领域拥有的一次性、可取消、可消费唤醒投影，不保存预写通知文案，也不是用户可见的 Reminder/Agent Task。它只引用产生机会的 Memory Revision、目标 Chat、`evaluateAt`、来源理由和消费状态：`occursAt` 是用户事实，`importantMoment` 是该 Revision 当前仍符合重要时刻主动联系的窄标记，`evaluateAt` 只是主动系统选择何时重新判断的派生值。用户对单件事情说“不用主动找我”时，用保留事件事实与时间、但将 `importantMoment=false` 的新 Revision 取消旧机会，不关闭类别许可。MVP 采用 `EXPERIENCE-ECHO-TIMING` 选择的单一规则：在 `occursAt` 前 30 分钟获得一次重判机会；事件形成时若已经不足 30 分钟则不补发即时机会。这个提前量不是协议限制，也不在普通 Settings 暴露。
+
+到达 `evaluateAt` 时，宿主只 claim 一次机会，再把当前时间、来源 Memory、目标 Chat 上下文、最近交互、可用 Activity/idle 事实、主动程度、安静时段与最近 3 次主动结果交给同一个陪伴语义门。模型只能选择保持沉默，或生成一条有来源、不过度解释用户情绪的自然消息；事件已取消或改期、证据不足、近期已有等价交流、安静时段不合适或当前表面不宜打扰时，机会消费后静默结束。这里复用的是 P2 已接受的宿主控制与语义门合同；既有 48/48 证据只覆盖 Activity 来源，新事件来源仍必须通过本增量自己的 fixture、集成与体验验收。到点只获得一次重判资格，不等于发送闹钟。生成内容仍先作为目标 Chat 中唯一的助手消息持久化，再投影到一个设备表面；Push、桌宠气泡和未读标记不复制消息历史。
+
+### 9.2.1 跨设备陪伴与素材投递
+
+CharaMate Desktop 继续是唯一 Agent、Memory、Chat/Run、Persona 与 Territory 真源。Android Companion 和 Mailbox/Push Relay 是独立部署单元，不进入桌面应用的单 npm package 或 Forge 构建：
+
+- Android 首版只负责配对、普通消息通知、打开精确 Chat/Message 的只读轻量详情、从系统 Sharesheet 分享单个图片或受支持文档及附文，以及可恢复上传队列；它不拥有完整移动 Chat、移动桌宠、Voice、Provider 配置、Memory 数据库或 Agent Runtime，也不在手机上继续多轮对话。
+- Relay 只负责设备注册、版本化传输信封、有界临时附件、cursor/ack mailbox 和 FCM 投递；它不生成话术、不检索 Memory、不保存全量 Chat，也不持有用户 Provider 凭据。手机上传只有在 Desktop 导入为真实 User Message/Attachment 后才算进入产品历史；通知只投影已经持久化的 Assistant Message，并携带精确 `chatId/messageId`。
+- 每个桌面实例首版最多配对一台 Android 手机。消息产生时只选择一个即时表面：最近用户动作来自 Android 时回复 Android；否则 Desktop 处于活跃使用时使用桌宠气泡，Desktop Main 正在运行且在线、但屏幕锁定或持续 idle 时优先 Android；不得同时双发。Push 失败不重新生成文案，也不制造第二条消息，用户回到 Desktop 后只看到同一 Chat 的未读内容。
+- 只有 Desktop 已唤醒、Main 正在运行且网络在线时，首版才承诺新的主动判断、Memory 检索、图片/文档理解和人格化回复。PC 睡眠或离线时，Relay 可以排队手机上传或投递此前已经生成的消息，但不代替 Agent 作出新决定；若未来要求 PC 完全离线仍自主推理，必须另行决定云端 Runtime 与 Memory 同步，而不能把它隐藏进轻量 Companion。
+
+通用系统分享先打开一个轻量确认面：从某条通知进入时默认回到该精确 Chat；其他 `ACTION_SEND` 入口让用户确认最近 Chat 或创建一个普通可见 Chat，不依赖猜测当前桌面会话。PC 桌宠接收图片/文档拖放时同样打开完整 Chat 并预填现有 Composer，不把附件能力塞进轻量气泡。所有入口最终复用同一 Attachment、Message 和 Run/Item 合同。
+
+2026-09-01 的移动端边界复核使用 Android 官方 [`POST_NOTIFICATIONS`](https://developer.android.com/develop/ui/views/notifications/notification-permission)、[接收简单分享数据](https://developer.android.com/training/sharing/receive)、[WorkManager 持久工作](https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work) 与 Firebase 官方 [FCM HTTP v1](https://firebase.google.com/docs/cloud-messaging/send/v1-api)、[消息类型](https://firebase.google.com/docs/cloud-messaging/customize-messages/set-message-type)。Android 13+ 普通通知需要运行时授权，分享文件以临时 `content://` URI 进入，可靠上传应复制到应用私有缓存后交给持久后台工作；FCM 服务凭据只放可信 Relay。平台能力只约束权限、传输和后台执行，何时说话、说什么与路由哪个 Chat 仍由 CharaMate 合同决定。
 
 ### 9.3 成长语义
 
@@ -1180,6 +1205,8 @@ GPT Image 的成本和 Edit 能力使生成成为日常建造操作，而不只�
 5. 用户可以继续用自然语言修改、排除提案中的分组或锁定更多内容；确认前不写当前 World。
 6. 确认时，结构变化、Asset Pack、来源和新的 World Revision 原子提交。失败、取消或应用中断都保留现有 Revision。
 
+共同经历形成的 `Territory Moment Candidate` 只复用上述 `TerritoryChangeCandidate`，不是新实体类型、页面或生成管线。Agent 可以在 `TERRITORY-MOMENT-SELECTION` 允许的少量显著时刻选择 `no_candidate` 或提出一个普通 `intent=item` 候选，并结合当前 Chat 的真实文字/附件、相关 Memory/Journey、Persona 与 Territory Style 自主决定名称、1–2 句故事和视觉表达；代码、Prompt 和资产中不得默认拍立得、奖杯、纪念品或其他固定模板。MVP 的自主候选最多新增一个普通物件或附件，不扩建 Zone、不移动/删除既有内容，也不重绘房间；更大范围变化仍来自用户明确请求。
+
 每个可展示的 Territory Definition 同时拥有独立于视觉 prompt 的叙事内容：简短名称与 1–2 句诗意描述。描述应使用具体、克制的感官意象，让物件像世界中的一部分，同时忠于已知来源；不得复制生图 prompt、Weekly Digest 全文、窗口标题列表、Provider/模型术语、尺寸参数或内部 ID。Memory/Activity 来源物件可以含蓄表达它所承载的事实，但不能把“观察到使用”写成“喜欢”或虚构经历。
 
 未来的 Agent/Tool 生成必须把用户可见名称和诗意描述作为结构化内容随候选提交，图片 prompt 只负责外观。没有结构化内容的普通 UI 请求由 Territory 宿主生成同样有界的叙事 fallback，不能把原 prompt 当描述。随包起始物件与仍停留在系统首版技术/原始 prompt 描述的既有 Definition 通过一次幂等内容补全创建新的 Definition Revision，并在同一 World Revision 切换当前实例；用户已经编辑过名称或故事的后续 Revision 不被覆盖。
@@ -1210,7 +1237,9 @@ Territory 只有两个用户交互状态：
 
 ### 10.6 物件与记忆生命周期
 
-高信息 Memory 或 Activity Digest 仍只能通过用户明确动作形成 Territory 候选。候选冻结来源 Revision 与说明；Memory/Activity 不读取 Territory 表，Territory 也不把物件反写为 Memory 事实。
+高信息 Memory 或 Activity Digest 仍通过用户明确动作形成 Territory 候选。另一个窄入口是用户已经允许“重要时刻可以偶尔为领地准备惊喜”后，由 `TERRITORY-MOMENT-SELECTION` 选定的唯一判断位置，针对普通 Chat Run 中一个有充分事实来源的显著时刻提出 `chat_moment` 候选；这只授权后台准备 Preview，不授权修改 World。候选冻结来源 Revision 与说明；Memory/Activity/Chat 不读取 Territory 表，Territory 也不把物件反写为上游事实。
+
+`chat_moment` 来源由宿主从当前已完成 Run、用户消息和附件派生稳定 `momentKey`，并绑定发生时间、简短来源摘要、原 Chat/Message 引用、附件名称/MIME/hash 以及实际使用的相关 Memory Revision；模型只决定是否提出与如何表达，不能提交或猜测内部 ID。同一 `momentKey` 至多存在一个开放或已应用的自主候选，重试和“换一种表达”继续更新同一候选；“这次不要”只取消该候选并抑制同一时刻再次自动提出，不推断用户不喜欢领地，也不写关系分数或隐藏兴趣值。
 
 每个已接受物件有稳定 Item ID，并引用不可变 Definition Revision。物件详情提供：
 
@@ -1243,11 +1272,13 @@ Territory 领域拥有以下聚合，不要求它们一一对应一张表：
 - World、Zone 与不可变 World Revision；
 - Style Profile 与 Asset Pack Revision；
 - Entity Definition、Entity Instance、组合关系与放置；
-- Memory/Activity 来源快照；
+- Memory/Activity/Chat Moment 来源快照；
 - Territory Change Candidate 与生成状态；
 - 已登记 Asset、预览 cache 与删除恢复状态。
 
 Renderer 只通过 typed Preload 取得当前 Territory projection 和受控 Territory asset URL，不读取任意文件路径。Main 负责 JSON Schema 校验、Revision 提交、文件 staging/rollback、资源引用和孤儿清理。数据库不保存大图片 BLOB；图片位于 Territory 自有 asset 目录。
+
+Chat 继续拥有原始消息和附件；Territory 只拥有生成资产、不可变来源摘要、上游引用和用于一致性判断的附件 hash，不暗中复制原图作为长期收藏。若用户删除原 Chat，已接受物件与生成资产继续存在，但详情明确显示原始来源不可用；若未来要在物件中直接长期展示原图，必须通过单独、明确的保留动作授权。
 
 结构化生成的持久产物是经过校验的 World change set、Definition/Asset Pack manifest 和图片资产，而不是 SQL、任意 Pixi `zIndex`、未校验世界坐标或可执行脚本。候选重试以稳定 ID 和冻结的 base Revision 幂等；如果当前 World 已前进，应用前必须重新预览或明确重建候选，不能覆盖新修改。
 
@@ -1271,6 +1302,8 @@ Renderer 只通过 typed Preload 取得当前 Territory projection 和受控 Ter
 - 地毯、家具、桌面/墙面/书架附件、前景与灯光可按声明组合；角色、遮挡、碰撞、寻路和父子变换在重启后保持确定。
 - 自动化行走验收至少覆盖同一件高物件的“角色在后方被遮挡、角色在前方覆盖物件”两种顺序，并确认角色脚底不会进入其 collision cells。
 - AI 重绘严格保留锁定实体和来源；用户可以只使用现有收藏重新布置，不被迫生成新资产。
+- 同一组真实图片/文档证据可以由 Territory 自主选择不同但来源忠实的物件表达；生产代码和 Prompt 不含固定拍立得或纪念品模板，图片必须读取真实像素，文档必须使用实际解析正文而不是文件名。
+- `chat_moment` 候选创建、生成完成、通知、取消、失败和 stale 都不改变 World Revision；同一 Run 恢复或重复调用不生成第二个候选，只有用户应用 Preview 才原子提交，删除原 Chat 后不保留秘密原图副本。
 - Territory 不因数量常量自动收回或删除已接受内容；大区域滚动、缩放和返回时世界状态完整。
 - 桌宠能够使用类型化物件能力，并在时间、天气、场景改造和记忆物件形成时呈现上下文行为。
 - 行走期间实际显示纹理持续来自 running atlas 行，抵达后才切换到 idle 或目标互动姿态；同向、反向、纯竖向与途中改道均不出现坐姿平移。
@@ -1334,11 +1367,12 @@ API Key 使用 Electron async `safeStorage`（`encryptStringAsync` / `decryptStr
 
 | 分组 | 内容 |
 | --- | --- |
-| Character | 当前桌宠、导入、缩放、动画、Persona |
+| Character | 当前桌宠、导入、缩放、动画、Persona、主动程度/安静时段、重要时刻主动联系与领地惊喜许可 |
 | Voice | Realtime Provider、音色试听、默认 instructions、输入模式 |
 | Models | Provider、URL、Key、Model 自动加载与选择 |
 | Agent | 默认 Chat/Agent、默认权限、工作目录；内部按需协作没有用户设置 |
 | Browser & Computer | Managed Profile、Cookie 导入、OS 权限状态 |
+| Devices | 一台 Android Companion 的配对状态、通知开关、协议状态与解除配对；不提供设备优先级矩阵或同步参数 |
 | Skills | 用户/项目 Skill 的名称与描述、编辑、启停、Pin、归档、恢复和删除；不展示版本历史或成长候选历史 |
 | MCP | Server、传输、环境、工具列表、测试与启停 |
 | Activity | 开关、暂停状态、占用与立即清理；采集/蒸馏内部频率不做用户档位 |
@@ -1701,7 +1735,9 @@ userData/
 | Profile | `profile_fields`（指向 Memory Revision） |
 | Activity | `activity_events`, `activity_episodes`, `activity_digests`, `distillation_runs`, `retention_runs` |
 | Journey | `journeys`, `together_sessions`, `journey_moments`；Home Chat 与 Automation/Memory 只保存稳定引用，不复制其领域数据 |
-| Automation | `automations`（包含 Reminder、Agent Task 与主动触发规则）, `automation_runs` |
+| Companionship | `companion_initiative_records`, `companion_initiative_opportunities`；引用 Chat 与 Memory Revision，不复制消息或事实正文 |
+| Automation | `automations`（只包含 Reminder 与 Agent Task）, `automation_runs` |
+| Companion Bridge | `paired_companion_devices`, `companion_mailbox_cursors`；只保存本机配对引用、协议版本和消费水位，不保存 FCM 服务凭据或远端 Chat 副本 |
 | Extension | `mcp_servers`, `skill_versions`, `skill_usage` |
 | Provider | `provider_profiles`（无明文 Key） |
 | Territory | World/Zone/World Revision、Style Profile/Asset Pack、Entity Definition/Instance、来源、Change Candidate 与 Asset 所需的唯一表组；具体表在新合同实现时一次冻结 |
@@ -1715,10 +1751,13 @@ userData/
 4. Profile 字段必须指向当前有效 Memory Revision。
 5. 若 Graph 晋级，每条关系必须有 evidence，失效通过 `validTo` 表达。
 6. 若所选检索使用外部字节引用，引用提交前对应字节必须按其一致性协议持久化。
-7. Territory entity 只保存 Memory/Activity 来源快照，不成为上游领域的事实来源；删除 Territory 内容不级联删除来源。
+7. Territory entity 只保存 Memory/Activity/Chat Moment 来源快照，不成为上游领域的事实来源；删除 Territory 内容不级联删除来源。
 8. API Key 不进 SQLite、日志、消息、Tool Result 和 Memory。
 9. 全局至多一条 `together_sessions.status = active`；一次 Session 至多一个 Journey；每个 Journey 恰有一个唯一 Home Chat。
 10. Journey 完成时不存在仍为 `active/paused` 的关联 Session；应用恢复时不存在遗留 `active` Session。
+11. 同一有效事件 Memory Revision 至多有一个开放的 `ProactiveOpportunity`；claim、取消和消费幂等，到点不等于必发消息。
+12. 每个 Android 通知只引用一个已经持久化的 Assistant Message；每个手机上传只有导入为一个真实 User Message/Attachment 后才推进 mailbox cursor。
+13. Territory 的 `chat_moment` 只保存不可变来源摘要、上游引用与附件 hash；原始附件仍由 Chat 拥有，用户删除来源后不得存在未授权秘密副本。
 
 2026-08-01 的 Phase 1 Data 实现前来源刷新使用锁定发布物 `better-sqlite3@13.0.1` 随包源码：其 [`transaction`](https://github.com/WiseLibs/better-sqlite3/blob/v13.0.1/lib/methods/transaction.js) 在同步回调成功后提交、异常时回滚，并以 savepoint 支持嵌套事务。Phase 1 因此只把“事件行、当前投影与 sequence 水位必须在一个同步事务中提交”作为正确性约束；`journal_mode`、`synchronous`、busy timeout、batch 与 checkpoint 仍留给 `MEMORY-STORAGE`，本阶段不据 README 的性能建议提前选择 WAL 或固定数值。
 
@@ -1878,6 +1917,8 @@ Playwright 官方当前把 Electron automation 标为 experimental，因此 Phas
 13. 领地初始可见且可全部改写；地形、结构、多层物件、组合与记忆来源在生成、编辑、删除、恢复和重启后保持一致，失败不改变当前 World Revision。
 14. 领地不设置全局物件数量常量，也不为性能自动收回内容；当前使用获胜的活动 Zone 直接 scene tree 与 `Assets` cache，并在跨 Zone、视口和重启时保持完整世界状态。
 15. Skill 教学产生版本化候选，replay 失败时不自动激活。
+16. 用户在 Chat 中明确陈述未来重要事件并授予类别许可后，改期/取消/安静时段/近期等价交流与重启恢复都能让一次 `ProactiveOpportunity` 正确静默或只产生一条普通 Chat 消息；到点不是必发闹钟。
+17. 配对 Android 时，同一已持久化助手消息最多投影一个设备表面；手机分享的单图片/文档和附文进入同一 Attachment/Run 路径，PC 离线时诚实排队。显著时刻可以准备不固定形态的 Territory Preview，但只有用户应用才改变 World。
 
 ### 18.3 Benchmark 决策门槛
 
@@ -2073,6 +2114,14 @@ Phase 4 的实验与实现可在 Phase 2 稳定后和 Phase 3 后半段并行，
 - 单路径审计，删除失败 Arm、Adapter、开关、临时 Schema、候选依赖、未使用 package 和隐藏内部设置。
 
 退出条件：§18 必测旅程、§20 完成定义、full offline、build/package、受影响 Electron E2E 全部满足；Live/Benchmark 结果独立报告，未运行项有明确原因。
+
+### 后续增量：经历回响与跨设备陪伴
+
+1. 先完成 `EXPERIENCE-ECHO-TIMING`，随后实现 `event/commitment.occursAt`、重要时刻类别许可、持久 `ProactiveOpportunity` 和同一主动语义门重判；不把示例提前量、预写话术或隐藏 Reminder 带入生产。
+2. 冻结跨设备 v1 Contract，再由独立 Relay/Android 仓库和当前 Desktop Bridge 实现 FCM 通知、Sharesheet、Mailbox/cursor/ack 与统一 Attachment ingress；Desktop 保持唯一 Agent/Memory/Chat 真源，PC 离线不产生新推理。
+3. 完成 `TERRITORY-MOMENT-SELECTION`，再把 `chat_moment` 来源绑定到既有 Territory Candidate；生成能力自主决定表达什么，用户确认前不修改 World，不新增拍立得或其他模板。
+
+增量退出条件：两个 Decision Record、三个父工作包及跨部署验收全部满足；Android/Relay 不形成第二 Runtime，消息/附件不重复，机会和候选跨重启幂等，失败 Arm、临时协议与固定故事模板均已删除。详细 owner、非目标和测试见 `docs/progress/ROADMAP.md`。
 
 ### 19.2 串行与并行规则
 

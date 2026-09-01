@@ -19,6 +19,7 @@ import { openApplicationDatabase } from "../../src/main/db/database";
 import { SkillRepository } from "../../src/main/extensions/skillRepository";
 import { SkillService } from "../../src/main/extensions/skillService";
 import { ToolRegistry } from "../../src/main/tools/toolRegistry";
+import type { CompanionInitiativeSettings } from "../../src/shared/contracts/settings";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { FakeClock } from "../fixtures/fakeClock";
 
@@ -76,6 +77,10 @@ describe("Phase 2 Agent Settings", () => {
     const database = openApplicationDatabase(path.join(root, "app.sqlite"));
     const repository = new SettingsRepository(database, firstWorkspace);
     const refreshed: string[] = [];
+    const initiativeChanges: Array<{
+      current: CompanionInitiativeSettings;
+      previous: CompanionInitiativeSettings;
+    }> = [];
     const openedPaths: string[] = [];
     let browserOpened = 0;
     const browser = {
@@ -105,6 +110,9 @@ describe("Phase 2 Agent Settings", () => {
         openedPaths.push(target);
         return Promise.resolve("");
       },
+      (current, previous) => {
+        initiativeChanges.push({ current, previous });
+      },
     );
 
     expect(await service.getSnapshot()).toEqual({
@@ -120,6 +128,8 @@ describe("Phase 2 Agent Settings", () => {
         screenRecording: "not_determined",
       },
       companionInitiative: {
+        importantMomentOutreachEnabled: false,
+        importantMomentOutreachPrompted: false,
         level: "balanced",
         quietHours: {
           enabled: true,
@@ -182,6 +192,8 @@ describe("Phase 2 Agent Settings", () => {
     ).rejects.toThrow("工作目录不存在");
     expect(
       service.saveCompanionInitiative({
+        importantMomentOutreachEnabled: true,
+        importantMomentOutreachPrompted: true,
         level: "quiet",
         quietHours: {
           enabled: true,
@@ -190,6 +202,8 @@ describe("Phase 2 Agent Settings", () => {
         },
       }),
     ).toEqual({
+      importantMomentOutreachEnabled: true,
+      importantMomentOutreachPrompted: true,
       level: "quiet",
       quietHours: {
         enabled: true,
@@ -197,8 +211,34 @@ describe("Phase 2 Agent Settings", () => {
         startMinute: 21 * 60 + 30,
       },
     });
+    expect(initiativeChanges).toEqual([
+      {
+        current: {
+          importantMomentOutreachEnabled: true,
+          importantMomentOutreachPrompted: true,
+          level: "quiet",
+          quietHours: {
+            enabled: true,
+            endMinute: 7 * 60 + 30,
+            startMinute: 21 * 60 + 30,
+          },
+        },
+        previous: {
+          importantMomentOutreachEnabled: false,
+          importantMomentOutreachPrompted: false,
+          level: "balanced",
+          quietHours: {
+            enabled: true,
+            endMinute: 8 * 60,
+            startMinute: 22 * 60,
+          },
+        },
+      },
+    ]);
     expect(() =>
       service.saveCompanionInitiative({
+        importantMomentOutreachEnabled: true,
+        importantMomentOutreachPrompted: true,
         level: "balanced",
         quietHours: {
           enabled: true,
@@ -226,6 +266,8 @@ describe("Phase 2 Agent Settings", () => {
     expect(reopenedSettings.getVoiceWakeEnabled()).toBe(true);
     expect(reopenedSettings.getVoice().inputMode).toBe("push_to_talk");
     expect(reopenedSettings.getCompanionInitiative()).toEqual({
+      importantMomentOutreachEnabled: true,
+      importantMomentOutreachPrompted: true,
       level: "quiet",
       quietHours: {
         enabled: true,

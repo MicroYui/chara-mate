@@ -138,6 +138,7 @@ export const ProactiveConversationBubbleSchema = Type.Object(
     id: EntityIdSchema,
     journeyId: Type.Optional(EntityIdSchema),
     kind: ProactiveConversationBubbleKindSchema,
+    messageId: Type.Optional(EntityIdSchema),
     replyState: ProactiveConversationBubbleReplyStateSchema,
   },
   { additionalProperties: false },

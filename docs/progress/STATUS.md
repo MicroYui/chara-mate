@@ -1,10 +1,16 @@
 # CharaMate 当前状态
 
-> 更新日期：2026-08-31
+> 更新日期：2026-09-01
 
 ## 当前里程碑
 
-**智能角色体验收口 — CHARACTER-DIALOGUE、PROACTIVE-POLICY、NARRATIVE-AGENCY、TERRITORY-NPC-ACTION 均已完成**
+**经历回响与跨设备陪伴 — `implementing`**
+
+产品方向已确认：用户一次允许重要时刻主动联系后，明确未来事件可以形成到点仍会重判的一次机会；Android 作为通知与分享入口，Desktop 保持唯一 Agent/Memory/Chat/Run/Territory 真源；显著 Chat Moment 可以由现有 Territory 生成能力自主决定表达什么，但只准备待确认 Preview，不固定拍立得等模板，也不自动修改 World。
+
+`EXPERIENCE-ECHO-TIMING` 已按用户要求不做大规模实验，选择固定在 `occursAt` 前 30 分钟获得一次重判机会；事件形成时若不足 30 分钟则不即时补发。`ECHO-PROACTIVE-OPPORTUNITY` 已完成 Memory `occursAt/timeZone`、重要时刻类别许可、持久机会、恢复重查和同一 Chat Run/气泡投影。Android/Relay、跨设备 Attachment ingress 与 `chat_moment` Territory 来源尚未开始；任何真实 Provider/FCM/Image Live 仍需用户明确授权。
+
+### 已完成绿色基线
 
 `PROACTIVE-POLICY` 已完成。48 个确定性时机场景中，P2（显式主动程度/安静时段 + 最近 3 次结果的有界退避）以 48/48 通过，P0/P1 分别为 18/48、34/48；生产已加入单一持久策略、Settings → Character 控件和气泡“少一点”，既有模型语义门、Persona、Journey 路由与统一 Agent Runtime 保持不变。
 
@@ -73,6 +79,9 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
+| `ECHO-PROACTIVE-OPPORTUNITY` | `main` | `done` | Schema v20、Memory 明确时间、类别许可、持久机会、启动/恢复重查、取消/恢复与同一 Chat Run/气泡投影完成 |
+| `ECHO-MOBILE-COMPANION` | `main`（桌面合同 owner） | `specified` | Android/Relay/桌面 Bridge 的独立部署与 PC-online 边界已冻结；依赖前一包的单一消息投影结果合同 |
+| `ECHO-TERRITORY-MOMENT` | `main`（Territory integration owner） | `specified` | `chat_moment` 只扩展既有 Candidate 来源且不固定物件形态；等待 `TERRITORY-MOMENT-SELECTION` 与跨设备附件合同 |
 | `TERRITORY-NPC-ACTION-DECISION` | `codex/character-dialogue-roadmap` | `done` | 选择 T1；生产 `territory.observe → territory.act`、宿主裁决与 Renderer event 已通过完整 offline、25/25 Electron E2E、package 与 packaged smoke |
 | `TERRITORY-NPC-ACTION-EXPERIMENT` | `codex/territory-npc-action-experiment` | `done` | node:test 4/4；27 样本/79 次有效 Provider 请求，T0/T1/T2 均 9/9，raw 仅保存在仓库外 |
 | `NARRATIVE-AGENCY-DECISION` | `codex/character-dialogue-roadmap` | `done` | 48 次有效 Pilot 选择 N0-RULES；生产只补同一 Agent 的角色控制权与虚构事实边界，无 projection/director/新状态 |
@@ -117,7 +126,9 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 ## 依赖、边界与已知问题
 
-- `PROACTIVE-POLICY` 当前只覆盖未经用户明确请求的 Activity 主动开场。用户已约定的 Automation/Journey 跟进仍按其显式承诺投递，不被安静时段或负反馈退避悄悄吞掉。
+- 当前生产已支持用户明确陈述的未来 `event/commitment` 通过 `occursAt/timeZone` 和重要时刻类别许可形成一次持久 `ProactiveOpportunity`；到点仍经过 P2、并发状态与模型语义门，可以静默。它只在 Desktop Main 运行、启动或系统恢复时重查，不是精确闹钟，也不能在 PC 离线时产生新的 Agent 判断。
+- 当前没有 Android endpoint、Mailbox/Push Relay、跨设备资产中继或桌宠附件拖放入口；PC 图片附件已有真实像素链路，但 PDF/通用文档解析与手机分享均不能描述为已完成能力。
+- 当前 Territory 自主生成已有统一 Candidate/Preview 与自由物件表达，但来源只覆盖 Memory/Activity，Agent Tool 尚未绑定 Chat/附件来源；后台 Moment Preview、`momentKey` 去重和用户“换一种表达 / 这次不要”尚未实现。
 - `CHARACTER-DIALOGUE` 已选择并实现 A1。它复用现有 Agent Runtime、Memory、Journey、Voice 与已接受 `CONTEXT-RECIPE`；实验 Arm 和 A2 状态只留在 disposable worktree，不进入生产路径。
 - Persona、revision snapshot 与 Character Context Compiler 已成为唯一生产路径；固定 `Hi Mika` 只保留为当前产品定义的唤醒短语，不再承担非唤醒场景的人格配置。
 - `VOICE-WAKE` 只接受固定短语 `Hi Mika`。Realtime `server_vad` 只在已建立的 Realtime Session 内划分语音边界，不承担待机唤醒；唤醒命中与 out-of-band 连接欢迎语都不写 Chat/Run/Memory，只有后续非空 Realtime 用户转写才进入现有 Voice Run。
@@ -135,6 +146,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 ## 最近绿色验证
 
+- 2026-09-01 经历回响桌面闭环：Schema v20、Memory 时间事实、重要时刻类别许可、持久机会、取消/恢复、同一 Chat Run 与气泡投影完成。锁定依赖入口的完整离线层通过：contract 114/114、focused/component 448/448、integration 205/205；production build 与 Electron E2E 25/25 通过，`git diff --check`、ESLint 和 Prettier 通过。保留 2 条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示。本机 `node_modules/.bin` 为空，因此聚合脚本中的 `tsc` 名称无法解析；已直接运行同一 lockfile 安装版本的 TypeScript/ESLint/Prettier/Vitest 入口完成等价验证。未运行真实 Provider、FCM、Image Live、package、make、签名或公证。
 - 2026-08-31 智能角色体验收口：`TERRITORY-NPC-ACTION` 的 27 个有效样本、79 次目标模型请求（加格式探针与链路 smoke 共 84 次 Provider 请求）完成，T0/T1/T2 均 9/9 且无虚报成功，选择 T1。生产 `npm run verify:offline` 通过（contract 112/112、focused/component 430/430、integration 200/200），`npm run test:e2e` 含 production build 在串行 Electron 生命周期下通过 25/25，arm64 `npm run package` 与 `npm run smoke:package` 通过；packaged smoke 确认 `databaseRoundTrip=true`、`browserRoundTrip=true`、`rendererReady=true`、`characterRendererReady=true`、`singleInstance=true`、`trayReady=true`、`visibleWindowCount=0`、`wakeAssetsReady=true`。`npm run test:benchmark` 返回 `not-applicable`；保留两条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示，未运行 `make`、签名或公证。
 - 2026-08-31 PROACTIVE-POLICY：disposable 48-case 结果为 P0 18/48、P1 34/48、P2 48/48，Decision Record 选择 P2。生产 `npm run check:fast` 通过（contract 108/108，仅 2 条既有 TanStack Virtual warning），`npm run test:focused` 424/424、`npm run test:integration` 198/198、`npm run build`、受影响 Electron E2E 2/2、arm64 `npm run package` 与 `npm run smoke:package` 通过；未运行新 Provider Live，因为三个 Arm 不改变模型语义门或话术。
 - 2026-08-31 Persona + Character Dialogue：真实 Pilot 使用 `copilot_api / gpt-5.6-sol`，36/36 样本成功、实际 37 次 Provider 请求；A1 Decision Record 已形成。`npm run verify:offline` 通过（contract 108/108、focused/component 417/417、integration 198/198，约 25 秒），`npm run build` 通过（约 9 秒），完整 Electron E2E 24/24 通过（30.5 秒），arm64 `npm run package` 与 `npm run smoke:package` 通过；packaged smoke 确认 `databaseRoundTrip=true`、`rendererReady=true`、`characterRendererReady=true`、`singleInstance=true`、`visibleWindowCount=0`、`wakeAssetsReady=true`。保留 2 条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示；未运行 `make`、签名、公证或新的 Voice/Image Live。
@@ -165,7 +177,8 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 ## 当前来源快照
 
-- 2026-08-31 `codex/character-dialogue-roadmap` 与 disposable 实验均已同步到 `main@5be8e28`。真实 Pilot manifest 为 `c29f0b…09ac9`，36/36 样本成功、实际 37 次 Provider 请求；A1 已选为生产路径。
+- 2026-09-01 `codex/character-dialogue-roadmap` 已合并并推送到 `main@885706c`，本地 `main` 与 `origin/main` 一致。真实 Pilot manifest 为 `c29f0b…09ac9`，36/36 样本成功、实际 37 次 Provider 请求；A1 已选为生产路径。
+- 2026-09-01 复核 Android 官方通知权限、Sharesheet、WorkManager 与 Firebase FCM HTTP v1/message type：Android Companion 首版可保持为通知、分享和上传队列，FCM 服务凭据必须只在可信 Relay；PC 离线时不宣称可以产生新的 Agent/Memory 决策。来源链接已写入产品设计 §9.2.1。
 - 2026-08-28 复核锁定 `openai@6.49.0` Responses 类型与当前 `OpenAIResponsesModelProvider`/`AgentRuntime`/`approvalPolicy`：`defer_loading` 是逐 Tool 可选字段，`tool_search` 服务 deferred Tools；Adapter 已支持一个请求同时携带 always-loaded core 与 deferred 长尾。核心 pack 的 7 个名称属于 CharaMate correctness 边界，不是 Provider 硬限制；Chat/Agent 可见性和 Approval 执行授权继续分层。
 - 2026-08-28 复核 Apple [`NSWorkspace.didActivateApplicationNotification`](https://developer.apple.com/documentation/appkit/nsworkspace/didactivateapplicationnotification)、[`AXObserverAddNotification`](https://developer.apple.com/documentation/applicationservices/1462089-axobserveraddnotification) 与 [`kAXFocusedWindowAttribute`](https://developer.apple.com/documentation/applicationservices/kaxfocusedwindowattribute)：激活通知给出目标 `NSRunningApplication`，聚焦窗口与标题由独立 Accessibility 属性/通知提供，官方未承诺二者在同一时刻就绪。激活后的下一主队列轮次及 50/150/300 ms 有界补采是 CharaMate 针对实测竞态的恢复启发式，不是 macOS 协议限制；每次补采绑定当前应用代次，切换或停止后旧结果失效。
 - 2026-08-28 复核 Apple [`AXIsProcessTrusted`](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted)、代码签名/嵌套代码要求、Electron `43.2.0` `systemPreferences.isTrustedAccessibilityClient` 与 Forge macOS 签名路径：辅助功能信任检查属于调用进程，隐私授权依赖代码身份。当前旧独立 helper 在 Main 显示已授权时持续缺少窗口标题，且本地 ad-hoc 包中二者身份分离；生产因此收敛为 Main 内 Node-API 模块。没有窗口标题时直接静默、邀请过期后允许后续充分证据再次触发属于 CharaMate 产品规则，不是平台协议限制。

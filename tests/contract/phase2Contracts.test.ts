@@ -88,6 +88,8 @@ const settingsSnapshot = {
     screenRecording: "not_determined",
   },
   companionInitiative: {
+    importantMomentOutreachEnabled: false,
+    importantMomentOutreachPrompted: false,
     level: "balanced",
     quietHours: {
       enabled: true,

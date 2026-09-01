@@ -252,6 +252,8 @@ describe("Phase 1 typed preload data boundary", () => {
 
   it("validates companion initiative settings on save", async () => {
     const companionInitiative = {
+      importantMomentOutreachEnabled: false,
+      importantMomentOutreachPrompted: false,
       level: "quiet" as const,
       quietHours: {
         enabled: true,

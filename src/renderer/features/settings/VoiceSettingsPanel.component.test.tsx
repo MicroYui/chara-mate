@@ -49,6 +49,8 @@ describe("Voice Settings panel", () => {
             screenRecording: "granted",
           },
           companionInitiative: {
+            importantMomentOutreachEnabled: false,
+            importantMomentOutreachPrompted: false,
             level: "balanced",
             quietHours: {
               enabled: true,

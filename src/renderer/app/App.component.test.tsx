@@ -492,6 +492,8 @@ function renderApp({
             screenRecording: "unavailable",
           },
           companionInitiative: {
+            importantMomentOutreachEnabled: false,
+            importantMomentOutreachPrompted: false,
             level: "balanced",
             quietHours: {
               enabled: true,

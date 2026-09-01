@@ -5,6 +5,7 @@ import type { Journey, JourneySnapshot } from "../../shared/contracts/journey";
 import type { ProactiveConversationBubble } from "../../shared/contracts/pet";
 import type { ProviderSnapshot } from "../../shared/contracts/provider";
 import type { Run } from "../../shared/contracts/run";
+import type { PersonaSnapshot } from "../../shared/contracts/persona";
 import {
   EntityIdSchema,
   NonBlankStringSchema,
@@ -75,6 +76,7 @@ export interface AssistantInitiatedRunLauncher {
     options: {
       readonly modelId: string;
       readonly onStarted?: (run: Run) => void;
+      readonly persona: PersonaSnapshot;
       readonly toolNames?: readonly string[];
     },
   ): Promise<Run>;
@@ -82,6 +84,10 @@ export interface AssistantInitiatedRunLauncher {
 
 export interface CompanionInitiativeRunReader {
   readCompletedAssistantMessage(runId: string): string | undefined;
+}
+
+export interface CompanionInitiativePersonaReader {
+  getActiveSnapshot(): PersonaSnapshot;
 }
 
 export interface CompanionInitiativeJourneyReader {
@@ -308,7 +314,9 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
     private readonly policy: CompanionInitiativePolicyReader,
     private readonly clock: Clock,
     private readonly logger: Pick<AppLogger, "warn">,
+    private readonly personas: CompanionInitiativePersonaReader,
     private readonly personaName: () => string = () => "Mika",
+    private readonly externalInitiativeBusy: () => boolean = () => false,
     private readonly readLocalMinuteOfDay: (
       timestamp: string,
     ) => number = localMinuteOfDay,
@@ -318,6 +326,7 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
     if (
       this.#stopping ||
       this.#pendingRuns.size > 0 ||
+      this.externalInitiativeBusy() ||
       this.bubbles.hasOutstandingBubble() ||
       !this.#policyAllowsInitiative()
     ) {
@@ -359,6 +368,7 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
               kind: pending.provisionalChat ? "invitation" : "continuation",
               message: content,
               shownAt,
+              sourceKind: "activity",
               windowTitle: pending.windowTitle,
             });
           } catch (error) {
@@ -403,6 +413,7 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
           !this.#stopping &&
           this.#latestObservation &&
           this.#pendingRuns.size === 0 &&
+          !this.externalInitiativeBusy() &&
           !this.bubbles.hasOutstandingBubble() &&
           this.#policyAllowsInitiative()
         ) {
@@ -415,6 +426,7 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
     while (!this.#stopping && this.#latestObservation) {
       if (
         this.#pendingRuns.size > 0 ||
+        this.externalInitiativeBusy() ||
         this.bubbles.hasOutstandingBubble() ||
         !this.#policyAllowsInitiative()
       ) {
@@ -439,6 +451,7 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
       if (
         currentSnapshot.activeSession ||
         this.#pendingRuns.size > 0 ||
+        this.externalInitiativeBusy() ||
         this.bubbles.hasOutstandingBubble() ||
         !this.#policyAllowsInitiative()
       ) {
@@ -496,6 +509,7 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
             onStarted: (started) => {
               this.#pendingRuns.set(started.id, pendingRun);
             },
+            persona: this.personas.getActiveSnapshot(),
             toolNames: [],
           },
         );
@@ -527,5 +541,13 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
       recentInitiatives: this.history.listRecent(),
       settings: this.policy.getCompanionInitiative(),
     }).eligible;
+  }
+
+  isBusy(): boolean {
+    return (
+      this.#pendingRuns.size > 0 ||
+      this.#drainTask !== undefined ||
+      this.bubbles.hasOutstandingBubble()
+    );
   }
 }

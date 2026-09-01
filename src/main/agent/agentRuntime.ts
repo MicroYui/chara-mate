@@ -43,6 +43,7 @@ import {
   MEMORY_SEARCH_TOOL_NAME,
 } from "../memory/memoryTool";
 import { COMPANIONSHIP_UPDATE_TOOL_NAME } from "../journey/companionshipTool";
+import { IMPORTANT_MOMENT_OUTREACH_TOOL_NAME } from "../journey/importantMomentOutreachTool";
 import type { ChatModelRuntime } from "../providers/providerService";
 import { ProviderError, toProviderAppError } from "../providers/providerError";
 import { toolEvidenceHash } from "../tools/toolRegistry";
@@ -114,6 +115,7 @@ const ALWAYS_LOADED_CLIENT_TOOLS = new Set([
   "plan.update",
   MEMORY_FORMATION_TOOL_NAME,
   COMPANIONSHIP_UPDATE_TOOL_NAME,
+  IMPORTANT_MOMENT_OUTREACH_TOOL_NAME,
   COLLABORATION_DISPATCH_TOOL_NAME,
 ]);
 const USER_INPUT_NAMESPACE = "interaction";
@@ -435,6 +437,7 @@ function hasToolOutput(input: readonly JsonValue[], callId: string): boolean {
 function toolDisplayOutput(result: ToolResult, toolName?: string): string {
   if (
     toolName === MEMORY_FORMATION_TOOL_NAME ||
+    toolName === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME ||
     toolName === MEMORY_SEARCH_TOOL_NAME ||
     toolName === ACTIVITY_SEARCH_TOOL_NAME
   ) {
@@ -1678,7 +1681,7 @@ export class AgentRuntime {
         TEXT_AGENT_BASE_INSTRUCTIONS,
         `Current timestamp: ${this.clock.now()}. User system time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}. Interpret relative dates such as today in that time zone.`,
         run.execution.mode === "chat"
-          ? "This Run is Chat mode. You may use the provided idempotent read-only query and plan tools. Never perform write, critical, or other external-effect actions; memory.record and companionship.update are the only internal persistence exceptions. Ask the user to switch explicitly to Agent mode when another action is required."
+          ? "This Run is Chat mode. You may use the provided idempotent read-only query and plan tools. Never perform write, critical, or other external-effect actions; memory.record, companionship.update, and companion.important_moment_outreach are the only internal persistence exceptions. Ask the user to switch explicitly to Agent mode when another action is required."
           : "This Run is Agent mode. Follow its approval decisions and continue after structured rejection when a legitimate alternative exists.",
         extra,
       ]
@@ -1839,7 +1842,8 @@ export class AgentRuntime {
     const run = this.#requireRun(active.runId);
     const internalPersistence =
       resolvedName === MEMORY_FORMATION_TOOL_NAME ||
-      resolvedName === COMPANIONSHIP_UPDATE_TOOL_NAME;
+      resolvedName === COMPANIONSHIP_UPDATE_TOOL_NAME ||
+      resolvedName === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME;
     if (!toolAllowedInExecution(run.execution, definition.descriptor)) {
       this.#recordToolResult(active, pending, undefined, chatModeToolResult());
       return;

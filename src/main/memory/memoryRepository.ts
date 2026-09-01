@@ -43,9 +43,12 @@ interface RevisionRow {
   content: string;
   created_at: string;
   id: string;
+  important_moment: number;
   memory_id: string;
+  occurs_at: string | null;
   reason: string;
   source_type: MemorySourceType;
+  time_zone: string | null;
 }
 
 interface SourceRow {
@@ -65,8 +68,10 @@ interface CandidateRow {
   content: string;
   created_at: string;
   id: string;
+  important_moment: number;
   importance: number;
   novelty: number;
+  occurs_at: string | null;
   reason: string;
   source_ids_json: string;
   source_labels_json: string;
@@ -75,6 +80,7 @@ interface CandidateRow {
   supersedes_memory_id: string | null;
   type: MemoryType;
   updated_at: string;
+  time_zone: string | null;
   valid_from: string | null;
   valid_to: string | null;
 }
@@ -87,16 +93,26 @@ interface UsageRow {
   used_at: string;
 }
 
-export interface CreateMemoryInput extends MemoryCreateRequest {
+export type CreateMemoryInput = Omit<
+  MemoryCreateRequest,
+  "occursAt" | "timeZone"
+> & {
   readonly memoryId: string;
   readonly now: Timestamp;
+  readonly occursAt?: Timestamp;
   readonly revisionId: string;
-}
+  readonly timeZone?: string;
+};
 
-export interface ReviseMemoryInput extends MemoryReviseRequest {
+export type ReviseMemoryInput = Omit<
+  MemoryReviseRequest,
+  "occursAt" | "timeZone"
+> & {
   readonly now: Timestamp;
+  readonly occursAt?: Timestamp;
   readonly revisionId: string;
-}
+  readonly timeZone?: string;
+};
 
 export interface ResolveMemoryClaimInput {
   readonly claimSlot: MemoryClaimSlot;
@@ -108,14 +124,19 @@ export interface ResolveMemoryClaimInput {
   readonly sources: readonly MemorySource[];
 }
 
-export interface ProposeMemoryInput extends MemoryProposalInput {
+export type ProposeMemoryInput = Omit<
+  MemoryProposalInput,
+  "occursAt" | "timeZone"
+> & {
   readonly candidateId: string;
   readonly formation?: {
     readonly operation: MemoryClaimOperation;
     readonly slot?: MemoryClaimSlot;
   };
   readonly now: Timestamp;
-}
+  readonly occursAt?: Timestamp;
+  readonly timeZone?: string;
+};
 
 export interface MemoryHitSelection {
   readonly memoryId: string;
@@ -136,7 +157,9 @@ const memorySelect = `
 const candidateSelect = `
   SELECT c.id, c.type, c.status, c.content, c.reason, c.source_ids_json,
          c.source_labels_json, c.source_type, c.confidence, c.importance,
-         c.novelty, c.valid_from, c.valid_to, c.supersedes_memory_id,
+         c.novelty, c.important_moment, c.occurs_at, c.time_zone,
+         c.valid_from, c.valid_to,
+         c.supersedes_memory_id,
          c.accepted_memory_id, c.created_at, c.updated_at,
          mcf.operation AS claim_operation,
          mcf.claim_slot
@@ -182,8 +205,12 @@ function candidateFromRow(row: CandidateRow): MemoryCandidate {
     content: row.content,
     createdAt: row.created_at,
     id: row.id,
+    importantMoment: row.important_moment === 1,
     importance: row.importance,
     novelty: row.novelty,
+    ...(row.occurs_at && row.time_zone
+      ? { occursAt: row.occurs_at, timeZone: row.time_zone }
+      : {}),
     reason: row.reason,
     sourceIds: JSON.parse(row.source_ids_json) as string[],
     sourceLabels: JSON.parse(row.source_labels_json) as string[],
@@ -235,7 +262,8 @@ export class MemoryRepository {
 
     const revisionRows = this.database
       .prepare(
-        `SELECT id, memory_id, content, source_type, reason, created_at
+        `SELECT id, memory_id, content, source_type, reason,
+                important_moment, occurs_at, time_zone, created_at
          FROM memory_revisions
          WHERE memory_id = ?
          ORDER BY (id = ?) DESC, created_at DESC, rowid DESC`,
@@ -280,7 +308,11 @@ export class MemoryRepository {
         content: revision.content,
         createdAt: revision.created_at,
         id: revision.id,
+        importantMoment: revision.important_moment === 1,
         memoryId: revision.memory_id,
+        ...(revision.occurs_at && revision.time_zone
+          ? { occursAt: revision.occurs_at, timeZone: revision.time_zone }
+          : {}),
         reason: revision.reason,
         sourceIds: sourceIdsByRevision.get(revision.id) ?? [],
         sourceType: revision.source_type,
@@ -404,7 +436,8 @@ export class MemoryRepository {
       (
         this.database
           .prepare(
-            `SELECT id, memory_id, content, source_type, reason, created_at
+            `SELECT id, memory_id, content, source_type, reason,
+                    important_moment, occurs_at, time_zone, created_at
              FROM memory_revisions
              WHERE id IN (SELECT value FROM json_each(?))`,
           )
@@ -445,7 +478,11 @@ export class MemoryRepository {
           content: revision.content,
           createdAt: revision.created_at,
           id: revision.id,
+          importantMoment: revision.important_moment === 1,
           memoryId: revision.memory_id,
+          ...(revision.occurs_at && revision.time_zone
+            ? { occursAt: revision.occurs_at, timeZone: revision.time_zone }
+            : {}),
           reason: revision.reason,
           sourceIds: (sourcesByRevision.get(revisionId) ?? []).map(
             ({ id }) => id,
@@ -705,9 +742,11 @@ export class MemoryRepository {
           `INSERT INTO memory_candidates (
              id, type, status, content, reason, source_ids_json,
              source_labels_json, source_type,
-             confidence, importance, novelty, valid_from, valid_to,
+             confidence, importance, novelty, important_moment,
+             occurs_at, time_zone,
+             valid_from, valid_to,
              supersedes_memory_id, accepted_memory_id, created_at, updated_at
-           ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+           ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
         )
         .run(
           input.candidateId,
@@ -720,6 +759,9 @@ export class MemoryRepository {
           input.confidence,
           input.importance,
           input.novelty,
+          input.importantMoment ? 1 : 0,
+          input.occursAt ?? null,
+          input.timeZone ?? null,
           input.validFrom ?? null,
           input.validTo ?? null,
           input.supersedesMemoryId ?? null,
@@ -780,9 +822,12 @@ export class MemoryRepository {
   findPendingCandidateByContent(
     content: string,
     options: {
+      readonly importantMoment?: boolean;
       readonly operation?: MemoryClaimOperation;
+      readonly occursAt?: string;
       readonly slot?: MemoryClaimSlot;
       readonly supersedesMemoryId?: string;
+      readonly timeZone?: string;
     } = {},
   ): MemoryCandidate | undefined {
     const row = this.database
@@ -790,6 +835,15 @@ export class MemoryRepository {
         `${candidateSelect}
          WHERE c.status = 'pending'
            AND c.content = ? COLLATE NOCASE
+           AND c.important_moment = ?
+           AND (
+             (? IS NULL AND c.occurs_at IS NULL)
+             OR c.occurs_at = ?
+           )
+           AND (
+             (? IS NULL AND c.time_zone IS NULL)
+             OR c.time_zone = ?
+           )
            AND (
              (? IS NULL AND c.supersedes_memory_id IS NULL)
              OR c.supersedes_memory_id = ?
@@ -807,6 +861,11 @@ export class MemoryRepository {
       )
       .get(
         content,
+        options.importantMoment ? 1 : 0,
+        options.occursAt ?? null,
+        options.occursAt ?? null,
+        options.timeZone ?? null,
+        options.timeZone ?? null,
         options.supersedesMemoryId ?? null,
         options.supersedesMemoryId ?? null,
         options.slot ?? null,
@@ -963,8 +1022,9 @@ export class MemoryRepository {
     this.database
       .prepare(
         `INSERT INTO memory_revisions (
-           id, memory_id, content, source_type, reason, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?)`,
+           id, memory_id, content, source_type, reason,
+           important_moment, occurs_at, time_zone, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.revisionId,
@@ -972,6 +1032,9 @@ export class MemoryRepository {
         input.content,
         sourceType,
         input.reason,
+        input.importantMoment ? 1 : 0,
+        input.occursAt ?? null,
+        input.timeZone ?? null,
         input.now,
       );
     this.#indexRevision(input.memoryId, input.revisionId, input.content);
@@ -1015,8 +1078,9 @@ export class MemoryRepository {
     this.database
       .prepare(
         `INSERT INTO memory_revisions (
-           id, memory_id, content, source_type, reason, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?)`,
+           id, memory_id, content, source_type, reason,
+           important_moment, occurs_at, time_zone, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.revisionId,
@@ -1024,6 +1088,9 @@ export class MemoryRepository {
         input.content,
         sourceType,
         input.reason,
+        input.importantMoment ? 1 : 0,
+        input.occursAt ?? null,
+        input.timeZone ?? null,
         input.now,
       );
     this.#indexRevision(input.memoryId, input.revisionId, input.content);

@@ -20,12 +20,15 @@ function record(
     message: "还在整理这份内容吗？",
     outcome,
     shownAt: new Date(Date.parse(now) - minutesAgo * 60_000).toISOString(),
+    sourceKind: "activity",
     updatedAt: now,
     windowTitle: "outline.md",
   };
 }
 
 const balanced = {
+  importantMomentOutreachEnabled: false,
+  importantMomentOutreachPrompted: false,
   level: "balanced",
   quietHours: { enabled: false, endMinute: 480, startMinute: 1320 },
 } as const;

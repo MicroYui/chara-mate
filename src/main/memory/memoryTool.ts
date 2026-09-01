@@ -1,6 +1,9 @@
 import { Type, type Static } from "@sinclair/typebox";
 
-import type { MemorySourceType } from "../../shared/contracts/memory";
+import type {
+  MemorySourceType,
+  MemoryType,
+} from "../../shared/contracts/memory";
 import type { JsonValue } from "../../shared/contracts/primitives";
 import {
   MemoryClaimSlotSchema,
@@ -21,10 +24,18 @@ export const MEMORY_SEARCH_TOOL_NAME = "memory.search";
 
 const UnscopedMemoryTypeSchema = Type.Union([
   Type.Literal("project"),
-  Type.Literal("event"),
   Type.Literal("procedure"),
+]);
+
+const TimedMemoryTypeSchema = Type.Union([
+  Type.Literal("event"),
   Type.Literal("commitment"),
 ]);
+
+const FormationTimeZoneSchema = Type.String({
+  description: "An IANA time-zone identifier such as Asia/Shanghai.",
+  pattern: "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$",
+});
 
 const MemoryFormationBasisSchema = Type.Union([
   Type.Literal("explicit_user_statement"),
@@ -38,51 +49,110 @@ const MemoryUpdateOperationSchema = Type.Union([
   Type.Literal("remove"),
 ]);
 
+const stableFormationSchemas = [
+  Type.Object(
+    {
+      basis: MemoryFormationBasisSchema,
+      claimSlot: MemoryClaimSlotSchema,
+      content: NonBlankStringSchema,
+      operation: Type.Literal("create"),
+      validFrom: Type.Optional(TimestampSchema),
+      validTo: Type.Optional(TimestampSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      basis: MemoryFormationBasisSchema,
+      claimSlot: MemoryClaimSlotSchema,
+      content: NonBlankStringSchema,
+      operation: MemoryUpdateOperationSchema,
+      validFrom: Type.Optional(TimestampSchema),
+      validTo: Type.Optional(TimestampSchema),
+    },
+    { additionalProperties: false },
+  ),
+];
+
+const unscopedFormationSchemas = [
+  Type.Object(
+    {
+      basis: MemoryFormationBasisSchema,
+      content: NonBlankStringSchema,
+      operation: Type.Literal("create"),
+      type: UnscopedMemoryTypeSchema,
+      validFrom: Type.Optional(TimestampSchema),
+      validTo: Type.Optional(TimestampSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      basis: MemoryFormationBasisSchema,
+      content: NonBlankStringSchema,
+      operation: MemoryUpdateOperationSchema,
+      type: UnscopedMemoryTypeSchema,
+      validFrom: Type.Optional(TimestampSchema),
+      validTo: Type.Optional(TimestampSchema),
+    },
+    { additionalProperties: false },
+  ),
+];
+
+const timedCreateProperties = {
+  basis: MemoryFormationBasisSchema,
+  content: NonBlankStringSchema,
+  importantMoment: Type.Boolean(),
+  operation: Type.Literal("create"),
+  type: TimedMemoryTypeSchema,
+  validFrom: Type.Optional(TimestampSchema),
+  validTo: Type.Optional(TimestampSchema),
+};
+
+const timedUpdateProperties = {
+  basis: MemoryFormationBasisSchema,
+  content: NonBlankStringSchema,
+  importantMoment: Type.Boolean(),
+  operation: MemoryUpdateOperationSchema,
+  targetHint: NonBlankStringSchema,
+  type: TimedMemoryTypeSchema,
+  validFrom: Type.Optional(TimestampSchema),
+  validTo: Type.Optional(TimestampSchema),
+};
+
+const timedFormationSchemas = [
+  Type.Object(timedCreateProperties, { additionalProperties: false }),
+  Type.Object(
+    {
+      ...timedCreateProperties,
+      occursAt: TimestampSchema,
+      timeZone: FormationTimeZoneSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(timedUpdateProperties, { additionalProperties: false }),
+  Type.Object(
+    {
+      ...timedUpdateProperties,
+      occursAt: TimestampSchema,
+      timeZone: FormationTimeZoneSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...timedUpdateProperties,
+      occursAt: Type.Null(),
+      timeZone: Type.Null(),
+    },
+    { additionalProperties: false },
+  ),
+];
+
 export const MemoryFormationInputSchema = Type.Union([
-  Type.Object(
-    {
-      basis: MemoryFormationBasisSchema,
-      claimSlot: MemoryClaimSlotSchema,
-      content: NonBlankStringSchema,
-      operation: Type.Literal("create"),
-      validFrom: Type.Optional(TimestampSchema),
-      validTo: Type.Optional(TimestampSchema),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      basis: MemoryFormationBasisSchema,
-      claimSlot: MemoryClaimSlotSchema,
-      content: NonBlankStringSchema,
-      operation: MemoryUpdateOperationSchema,
-      validFrom: Type.Optional(TimestampSchema),
-      validTo: Type.Optional(TimestampSchema),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      basis: MemoryFormationBasisSchema,
-      content: NonBlankStringSchema,
-      operation: Type.Literal("create"),
-      type: UnscopedMemoryTypeSchema,
-      validFrom: Type.Optional(TimestampSchema),
-      validTo: Type.Optional(TimestampSchema),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      basis: MemoryFormationBasisSchema,
-      content: NonBlankStringSchema,
-      operation: MemoryUpdateOperationSchema,
-      type: UnscopedMemoryTypeSchema,
-      validFrom: Type.Optional(TimestampSchema),
-      validTo: Type.Optional(TimestampSchema),
-    },
-    { additionalProperties: false },
-  ),
+  ...stableFormationSchemas,
+  ...unscopedFormationSchemas,
+  ...timedFormationSchemas,
 ]);
 
 type MemoryFormationToolInput = Static<typeof MemoryFormationInputSchema>;
@@ -144,7 +214,14 @@ export function registerMemoryTool(
           memoryUpdatedAt: hit.memory.updatedAt,
           rank: hit.rank,
           revisionCreatedAt: hit.revision.createdAt,
+          importantMoment: hit.revision.importantMoment ?? false,
           type: hit.memory.type,
+          ...("occursAt" in hit.revision && "timeZone" in hit.revision
+            ? {
+                occursAt: hit.revision.occursAt,
+                timeZone: hit.revision.timeZone,
+              }
+            : {}),
           ...(hit.memory.validFrom ? { validFrom: hit.memory.validFrom } : {}),
           ...(hit.memory.validTo ? { validTo: hit.memory.validTo } : {}),
         })),
@@ -175,14 +252,19 @@ export function registerMemoryFormationTool(
   resolveEvidence: MemoryFormationEvidenceResolver,
   onFormed?: (input: {
     readonly content: string;
+    readonly importantMoment: boolean;
     readonly memoryId: string;
+    readonly occursAt?: string;
+    readonly revisionId: string;
     readonly runId: string;
+    readonly timeZone?: string;
+    readonly type: MemoryType;
   }) => void,
 ): void {
   registry.register({
     descriptor: {
       description:
-        "Record durable user knowledge during the current Chat or Agent Run. For supported profile/preference fields, use the closed claimSlot whose name describes the stable field, never its value: e.g. preference.hobbies remains the same slot when A changes to B. Use create only for a genuinely new field, replace for an explicit correction or complete replacement, and append/remove only for a set-valued slot. For every update, content must be the complete post-operation memory statement, not only the added or removed fragment. The host resolves an existing bound stable field only from its private current-Run allowlist; never submit, invent, or mention Memory, Revision, or source IDs. For other durable memories use type; an update without a host-resolvable target becomes a review candidate. If an update conflicts with a slot, is ambiguous with another preloaded stable field, or needs to bind old unkeyed data, it becomes a review candidate instead of a second active fact. Use explicit_user_statement only for facts the user directly stated; inference and run_observation always become candidates. Never record transient requests, assistant speculation, copied material, credentials, secrets, or unchanged memories.",
+        "Record durable user knowledge during the current Chat or Agent Run. For supported profile/preference fields, use the closed claimSlot whose name describes the stable field, never its value: e.g. preference.hobbies remains the same slot when A changes to B. Use create only for a genuinely new field, replace for an explicit correction or complete replacement, and append/remove only for a set-valued slot. For every update, content must be the complete post-operation memory statement, not only the added or removed fragment. For event/commitment updates, targetHint must repeat the exact current memory statement supplied in context; the host normalizes it and resolves a unique match only inside its private current-Run allowlist. Never submit, invent, or mention Memory, Revision, or source IDs. For event/commitment, provide occursAt and IANA timeZone together when the user gives a future time; omit both to preserve an existing time during update, and set both to null only when the user explicitly cancels or removes the time. Set importantMoment true only when the user explicitly says this event or commitment matters to them and has not opted out of proactive contact for this specific matter. Set it false when the user explicitly asks not to be proactively contacted about that event; keep the event content accurate and omit occursAt/timeZone to preserve its time. Other memory types cannot carry event time or importantMoment=true. An update without a uniquely resolved target becomes a review candidate. If an update conflicts with a slot, is ambiguous with another preloaded stable field, or needs to bind old unkeyed data, it becomes a review candidate instead of a second active fact. Use explicit_user_statement only for facts the user directly stated; inference and run_observation always become candidates. Never record transient requests, assistant speculation, copied material, credentials, secrets, or unchanged memories.",
       effect: "write",
       idempotency: "idempotent",
       inputSchema: MemoryFormationInputSchema,
@@ -212,10 +294,26 @@ export function registerMemoryFormationTool(
         },
       });
       if ("memoryId" in result) {
+        const detail = memory.get(result.memoryId);
+        const revision = detail.revisions.find(
+          ({ id }) => id === result.revisionId,
+        );
+        if (!revision) {
+          throw new TypeError("Formed memory revision is unavailable");
+        }
         onFormed?.({
-          content: request.content,
+          content: revision.content,
+          importantMoment: revision.importantMoment ?? false,
           memoryId: result.memoryId,
+          ...("occursAt" in revision && "timeZone" in revision
+            ? {
+                occursAt: revision.occursAt,
+                timeZone: revision.timeZone,
+              }
+            : {}),
+          revisionId: revision.id,
           runId: context.runId,
+          type: detail.memory.type,
         });
       }
       const modelContent = { outcome: result.outcome } satisfies JsonValue;

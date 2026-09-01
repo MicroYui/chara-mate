@@ -5,7 +5,9 @@ import { IpcChannelSchema } from "../../src/shared/schemas/ipc";
 import {
   MemoryCreateRequestSchema,
   MemoryListRequestSchema,
+  MemoryRevisionSchema,
   MemoryResolveClaimRequestSchema,
+  MemoryReviseRequestSchema,
 } from "../../src/shared/schemas/memory";
 import { parseSchema } from "../../src/shared/schemas/validation";
 import { parseSchemaWithoutCodeGeneration } from "../../src/shared/schemas/valueValidation";
@@ -56,4 +58,62 @@ describe("Memory boundary contracts", () => {
       }),
     ).toThrow();
   });
+
+  it.each(parsers)(
+    "keeps event time paired on requests and revisions through %s",
+    (parse) => {
+      const timedCreate = {
+        confidence: 1,
+        content: "用户明天下午三点有重要的演示。",
+        importance: 0.9,
+        importantMoment: true,
+        occursAt: "2026-09-02T07:00:00.000Z",
+        reason: "用户明确说明",
+        sources: [],
+        timeZone: "Asia/Shanghai",
+        type: "event",
+      } as const;
+      expect(parse(MemoryCreateRequestSchema, timedCreate)).toMatchObject({
+        occursAt: timedCreate.occursAt,
+        timeZone: timedCreate.timeZone,
+      });
+      expect(() =>
+        parse(MemoryCreateRequestSchema, {
+          ...timedCreate,
+          timeZone: undefined,
+        }),
+      ).toThrow();
+      expect(
+        parse(MemoryReviseRequestSchema, {
+          content: "用户的演示已经取消。",
+          importantMoment: false,
+          memoryId,
+          occursAt: null,
+          reason: "用户明确取消",
+          sources: [],
+          timeZone: null,
+        }),
+      ).toMatchObject({ occursAt: null, timeZone: null });
+
+      const revision = {
+        content: timedCreate.content,
+        createdAt: "2026-09-01T12:00:00.000Z",
+        id: "10000000-0000-4000-8000-000000000002",
+        importantMoment: true,
+        memoryId,
+        occursAt: timedCreate.occursAt,
+        reason: timedCreate.reason,
+        sourceIds: [],
+        sourceType: "chat",
+        timeZone: timedCreate.timeZone,
+      } as const;
+      expect(parse(MemoryRevisionSchema, revision)).toMatchObject({
+        importantMoment: true,
+        occursAt: timedCreate.occursAt,
+      });
+      expect(() =>
+        parse(MemoryRevisionSchema, { ...revision, timeZone: undefined }),
+      ).toThrow();
+    },
+  );
 });

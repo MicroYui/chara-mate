@@ -24,6 +24,7 @@ import { migrateV15ToV16 } from "./schema/migrateV15ToV16";
 import { migrateV16ToV17 } from "./schema/migrateV16ToV17";
 import { migrateV17ToV18 } from "./schema/migrateV17ToV18";
 import { migrateV18ToV19 } from "./schema/migrateV18ToV19";
+import { migrateV19ToV20 } from "./schema/migrateV19ToV20";
 
 interface MetadataRow {
   value: string;
@@ -95,6 +96,10 @@ function initializeCurrentSchema(database: Database.Database): void {
   if (installedVersion === "18") {
     migrateV18ToV19(database);
     installedVersion = "19";
+  }
+  if (installedVersion === "19") {
+    migrateV19ToV20(database);
+    installedVersion = "20";
   }
   if (
     installedVersion !== undefined &&

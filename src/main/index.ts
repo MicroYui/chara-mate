@@ -126,6 +126,12 @@ import { registerJourneyIpc } from "./journey/journeyIpc";
 import { JourneyRepository } from "./journey/journeyRepository";
 import { JourneyService } from "./journey/journeyService";
 import { ProactiveConversationSurface } from "./journey/proactiveConversationSurface";
+import { registerImportantMomentOutreachTool } from "./journey/importantMomentOutreachTool";
+import { ProactiveOpportunityRepository } from "./journey/proactiveOpportunityRepository";
+import {
+  ModelProactiveOpportunityDecider,
+  ProactiveOpportunityService,
+} from "./journey/proactiveOpportunityService";
 import { CharacterWindowController } from "./pet/characterWindowController";
 import { bundledPetsDirectory, installBundledPets } from "./pet/bundledPets";
 import { registerPetIpc } from "./pet/petIpc";
@@ -239,6 +245,7 @@ let voiceService: VoiceService | undefined;
 let voiceWakeService: VoiceWakeService | undefined;
 let journeyService: JourneyService | undefined;
 let companionInitiativeService: CompanionInitiativeService | undefined;
+let proactiveOpportunityService: ProactiveOpportunityService | undefined;
 let proactiveConversationSurface: ProactiveConversationSurface | undefined;
 let stopPromise: Promise<void> | undefined;
 let shutdownComplete = false;
@@ -299,6 +306,7 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterVoiceWakeIpc = undefined;
     session.defaultSession.setPermissionCheckHandler(null);
     session.defaultSession.setPermissionRequestHandler(null);
+    proactiveOpportunityService?.shutdown();
     await automationScheduler?.stop();
     automationScheduler = undefined;
     await evolutionService?.shutdown();
@@ -317,6 +325,7 @@ async function stopApplicationInfrastructure(): Promise<void> {
     }
     await companionInitiativeService?.shutdown();
     companionInitiativeService = undefined;
+    proactiveOpportunityService = undefined;
     proactiveConversationSurface?.shutdown();
     proactiveConversationSurface = undefined;
     journeyService?.pauseForShutdown();
@@ -412,6 +421,19 @@ async function startApplication(): Promise<void> {
   const companionInitiativeReference: {
     current?: CompanionInitiativeService;
   } = {};
+  const proactiveOpportunityReference: {
+    current?: ProactiveOpportunityService;
+  } = {};
+  memoryServiceInstance.setChangedListener((memoryId) => {
+    try {
+      proactiveOpportunityReference.current?.handleMemoryChanged(memoryId);
+    } catch (error) {
+      logger.warn("PROACTIVE_OPPORTUNITY_MEMORY_RECONCILE_ERROR", {
+        error,
+        memoryId,
+      });
+    }
+  });
   const evolutionServiceReference: { current?: EvolutionService } = {};
   const proactiveConversationSurfaceReference: {
     current?: ProactiveConversationSurface;
@@ -481,6 +503,15 @@ async function startApplication(): Promise<void> {
         companionInitiativeReference.current?.observeRun(envelope);
       } catch (error) {
         logger.warn("COMPANION_INITIATIVE_RUN_OBSERVER_ERROR", {
+          error,
+          runId: envelope.streamId,
+          sequence: envelope.sequence,
+        });
+      }
+      try {
+        proactiveOpportunityReference.current?.observeRun(envelope);
+      } catch (error) {
+        logger.warn("PROACTIVE_OPPORTUNITY_RUN_OBSERVER_ERROR", {
           error,
           runId: envelope.streamId,
           sequence: envelope.sequence,
@@ -740,6 +771,7 @@ async function startApplication(): Promise<void> {
     activityAssets,
   );
   unregisterActivityIpc = registerActivityIpc(activityService);
+  const activitySystemSource = new ElectronActivitySystemSource(60);
   activityCapture = new ActivityCaptureCoordinator(
     activityService,
     new MacOsActiveApplicationSource(
@@ -757,7 +789,7 @@ async function startApplication(): Promise<void> {
             "active-application-observer.node",
           ),
     ),
-    new ElectronActivitySystemSource(60),
+    activitySystemSource,
     clock,
     logger,
     {
@@ -793,7 +825,24 @@ async function startApplication(): Promise<void> {
     (directory) => skillService.setWorkspaceDirectory(directory),
     userDataPath,
     (target) => shell.openPath(target),
+    (current, previous) => {
+      try {
+        if (
+          current.importantMomentOutreachEnabled !==
+          previous.importantMomentOutreachEnabled
+        ) {
+          proactiveOpportunityReference.current?.handlePermissionChanged(
+            current.importantMomentOutreachEnabled,
+          );
+        } else {
+          automationScheduler?.refresh();
+        }
+      } catch (error) {
+        logger.warn("COMPANION_INITIATIVE_RECONCILE_ERROR", { error });
+      }
+    },
   );
+  registerImportantMomentOutreachTool(toolRegistry, settingsService);
   registerLocalTools(toolRegistry, {
     artifacts: artifactStore,
     openPath: (target) => shell.openPath(target),
@@ -953,13 +1002,21 @@ async function startApplication(): Promise<void> {
     clock,
     personaService,
     undefined,
-    (run) =>
-      [
+    (run) => {
+      const initiative = settingsRepository.getCompanionInitiative();
+      const outreachState = initiative.importantMomentOutreachEnabled
+        ? "enabled"
+        : initiative.importantMomentOutreachPrompted
+          ? "declined"
+          : "not_asked";
+      return [
         skillService.instructions(),
+        `Important-moment outreach setting: ${outreachState}.`,
         journeyServiceInstance.agentContextInstructions(run.chatId),
       ]
         .filter(Boolean)
-        .join("\n\n"),
+        .join("\n\n");
+    },
     chatTitleService,
     imageInput,
     memoryServiceInstance,
@@ -1040,9 +1097,64 @@ async function startApplication(): Promise<void> {
     settingsRepository,
     clock,
     logger,
+    personaService,
     () => personaService.getActiveSnapshot().displayName,
+    () => proactiveOpportunityReference.current?.isBusy() ?? false,
   );
   companionInitiativeService = companionInitiativeServiceInstance;
+  const proactiveOpportunityServiceInstance = new ProactiveOpportunityService(
+    new ProactiveOpportunityRepository(applicationDatabase),
+    memoryServiceInstance,
+    {
+      getChat: (chatId) => chatRepository.getChat(chatId),
+      listMessages: (chatId) => chatRepository.listMessages(chatId),
+    },
+    {
+      getRun: (runId) => runRepository.getRun(runId),
+      readCompletedAssistantMessage: (runId) => {
+        const message = chatRepository
+          .listRunMessages(runId)
+          .findLast(
+            ({ role, status }) =>
+              role === "assistant" && status === "completed",
+          );
+        return message
+          ? { content: message.content, id: message.id }
+          : undefined;
+      },
+    },
+    new ModelProactiveOpportunityDecider(providerService),
+    agentRuntime,
+    {
+      hasOutstandingBubble: () =>
+        proactiveConversationSurfaceInstance.hasOutstandingBubble(),
+      publishBubble: (bubble) =>
+        proactiveConversationSurfaceInstance.publish(bubble),
+    },
+    companionInitiativeRepository,
+    settingsRepository,
+    {
+      hasActiveSession: () =>
+        Boolean(journeyServiceInstance.getSnapshot().activeSession),
+    },
+    personaService,
+    idGenerator,
+    clock,
+    logger,
+    () => companionInitiativeServiceInstance.isBusy(),
+    (excludeRunId) =>
+      runRepository
+        .listRunsByStatus([
+          "queued",
+          "running",
+          "waiting_approval",
+          "needs_input",
+        ])
+        .some(({ id }) => id !== excludeRunId),
+    () => activitySystemSource.isIdle(),
+  );
+  proactiveOpportunityReference.current = proactiveOpportunityServiceInstance;
+  proactiveOpportunityService = proactiveOpportunityServiceInstance;
   const automationServiceInstance = new AutomationService(
     new AutomationRepository(applicationDatabase),
     chatService,
@@ -1139,6 +1251,7 @@ async function startApplication(): Promise<void> {
     },
   });
   await agentRuntime.initialize();
+  proactiveOpportunityServiceInstance.initialize();
   companionInitiativeReference.current = companionInitiativeServiceInstance;
 
   const petLibrary = new PetLibraryRepository(path.join(userDataPath, "pets"));
@@ -1200,13 +1313,21 @@ async function startApplication(): Promise<void> {
       },
     },
     personaService,
-    (chatId) =>
-      [
+    (chatId) => {
+      const initiative = settingsRepository.getCompanionInitiative();
+      const outreachState = initiative.importantMomentOutreachEnabled
+        ? "enabled"
+        : initiative.importantMomentOutreachPrompted
+          ? "declined"
+          : "not_asked";
+      return [
         skillService.instructions(),
+        `Important-moment outreach setting: ${outreachState}.`,
         journeyServiceInstance.agentContextInstructions(chatId),
       ]
         .filter(Boolean)
-        .join("\n\n"),
+        .join("\n\n");
+    },
     chatTitleService,
     memoryServiceInstance,
     (phase) => {
@@ -1260,12 +1381,15 @@ async function startApplication(): Promise<void> {
   });
   await automationServiceInstance.initialize();
   automationScheduler = new AutomationScheduler(
-    automationServiceInstance,
+    [automationServiceInstance, proactiveOpportunityServiceInstance],
     clock,
     powerMonitor,
     (error) => logger.warn("AUTOMATION_SCHEDULER_ERROR", { error }),
   );
   automationServiceInstance.setScheduleChangedListener(() =>
+    automationScheduler?.refresh(),
+  );
+  proactiveOpportunityServiceInstance.setScheduleChangedListener(() =>
     automationScheduler?.refresh(),
   );
   unregisterAutomationIpc = registerAutomationIpc(automationServiceInstance);

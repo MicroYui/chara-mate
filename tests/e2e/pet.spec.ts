@@ -394,6 +394,7 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
       first.main.getByRole("heading", { name: "主动陪伴" }),
     ).toBeVisible();
     await first.main.getByLabel("主动程度").selectOption("quiet");
+    await first.main.getByLabel("重要时刻主动联系我").check();
     await first.main.getByLabel("安静时段开始").fill("21:30");
     await first.main.getByLabel("安静时段结束").fill("07:30");
     await first.main.getByRole("button", { name: "保存主动陪伴" }).click();
@@ -406,6 +407,8 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
         }),
       )
       .toEqual({
+        importantMomentOutreachEnabled: true,
+        importantMomentOutreachPrompted: true,
         level: "quiet",
         quietHours: {
           enabled: true,
@@ -509,6 +512,17 @@ test("renders imported v1/v2 pets in a transparent movable window and restores i
       .toMatchObject({
         ok: true,
         value: { animationSpeed: 0.6, scale: 1.25 },
+      });
+    await expect
+      .poll(() =>
+        second.main.evaluate(async () => {
+          const response = await window.charaMate.settings.getSnapshot();
+          return response.ok ? response.value.companionInitiative : null;
+        }),
+      )
+      .toMatchObject({
+        importantMomentOutreachEnabled: true,
+        importantMomentOutreachPrompted: true,
       });
     const restoredBounds = await application.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows().find(

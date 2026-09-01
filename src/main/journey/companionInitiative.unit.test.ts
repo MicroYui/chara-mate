@@ -71,6 +71,7 @@ const recentInitiative: CompanionInitiativeRecord = {
   message: "还在整理论文思路吗？",
   outcome: "expired",
   shownAt: "2026-08-13T08:50:00.000Z",
+  sourceKind: "activity",
   updatedAt: "2026-08-13T08:50:20.000Z",
   windowTitle: "thesis-notes.md",
 };
@@ -248,6 +249,8 @@ function serviceHarness(
     },
     {
       getCompanionInitiative: () => ({
+        importantMomentOutreachEnabled: false,
+        importantMomentOutreachPrompted: false,
         level: "lively",
         quietHours: {
           enabled: false,
@@ -258,7 +261,9 @@ function serviceHarness(
     },
     { now: () => currentTime } satisfies Clock,
     logger,
+    { getActiveSnapshot: () => defaultPersonaSnapshot(NOW) },
     () => "Mika",
+    () => false,
     () => 12 * 60,
   );
   return {
@@ -417,6 +422,7 @@ describe("CompanionInitiativeService", () => {
       kind: "invitation",
       message: "你在整理这篇论文吗？",
       shownAt: NOW,
+      sourceKind: "activity",
       windowTitle: observation.windowTitle,
     });
   });

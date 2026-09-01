@@ -22,7 +22,7 @@ export const CompanionInitiativeOutcomeSchema = Type.Union([
 const CompanionInitiativeRecordSchema = Type.Object(
   {
     appId: Type.Optional(NonBlankStringSchema),
-    appName: NonBlankStringSchema,
+    appName: Type.Optional(NonBlankStringSchema),
     grounding: NonBlankStringSchema,
     id: EntityIdSchema,
     kind: Type.Union([
@@ -32,8 +32,12 @@ const CompanionInitiativeRecordSchema = Type.Object(
     message: NonBlankStringSchema,
     outcome: CompanionInitiativeOutcomeSchema,
     shownAt: TimestampSchema,
+    sourceKind: Type.Union([
+      Type.Literal("activity"),
+      Type.Literal("memory_event"),
+    ]),
     updatedAt: TimestampSchema,
-    windowTitle: NonBlankStringSchema,
+    windowTitle: Type.Optional(NonBlankStringSchema),
   },
   { additionalProperties: false },
 );
@@ -64,12 +68,13 @@ interface CompanionInitiativeRecordRow {
   readonly message: string;
   readonly outcome: string;
   readonly shown_at: string;
+  readonly source_kind: string;
   readonly updated_at: string;
   readonly window_title: string;
 }
 
 const RECORD_COLUMNS = `
-  id, kind, app_id, app_name, window_title, grounding, message,
+  id, source_kind, kind, app_id, app_name, window_title, grounding, message,
   outcome, shown_at, updated_at
 `;
 
@@ -78,15 +83,18 @@ function readRecord(
 ): CompanionInitiativeRecord {
   return parseSchema(CompanionInitiativeRecordSchema, {
     ...(row.app_id === null ? {} : { appId: row.app_id }),
-    appName: row.app_name,
+    ...(row.source_kind === "activity" ? { appName: row.app_name } : {}),
     grounding: row.grounding,
     id: row.id,
     kind: row.kind,
     message: row.message,
     outcome: row.outcome,
     shownAt: row.shown_at,
+    sourceKind: row.source_kind,
     updatedAt: row.updated_at,
-    windowTitle: row.window_title,
+    ...(row.source_kind === "activity"
+      ? { windowTitle: row.window_title }
+      : {}),
   });
 }
 
@@ -118,16 +126,17 @@ export class CompanionInitiativeRepository implements CompanionInitiativeHistory
       this.database
         .prepare(
           `INSERT OR IGNORE INTO companion_initiative_records (
-             id, kind, app_id, app_name, window_title, grounding, message,
-             outcome, shown_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             id, source_kind, kind, app_id, app_name, window_title, grounding,
+             message, outcome, shown_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           record.id,
+          record.sourceKind,
           record.kind,
           record.appId ?? null,
-          record.appName,
-          record.windowTitle,
+          record.appName ?? "CharaMate",
+          record.windowTitle ?? "重要时刻",
           record.grounding,
           record.message,
           record.outcome,

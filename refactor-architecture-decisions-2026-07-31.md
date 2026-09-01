@@ -265,6 +265,8 @@ Manifest 在运行前冻结并计算 hash。结果只引用该 hash，防止实�
 | `CONTEXT-RECIPE` | §8 | 唯一内容组合、顺序、预算与裁剪规则 |
 | `MEMORY-FORMATION` | §8.6 | Chat/Agent 使用期形成、修订或候选化 Memory 的唯一流程 |
 | `CHARACTER-DIALOGUE` | §8A | 版本化 Persona Core 与选择性 Character State 的唯一对话路径，以及跨 Text/Voice/Automation/主动对话的一致性 |
+| `EXPERIENCE-ECHO-TIMING` | §8E | 明确未来事件在何时获得一次主动重判机会；不得重做 P2 或把示例提前量写成常量 |
+| `TERRITORY-MOMENT-SELECTION` | §8F | 哪些有真实来源的 Chat Moment 值得调用现有 Territory Candidate，以及唯一触发位置 |
 | `ACTIVITY-DISTILLATION` | §9 | 唯一 Episode/Digest/候选生成流程 |
 | `ACTIVITY-RETENTION` | §9 | 唯一保留、容量与清理策略 |
 | `TERRITORY-SCENE-GENERATION` | 产品设计 §10.4 | 单物件、协调 Asset Pack、选区/Zone/扩建与局部 Edit 的唯一生成、归一化、修复和验收流程 |
@@ -1680,6 +1682,59 @@ N2 只有在 agency/连续性上相对 N1 出现稳定、可解释的配对收�
 主要指标为：行动意图/target 正确、非法 action 尝试、歧义时克制、失败后不虚报完成、最终回答与真实 Tool Result 一致。逐例产品评审再比较 Persona 自然度、语言与动作衔接和是否出现不必要的游戏化。成本同时报告 Provider 请求数、input/output Token、延迟、无关对话的额外 World Token，以及生产模块/Schema/event 数量。
 
 出现能力越权、错误 target 或失败后声称成功的 Arm 不晋级。T2 只有相对 T1 出现稳定、可解释的配对行动/回复收益才保留；质量相当时删除 planner。T1 与 T0 行动质量相当则比较按需额外 step 与每轮动态注入成本，并选择对普通对话侵入更小、生产状态更少的一条。最终胜者必须复用现有 Agent Harness、Tool/Approval、Territory Repository 与 Pixi renderer；失败 Arm、planner、实验 prompt、runner、Arm 标识和原始输出不进入生产仓库。
+
+---
+
+## 8E. `EXPERIENCE-ECHO-TIMING` 未来重要事件的一次重判时机
+
+本 Decision 只决定：用户已经允许“重要时刻主动联系我”，并直接陈述一个时间明确、尚未发生且对自己重要的现实事件后，系统何时创建唯一一次 `evaluateAt`。2026-09-01 用户明确要求不为这一步开展大规模实验、直接按下一步路线推进，因此本轮采用最简单、可解释的固定单次策略，不调用真实 Provider 比较语义时机。已确认的类别许可与一次重判产品方向不由本 Decision 重新表决；它不重做 `PROACTIVE-POLICY` 已接受的主动程度、安静时段、最近 3 次结果退避，不改变 Persona、Chat 路由或通知文案，也不把机会变成到点必发的 Reminder。
+
+### 8E.1 来源与当前边界
+
+- §8B 已登记的人本主动 Agent 研究继续作为“有用、可关闭、不过频”的评价来源；本 Decision 不从论文复制固定提前分钟。
+- 2026-09-01 复核的源码基线为 `main@885706c`：当前 `CompanionInitiativeService` 只消费前台 Activity 观察，Memory 没有独立事件发生时间或持久机会；Automation 已具备数据库 claim、应用启动/系统恢复重查和 timer 只负责唤醒的语义。
+- Electron `43.2.0` `powerMonitor` 与 Node `24.18.x` timers 只证明应用可以在运行/恢复时重新检查持久状态，不保证精确触发或手机送达。`occursAt` 是用户事实，`evaluateAt` 是 CharaMate 启发式，两者必须分开。
+
+### 8E.2 轻量选择与生产规则
+
+| 路径 | 机会形成 | 结论 |
+| --- | --- | --- |
+| `E1-FIXED-SINGLE` | 获得类别许可后，宿主在 `occursAt` 前 30 分钟创建一次机会 | **选择为 MVP 唯一生产路径**；与已确认故事中的 15:00 → 14:30 相符，零额外 Provider 请求，容易解释和测试 |
+| `E2-SEMANTIC-SINGLE` | 模型按语境选择 `evaluateAt` | 暂不实现；只有真实使用证明固定时机持续不合适时，才另立后续 Decision |
+
+每个有效 Memory Revision 只允许一个开放机会；改期、取消、删除、关闭许可和已发生的等价交流使旧机会失效。如果只是重新开启类别许可，或恢复同一个仍在未来的 Revision，则幂等重开原机会，不复制新机会。生产常量固定为提前 30 分钟，普通 UI 不暴露或允许调整。若事件在形成时已经发生，或距离发生不足 30 分钟，本版不创建机会，避免在当前对话后立刻重复搭话。到达 `evaluateAt` 后仍经过同一个 P2 宿主资格策略和陪伴语义门，可以静默。
+
+### 8E.3 最小验证
+
+只做确定性合同和集成验证：明确未来时间形成一次机会；不足 30 分钟或已发生不形成；改期、取消、删除与关闭许可取消旧机会；重新开启许可或恢复仍在未来的同 Revision 时只重开原机会；睡眠/退出后恢复只 claim 一次；到点仍可因 P2、气泡占用、近期等价交流或语义门选择静默；发送时先写入精确来源 Chat 的普通 Run/Message，再只投影一次。跨时区使用已持久化的绝对 `occursAt`，`timeZone` 只保留用户事实的解释上下文。
+
+硬边界是许可、当前 Revision、取消、安静时段和单次 claim 均不得违反；本轮不把 fixture 结果声称为真实用户满意度，也不运行真实 Provider Pilot。固定提前 30 分钟是用户选择下的 MVP 启发式，不是协议限制；后续若真实反馈显示不同事件类型需要不同窗口，再以新证据讨论是否引入语义时机。
+
+生产只形成一个固定机会创建器并接入现有主动领域；不保留 Arm、窗口配置、实验 prompt、runner 或 Settings 数值控件。结论记录在 `docs/benchmarks/experience-echo-timing.md`。
+
+---
+
+## 8F. `TERRITORY-MOMENT-SELECTION` 共同经历的领地候选选择
+
+本 Decision 只评估哪些有真实 Chat/附件/Memory 来源的时刻值得提出一个现有 `TerritoryChangeCandidate`，以及判断发生在同一 Run 还是额外 Review。已确认的稀疏自主提案方向不由本研究重新表决；M0 只提供当前纯手动入口的观测基线。它不重新比较 `TERRITORY-SCENE-GENERATION`、Image Provider、World compiler、Preview 或应用 Revision，也不预设拍立得、奖杯、纪念品或任何视觉模板；表现形态继续由获胜 Territory 生成路径结合来源和当前 Style 自主决定。
+
+### 8F.1 Arms
+
+| Arm | 选择位置 | 候选行为 |
+| --- | --- | --- |
+| `M0-USER-ONLY` | 只有用户明确点击或要求生成 | 只作观测基线，不是已确认产品方向的可晋级 Arm |
+| `M1-IN-RUN` | 处理该时刻的普通 Chat Agent 在回答完成前结构化选择 `no_candidate/propose_moment` | 复用当前语境与同一 Run |
+| `M2-POST-RUN-REVIEW` | Run 完成后由一次无 Tool 的异步 Review 使用相同冻结证据选择 | 额外判断候选 |
+
+三组使用相同的已完成用户消息、实际读取的图片像素或文档片段、相关 Memory/Journey 摘要、Persona 和 Territory Style；宿主绑定 Run/Message/Attachment/Memory ID，模型不能提交内部来源 ID。自主候选只在用户已经允许领地惊喜时存在，最多新增一个普通物件或附件 Preview，不修改 World；同一 `momentKey` 重复调用、恢复和“换一种表达”都不能产生多个开放候选。
+
+### 8F.2 数据、指标与晋级
+
+冻结至少 30 个中文场景，平衡重要完成/转折、日常但有情感意义的图片、普通文件传输、无关自拍/截图、只上传未解析文档、含糊情绪、重复素材、被用户拒绝过的时刻和来源随后删除。独立标签同时给出“值得提出 / 应保持沉默”、可接受的事实边界和不可声称的情绪；物件形态不作为固定标准，只评价与来源、Persona 和世界风格是否协调。
+
+主要指标为候选 precision/recall、无依据生成数、事实/情绪越界数、拒绝后重复数、来源绑定完整率、额外 Provider 请求/Token、候选准备延迟和模块复杂度。无真实内容证据、用户未许可、拒绝后重复、直接修改 World 或伪造情绪事实任一出现都阻止该 Arm 晋级。M2 只有相对 M1 明确改善重要时刻召回且不增加误生成/越界时才保留；质量相当选择 M1。M0 只用来量化自主提案相对纯手动入口的价值和打扰；若 M1/M2 都不满足边界，本 Decision 保持 blocked 并回到权威产品设计讨论，不得把已确认的自主判断静默降级为手动按钮。真实 Provider/Image 调用需另获用户授权，默认先用确定性 fixture 验证协议、幂等和来源保真。
+
+最终生产只保留一个选择位置，并复用既有 Territory Candidate/Preview/Application 路径。失败 reviewer、Arm prompt、runner、候选字段和样本原图不进入仓库；长期回归 fixture 必须去除 Arm 身份且不含私人素材。中文 Decision Record 写入 `docs/benchmarks/territory-moment-selection.md`。
 
 ---
 

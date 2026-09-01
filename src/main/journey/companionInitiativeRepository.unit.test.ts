@@ -33,6 +33,7 @@ describe("CompanionInitiativeRepository", () => {
         kind: "invitation",
         message: `第 ${index + 1} 次主动消息`,
         shownAt,
+        sourceKind: "activity",
         windowTitle: `document-${index}.md`,
       });
     }

@@ -56,6 +56,8 @@ export const QuietHoursSchema = Type.Object(
 
 export const CompanionInitiativeSettingsSchema = Type.Object(
   {
+    importantMomentOutreachEnabled: Type.Boolean(),
+    importantMomentOutreachPrompted: Type.Boolean(),
     level: CompanionInitiativeLevelSchema,
     quietHours: QuietHoursSchema,
   },

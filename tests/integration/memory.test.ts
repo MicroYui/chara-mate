@@ -3,13 +3,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { openApplicationDatabase } from "../../src/main/db/database";
 import { LexicalRetrievalPipeline } from "../../src/main/memory/lexicalRetrievalPipeline";
 import { MemoryRepository } from "../../src/main/memory/memoryRepository";
 import { MemoryService } from "../../src/main/memory/memoryService";
-import { registerMemoryTool } from "../../src/main/memory/memoryTool";
+import {
+  registerMemoryFormationTool,
+  registerMemoryTool,
+} from "../../src/main/memory/memoryTool";
 import { ToolRegistry } from "../../src/main/tools/toolRegistry";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { FakeClock } from "../fixtures/fakeClock";
@@ -44,6 +47,43 @@ function harness() {
 }
 
 describe("Memory persistence", () => {
+  it("notifies the integration owner after mutations that can reschedule outreach", () => {
+    const { database, service } = harness();
+    const changed = vi.fn();
+    service.setChangedListener(changed);
+    const created = service.create({
+      confidence: 1,
+      content: "用户明天下午三点有一场重要分享。",
+      importance: 0.9,
+      importantMoment: true,
+      occursAt: "2026-08-09T07:00:00.000Z",
+      reason: "用户明确说明",
+      sources: [],
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+
+    service.revise({
+      content: "用户明天下午四点有一场重要分享。",
+      importantMoment: true,
+      memoryId: created.memory.id,
+      occursAt: "2026-08-09T08:00:00.000Z",
+      reason: "用户明确改期",
+      sources: [],
+      timeZone: "Asia/Shanghai",
+    });
+    service.archive(created.memory.id);
+    service.restore(created.memory.id);
+    service.delete(created.memory.id);
+    service.restore(created.memory.id);
+    service.delete(created.memory.id);
+    service.purge(created.memory.id);
+
+    expect(changed).toHaveBeenCalledTimes(8);
+    expect(changed).toHaveBeenCalledWith(created.memory.id);
+    database.close();
+  });
+
   it("keeps current state, Revision, sources and Profile projection aligned", () => {
     const { clock, database, service } = harness();
     const sourceId = randomUUID();
@@ -797,6 +837,260 @@ describe("Memory persistence", () => {
     expect(
       database.prepare("SELECT COUNT(*) AS count FROM memories").get(),
     ).toEqual({ count: 1 });
+    database.close();
+  });
+
+  it("versions event time and important-moment state through target hints", () => {
+    const { database, service } = harness();
+    const source = () => ({
+      id: randomUUID(),
+      label: "演示安排消息",
+      referenceId: randomUUID(),
+      type: "chat" as const,
+    });
+    const content = "用户明天下午三点有一场重要的演示。";
+    const created = service.form({
+      allowedMemoryIds: [],
+      basis: "explicit_user_statement",
+      content,
+      importantMoment: true,
+      occursAt: "2026-08-09T07:00:00.000Z",
+      operation: "create",
+      source: source(),
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+    if (!("memoryId" in created)) throw new Error("Expected event Memory");
+    expect(service.get(created.memoryId).revisions[0]).toMatchObject({
+      importantMoment: true,
+      occursAt: "2026-08-09T07:00:00.000Z",
+      timeZone: "Asia/Shanghai",
+    });
+
+    const revised = service.form({
+      allowedMemoryIds: [created.memoryId],
+      basis: "explicit_user_statement",
+      content,
+      importantMoment: true,
+      occursAt: "2026-08-09T08:00:00.000Z",
+      operation: "replace",
+      source: source(),
+      targetHint: `  ${content}  `,
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+    expect(revised).toMatchObject({
+      memoryId: created.memoryId,
+      outcome: "revised",
+    });
+    expect(service.get(created.memoryId).revisions[0]).toMatchObject({
+      importantMoment: true,
+      occursAt: "2026-08-09T08:00:00.000Z",
+    });
+
+    const duplicate = service.form({
+      allowedMemoryIds: [created.memoryId],
+      basis: "explicit_user_statement",
+      content,
+      importantMoment: true,
+      occursAt: "2026-08-09T08:00:00.000Z",
+      operation: "replace",
+      source: source(),
+      targetHint: content,
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+    expect(duplicate).toMatchObject({ outcome: "duplicate" });
+
+    const cancelled = service.form({
+      allowedMemoryIds: [created.memoryId],
+      basis: "explicit_user_statement",
+      content: "用户的演示已经取消。",
+      importantMoment: false,
+      occursAt: null,
+      operation: "replace",
+      source: source(),
+      targetHint: content,
+      timeZone: null,
+      type: "event",
+    });
+    expect(cancelled).toMatchObject({ outcome: "revised" });
+    const current = service.get(created.memoryId).revisions[0];
+    expect(current).toMatchObject({
+      content: "用户的演示已经取消。",
+      importantMoment: false,
+    });
+    expect(current).not.toHaveProperty("occursAt");
+    expect(current).not.toHaveProperty("timeZone");
+    expect(
+      database.prepare("SELECT COUNT(*) AS count FROM memory_revisions").get(),
+    ).toEqual({ count: 3 });
+    database.close();
+  });
+
+  it("rejects event time metadata that the packaged runtime cannot interpret", () => {
+    const { database, service } = harness();
+    const input = {
+      confidence: 1,
+      content: "用户明天下午三点有一场重要的演示。",
+      importance: 0.8,
+      importantMoment: true,
+      occursAt: "2026-08-09T07:00:00.000Z",
+      reason: "用户明确说明",
+      sources: [],
+      type: "event" as const,
+    };
+
+    expect(() =>
+      service.create({ ...input, timeZone: "Mars/Olympus" }),
+    ).toThrow(/timeZone must be recognized/u);
+    expect(() =>
+      service.create({
+        ...input,
+        occursAt: "2026-08-09 07:00",
+        timeZone: "Asia/Shanghai",
+      }),
+    ).toThrow(/canonical UTC timestamp/u);
+    expect(
+      database.prepare("SELECT COUNT(*) AS count FROM memories").get(),
+    ).toEqual({ count: 0 });
+    database.close();
+  });
+
+  it("reports formed revision metadata without exposing target IDs to the model", async () => {
+    const { database, service } = harness();
+    const registry = new ToolRegistry();
+    const formed: Array<Record<string, unknown>> = [];
+    registerMemoryFormationTool(
+      registry,
+      service,
+      () => ({
+        allowedMemoryIds: [],
+        label: "用户消息",
+        referenceId: randomUUID(),
+        sourceType: "chat",
+      }),
+      (value) => formed.push(value),
+    );
+
+    const result = await registry.execute(
+      "memory.record",
+      {
+        basis: "explicit_user_statement",
+        content: "用户明天下午三点有一场重要的演示。",
+        importantMoment: true,
+        occursAt: "2026-08-09T07:00:00.000Z",
+        operation: "create",
+        timeZone: "Asia/Shanghai",
+        type: "event",
+      },
+      {
+        itemId: randomUUID(),
+        onDelta: () => undefined,
+        runId: randomUUID(),
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.modelContent).toEqual({ outcome: "created" });
+    expect(formed).toHaveLength(1);
+    expect(formed[0]).toMatchObject({
+      importantMoment: true,
+      occursAt: "2026-08-09T07:00:00.000Z",
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+    expect(typeof formed[0]?.["revisionId"]).toBe("string");
+    database.close();
+  });
+
+  it("deduplicates timed candidates by content and time and rejects ambiguous hints", () => {
+    const { clock, database, service } = harness();
+    const source = () => ({
+      id: randomUUID(),
+      label: "日程消息",
+      referenceId: randomUUID(),
+      type: "chat" as const,
+    });
+    const candidateAtThree = service.form({
+      allowedMemoryIds: [],
+      basis: "inference",
+      content: "用户明天下午有演示。",
+      importantMoment: false,
+      occursAt: "2026-08-09T07:00:00.000Z",
+      operation: "create",
+      source: source(),
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+    const candidateAtFour = service.form({
+      allowedMemoryIds: [],
+      basis: "inference",
+      content: "用户明天下午有演示。",
+      importantMoment: false,
+      occursAt: "2026-08-09T08:00:00.000Z",
+      operation: "create",
+      source: source(),
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+    const replayAtFour = service.form({
+      allowedMemoryIds: [],
+      basis: "inference",
+      content: "用户明天下午有演示。",
+      importantMoment: false,
+      occursAt: "2026-08-09T08:00:00.000Z",
+      operation: "create",
+      source: source(),
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+    expect(candidateAtThree).toMatchObject({ outcome: "candidate_created" });
+    expect(candidateAtFour).toMatchObject({ outcome: "candidate_created" });
+    expect(replayAtFour).toMatchObject({
+      candidateId:
+        "candidateId" in candidateAtFour
+          ? candidateAtFour.candidateId
+          : undefined,
+      outcome: "candidate_duplicate",
+    });
+
+    const duplicateContent = "用户下周参加产品评审。";
+    const first = service.create({
+      confidence: 1,
+      content: duplicateContent,
+      importance: 0.8,
+      importantMoment: true,
+      occursAt: "2026-08-10T02:00:00.000Z",
+      reason: "用户明确说明",
+      sources: [],
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+    const second = service.create({
+      confidence: 1,
+      content: duplicateContent,
+      importance: 0.8,
+      importantMoment: true,
+      occursAt: "2026-08-11T02:00:00.000Z",
+      reason: "用户明确说明",
+      sources: [],
+      timeZone: "Asia/Shanghai",
+      type: "event",
+    });
+    clock.advance(1_000);
+    const ambiguous = service.form({
+      allowedMemoryIds: [first.memory.id, second.memory.id],
+      basis: "explicit_user_statement",
+      content: "用户的产品评审改到下午。",
+      importantMoment: true,
+      operation: "replace",
+      source: source(),
+      targetHint: duplicateContent,
+      type: "event",
+    });
+    expect(ambiguous).toMatchObject({ outcome: "candidate_created" });
+    expect(service.get(first.memory.id).revisions).toHaveLength(1);
+    expect(service.get(second.memory.id).revisions).toHaveLength(1);
     database.close();
   });
 

@@ -44,4 +44,65 @@ describe("Memory formation Tool schema", () => {
       }),
     ).toThrow(/rejected value/u);
   });
+
+  it("keeps timed memories paired and resolves updates through content hints", () => {
+    expect(
+      parseSchema(MemoryFormationInputSchema, {
+        basis: "explicit_user_statement",
+        content: "用户明天下午三点有重要的演示。",
+        importantMoment: true,
+        occursAt: "2026-09-02T07:00:00.000Z",
+        operation: "create",
+        timeZone: "Asia/Shanghai",
+        type: "event",
+      }),
+    ).toMatchObject({ importantMoment: true, type: "event" });
+
+    expect(
+      parseSchema(MemoryFormationInputSchema, {
+        basis: "explicit_user_statement",
+        content: "用户的演示已取消。",
+        importantMoment: false,
+        occursAt: null,
+        operation: "replace",
+        targetHint: "用户明天下午三点有重要的演示。",
+        timeZone: null,
+        type: "event",
+      }),
+    ).toMatchObject({
+      occursAt: null,
+      targetHint: "用户明天下午三点有重要的演示。",
+    });
+
+    expect(() =>
+      parseSchema(MemoryFormationInputSchema, {
+        basis: "explicit_user_statement",
+        content: "用户明天下午三点有演示。",
+        importantMoment: false,
+        occursAt: "2026-09-02T07:00:00.000Z",
+        operation: "create",
+        type: "event",
+      }),
+    ).toThrow(/rejected value/u);
+
+    expect(() =>
+      parseSchema(MemoryFormationInputSchema, {
+        basis: "explicit_user_statement",
+        content: "用户的演示改到四点。",
+        importantMoment: true,
+        operation: "replace",
+        type: "event",
+      }),
+    ).toThrow(/rejected value/u);
+
+    expect(() =>
+      parseSchema(MemoryFormationInputSchema, {
+        basis: "explicit_user_statement",
+        content: "Lantern 计划六月发布。",
+        importantMoment: true,
+        operation: "create",
+        type: "project",
+      }),
+    ).toThrow(/rejected value/u);
+  });
 });

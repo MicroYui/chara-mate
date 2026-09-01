@@ -36,6 +36,8 @@ function createApi() {
           screenRecording: "granted",
         },
         companionInitiative: {
+          importantMomentOutreachEnabled: false,
+          importantMomentOutreachPrompted: false,
           level: "balanced",
           quietHours: {
             enabled: true,
