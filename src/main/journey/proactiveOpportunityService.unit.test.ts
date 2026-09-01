@@ -174,6 +174,7 @@ function harness(input?: {
   readonly enabled?: boolean;
   readonly otherActiveRun?: boolean;
   readonly otherActiveRunOnStart?: boolean;
+  readonly projectWithoutDesktopBubble?: boolean;
 }) {
   const database = new Database(":memory:");
   databases.push(database);
@@ -281,13 +282,20 @@ function harness(input?: {
   const launches: LaunchRecord[] = [];
   const bubbles: ProactiveConversationBubble[] = [];
   const historyRecords: CompanionInitiativeRecord[] = [];
+  const warn = vi.fn();
   const listMessages = vi.fn<() => Message[]>(() => []);
-  const recordShown = vi.fn((record: NewCompanionInitiativeRecord) => {
+  const recordAccepted = vi.fn((record: NewCompanionInitiativeRecord) => {
     historyRecords.unshift({
       ...record,
-      outcome: "shown",
-      updatedAt: record.shownAt,
+      outcome: "accepted",
+      updatedAt: record.acceptedAt,
     });
+  });
+  const projectMessage = vi.fn((bubble: ProactiveConversationBubble) => {
+    if (input?.projectWithoutDesktopBubble) return true;
+    outstandingBubble = true;
+    bubbles.push(bubble);
+    return true;
   });
   const decide = vi.fn(
     (
@@ -379,15 +387,11 @@ function harness(input?: {
     agent,
     {
       hasOutstandingBubble: () => outstandingBubble,
-      publishBubble: vi.fn((bubble: ProactiveConversationBubble) => {
-        outstandingBubble = true;
-        bubbles.push(bubble);
-        return true;
-      }),
+      projectMessage,
     },
     {
       listRecent: () => historyRecords,
-      recordShown,
+      recordAccepted,
     },
     {
       getCompanionInitiative: () => ({
@@ -408,7 +412,7 @@ function harness(input?: {
         `99999999-9999-4999-8999-${String(idSequence++).padStart(12, "0")}`,
     },
     { now: () => now },
-    { warn: vi.fn() },
+    { warn },
     () => false,
     () => otherActiveRun,
     () => true,
@@ -452,7 +456,8 @@ function harness(input?: {
     decide,
     historyRecords,
     launches,
-    recordShown,
+    projectMessage,
+    recordAccepted,
     repository,
     runById,
     service,
@@ -488,6 +493,7 @@ function harness(input?: {
           EVALUATE_AT,
         );
     },
+    warn,
   };
 }
 
@@ -679,14 +685,98 @@ describe("ProactiveOpportunityService", () => {
         messageId: MESSAGE_ID,
       }),
     ]);
-    expect(fixture.recordShown).toHaveBeenCalledTimes(1);
-    expect(fixture.recordShown).toHaveBeenCalledWith(
+    expect(fixture.recordAccepted).toHaveBeenCalledTimes(1);
+    expect(fixture.recordAccepted).toHaveBeenCalledWith(
       expect.objectContaining({
+        acceptedAt: COMPLETED_AT,
         id: RUN_ID,
         kind: "continuation",
         sourceKind: "memory_event",
       }),
     );
+    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
+      messageId: MESSAGE_ID,
+      outcome: "delivered",
+      state: "resolved",
+    });
+  });
+
+  it("uses an Android-accepted projection in the global initiative cooldown without claiming OS display", async () => {
+    const fixture = harness({ projectWithoutDesktopBubble: true });
+    const resolve = vi.spyOn(fixture.repository, "resolve");
+    fixture.service.reconcileAll();
+    fixture.setNow(EVALUATE_AT);
+    await fixture.service.runDue();
+
+    fixture.setNow(COMPLETED_AT);
+    const completedRun = fixture.completeRun();
+    fixture.service.observeRun(completedEnvelope(completedRun));
+
+    expect(fixture.bubbles).toEqual([]);
+    expect(fixture.recordAccepted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        acceptedAt: COMPLETED_AT,
+        id: RUN_ID,
+        message: "要准备上场了吗？放轻松，照你的节奏来。",
+        sourceKind: "memory_event",
+      }),
+    );
+    expect(fixture.recordAccepted.mock.invocationCallOrder[0]).toBeLessThan(
+      resolve.mock.invocationCallOrder[0]!,
+    );
+
+    fixture.setDetail(
+      memoryDetail({
+        occursAt: "2026-09-02T07:10:00.000Z",
+        revisionId: "33333333-3333-4333-8333-333333333334",
+      }),
+    );
+    fixture.service.handleMemoryChanged(MEMORY_ID);
+    fixture.setNow("2026-09-02T06:40:00.000Z");
+    await fixture.service.runDue();
+
+    expect(fixture.decide).toHaveBeenCalledTimes(1);
+    expect(fixture.launches).toHaveLength(1);
+    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
+      outcome: "silent",
+      state: "resolved",
+    });
+  });
+
+  it("keeps an accepted projection recoverable until initiative history is persisted", async () => {
+    const fixture = harness({ projectWithoutDesktopBubble: true });
+    const historyError = new Error("initiative history unavailable");
+    fixture.recordAccepted.mockImplementationOnce(() => {
+      throw historyError;
+    });
+    fixture.service.reconcileAll();
+    fixture.setNow(EVALUATE_AT);
+    await fixture.service.runDue();
+
+    fixture.setNow(COMPLETED_AT);
+    const completedRun = fixture.completeRun();
+    fixture.service.observeRun(completedEnvelope(completedRun));
+
+    expect(fixture.recordAccepted).toHaveBeenCalledTimes(1);
+    expect(fixture.projectMessage).toHaveBeenCalledTimes(1);
+    expect(fixture.historyRecords).toEqual([]);
+    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
+      runId: RUN_ID,
+      state: "evaluating",
+    });
+    expect(fixture.warn).toHaveBeenCalledWith(
+      "PROACTIVE_OPPORTUNITY_HISTORY_WRITE_ERROR",
+      expect.objectContaining({ error: historyError }),
+    );
+
+    fixture.service.initialize();
+
+    expect(fixture.recordAccepted).toHaveBeenCalledTimes(2);
+    expect(fixture.projectMessage).toHaveBeenCalledTimes(2);
+    expect(fixture.projectMessage.mock.calls[1]).toEqual(
+      fixture.projectMessage.mock.calls[0],
+    );
+    expect(fixture.historyRecords).toHaveLength(1);
     expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
       messageId: MESSAGE_ID,
       outcome: "delivered",
@@ -706,7 +796,7 @@ describe("ProactiveOpportunityService", () => {
     fixture.service.observeRun(completedEnvelope(completedRun));
 
     expect(fixture.bubbles).toEqual([]);
-    expect(fixture.recordShown).not.toHaveBeenCalled();
+    expect(fixture.recordAccepted).not.toHaveBeenCalled();
     expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
       messageId: MESSAGE_ID,
       outcome: "delivered",
@@ -732,7 +822,7 @@ describe("ProactiveOpportunityService", () => {
     expect(fixture.service.isBusy()).toBe(false);
   });
 
-  it("records a completed shutdown-race message without projecting a transient bubble", async () => {
+  it("leaves a completed shutdown-race Run evaluating for startup projection recovery", async () => {
     const fixture = harness();
     fixture.service.reconcileAll();
     fixture.setNow(EVALUATE_AT);
@@ -744,7 +834,26 @@ describe("ProactiveOpportunityService", () => {
     fixture.service.observeRun(completedEnvelope(completedRun));
 
     expect(fixture.bubbles).toEqual([]);
-    expect(fixture.recordShown).not.toHaveBeenCalled();
+    expect(fixture.recordAccepted).not.toHaveBeenCalled();
+    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
+      runId: RUN_ID,
+      state: "evaluating",
+    });
+  });
+
+  it("recovers a completed evaluating Run before resolving its message delivery", async () => {
+    const fixture = harness();
+    fixture.service.reconcileAll();
+    fixture.setNow(EVALUATE_AT);
+    await fixture.service.runDue();
+
+    fixture.setNow(COMPLETED_AT);
+    fixture.completeRun();
+    fixture.service.initialize();
+
+    expect(fixture.bubbles).toEqual([
+      expect.objectContaining({ messageId: MESSAGE_ID }),
+    ]);
     expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
       messageId: MESSAGE_ID,
       outcome: "delivered",

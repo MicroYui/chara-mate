@@ -2,6 +2,8 @@ import type { Static } from "@sinclair/typebox";
 
 import type {
   CompanionAndroidMailboxAckSchema,
+  CompanionAndroidMailboxEnqueueReceiptSchema,
+  CompanionAndroidMailboxEnqueueRequestSchema,
   CompanionAndroidMailboxEnvelopeSchema,
   CompanionAndroidMailboxEventSchema,
   CompanionAndroidMailboxPageSchema,
@@ -186,6 +188,12 @@ export type CompanionDesktopMailboxAck = Static<
 >;
 export type CompanionAndroidMailboxAck = Static<
   typeof CompanionAndroidMailboxAckSchema
+>;
+export type CompanionAndroidMailboxEnqueueRequest = Static<
+  typeof CompanionAndroidMailboxEnqueueRequestSchema
+>;
+export type CompanionAndroidMailboxEnqueueReceipt = Static<
+  typeof CompanionAndroidMailboxEnqueueReceiptSchema
 >;
 export type CompanionMailboxAck = Static<typeof CompanionMailboxAckSchema>;
 export type CompanionNotificationPush = Static<

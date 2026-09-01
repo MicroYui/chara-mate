@@ -52,7 +52,7 @@ function latestRecords(
   records: readonly CompanionInitiativeRecord[],
 ): readonly CompanionInitiativeRecord[] {
   return [...records]
-    .sort((left, right) => right.shownAt.localeCompare(left.shownAt))
+    .sort((left, right) => right.acceptedAt.localeCompare(left.acceptedAt))
     .slice(0, 3);
 }
 
@@ -84,9 +84,9 @@ export function evaluateCompanionInitiativePolicy(input: {
   }
   const latest = latestRecords(input.recentInitiatives)[0];
   if (!latest) return { eligible: true, reason: "eligible" };
-  const shownAtMs = Date.parse(latest.shownAt);
+  const acceptedAtMs = Date.parse(latest.acceptedAt);
   const nowMs = Date.parse(input.now);
-  if (!Number.isFinite(shownAtMs) || !Number.isFinite(nowMs)) {
+  if (!Number.isFinite(acceptedAtMs) || !Number.isFinite(nowMs)) {
     return { eligible: false, reason: "minimum_interval" };
   }
   const requiredInterval = Math.max(
@@ -94,7 +94,7 @@ export function evaluateCompanionInitiativePolicy(input: {
     COMPANION_INITIATIVE_LEVEL_INTERVAL_MS[input.settings.level] *
       (1 + consecutiveNegativeCount(input.recentInitiatives)),
   );
-  return nowMs - shownAtMs < requiredInterval
+  return nowMs - acceptedAtMs < requiredInterval
     ? { eligible: false, reason: "minimum_interval" }
     : { eligible: true, reason: "eligible" };
 }

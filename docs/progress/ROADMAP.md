@@ -151,7 +151,7 @@ flowchart TD
 5. **Wave 4 — 长期理解与领地支线**：Memory 自动形成闭环与 Activity 完成后，主动聊天、Self-evolution 实验和 Territory 沙盒的设计/Decision 可按各自 Gate 与所有权边界推进；Territory 共享合同由单一 integration owner 串行冻结，World runtime、Renderer fixture 和 AI 生成研究随后按所有权拆分。
 6. **Wave 5 — 全产品收口**：只集成已通过 Gate 的路径，运行完整离线、打包、E2E 和明确要求的 Live 检查。
 7. **Wave 6 — Persona 与角色对话补全（已完成）**：`CHARACTER-DIALOGUE` 已选择并实现 A1；生产具有版本化 Persona、唯一 Character Context 及跨 Text/Voice/Automation/主动对话 snapshot。显式叙事与 NPC 行动留作后续独立问题。
-8. **Wave 7 — 经历回响与跨设备陪伴（推进中）**：未来事件时机已完成最小选择，跨设备 v1 合同已冻结；当前仓库已由单一 owner 接入 Desktop Bridge 的 Main 配对、Relay mailbox、手机分享导入、IPC 与生命周期。下一步分别实现独立 Relay、Android Companion、Devices UI 和已完成 Assistant Message 的手机通知投影，再让 Chat Moment 复用既有 Territory Candidate。任何阶段都不建立云端 Agent、第二 Chat 真源或固定拍立得/纪念品模板。
+8. **Wave 7 — 经历回响与跨设备陪伴（推进中）**：未来事件时机已完成最小选择，跨设备 v1 合同已冻结；当前仓库已由单一 owner 接入 Desktop Bridge 的 Main 配对、Relay mailbox、手机分享导入、Assistant Message 单表面投影、稳定 Android enqueue/recovery、Devices UI 与生命周期。下一步分别实现独立 Relay、Android Companion 和三部署单元联合验收，再让 Chat Moment 复用既有 Territory Candidate。任何阶段都不建立云端 Agent、第二 Chat 真源或固定拍立得/纪念品模板。
 
 ## Phase 0 — 工程基线与稳定契约
 
@@ -341,7 +341,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P5-EVOLUTION`（已完成）：Run 完成事件只在明确纠正、明确教学、客观验证成功或重复流程时持久化异步 Review；单次无 Tool 结构化调用生成四类候选，全部经用户确认，Skill 再经 replay 后激活；patch 使用内部目标 revision/hash 防止覆盖后续手动编辑，Settings/Agent Skill 变更会同步候选状态；候选生效后只由普通 Skill 管理器负责 pin、归档和恢复，崩溃恢复和 typed IPC/UI 已进入单一生产路径。
 - `MAINT-EVOLUTION-VOICE-REVIEW`（已完成）：修正 Voice Run 错把 Realtime deployment 用作 Structured Outputs Reviewer 的协议错误；无兼容 Chat Model 时 skipped，失败 Review 可关闭，Memory 候选进入有界区域，并以真实桌面几何回归保护搜索栏与列表/详情布局。
 - `MAINT-PROACTIVE-ACTIVITY-EVIDENCE`（已完成）：把 macOS 前台应用/窗口观察收敛为 Electron Main 进程内原生模块，移除独立 helper 身份；主动陪伴在没有窗口标题时不请求 Provider，并删除气泡之外的重复等待态。
-- `MAINT-PROACTIVE-FREQUENCY`（已完成）：每条 Activity 主动消息成功展示后执行 5 分钟全局冷却；持久化最近 3 次观察依据、实际话术和回复/关闭/到期结果，冷却结束后由 Agent 做语义重复判断，不增加标题关键词、字符串相似度或无限历史。
+- `MAINT-PROACTIVE-FREQUENCY`（已完成）：每条主动消息被唯一即时表面接受后执行 5 分钟全局冷却；桌面以气泡真实展示为接受，Android 只以稳定投影选择为接受，不伪造系统展示或交互结果。持久化最近 3 次观察依据、实际话术和回应结果，冷却结束后由 Agent 做语义重复判断，不增加标题关键词、字符串相似度或无限历史。
 - `P5-SKILL-DELETE`（已完成）：Settings 对当前或已归档用户 Skill 提供二次确认的永久删除；当前 Skill 在删除事务内部先归档，Extension 再删除目录和全部内部 revision，Evolution 只保留来源证据并解除目标绑定，普通 UI 不提供第二条恢复路径，workspace Skill 拒绝删除；不新增表、后台清理任务或候选状态。
 
 ### 验收
@@ -352,7 +352,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - Automation 的 Tool、审批、取消、结果和失败与手动 Run 完全同构；
 - 内部 Journey/Session 在多条长期经历、多次共同活动、切换和重启后仍保持全局唯一活跃态、准确 Home Chat 与续接点；自然语言歧义只询问具体事情，不让用户选择 Chat 或内部对象；
 - Activity 观察不会直接创建 Session/Journey；Agent 对证据不足或歧义观察保持沉默，合适时通过普通 Chat Run 发起对话，匹配既有 Journey 时自动路由到其 Home Chat，关闭气泡不会追问；
-- macOS Settings 展示的辅助功能授权进程与实际读取窗口标题的进程一致；没有非空标题时不产生陪伴 Provider 请求；主动消息成功展示后的 5 分钟内不再次请求语义门，冷却结束后只向 Agent 提供最近 3 次主动记录并由其判断是否语义重复；
+- macOS Settings 展示的辅助功能授权进程与实际读取窗口标题的进程一致；没有非空标题时不产生陪伴 Provider 请求；主动消息被唯一即时表面接受后的 5 分钟内不再次请求语义门，冷却结束后只向 Agent 提供最近 3 次主动记录并由其判断是否语义重复；桌面气泡要求真实展示，Android 投影不伪造操作系统展示；
 - 全新话题气泡在首个回复前不进入最近、搜索或归档列表，也不提供“打开完整 Chat”；20 秒无回复、主动关闭或异常重启后临时 Chat/Run/消息被清理，首个文字或气泡语音回复原子转正同一个 Chat。已有 Chat 的气泡可在主窗口关闭时完成至少两轮连续短文字往返；每轮用户消息、助手回答和 Run 都出现在发起时绑定的同一 Chat，回复期间不会被新主动开场替换，关闭气泡不删除已正式建立的 Chat 或 Run，“打开完整 Chat”准确进入该 Chat；
 - 当前在场提示跨六页可见但不含计时、所属长期经历或状态按钮；Chats 只有普通最近/已归档列表，不出现“同行中 / 待续共处 / 同行回望”、详情抽屉或 Journey/Session/Home Chat 名词；通过普通对话完成开始、切换、暂停、结束、完成、重开、一次跟进、范围纠正和可见 Memory 旅程；
 - 后台 Approval 不被伪装为成功，气泡始终跳转同一 Chat Item；
@@ -447,7 +447,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## 后续产品增量 — 经历回响与跨设备陪伴
 
-> 当前状态：`implementing`。`EXPERIENCE-ECHO-TIMING` 已按用户要求以最小验证选择固定提前 30 分钟的一次性机会；第一个父工作包和 `ECHO-MOBILE-CONTRACT` 已完成。当前仓库 Desktop Bridge 已推进到 Schema v22，并在 Main 接入真实配对 handler/Relay HTTP client、mailbox 串行消费与 ack、受管附件导入同一 Agent Runtime 的 User Message/Attachment 与 Run/Item、typed IPC 及启动/休眠恢复/取消配对生命周期。独立 Relay 服务、Android app、Devices UI 和已完成 Assistant Message 的手机通知投影仍未实现；这些是下一步的分离工作包。Desktop 数据库/IPC 只由 Bridge owner 实现，Android Companion 与 Relay 属于独立仓库/部署单元，不把当前桌面单 package 改造成 monorepo。Territory 后续继续复用现有 Candidate/生成能力自主决定生成物，不增加固定拍立得模板。
+> 当前状态：`implementing`。`EXPERIENCE-ECHO-TIMING` 已按用户要求以最小验证选择固定提前 30 分钟的一次性机会；第一个父工作包和 `ECHO-MOBILE-CONTRACT` 已完成。当前仓库 Desktop Bridge 已推进到 Schema v23，并在 Main 接入真实配对 handler/Relay HTTP client、mailbox 串行消费与 ack、受管附件导入同一 Agent Runtime 的 User Message/Attachment 与 Run/Item、已完成 Assistant Message 的稳定 Android enqueue/recovery、桌面/手机唯一表面选择、黏性协议状态、typed IPC、Devices UI 及启动/休眠恢复/取消配对生命周期。独立 Relay 服务、Android app、手机只读消息详情和三部署单元联合验收仍未实现。Desktop 数据库/IPC 只由 Bridge owner 实现，Android Companion 与 Relay 属于独立仓库/部署单元，不把当前桌面单 package 改造成 monorepo。Territory 后续继续复用现有 Candidate/生成能力自主决定生成物，不增加固定拍立得模板。
 
 ### 1. `ECHO-PROACTIVE-OPPORTUNITY`
 
@@ -461,7 +461,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ### 2. `ECHO-MOBILE-COMPANION`
 
-- **状态**：`implementing`。`ECHO-MOBILE-CONTRACT` 已于 2026-09-01 冻结 `protocolVersion = 1` 的 pairing/device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标和 ack Schema；正反例同时通过 Ajv codegen 与无 codegen validator。`ECHO-DESKTOP-BRIDGE` 已在 Main 接入配对、Relay mailbox 串行消费/ack、手机分享导入同一 Run/Item、typed IPC 和应用生命周期；稳定 submission 会在 Provider 晚失败后恢复既有 User Message/Attachment，持久前序游标阻止重试回退 mailbox 水位。当前离线证据覆盖 domain unit、SQLite share-ingress integration 与无配对 Main IPC smoke；paired Relay、电源恢复、解绑和关闭联合链路留待 `ECHO-MOBILE-ACCEPTANCE`。独立 `ECHO-MAILBOX-PUSH-RELAY`、`ECHO-ANDROID-COMPANION`、Devices UI、Assistant Message 通知投影与三部署单元联合验收尚未实现。
+- **状态**：`implementing`。`ECHO-MOBILE-CONTRACT` 已于 2026-09-01 冻结 `protocolVersion = 1` 的 pairing/device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标和 ack Schema；正反例同时通过 Ajv codegen 与无 codegen validator。`ECHO-DESKTOP-BRIDGE` 已在 Main 接入配对、Relay mailbox 串行消费/ack、手机分享导入同一 Run/Item、稳定 Android mailbox enqueue/recovery、Assistant Message 单表面投影、黏性协议状态、Devices UI 和应用生命周期；稳定 submission 会在 Provider 晚失败后恢复既有 User Message/Attachment，持久前序游标阻止重试回退 mailbox 水位。当前离线证据覆盖 domain unit、SQLite share-ingress/projection integration、Settings component 与无配对 Main IPC smoke；paired Relay、电源恢复、解绑和关闭联合链路留待 `ECHO-MOBILE-ACCEPTANCE`。独立 `ECHO-MAILBOX-PUSH-RELAY`、`ECHO-ANDROID-COMPANION`、手机只读消息详情与三部署单元联合验收尚未实现。
 - **Outcome / authority**：落实产品设计 §5.2、§9.2.1 与 UI §4.4/§5.6/§11.5。Android 能收到同一 Assistant Message 的普通通知，并把单个图片或受支持文档及附文送入用户确认的 Chat；Desktop 仍是唯一 Agent/Memory/Run/Territory 真源。
 - **Scope / ownership**：父包依次包含 `ECHO-MOBILE-CONTRACT`（当前仓库 integration owner 冻结 pairing、device、Mailbox Envelope、upload、notification、cursor/ack v1 Schema）、`ECHO-MAILBOX-PUSH-RELAY`（独立 Relay）、`ECHO-ANDROID-COMPANION`（独立 Android）、`ECHO-DESKTOP-BRIDGE`（当前仓库 `src/main/companion/`）与 `ECHO-MOBILE-ACCEPTANCE`（三部署单元联合验收）。Contract 完成后 Relay/Android 可并行；Desktop Bridge 在冻结合同上实现。
 - **Dependencies**：依赖前一父包的单一消息投影结果合同、现有 Chat/Attachment/Run/Persona，以及 Android/FCM 2026-09-01 来源快照。跨设备附件统一复制到 CharaMate 管理资产，手机临时 URI、PC 绝对路径和 Relay URL 不成为持久真源。

@@ -136,6 +136,7 @@ function createRelay(
     client: {
       acknowledgeDesktopMailbox: vi.fn().mockResolvedValue(undefined),
       createPairingTicket,
+      enqueueAndroidMailbox: vi.fn(() => Promise.reject(new Error("unused"))),
       fetchDesktopMailbox: vi.fn(),
       readAsset: vi.fn(),
       setNotificationsEnabled,
@@ -447,6 +448,20 @@ describe("CompanionBridgeService", () => {
     expect(statusSnapshot?.state).toBe("paired");
     if (statusSnapshot?.state === "paired") {
       expect(statusSnapshot.device.status).toEqual({
+        message: "Relay protocol mismatch",
+        observedAt: LATER,
+        state: "protocol_error",
+      });
+    }
+
+    harness.service.updateDeviceStatus(COMPANION_FIXTURE_IDS.device, {
+      observedAt: "2026-09-01T10:02:00.000Z",
+      state: "online",
+    });
+    const stickySnapshot = harness.publish.mock.lastCall?.[0];
+    expect(stickySnapshot?.state).toBe("paired");
+    if (stickySnapshot?.state === "paired") {
+      expect(stickySnapshot.device.status).toEqual({
         message: "Relay protocol mismatch",
         observedAt: LATER,
         state: "protocol_error",

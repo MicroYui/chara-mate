@@ -25,14 +25,14 @@ describe("CompanionInitiativeRepository", () => {
     const repository = new CompanionInitiativeRepository(database);
 
     for (const [index, id] of records.entries()) {
-      const shownAt = `2026-08-28T09:0${index}:00.000Z`;
-      repository.recordShown({
+      const acceptedAt = `2026-08-28T09:0${index}:00.000Z`;
+      repository.recordAccepted({
+        acceptedAt,
         appName: "Text Editor",
         grounding: `Window ${index} is visible.`,
         id,
         kind: "invitation",
         message: `第 ${index + 1} 次主动消息`,
-        shownAt,
         sourceKind: "activity",
         windowTitle: `document-${index}.md`,
       });

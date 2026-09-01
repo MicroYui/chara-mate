@@ -515,6 +515,14 @@ export class CompanionBridgeRepository {
       deviceId,
       status,
     });
+    const current = this.getPairedDevice();
+    if (!current || current.device.id !== input.deviceId) return undefined;
+    if (
+      current.device.status.state === "protocol_error" &&
+      input.status.state !== "protocol_error"
+    ) {
+      return current;
+    }
     const changed = this.database
       .prepare(
         `UPDATE paired_companion_devices
@@ -784,6 +792,43 @@ export class CompanionBridgeRepository {
       )
       .get(id) as ShareImportRow | undefined;
     return row ? readShareImport(row) : undefined;
+  }
+
+  getShareImportByRunId(runId: string): CompanionShareImportRecord | undefined {
+    const id = parseSchema(EntityIdSchema, runId);
+    const row = this.database
+      .prepare(
+        `SELECT ${SHARE_IMPORT_COLUMNS} FROM companion_share_imports
+         WHERE run_id = ?`,
+      )
+      .get(id) as ShareImportRow | undefined;
+    return row ? readShareImport(row) : undefined;
+  }
+
+  listCompletedShareRunsForProjectionRecovery(): CompanionShareImportRecord[] {
+    return (
+      this.database
+        .prepare(
+          `SELECT share.* FROM companion_share_imports AS share
+           INNER JOIN runs AS run ON run.id = share.run_id
+           INNER JOIN messages AS message ON message.id = (
+             SELECT candidate.id
+             FROM messages AS candidate
+             WHERE candidate.run_id = share.run_id
+               AND candidate.role = 'assistant'
+               AND candidate.status = 'completed'
+               AND length(trim(candidate.content)) > 0
+             ORDER BY candidate.created_at DESC, candidate.id DESC
+             LIMIT 1
+           )
+           LEFT JOIN companion_message_projections AS projection
+             ON projection.message_id = message.id
+           WHERE run.status = 'completed'
+             AND projection.message_id IS NULL
+           ORDER BY share.claimed_at, share.submission_id`,
+        )
+        .all() as ShareImportRow[]
+    ).map(readShareImport);
   }
 
   listPendingShareAcks(deviceId: string): CompanionShareImportRecord[] {

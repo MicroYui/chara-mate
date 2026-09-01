@@ -8,7 +8,7 @@
 
 产品方向已确认：用户一次允许重要时刻主动联系后，明确未来事件可以形成到点仍会重判的一次机会；Android 作为通知与分享入口，Desktop 保持唯一 Agent/Memory/Chat/Run/Territory 真源；显著 Chat Moment 可以由现有 Territory 生成能力自主决定表达什么，但只准备待确认 Preview，不固定拍立得等模板，也不自动修改 World。
 
-`EXPERIENCE-ECHO-TIMING` 已按用户要求不做大规模实验，选择固定在 `occursAt` 前 30 分钟获得一次重判机会；事件形成时若不足 30 分钟则不即时补发。`ECHO-PROACTIVE-OPPORTUNITY` 已完成 Memory `occursAt/timeZone`、重要时刻类别许可、持久机会、恢复重查和同一 Chat Run/气泡投影。`ECHO-MOBILE-CONTRACT` 已冻结 Android/Relay/Desktop Bridge 共用的 pairing、device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标与 ack v1 Schema；`ECHO-DESKTOP-BRIDGE` 当前切片已完成 Main 的单手机配对、Relay HTTPS client、串行 mailbox/import/ack、真实 User Message/Attachment/Run/Item、typed IPC、密钥引用保留及启动/power event/解绑/关闭接线。Domain unit 覆盖配对、处理器启停重试和锁存解绑暂停，SQLite integration 覆盖分享导入；Electron E2E 覆盖 typed preload、未配对 IPC 与启动/关闭 smoke。paired Relay、电源恢复、解绑和关闭中的 mailbox 联合链路仍留待跨部署验收。下一步是已完成 Assistant Message 的 Android 通知投影和 Devices UI；独立 Relay/Android 与 `chat_moment` Territory 来源仍未实现。任何真实 Provider/FCM/Image Live 仍需用户明确授权。
+`EXPERIENCE-ECHO-TIMING` 已按用户要求不做大规模实验，选择固定在 `occursAt` 前 30 分钟获得一次重判机会；事件形成时若不足 30 分钟则不即时补发。`ECHO-PROACTIVE-OPPORTUNITY` 已完成 Memory `occursAt/timeZone`、重要时刻类别许可、持久机会、恢复重查和同一 Chat Run/单表面投影。`ECHO-MOBILE-CONTRACT` 已冻结 Android/Relay/Desktop Bridge 共用的 pairing、device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标与 ack v1 Schema；`ECHO-DESKTOP-BRIDGE` 当前切片已完成 Main 单手机配对、手机分享导入、已完成 Assistant Message 的稳定 Android mailbox 投影、桌面/手机唯一表面选择、投影恢复、黏性协议状态和 Settings → Devices 配对管理。Schema v23 把主动频率基线统一为“即时表面接受”：桌面仍要求气泡实际展示，Android 只记录稳定选择/入队接受，不伪造操作系统展示或交互结果。独立 Relay/Android、三部署单元联合验收、手机只读消息详情与 `chat_moment` Territory 来源仍未实现。任何真实 Provider/FCM/Image Live 仍需用户明确授权。
 
 ### 已完成绿色基线
 
@@ -24,7 +24,7 @@
 
 `MAINT-CORE-TOOL-BOUNDARY` 已完成：文件与命令的 7 个稳定核心原语按执行模式 always-loaded，并从 Tool Discovery 候选中排除；deferred 长尾能力继续使用单一 `T2-CLIENT-BM25`。本变更不改变 Chat/Agent effect 过滤或 Approval Policy。
 
-`MAINT-PROACTIVE-FREQUENCY` 已完成：Activity 主动消息成功展示后由宿主执行 5 分钟全局冷却，最近 3 次观察依据、实际话术和回复/关闭/到期结果持久化后交给 Agent 做语义重复判断；不增加标题关键词、字符串相似度或无限增长历史。冷却从真实气泡展示成功时开始，Provider 失败不占用冷却；应用重启后继续读取同一条持久时间线。
+`MAINT-PROACTIVE-FREQUENCY` 已完成：主动消息被唯一即时表面接受后由宿主执行 5 分钟全局冷却，最近 3 次观察依据、实际话术和回应结果持久化后交给 Agent 做语义重复判断；不增加标题关键词、字符串相似度或无限增长历史。桌面从真实气泡展示成功开始，Android 从稳定单表面投影选择开始；Relay 回执不等于操作系统已展示。Provider 失败不占用冷却，应用重启后继续读取同一条持久时间线。
 
 `MAINT-CHAT-MESSAGE-ACTIONS` 已完成：Chat 消息复制统一通过 typed preload 调用 Electron 原生剪贴板，不再依赖 `file://` 页面中不稳定的 Web Clipboard/`execCommand`；用户消息的“编辑”现在会把原始内容带回 Composer、聚焦输入框，并以新一轮发送，不改写已经完成的历史消息。消息正文同时明确保持可选择文本。
 
@@ -84,7 +84,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 | `ECHO-MOBILE-COMPANION` | `main`（桌面合同 owner） | `implementing` | v1 合同已就绪；Relay/Android 可在独立仓库并行，Desktop Bridge 依合同接入唯一 Chat/Attachment/Run 真源 |
 | `ECHO-MAILBOX-PUSH-RELAY` | 独立 Relay owner | `contract-ready` | 待在独立部署单元实现 mailbox、临时附件、幂等 ack 与 FCM adapter |
 | `ECHO-ANDROID-COMPANION` | 独立 Android owner | `contract-ready` | 待实现配对、通知、精确消息详情、Sharesheet 与 WorkManager 上传队列 |
-| `ECHO-DESKTOP-BRIDGE` | `main` | `implementing` | 入站分享切片已通过 domain unit、SQLite integration 与无配对 Main IPC smoke；paired Relay 生命周期待联合验收，Assistant Message Android 通知投影与 Devices UI 尚未实现 |
+| `ECHO-DESKTOP-BRIDGE` | `main` | `integration-verified` | 入站分享、Assistant Message 单表面投影、稳定 Android enqueue/recovery、黏性协议状态与 Devices UI 已接入；独立 Relay/Android 及 paired 联合生命周期待跨部署验收 |
 | `ECHO-TERRITORY-MOMENT` | `main`（Territory integration owner） | `specified` | `chat_moment` 只扩展既有 Candidate 来源且不固定物件形态；等待 `TERRITORY-MOMENT-SELECTION` 与跨设备附件合同 |
 | `TERRITORY-NPC-ACTION-DECISION` | `codex/character-dialogue-roadmap` | `done` | 选择 T1；生产 `territory.observe → territory.act`、宿主裁决与 Renderer event 已通过完整 offline、25/25 Electron E2E、package 与 packaged smoke |
 | `TERRITORY-NPC-ACTION-EXPERIMENT` | `codex/territory-npc-action-experiment` | `done` | node:test 4/4；27 样本/79 次有效 Provider 请求，T0/T1/T2 均 9/9，raw 仅保存在仓库外 |
@@ -96,7 +96,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 | `P7-PERSONA-CONTRACT/CONTEXT` | `codex/character-dialogue-roadmap` | `done` | Persona revision、Run/Automation/Voice snapshot、typed IPC 与唯一 Character Context Compiler 已完成；A2 状态模块不存在 |
 | `P7-PERSONA-UI` | `codex/character-dialogue-roadmap` | `done` | Settings → Character、侧栏当前 Persona、预设复制/编辑、默认音色归属与切换语义已完成 |
 | `MAINT-CORE-TOOL-BOUNDARY` | `main` | `done` | 文件/命令核心原语常驻且不参与 Discovery；长尾 T2、执行模式过滤与 Approval 保持单路径 |
-| `MAINT-PROACTIVE-FREQUENCY` | `main` | `done` | 5 分钟展示后全局冷却、最近 3 次有结果记录、重启恢复与 Agent 语义重复判断完成；无关键词/字符串规则 |
+| `MAINT-PROACTIVE-FREQUENCY` | `main` | `done` | 5 分钟表面接受后全局冷却、最近 3 次有界记录、重启恢复与 Agent 语义重复判断完成；Android 不伪造系统展示结果 |
 | `MAINT-CHAT-MESSAGE-ACTIONS` | `main` | `done` | 原生剪贴板 typed preload、消息正文选择，以及用户消息回填 Composer 后重新发送完成；历史记录保持 append-first |
 | `MAINT-PROACTIVE-ACTIVITY-EVIDENCE` | `main` | `done` | Main 进程内单一观察路径增加应用代次保护的激活补采；真实 packaged App 的 ChatGPT/Chrome 标题与后续主动判断链路已恢复 |
 | `MAINT-ACTIVITY-AGENT-RECALL` | `codex/voice-wake` | `done` | Activity-owned deferred 紧凑检索、跨自然周稳定候选、旧累计时长 Memory 的用户确认替换与最近两个 Weekly Digest 有界来源完成 |
@@ -131,7 +131,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 ## 依赖、边界与已知问题
 
 - 当前生产已支持用户明确陈述的未来 `event/commitment` 通过 `occursAt/timeZone` 和重要时刻类别许可形成一次持久 `ProactiveOpportunity`；到点仍经过 P2、并发状态与模型语义门，可以静默。它只在 Desktop Main 运行、启动或系统恢复时重查，不是精确闹钟，也不能在 PC 离线时产生新的 Agent 判断。
-- 当前没有 Android endpoint、独立 Mailbox/Push Relay 部署、真实 FCM 或桌宠附件拖放入口；Desktop 已能把合法手机分享信封导入真实 User Message/Attachment。图片使用真实像素；UTF-8 文本/Markdown 可取得正文，PDF/其他文件当前只作附件并不声称已理解内容。
+- 当前没有独立 Mailbox/Push Relay 部署、Android app、真实 FCM、手机只读消息详情或桌宠附件拖放入口；Desktop 已实现 Relay v1 endpoint client、稳定 Android notification enqueue，并能把合法手机分享信封导入真实 User Message/Attachment。图片使用真实像素；UTF-8 文本/Markdown 可取得正文，PDF/其他文件当前只作附件并不声称已理解内容。
 - 当前 Territory 自主生成已有统一 Candidate/Preview 与自由物件表达，但来源只覆盖 Memory/Activity，Agent Tool 尚未绑定 Chat/附件来源；后台 Moment Preview、`momentKey` 去重和用户“换一种表达 / 这次不要”尚未实现。
 - `CHARACTER-DIALOGUE` 已选择并实现 A1。它复用现有 Agent Runtime、Memory、Journey、Voice 与已接受 `CONTEXT-RECIPE`；实验 Arm 和 A2 状态只留在 disposable worktree，不进入生产路径。
 - Persona、revision snapshot 与 Character Context Compiler 已成为唯一生产路径；固定 `Hi Mika` 只保留为当前产品定义的唤醒短语，不再承担非唤醒场景的人格配置。
@@ -139,9 +139,9 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 - 自动唤醒与桌宠通用声波入口相同，固定使用 `Agent + full_access`。误唤醒后的无语音激活会自动结束，但 10 秒窗口只从欢迎语完整停止并回到 listening 后开始；该等待值是 CharaMate 可用性启发式，不是 OpenAI/Azure 或 sherpa-onnx 协议限制。
 - 当前 KWS 选择证据来自 macOS 合成语料与实际生产 Worker，不代表真实麦克风、多说话人、噪声房间或全天候 FAR/FRR 已通过；功能因此保持默认关闭，限制见 `docs/benchmarks/voice-wake.md`。
 - Activity 只提供前台应用、应用 ID 与窗口标题事实；Agent 可按需通过 deferred `activity.search` 读取有界聚合，但只能表述为观察行为。是否沉默、发起新话题或续接既有 Chat 仍由 Agent 结合完整语义判断，不使用关键词表，也不让用户选择归属 Chat。
-- Activity 主动消息从成功展示起执行 5 分钟全局冷却；冷却结束后 Agent 只读取最近 3 次主动话术及回复、关闭、到期或中断结果做语义重复判断。该记录固定保留 3 条，不进入 Memory，也不影响用户明确约定的 Automation/Journey 跟进。
+- 主动消息从唯一即时表面接受起执行 5 分钟全局冷却；桌面接受要求气泡真实展示，Android 接受只表示稳定选择/入队，不声称系统通知已经展示。冷却结束后 Agent 只读取最近 3 次主动话术及回应结果做语义重复判断。该记录固定保留 3 条，不进入 Memory，也不影响用户明确约定的 Automation/Journey 跟进。
 - 一次共处最多关联一个长期经历；可以保留多个未完成共处，但全局只有一个进行中，其余自动暂停。应用退出不会虚构后台共同在场。
-- 角色主动内容先作为目标 Chat 中的真实助手消息持久化，再投影到桌宠气泡；气泡只是同一 Chat 的轻量表面，不是独立会话系统。
+- 角色主动内容先作为目标 Chat 中的真实助手消息持久化，再投影到唯一即时表面；桌宠气泡和 Android 通知都只是同一 Message 的轻量表面，不是独立会话系统。
 - Territory 的连续环境底图是可编辑 Definition；家具、附件、记忆物件、碰撞和寻路仍为结构化实体，不从图片反推可选几何。
 - `MULTI-AGENT` 的机械 Execution Gate 为 no-winner；生产能力来自透明的结果后产品修订，只覆盖两个只读、资源互斥 child。
 - 本机未提供 Developer ID 与 notarization keychain profile，因此 DMG 是可挂载、校验通过的本地验收包，不宣称已签名或公证；正式发布沿同一 Forge 配置注入凭据。
@@ -150,6 +150,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 ## 最近绿色验证
 
+- 2026-09-01 Assistant Message 跨设备投影与 Devices UI：Schema v23 将最近主动记录从桌面“已展示”推广为唯一即时表面“已接受”，桌面仍要求气泡真实展示，Android 只记录稳定选择/入队而不伪造系统通知结果。Desktop Bridge 新增幂等 Android mailbox enqueue、投影恢复、Relay 回执身份校验、入站/出站共享的黏性协议状态、缺失凭据锁存与重新配对恢复；Settings → Devices 提供单手机二维码、连接/通知/协议状态和解除配对，并以 operation token 避免异步响应覆盖实时事件。`npm run verify:offline` 通过：contract 130/130、focused/component 569/569、integration 213/213；production build 与完整 Electron E2E 25/25 通过，TypeScript、ESLint、Prettier 和 `git diff --check` 通过。保留 2 条既有 TanStack Virtual warning 和大型懒加载 chunk 提示。未运行 package/make、独立 Relay/Android、真实 FCM、Provider 或 Image Live。
 - 2026-09-01 Desktop Companion Bridge Main 集成：Schema v22 在既有 cursor CAS 上持久化前序游标；Main 通过系统密钥存储引用保留配对凭据，接入可取消 pairing/mailbox 长询问、pending ack 优先重放及严格 `import → cursor 校验 → ack → mark`，手机文本、图片、UTF-8 文本/Markdown、PDF/普通文件经受管资产进入现有 User Message/Attachment/Run/Item。配对回滚、过期、长询问续接、Relay/凭据失败解绑恢复、Provider 晚失败、重复/并发冲突、处理器启停/唤醒及解绑期间锁存暂停均有确定性覆盖。直接使用 lockfile 安装入口完成全量离线验证：contract 130/130、focused/component 544/544、integration 211/211，TypeScript、ESLint、Prettier、`git diff --check`、production native/build 与完整 Electron E2E 25/25 通过；Companion 的 E2E 断言当前只覆盖 typed preload、未配对 IPC 和启动/关闭 smoke，paired Relay 生命周期留待跨部署验收。保留 2 条既有 TanStack Virtual warning 和大型懒加载 chunk 提示。未接入或运行独立 Relay、Android、FCM、真实 Provider/Image Live 或 package。
 - 2026-09-01 Android Companion v1 合同：pairing/device、分方向 opaque cursor mailbox、稳定 `submissionId`、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标和 ack Schema 已冻结；TypeScript、受影响 ESLint/Prettier、`git diff --check` 与 contract 128/128 通过，其中 companion 正反例同时覆盖 Ajv codegen 和无 codegen validator。未创建数据库迁移、IPC、Relay/Android 源码，未运行真实 FCM。
 - 2026-09-01 经历回响桌面闭环：Schema v20、Memory 时间事实、重要时刻类别许可、持久机会、取消/恢复、同一 Chat Run 与气泡投影完成。锁定依赖入口的完整离线层通过：contract 114/114、focused/component 448/448、integration 205/205；production build 与 Electron E2E 25/25 通过，`git diff --check`、ESLint 和 Prettier 通过。保留 2 条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示。本机 `node_modules/.bin` 为空，因此聚合脚本中的 `tsc` 名称无法解析；已直接运行同一 lockfile 安装版本的 TypeScript/ESLint/Prettier/Vitest 入口完成等价验证。未运行真实 Provider、FCM、Image Live、package、make、签名或公证。

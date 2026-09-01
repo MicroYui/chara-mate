@@ -12,7 +12,7 @@ import { sanitizeForPersistence } from "../db/persistenceBoundary";
 export const COMPANION_INITIATIVE_HISTORY_LIMIT = 3;
 
 export const CompanionInitiativeOutcomeSchema = Type.Union([
-  Type.Literal("shown"),
+  Type.Literal("accepted"),
   Type.Literal("replied"),
   Type.Literal("dismissed"),
   Type.Literal("expired"),
@@ -31,7 +31,7 @@ const CompanionInitiativeRecordSchema = Type.Object(
     ]),
     message: NonBlankStringSchema,
     outcome: CompanionInitiativeOutcomeSchema,
-    shownAt: TimestampSchema,
+    acceptedAt: TimestampSchema,
     sourceKind: Type.Union([
       Type.Literal("activity"),
       Type.Literal("memory_event"),
@@ -56,7 +56,7 @@ export type NewCompanionInitiativeRecord = Omit<
 
 export interface CompanionInitiativeHistory {
   listRecent(): readonly CompanionInitiativeRecord[];
-  recordShown(input: NewCompanionInitiativeRecord): void;
+  recordAccepted(input: NewCompanionInitiativeRecord): void;
 }
 
 interface CompanionInitiativeRecordRow {
@@ -67,7 +67,7 @@ interface CompanionInitiativeRecordRow {
   readonly kind: string;
   readonly message: string;
   readonly outcome: string;
-  readonly shown_at: string;
+  readonly accepted_at: string;
   readonly source_kind: string;
   readonly updated_at: string;
   readonly window_title: string;
@@ -75,7 +75,7 @@ interface CompanionInitiativeRecordRow {
 
 const RECORD_COLUMNS = `
   id, source_kind, kind, app_id, app_name, window_title, grounding, message,
-  outcome, shown_at, updated_at
+  outcome, accepted_at, updated_at
 `;
 
 function readRecord(
@@ -89,7 +89,7 @@ function readRecord(
     kind: row.kind,
     message: row.message,
     outcome: row.outcome,
-    shownAt: row.shown_at,
+    acceptedAt: row.accepted_at,
     sourceKind: row.source_kind,
     updatedAt: row.updated_at,
     ...(row.source_kind === "activity"
@@ -107,7 +107,7 @@ export class CompanionInitiativeRepository implements CompanionInitiativeHistory
         .prepare(
           `SELECT ${RECORD_COLUMNS}
            FROM companion_initiative_records
-           ORDER BY shown_at DESC, id DESC
+           ORDER BY accepted_at DESC, id DESC
            LIMIT ?`,
         )
         .all(
@@ -116,18 +116,18 @@ export class CompanionInitiativeRepository implements CompanionInitiativeHistory
     ).map(readRecord);
   }
 
-  recordShown(input: NewCompanionInitiativeRecord): void {
+  recordAccepted(input: NewCompanionInitiativeRecord): void {
     const record = sanitizeForPersistence(CompanionInitiativeRecordSchema, {
       ...input,
-      outcome: "shown",
-      updatedAt: input.shownAt,
+      outcome: "accepted",
+      updatedAt: input.acceptedAt,
     });
     this.database.transaction(() => {
       this.database
         .prepare(
           `INSERT OR IGNORE INTO companion_initiative_records (
              id, source_kind, kind, app_id, app_name, window_title, grounding,
-             message, outcome, shown_at, updated_at
+             message, outcome, accepted_at, updated_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
@@ -140,7 +140,7 @@ export class CompanionInitiativeRepository implements CompanionInitiativeHistory
           record.grounding,
           record.message,
           record.outcome,
-          record.shownAt,
+          record.acceptedAt,
           record.updatedAt,
         );
       this.database
@@ -149,7 +149,7 @@ export class CompanionInitiativeRepository implements CompanionInitiativeHistory
            WHERE id NOT IN (
              SELECT id
              FROM companion_initiative_records
-             ORDER BY shown_at DESC, id DESC
+             ORDER BY accepted_at DESC, id DESC
              LIMIT ?
            )`,
         )

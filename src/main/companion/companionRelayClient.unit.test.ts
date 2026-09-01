@@ -4,6 +4,8 @@ import {
   COMPANION_FIXTURE_IDS,
   companionMailboxFetchRequestFixture,
   companionMailboxPageFixture,
+  companionNotificationEnqueueReceiptFixture,
+  companionNotificationEnqueueRequestFixture,
   companionPairingCreateRequestFixture,
   companionPairingGrantFixture,
   companionPairingTicketFixture,
@@ -124,6 +126,55 @@ describe("HttpsCompanionRelayClient", () => {
     expect(requestBody(ackInit)).toEqual(companionShareAckFixture);
     expect(JSON.stringify(requestBody(fetchInit))).not.toContain(CREDENTIAL);
     expect(JSON.stringify(requestBody(ackInit))).not.toContain(CREDENTIAL);
+  });
+
+  it("enqueues one stable Android event and accepts only its Relay-owned envelope", async () => {
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        jsonResponse(companionNotificationEnqueueReceiptFixture),
+      );
+    const client = new HttpsCompanionRelayClient({ fetchImplementation });
+
+    await expect(
+      client.enqueueAndroidMailbox({
+        credential: CREDENTIAL,
+        relayOrigin: ORIGIN,
+        request: companionNotificationEnqueueRequestFixture,
+      }),
+    ).resolves.toEqual(companionNotificationEnqueueReceiptFixture);
+
+    const [url, init] = fetchImplementation.mock.calls[0] ?? [];
+    expect(url).toBe(`${ORIGIN}/v1/companion/mailbox/enqueue`);
+    expect(init).toMatchObject({ method: "POST", redirect: "error" });
+    expect(init?.headers).toMatchObject({
+      Authorization: `Bearer ${CREDENTIAL}`,
+    });
+    expect(requestBody(init)).toEqual(
+      companionNotificationEnqueueRequestFixture,
+    );
+    expect(JSON.stringify(requestBody(init))).not.toContain(CREDENTIAL);
+  });
+
+  it("rejects an Android enqueue receipt that changes the stable event identity", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        ...companionNotificationEnqueueReceiptFixture,
+        envelope: {
+          ...companionNotificationEnqueueReceiptFixture.envelope,
+          id: COMPANION_FIXTURE_IDS.envelopeTargets,
+        },
+      }),
+    );
+    const client = new HttpsCompanionRelayClient({ fetchImplementation });
+
+    await expect(
+      client.enqueueAndroidMailbox({
+        credential: CREDENTIAL,
+        relayOrigin: ORIGIN,
+        request: companionNotificationEnqueueRequestFixture,
+      }),
+    ).rejects.toMatchObject({ kind: "protocol" });
   });
 
   it("reads an asset body and routes device mutations through fixed paths", async () => {
@@ -279,6 +330,43 @@ describe("HttpsCompanionRelayClient", () => {
           request: companionMailboxFetchRequestFixture,
         }),
       ).rejects.toMatchObject({ retryAfterMs: 30_000 });
+
+      for (const retryAfter of [
+        "Tuesday, 01-Sep-26 08:00:30 GMT",
+        "Tue Sep  1 08:00:30 2026",
+      ]) {
+        const historicalFormat = new HttpsCompanionRelayClient({
+          fetchImplementation: vi.fn<typeof fetch>().mockResolvedValue(
+            new Response(null, {
+              headers: { "retry-after": retryAfter },
+              status: 429,
+            }),
+          ),
+        });
+        await expect(
+          historicalFormat.fetchDesktopMailbox({
+            credential: CREDENTIAL,
+            relayOrigin: ORIGIN,
+            request: companionMailboxFetchRequestFixture,
+          }),
+        ).rejects.toMatchObject({ retryAfterMs: 30_000 });
+      }
+
+      const oldRfc850Year = new HttpsCompanionRelayClient({
+        fetchImplementation: vi.fn<typeof fetch>().mockResolvedValue(
+          new Response(null, {
+            headers: { "retry-after": "Thursday, 01-Sep-77 08:00:30 GMT" },
+            status: 429,
+          }),
+        ),
+      });
+      await expect(
+        oldRfc850Year.fetchDesktopMailbox({
+          credential: CREDENTIAL,
+          relayOrigin: ORIGIN,
+          request: companionMailboxFetchRequestFixture,
+        }),
+      ).rejects.toMatchObject({ retryAfterMs: 0 });
 
       const invalid = new HttpsCompanionRelayClient({
         fetchImplementation: vi.fn<typeof fetch>().mockResolvedValue(

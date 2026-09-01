@@ -307,7 +307,9 @@ function renderApp({
       }),
     },
     companion: {
-      getSnapshot: vi.fn(),
+      getSnapshot: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: { state: "unpaired" } }),
       setNotificationsEnabled: vi.fn(),
       startPairing: vi.fn(),
       subscribeChanged: vi.fn(() => () => undefined),
@@ -1134,6 +1136,32 @@ describe("application shell", () => {
     ).toBeVisible();
     expect(screen.getAllByText("4.0 KB")).toHaveLength(2);
     expect(screen.getByText("/tmp/chara-mate")).toBeVisible();
+  });
+
+  it("opens Devices inside Settings without adding another primary page", async () => {
+    renderApp();
+    await screen.findByRole("region", { name: "Chats" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const settingsNavigation = screen.getByLabelText("设置分类");
+    const categories = within(settingsNavigation)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(categories.indexOf("Devices")).toBe(
+      categories.indexOf("Browser & Computer") + 1,
+    );
+    expect(categories.indexOf("Skills")).toBe(
+      categories.indexOf("Devices") + 1,
+    );
+
+    fireEvent.click(
+      within(settingsNavigation).getByRole("button", { name: "Devices" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Android Companion" }),
+    ).toBeVisible();
+    expect(screen.getByText("尚未连接手机")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeVisible();
   });
 
   it("opens the integrated Provider settings from Models", async () => {

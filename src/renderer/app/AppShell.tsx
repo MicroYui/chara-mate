@@ -47,6 +47,7 @@ import { AgentSettingsPanel } from "../features/settings/AgentSettingsPanel";
 import { BrowserComputerSettingsPanel } from "../features/settings/BrowserComputerSettingsPanel";
 import { ActivitySettingsPanel } from "../features/settings/ActivitySettingsPanel";
 import { DataSettingsPanel } from "../features/settings/DataSettingsPanel";
+import { DevicesSettingsPanel } from "../features/settings/DevicesSettingsPanel";
 import { McpSettingsPanel } from "../features/settings/McpSettingsPanel";
 import { SkillsSettingsPanel } from "../features/settings/SkillsSettingsPanel";
 import { VoiceSettingsPanel } from "../features/settings/VoiceSettingsPanel";
@@ -675,6 +676,7 @@ function SettingsPage({
     | "browser-computer"
     | "character"
     | "data"
+    | "devices"
     | "mcp"
     | "models"
     | "skills"
@@ -727,6 +729,13 @@ function SettingsPage({
           onClick={() => setActiveSection("browser-computer")}
         >
           Browser &amp; Computer
+        </button>
+        <button
+          type="button"
+          aria-current={activeSection === "devices" ? "page" : undefined}
+          onClick={() => setActiveSection("devices")}
+        >
+          Devices
         </button>
         <button
           type="button"
@@ -872,6 +881,8 @@ function SettingsPage({
           <AgentSettingsPanel onChanged={onAgentSettingsChanged} />
         ) : activeSection === "browser-computer" ? (
           <BrowserComputerSettingsPanel />
+        ) : activeSection === "devices" ? (
+          <DevicesSettingsPanel />
         ) : activeSection === "skills" ? (
           <SkillsSettingsPanel />
         ) : activeSection === "mcp" ? (

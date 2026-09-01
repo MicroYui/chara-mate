@@ -70,7 +70,7 @@ const recentInitiative: CompanionInitiativeRecord = {
   kind: "invitation",
   message: "还在整理论文思路吗？",
   outcome: "expired",
-  shownAt: "2026-08-13T08:50:00.000Z",
+  acceptedAt: "2026-08-13T08:50:00.000Z",
   sourceKind: "activity",
   updatedAt: "2026-08-13T08:50:20.000Z",
   windowTitle: "thesis-notes.md",
@@ -218,11 +218,11 @@ function serviceHarness(
     readonly journeyId?: string;
   }> = [];
   const historyRecords = [...initialHistory];
-  const recordShown = vi.fn((input: NewCompanionInitiativeRecord) => {
+  const recordAccepted = vi.fn((input: NewCompanionInitiativeRecord) => {
     historyRecords.unshift({
       ...input,
-      outcome: "shown",
-      updatedAt: input.shownAt,
+      outcome: "accepted",
+      updatedAt: input.acceptedAt,
     });
     historyRecords.splice(3);
   });
@@ -245,7 +245,7 @@ function serviceHarness(
     },
     {
       listRecent: () => historyRecords,
-      recordShown,
+      recordAccepted,
     },
     {
       getCompanionInitiative: () => ({
@@ -275,7 +275,7 @@ function serviceHarness(
     historyRecords,
     launched,
     logger,
-    recordShown,
+    recordAccepted,
     restoredChats,
     service,
     setNow(value: string) {
@@ -415,13 +415,13 @@ describe("CompanionInitiativeService", () => {
         kind: "invitation",
       },
     ]);
-    expect(fixture.recordShown).toHaveBeenCalledWith({
+    expect(fixture.recordAccepted).toHaveBeenCalledWith({
+      acceptedAt: NOW,
       appName: observation.appName,
       grounding: "The window title is thesis-outline.md.",
       id: RUN_ID,
       kind: "invitation",
       message: "你在整理这篇论文吗？",
-      shownAt: NOW,
       sourceKind: "activity",
       windowTitle: observation.windowTitle,
     });
@@ -650,7 +650,7 @@ describe("CompanionInitiativeService", () => {
         provider: providerSnapshot,
       },
       snapshot(),
-      [{ ...recentInitiative, shownAt: NOW, updatedAt: NOW }],
+      [{ ...recentInitiative, acceptedAt: NOW, updatedAt: NOW }],
     );
 
     fixture.service.observeForeground(observation);

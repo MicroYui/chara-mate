@@ -410,6 +410,24 @@ export const CompanionAndroidMailboxEnvelopeSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const CompanionAndroidMailboxEnqueueRequestSchema = Type.Object(
+  {
+    envelopeId: EntityIdSchema,
+    event: CompanionAndroidMailboxEventSchema,
+    protocolVersion: CompanionProtocolVersionSchema,
+    recipient: CompanionAndroidMailboxRecipientSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const CompanionAndroidMailboxEnqueueReceiptSchema = Type.Object(
+  {
+    envelope: CompanionAndroidMailboxEnvelopeSchema,
+    protocolVersion: CompanionProtocolVersionSchema,
+  },
+  { additionalProperties: false },
+);
+
 export const CompanionMailboxEnvelopeSchema = Type.Union([
   CompanionDesktopMailboxEnvelopeSchema,
   CompanionAndroidMailboxEnvelopeSchema,

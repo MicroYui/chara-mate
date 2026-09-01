@@ -100,7 +100,7 @@ export interface ProactiveOpportunityRunLauncher {
 
 export interface ProactiveOpportunityBubbleTarget {
   hasOutstandingBubble(): boolean;
-  publishBubble(bubble: ProactiveConversationBubble): boolean;
+  projectMessage(bubble: ProactiveConversationBubble): boolean;
 }
 
 export interface ProactiveOpportunityJourneyReader {
@@ -130,10 +130,10 @@ function extractJson(text: string): unknown {
 
 function compactInitiative(record: CompanionInitiativeRecord) {
   return {
+    acceptedAt: record.acceptedAt,
     grounding: record.grounding,
     message: record.message,
     outcome: record.outcome,
-    shownAt: record.shownAt,
     sourceKind: record.sourceKind,
   };
 }
@@ -668,18 +668,20 @@ export class ProactiveOpportunityService {
       this.repository.resolve(opportunity.id, "silent", occurredAt);
       return;
     }
-    this.repository.resolve(
-      opportunity.id,
-      "delivered",
-      occurredAt,
-      message.id,
-    );
     if (this.#stopping) return;
     const evidence = this.#validEvidence(opportunity, occurredAt);
-    if (!evidence) return;
-    let shown = false;
+    if (!evidence) {
+      this.repository.resolve(
+        opportunity.id,
+        "delivered",
+        occurredAt,
+        message.id,
+      );
+      return;
+    }
+    let accepted = false;
     try {
-      shown = this.bubbles.publishBubble({
+      accepted = this.bubbles.projectMessage({
         chatId: opportunity.targetChatId,
         content: message.content.trim(),
         createdAt: occurredAt,
@@ -694,21 +696,29 @@ export class ProactiveOpportunityService {
         opportunityId: opportunity.id,
       });
     }
-    if (!shown) return;
-    try {
-      this.history.recordShown({
-        grounding: evidence.memory.revision.content,
-        id: opportunity.runId!,
-        kind: "continuation",
-        message: message.content.trim(),
-        shownAt: this.clock.now(),
-        sourceKind: "memory_event",
-      });
-    } catch (error) {
-      this.logger.warn("PROACTIVE_OPPORTUNITY_HISTORY_WRITE_ERROR", {
-        error,
-        opportunityId: opportunity.id,
-      });
+    if (accepted) {
+      try {
+        this.history.recordAccepted({
+          acceptedAt: this.clock.now(),
+          grounding: evidence.memory.revision.content,
+          id: opportunity.runId!,
+          kind: "continuation",
+          message: message.content.trim(),
+          sourceKind: "memory_event",
+        });
+      } catch (error) {
+        this.logger.warn("PROACTIVE_OPPORTUNITY_HISTORY_WRITE_ERROR", {
+          error,
+          opportunityId: opportunity.id,
+        });
+        return;
+      }
     }
+    this.repository.resolve(
+      opportunity.id,
+      "delivered",
+      occurredAt,
+      message.id,
+    );
   }
 }

@@ -1,4 +1,6 @@
 import type {
+  CompanionAndroidMailboxEnqueueReceipt,
+  CompanionAndroidMailboxEnqueueRequest,
   CompanionChatTargetSnapshot,
   CompanionDevice,
   CompanionMailboxAck,
@@ -195,6 +197,18 @@ export const companionNotificationEnvelopeFixture = {
     kind: "android",
   },
 } satisfies CompanionMailboxEnvelope;
+
+export const companionNotificationEnqueueRequestFixture = {
+  envelopeId: COMPANION_FIXTURE_IDS.envelopeNotification,
+  event: companionNotificationEnvelopeFixture.event,
+  protocolVersion: 1,
+  recipient: companionNotificationEnvelopeFixture.recipient,
+} satisfies CompanionAndroidMailboxEnqueueRequest;
+
+export const companionNotificationEnqueueReceiptFixture = {
+  envelope: companionNotificationEnvelopeFixture,
+  protocolVersion: 1,
+} satisfies CompanionAndroidMailboxEnqueueReceipt;
 
 export const companionMailboxFetchRequestFixture = {
   afterCursor: COMPANION_FIXTURE_CURSORS.desktopPrevious,

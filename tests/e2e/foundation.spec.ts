@@ -736,6 +736,15 @@ description: Verify editing, saving, and permanent deletion through Settings.
       page.evaluate(() => window.charaMate.voice.getActive()),
     ).resolves.toEqual({ ok: true, value: null });
     await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { exact: true, name: "Devices" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Android Companion" }),
+    ).toBeVisible();
+    await expect(page.getByText("尚未连接手机")).toBeVisible();
+    await page.getByRole("button", { name: "开始配对" }).click();
+    await expect(page.getByRole("alert")).toContainText(
+      "Companion Relay pairing origin is not configured.",
+    );
     await page.getByRole("button", { exact: true, name: "Voice" }).click();
     await expect(
       page.getByRole("heading", { name: "Realtime 语音" }),

@@ -89,15 +89,18 @@ function expectPersistenceCode(
   }
 }
 
-function insertRun(id: string): void {
+function insertRun(
+  id: string,
+  status: "completed" | "running" = "running",
+): void {
   database!
     .prepare(
       `INSERT INTO runs (
          id, chat_id, execution_json, persona_json, provider_json, source,
-         status, latest_sequence, created_at, started_at
-       ) VALUES (?, ?, '{}', '{}', '{}', 'text', 'running', 0, ?, ?)`,
+         status, latest_sequence, created_at, started_at, ended_at
+       ) VALUES (?, ?, '{}', '{}', '{}', 'text', ?, 0, ?, ?, ?)`,
     )
-    .run(id, IDS.chat, NOW, NOW);
+    .run(id, IDS.chat, status, NOW, NOW, status === "completed" ? LATER : null);
 }
 
 function insertMessage(
@@ -166,6 +169,16 @@ describe("CompanionBridgeRepository", () => {
         state: "protocol_error",
       })?.device.status,
     ).toMatchObject({ state: "protocol_error" });
+    expect(
+      repository.updateDeviceStatus(IDS.device, {
+        observedAt: "2026-09-01T10:02:00.000Z",
+        state: "online",
+      })?.device.status,
+    ).toEqual({
+      message: "Protocol version mismatch",
+      observedAt: LATER,
+      state: "protocol_error",
+    });
     expect(
       repository.setNotificationsEnabled(IDS.device, false, LATER)?.device
         .notificationsEnabled,
@@ -344,6 +357,68 @@ describe("CompanionBridgeRepository", () => {
     expect(repository.pruneExpiredShares(LATEST)).toBe(1);
     expect(repository.getShareImport(IDS.submission)).toBeDefined();
     expect(repository.getShareImport(IDS.submission2)).toBeUndefined();
+  });
+
+  it("finds share imports by Run and recovers only an unprojected completed reply", () => {
+    database = openDatabase();
+    const repository = new CompanionBridgeRepository(database);
+    repository.pairDevice(pairedDevice());
+
+    repository.claimShare(textClaim());
+    repository.bindOrRebindShareRun({
+      runId: IDS.run,
+      submissionId: IDS.submission,
+      updatedAt: LATER,
+    });
+    insertRun(IDS.run, "completed");
+    insertMessage(IDS.message, "user", IDS.run);
+    insertMessage(IDS.message2, "assistant", IDS.run);
+
+    repository.claimShare(
+      textClaim({
+        cursor: "opaque-cursor-2",
+        envelopeId: IDS.envelope2,
+        submissionId: IDS.submission2,
+      }),
+    );
+    repository.bindOrRebindShareRun({
+      runId: IDS.run2,
+      submissionId: IDS.submission2,
+      updatedAt: LATER,
+    });
+    insertRun(IDS.run2);
+    insertMessage(IDS.message3, "assistant", IDS.run2);
+
+    expect(repository.getShareImportByRunId(IDS.run)).toMatchObject({
+      runId: IDS.run,
+      state: "claimed",
+      submissionId: IDS.submission,
+    });
+    expect(repository.getShareImportByRunId(IDS.otherDevice)).toBeUndefined();
+    expect(repository.listCompletedShareRunsForProjectionRecovery()).toEqual([
+      expect.objectContaining({ runId: IDS.run, state: "claimed" }),
+    ]);
+
+    repository.completeShareImport({
+      chatId: IDS.chat,
+      importedAt: LATEST,
+      messageId: IDS.message,
+      submissionId: IDS.submission,
+    });
+    expect(repository.listCompletedShareRunsForProjectionRecovery()).toEqual([
+      expect.objectContaining({ runId: IDS.run, state: "imported" }),
+    ]);
+
+    repository.reserveMessageProjection({
+      deviceId: IDS.device,
+      envelopeId: IDS.envelope,
+      messageId: IDS.message2,
+      selectedAt: LATEST,
+      surface: "android_notification",
+    });
+    expect(repository.listCompletedShareRunsForProjectionRecovery()).toEqual(
+      [],
+    );
   });
 
   it("fixes the Android envelope at reservation and resumes projection states", () => {

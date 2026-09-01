@@ -19,7 +19,7 @@ function record(
     kind: "invitation",
     message: "还在整理这份内容吗？",
     outcome,
-    shownAt: new Date(Date.parse(now) - minutesAgo * 60_000).toISOString(),
+    acceptedAt: new Date(Date.parse(now) - minutesAgo * 60_000).toISOString(),
     sourceKind: "activity",
     updatedAt: now,
     windowTitle: "outline.md",

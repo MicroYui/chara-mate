@@ -86,6 +86,7 @@ import {
 } from "./companion/companionError";
 import { registerCompanionIpc } from "./companion/companionIpc";
 import { CompanionMailboxProcessor } from "./companion/companionMailboxProcessor";
+import { CompanionMessageProjectionService } from "./companion/companionMessageProjectionService";
 import { HttpsCompanionRelayClient } from "./companion/companionRelayClient";
 import { CompanionShareIngress } from "./companion/companionShareIngress";
 import {
@@ -263,11 +264,14 @@ let proactiveOpportunityService: ProactiveOpportunityService | undefined;
 let proactiveConversationSurface: ProactiveConversationSurface | undefined;
 let companionBridgeService: CompanionBridgeService | undefined;
 let companionMailboxProcessor: CompanionMailboxProcessor | undefined;
+let companionMessageProjectionService:
+  CompanionMessageProjectionService | undefined;
 let stopPromise: Promise<void> | undefined;
 let shutdownComplete = false;
 
 function openMainWindow(target?: MainWindowTarget): void {
   companionMailboxProcessor?.start();
+  companionMessageProjectionService?.start();
   const controller = mainWindowController;
   if (!controller) return;
   void controller.open(target).catch((error: unknown) => {
@@ -331,6 +335,8 @@ async function stopApplicationInfrastructure(): Promise<void> {
     companionBridgeService = undefined;
     await companionMailboxProcessor?.shutdown();
     companionMailboxProcessor = undefined;
+    await companionMessageProjectionService?.shutdown();
+    companionMessageProjectionService = undefined;
     proactiveOpportunityService?.shutdown();
     await automationScheduler?.stop();
     automationScheduler = undefined;
@@ -452,6 +458,9 @@ async function startApplication(): Promise<void> {
   const proactiveOpportunityReference: {
     current?: ProactiveOpportunityService;
   } = {};
+  const companionMessageProjectionReference: {
+    current?: CompanionMessageProjectionService;
+  } = {};
   memoryServiceInstance.setChangedListener((memoryId) => {
     try {
       proactiveOpportunityReference.current?.handleMemoryChanged(memoryId);
@@ -537,6 +546,15 @@ async function startApplication(): Promise<void> {
         });
       }
       try {
+        companionMessageProjectionReference.current?.observeRun(envelope);
+      } catch (error) {
+        logger.warn("COMPANION_MESSAGE_PROJECTION_RUN_OBSERVER_ERROR", {
+          error,
+          runId: envelope.streamId,
+          sequence: envelope.sequence,
+        });
+      }
+      try {
         proactiveOpportunityReference.current?.observeRun(envelope);
       } catch (error) {
         logger.warn("PROACTIVE_OPPORTUNITY_RUN_OBSERVER_ERROR", {
@@ -570,6 +588,7 @@ async function startApplication(): Promise<void> {
         envelope.event.type === "run.interrupted"
       ) {
         companionMailboxProcessor?.start();
+        companionMessageProjectionService?.start();
       }
     },
   });
@@ -1169,8 +1188,31 @@ async function startApplication(): Promise<void> {
     {
       hasOutstandingBubble: () =>
         proactiveConversationSurfaceInstance.hasOutstandingBubble(),
-      publishBubble: (bubble) =>
-        proactiveConversationSurfaceInstance.publish(bubble),
+      projectMessage: (bubble) => {
+        const projector = companionMessageProjectionReference.current;
+        if (!bubble.messageId || !projector) {
+          return proactiveConversationSurfaceInstance.publish(bubble);
+        }
+        const selection = projector.selectImportantMoment(
+          bubble.messageId,
+          activitySystemSource.isIdle(),
+        );
+        if (selection.surface === "android_notification") {
+          return selection.acceptedBySelectedSurface;
+        }
+        if (!selection.shouldProjectDesktop) {
+          return selection.acceptedBySelectedSurface;
+        }
+        const shown = proactiveConversationSurfaceInstance.publish(bubble);
+        if (shown) projector.markDesktopProjected(bubble.messageId);
+        else {
+          projector.markDesktopFailed(
+            bubble.messageId,
+            "Desktop proactive bubble was unavailable.",
+          );
+        }
+        return shown;
+      },
     },
     companionInitiativeRepository,
     settingsRepository,
@@ -1291,11 +1333,43 @@ async function startApplication(): Promise<void> {
       return automation.id;
     },
   });
-  await agentRuntime.initialize();
   const companionRelayOrigin = process.env["CHARAMATE_COMPANION_RELAY_ORIGIN"];
   const companionRelay = new HttpsCompanionRelayClient({
     ...(companionRelayOrigin ? { pairingOrigin: companionRelayOrigin } : {}),
   });
+  const companionBridgeServiceReference: {
+    current?: CompanionBridgeService;
+  } = {};
+  const companionMessageProjectionServiceInstance =
+    new CompanionMessageProjectionService({
+      bridge: companionBridgeRepository,
+      chats: chatRepository,
+      clock,
+      idGenerator,
+      onBackgroundError(error) {
+        logger.warn("COMPANION_MESSAGE_PROJECTION_ERROR", { error });
+      },
+      onStatusChange(deviceId, status) {
+        try {
+          companionBridgeServiceReference.current?.updateDeviceStatus(
+            deviceId,
+            status,
+          );
+        } catch (error) {
+          const mapped = toCompanionAppError(error);
+          logger.warn("COMPANION_STATUS_UPDATE_ERROR", {
+            code: mapped.code,
+            retryable: mapped.retryable,
+          });
+        }
+      },
+      relay: companionRelay,
+      runs: runRepository,
+      secretStore,
+    });
+  companionMessageProjectionReference.current =
+    companionMessageProjectionServiceInstance;
+  companionMessageProjectionService = companionMessageProjectionServiceInstance;
   const companionShareIngress = new CompanionShareIngress({
     agent: agentRuntime,
     artifacts: artifactStore,
@@ -1322,9 +1396,6 @@ async function startApplication(): Promise<void> {
     },
     runs: runRepository,
   });
-  const companionBridgeServiceReference: {
-    current?: CompanionBridgeService;
-  } = {};
   const companionMailboxProcessorInstance = new CompanionMailboxProcessor({
     bridge: companionBridgeRepository,
     clock,
@@ -1349,7 +1420,11 @@ async function startApplication(): Promise<void> {
   const companionBridgeServiceInstance = new CompanionBridgeService({
     clock,
     hooks: {
-      beforeUnpair: () => companionMailboxProcessorInstance.pause(),
+      beforeUnpair: () =>
+        Promise.all([
+          companionMailboxProcessorInstance.pause(),
+          companionMessageProjectionServiceInstance.pause(),
+        ]).then(() => undefined),
       onBackgroundError(error) {
         const mapped = toCompanionAppError(error);
         logger.warn("COMPANION_BACKGROUND_ERROR", {
@@ -1357,9 +1432,19 @@ async function startApplication(): Promise<void> {
           retryable: mapped.retryable,
         });
       },
-      onPaired: () => companionMailboxProcessorInstance.reset(),
-      onUnpairFailed: () => companionMailboxProcessorInstance.resume(),
-      onUnpaired: () => companionMailboxProcessorInstance.stop(),
+      onPaired: () => {
+        companionMailboxProcessorInstance.reset();
+        companionMessageProjectionServiceInstance.reset();
+      },
+      onUnpairFailed: () => {
+        companionMailboxProcessorInstance.resume();
+        companionMessageProjectionServiceInstance.resume();
+      },
+      onUnpaired: () =>
+        Promise.all([
+          companionMailboxProcessorInstance.stop(),
+          companionMessageProjectionServiceInstance.pause(),
+        ]).then(() => undefined),
     },
     publisher: {
       publish(companionSnapshot) {
@@ -1387,17 +1472,25 @@ async function startApplication(): Promise<void> {
   companionBridgeService = companionBridgeServiceInstance;
   companionMailboxProcessor = companionMailboxProcessorInstance;
   unregisterCompanionIpc = registerCompanionIpc(companionBridgeServiceInstance);
-  const wakeCompanionMailbox = () => companionMailboxProcessor?.wake();
-  const startCompanionMailbox = () => companionMailboxProcessor?.start();
-  powerMonitor.on("resume", wakeCompanionMailbox);
-  powerMonitor.on("unlock-screen", wakeCompanionMailbox);
-  powerMonitor.on("user-did-become-active", startCompanionMailbox);
-  unregisterCompanionPowerEvents = () => {
-    powerMonitor.off("resume", wakeCompanionMailbox);
-    powerMonitor.off("unlock-screen", wakeCompanionMailbox);
-    powerMonitor.off("user-did-become-active", startCompanionMailbox);
+  const wakeCompanionWork = () => {
+    companionMailboxProcessor?.wake();
+    companionMessageProjectionService?.wake();
   };
+  const startCompanionWork = () => {
+    companionMailboxProcessor?.start();
+    companionMessageProjectionService?.start();
+  };
+  powerMonitor.on("resume", wakeCompanionWork);
+  powerMonitor.on("unlock-screen", wakeCompanionWork);
+  powerMonitor.on("user-did-become-active", startCompanionWork);
+  unregisterCompanionPowerEvents = () => {
+    powerMonitor.off("resume", wakeCompanionWork);
+    powerMonitor.off("unlock-screen", wakeCompanionWork);
+    powerMonitor.off("user-did-become-active", startCompanionWork);
+  };
+  await agentRuntime.initialize();
   companionMailboxProcessorInstance.start();
+  companionMessageProjectionServiceInstance.start();
   proactiveOpportunityServiceInstance.initialize();
   companionInitiativeReference.current = companionInitiativeServiceInstance;
 

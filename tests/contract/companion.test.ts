@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import { COMPANION_PROTOCOL_VERSION } from "../../src/shared/contracts/companion";
 import {
+  CompanionAndroidMailboxEnqueueReceiptSchema,
+  CompanionAndroidMailboxEnqueueRequestSchema,
   CompanionChatTargetSnapshotSchema,
   CompanionDeviceNotificationPreferenceRequestSchema,
   CompanionDeviceRegistrationUpdateSchema,
@@ -36,6 +38,8 @@ import {
   companionMailboxFetchRequestFixture,
   companionMailboxPageFixture,
   companionNotificationAckFixture,
+  companionNotificationEnqueueReceiptFixture,
+  companionNotificationEnqueueRequestFixture,
   companionNotificationEnvelopeFixture,
   companionNotificationPushFixture,
   companionPairingClaimFixture,
@@ -90,6 +94,16 @@ const validCases: readonly (readonly [string, TSchema, unknown])[] = [
     "notification envelope",
     CompanionMailboxEnvelopeSchema,
     companionNotificationEnvelopeFixture,
+  ],
+  [
+    "notification enqueue request",
+    CompanionAndroidMailboxEnqueueRequestSchema,
+    companionNotificationEnqueueRequestFixture,
+  ],
+  [
+    "notification enqueue receipt",
+    CompanionAndroidMailboxEnqueueReceiptSchema,
+    companionNotificationEnqueueReceiptFixture,
   ],
   [
     "chat target envelope",
@@ -289,6 +303,21 @@ describe("Android Companion v1 boundary contracts", () => {
           ...companionNotificationPushFixture,
           deliveredAt: COMPANION_FIXTURE_TIMESTAMPS.created,
           deliveryStatus: "delivered",
+        }),
+      ).toThrow();
+      expect(() =>
+        parse(CompanionAndroidMailboxEnqueueRequestSchema, {
+          ...companionNotificationEnqueueRequestFixture,
+          recipient: {
+            desktopInstanceId: COMPANION_FIXTURE_IDS.desktop,
+            kind: "desktop",
+          },
+        }),
+      ).toThrow();
+      expect(() =>
+        parse(CompanionAndroidMailboxEnqueueRequestSchema, {
+          ...companionNotificationEnqueueRequestFixture,
+          cursor: "desktop-must-not-assign-this",
         }),
       ).toThrow();
     },

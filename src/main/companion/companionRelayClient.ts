@@ -1,7 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type { Static, TSchema } from "@sinclair/typebox";
 
 import {
   COMPANION_PROTOCOL_VERSION,
+  type CompanionAndroidMailboxEnqueueReceipt,
+  type CompanionAndroidMailboxEnqueueRequest,
   type CompanionDesktopMailboxAck,
   type CompanionDesktopMailboxPage,
   type CompanionDeviceNotificationPreferenceRequest,
@@ -13,6 +17,8 @@ import {
   type CompanionUploadAsset,
 } from "../../shared/contracts/companion";
 import {
+  CompanionAndroidMailboxEnqueueReceiptSchema,
+  CompanionAndroidMailboxEnqueueRequestSchema,
   CompanionDesktopMailboxAckSchema,
   CompanionDesktopMailboxPageSchema,
   CompanionDeviceNotificationPreferenceRequestSchema,
@@ -117,6 +123,10 @@ interface FetchDesktopMailboxInput extends AuthenticatedRelayInput {
   readonly request: CompanionMailboxFetchRequest;
 }
 
+interface EnqueueAndroidMailboxInput extends AuthenticatedRelayInput {
+  readonly request: CompanionAndroidMailboxEnqueueRequest;
+}
+
 interface AcknowledgeDesktopMailboxInput extends AuthenticatedRelayInput {
   readonly ack: CompanionDesktopMailboxAck;
 }
@@ -140,6 +150,9 @@ export interface CompanionRelayClient {
   createPairingTicket(
     input: CreatePairingTicketInput,
   ): Promise<CompanionPairingTicket>;
+  enqueueAndroidMailbox(
+    input: EnqueueAndroidMailboxInput,
+  ): Promise<CompanionAndroidMailboxEnqueueReceipt>;
   fetchDesktopMailbox(
     input: FetchDesktopMailboxInput,
   ): Promise<CompanionDesktopMailboxPage>;
@@ -200,6 +213,135 @@ function authenticatedHeaders(credential: string, json = false) {
   };
 }
 
+const HTTP_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+const HTTP_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const HTTP_LONG_WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+interface HttpDateParts {
+  readonly day: number;
+  readonly hour: number;
+  readonly minute: number;
+  readonly month: number;
+  readonly second: number;
+  readonly weekday: number;
+  readonly year: number;
+}
+
+function httpDateTimestamp(
+  parts: HttpDateParts,
+  validateWeekday = true,
+): number | undefined {
+  if (
+    parts.year < 1 ||
+    parts.month < 0 ||
+    parts.day < 1 ||
+    parts.hour > 23 ||
+    parts.minute > 59 ||
+    parts.second > 59
+  ) {
+    return undefined;
+  }
+  const date = new Date(0);
+  date.setUTCFullYear(parts.year, parts.month, parts.day);
+  date.setUTCHours(parts.hour, parts.minute, parts.second, 0);
+  if (
+    date.getUTCFullYear() !== parts.year ||
+    date.getUTCMonth() !== parts.month ||
+    date.getUTCDate() !== parts.day ||
+    date.getUTCHours() !== parts.hour ||
+    date.getUTCMinutes() !== parts.minute ||
+    date.getUTCSeconds() !== parts.second ||
+    (validateWeekday && date.getUTCDay() !== parts.weekday)
+  ) {
+    return undefined;
+  }
+  return date.getTime();
+}
+
+function httpMonth(value: string): number {
+  return HTTP_MONTHS.indexOf(value as (typeof HTTP_MONTHS)[number]);
+}
+
+function parseHttpDate(value: string, nowMs: number): number | undefined {
+  const preferred =
+    /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat), (\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/u.exec(
+      value,
+    );
+  if (preferred) {
+    return httpDateTimestamp({
+      day: Number(preferred[2]),
+      hour: Number(preferred[5]),
+      minute: Number(preferred[6]),
+      month: httpMonth(preferred[3] ?? ""),
+      second: Number(preferred[7]),
+      weekday: HTTP_WEEKDAYS.indexOf(preferred[1] ?? ""),
+      year: Number(preferred[4]),
+    });
+  }
+
+  const rfc850 =
+    /^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2}) (\d{2}):(\d{2}):(\d{2}) GMT$/u.exec(
+      value,
+    );
+  if (rfc850) {
+    const currentYear = new Date(nowMs).getUTCFullYear();
+    let year = Math.floor(currentYear / 100) * 100 + Number(rfc850[4]);
+    const parts = {
+      day: Number(rfc850[2]),
+      hour: Number(rfc850[5]),
+      minute: Number(rfc850[6]),
+      month: httpMonth(rfc850[3] ?? ""),
+      second: Number(rfc850[7]),
+      weekday: HTTP_LONG_WEEKDAYS.indexOf(rfc850[1] ?? ""),
+      year,
+    };
+    const timestamp = httpDateTimestamp(parts, false);
+    const futureBoundary = new Date(nowMs);
+    futureBoundary.setUTCFullYear(futureBoundary.getUTCFullYear() + 50);
+    if (timestamp !== undefined && timestamp > futureBoundary.getTime()) {
+      year -= 100;
+      parts.year = year;
+    }
+    return httpDateTimestamp(parts);
+  }
+
+  const asctime =
+    /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{2}| \d) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/u.exec(
+      value,
+    );
+  if (!asctime) return undefined;
+  return httpDateTimestamp({
+    day: Number(asctime[3]),
+    hour: Number(asctime[4]),
+    minute: Number(asctime[5]),
+    month: httpMonth(asctime[2] ?? ""),
+    second: Number(asctime[6]),
+    weekday: HTTP_WEEKDAYS.indexOf(asctime[1] ?? ""),
+    year: Number(asctime[7]),
+  });
+}
+
 function retryAfterMs(response: Response): number | undefined {
   const value = response.headers.get("retry-after")?.trim();
   if (!value) return undefined;
@@ -212,11 +354,9 @@ function retryAfterMs(response: Response): number | undefined {
       : undefined;
   }
 
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed) || new Date(parsed).toUTCString() !== value) {
-    return undefined;
-  }
-  return Math.max(0, parsed - Date.now());
+  const nowMs = Date.now();
+  const parsed = parseHttpDate(value, nowMs);
+  return parsed === undefined ? undefined : Math.max(0, parsed - nowMs);
 }
 
 function requestFailure(response: Response): CompanionRelayClientError {
@@ -346,6 +486,48 @@ export class HttpsCompanionRelayClient implements CompanionRelayClient {
       );
     }
     return page;
+  }
+
+  async enqueueAndroidMailbox({
+    credential,
+    relayOrigin: origin,
+    request: input,
+    signal,
+  }: EnqueueAndroidMailboxInput): Promise<CompanionAndroidMailboxEnqueueReceipt> {
+    const request = this.#parse(
+      CompanionAndroidMailboxEnqueueRequestSchema,
+      input,
+    );
+    if (request.event.deviceId !== request.recipient.deviceId) {
+      throw protocolFailure(
+        "Android mailbox event and recipient target different devices.",
+      );
+    }
+    const response = await this.#request(
+      endpoint(origin, "/v1/companion/mailbox/enqueue"),
+      {
+        body: JSON.stringify(request),
+        headers: authenticatedHeaders(credential, true),
+        method: "POST",
+        redirect: "error",
+        ...(signal ? { signal } : {}),
+      },
+      signal,
+    );
+    const receipt = await this.#json(
+      response,
+      CompanionAndroidMailboxEnqueueReceiptSchema,
+    );
+    if (
+      receipt.envelope.id !== request.envelopeId ||
+      receipt.envelope.recipient.deviceId !== request.recipient.deviceId ||
+      !isDeepStrictEqual(receipt.envelope.event, request.event)
+    ) {
+      throw protocolFailure(
+        "Companion Relay returned a receipt for a different Android mailbox event.",
+      );
+    }
+    return receipt;
   }
 
   async acknowledgeDesktopMailbox({

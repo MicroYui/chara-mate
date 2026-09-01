@@ -182,6 +182,7 @@ function createHarness(
   const relay: CompanionRelayClient = {
     acknowledgeDesktopMailbox,
     createPairingTicket: vi.fn(() => Promise.reject(new Error("unused"))),
+    enqueueAndroidMailbox: vi.fn(() => Promise.reject(new Error("unused"))),
     fetchDesktopMailbox,
     readAsset: vi.fn(() => Promise.resolve(Buffer.alloc(0))),
     setNotificationsEnabled: vi.fn(() => Promise.resolve()),

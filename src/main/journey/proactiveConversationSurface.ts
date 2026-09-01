@@ -44,7 +44,7 @@ export interface ProactiveConversationProjector {
 export interface ProactiveConversationLifecycleObserver {
   recordOutcome(
     bubbleId: string,
-    outcome: Exclude<CompanionInitiativeOutcome, "shown">,
+    outcome: Exclude<CompanionInitiativeOutcome, "accepted">,
   ): void;
 }
 
@@ -236,7 +236,7 @@ export class ProactiveConversationSurface {
 
   #releaseCurrent(
     clearProjection: boolean,
-    outcome: Exclude<CompanionInitiativeOutcome, "shown" | "replied">,
+    outcome: Exclude<CompanionInitiativeOutcome, "accepted" | "replied">,
   ): void {
     const bubble = this.#bubble;
     if (!bubble) return;

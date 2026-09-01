@@ -95,6 +95,8 @@ export {
   COMPANION_PROTOCOL_VERSION,
   type CompanionApi,
   type CompanionAndroidMailboxAck,
+  type CompanionAndroidMailboxEnqueueReceipt,
+  type CompanionAndroidMailboxEnqueueRequest,
   type CompanionAndroidMailboxEnvelope,
   type CompanionAndroidMailboxEvent,
   type CompanionAndroidMailboxPage,

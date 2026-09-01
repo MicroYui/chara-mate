@@ -148,20 +148,20 @@ function decisionPrompt(evidence: CompanionInitiativeEvidence): string {
     observation: evidence.observation,
     recentInitiatives: evidence.recentInitiatives.map(
       ({
+        acceptedAt,
         appName,
         grounding,
         kind,
         message,
         outcome,
-        shownAt,
         windowTitle,
       }) => ({
+        acceptedAt,
         appName,
         grounding,
         kind,
         message,
         outcome,
-        shownAt,
         windowTitle,
       }),
     ),
@@ -273,7 +273,11 @@ function openerPrompt(
         : {}),
       observation,
       recentInitiatives: recentInitiatives.map(
-        ({ message, outcome, shownAt }) => ({ message, outcome, shownAt }),
+        ({ acceptedAt, message, outcome }) => ({
+          acceptedAt,
+          message,
+          outcome,
+        }),
       ),
     }),
   ].join("\n");
@@ -358,16 +362,16 @@ export class CompanionInitiativeService implements ForegroundActivityObserver {
           replyState: "ready",
         });
         if (delivered) {
-          const shownAt = this.clock.now();
+          const acceptedAt = this.clock.now();
           try {
-            this.history.recordShown({
+            this.history.recordAccepted({
               ...(pending.appId ? { appId: pending.appId } : {}),
               appName: pending.appName,
               grounding: pending.grounding,
               id: envelope.event.run.id,
               kind: pending.provisionalChat ? "invitation" : "continuation",
               message: content,
-              shownAt,
+              acceptedAt,
               sourceKind: "activity",
               windowTitle: pending.windowTitle,
             });

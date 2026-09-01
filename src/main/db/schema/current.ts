@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = "22";
+export const CURRENT_SCHEMA_VERSION = "23";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -141,14 +141,16 @@ export const CURRENT_SCHEMA_SQL = `
     grounding TEXT NOT NULL CHECK (length(trim(grounding)) > 0),
     message TEXT NOT NULL CHECK (length(trim(message)) > 0),
     outcome TEXT NOT NULL CHECK (
-      outcome IN ('shown', 'replied', 'dismissed', 'expired', 'interrupted')
+      outcome IN (
+        'accepted', 'replied', 'dismissed', 'expired', 'interrupted'
+      )
     ),
-    shown_at TEXT NOT NULL,
+    accepted_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   ) STRICT;
 
   CREATE INDEX IF NOT EXISTS companion_initiative_records_time_idx
-    ON companion_initiative_records(shown_at DESC, id DESC);
+    ON companion_initiative_records(accepted_at DESC, id DESC);
 
   CREATE TABLE IF NOT EXISTS window_placements (
     window_id TEXT PRIMARY KEY NOT NULL,
