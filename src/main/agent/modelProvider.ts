@@ -76,7 +76,10 @@ export type ModelEvent =
 
 export interface ModelProvider {
   readonly supportsNativeWebSearch?: boolean;
-  resolveContextLimits(modelId: string): Promise<ModelContextLimits>;
+  resolveContextLimits(
+    modelId: string,
+    signal?: AbortSignal,
+  ): Promise<ModelContextLimits>;
   stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent>;
 }
 

@@ -7,6 +7,7 @@ import type {
   CompanionMailboxPage,
   CompanionNotificationPush,
   CompanionPairingClaim,
+  CompanionPairingCreateRequest,
   CompanionPairingGrant,
   CompanionPairingTicket,
   CompanionUploadAsset,
@@ -56,6 +57,11 @@ export const companionDeviceFixture = {
     state: "online",
   },
 } satisfies CompanionDevice;
+
+export const companionPairingCreateRequestFixture = {
+  desktopInstanceId: COMPANION_FIXTURE_IDS.desktop,
+  protocolVersion: 1,
+} satisfies CompanionPairingCreateRequest;
 
 export const companionPairingTicketFixture = {
   desktopInstanceId: COMPANION_FIXTURE_IDS.desktop,

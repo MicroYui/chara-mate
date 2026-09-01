@@ -233,15 +233,16 @@ describe("CompanionBridgeRepository", () => {
       state: "imported",
     });
     expect(repository.getDesktopMailboxCursor()).toBe("opaque-cursor-1");
-    expect(repository.listPendingShareAcks()).toHaveLength(1);
+    expect(repository.listPendingShareAcks(IDS.device)).toHaveLength(1);
+    expect(repository.listPendingShareAcks(IDS.otherDevice)).toEqual([]);
 
     repository.unpairDevice(IDS.device);
     expect(repository.getOrCreateDesktopInstanceId()).toBe(IDS.desktop);
     expect(repository.getDesktopMailboxCursor()).toBe("opaque-cursor-1");
     database.prepare("DELETE FROM chats WHERE id = ?").run(IDS.chat);
-    expect(repository.listPendingShareAcks()).toHaveLength(1);
+    expect(repository.listPendingShareAcks(IDS.device)).toHaveLength(1);
     expect(repository.pruneExpiredShares(EXPIRES)).toBe(0);
-    expect(repository.listPendingShareAcks()).toHaveLength(1);
+    expect(repository.listPendingShareAcks(IDS.device)).toHaveLength(1);
 
     expect(repository.markShareAcked(IDS.submission, LATEST).relayAckedAt).toBe(
       LATEST,
@@ -249,7 +250,7 @@ describe("CompanionBridgeRepository", () => {
     expect(
       repository.markShareAcked(IDS.submission, EXPIRES).relayAckedAt,
     ).toBe(LATEST);
-    expect(repository.listPendingShareAcks()).toEqual([]);
+    expect(repository.listPendingShareAcks(IDS.device)).toEqual([]);
     expect(repository.pruneExpiredShares(EXPIRES)).toBe(1);
     expect(repository.getShareImport(IDS.submission)).toBeUndefined();
     expect(repository.getDesktopMailboxCursor()).toBe("opaque-cursor-1");

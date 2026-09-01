@@ -786,15 +786,17 @@ export class CompanionBridgeRepository {
     return row ? readShareImport(row) : undefined;
   }
 
-  listPendingShareAcks(): CompanionShareImportRecord[] {
+  listPendingShareAcks(deviceId: string): CompanionShareImportRecord[] {
+    const id = parseSchema(EntityIdSchema, deviceId);
     return (
       this.database
         .prepare(
           `SELECT ${SHARE_IMPORT_COLUMNS} FROM companion_share_imports
-           WHERE state = 'imported' AND relay_acked_at IS NULL
+           WHERE device_id = ? AND state = 'imported'
+             AND relay_acked_at IS NULL
            ORDER BY imported_at, submission_id`,
         )
-        .all() as ShareImportRow[]
+        .all(id) as ShareImportRow[]
     ).map(readShareImport);
   }
 

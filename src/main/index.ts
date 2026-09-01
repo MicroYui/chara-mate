@@ -15,6 +15,7 @@ import type { FoundationSnapshot } from "../shared/contracts/foundation";
 import { AGENT_CHANNELS } from "../shared/contracts/agent";
 import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
+import { COMPANION_DESKTOP_CHANNELS } from "../shared/contracts/companion";
 import { EVOLUTION_CHANNELS } from "../shared/contracts/evolution";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
 import { JOURNEY_CHANNELS } from "../shared/contracts/journey";
@@ -32,6 +33,7 @@ import {
 } from "../shared/schemas/pet";
 import { ApprovalNavigationTargetSchema } from "../shared/schemas/agent";
 import { PersonaLibrarySnapshotSchema } from "../shared/schemas/persona";
+import { CompanionDesktopSnapshotSchema } from "../shared/schemas/companion";
 import { parseSchema } from "../shared/schemas/validation";
 import {
   VoiceClientCommandSchema,
@@ -76,6 +78,16 @@ import { registerActivityTool } from "./activity/activityTool";
 import { ChatRepository } from "./chat/chatRepository";
 import { ChatService } from "./chat/chatService";
 import { ChatTitleService } from "./chat/chatTitleService";
+import { CompanionBridgeRepository } from "./companion/companionBridgeRepository";
+import { CompanionBridgeService } from "./companion/companionBridgeService";
+import {
+  CompanionError,
+  toCompanionAppError,
+} from "./companion/companionError";
+import { registerCompanionIpc } from "./companion/companionIpc";
+import { CompanionMailboxProcessor } from "./companion/companionMailboxProcessor";
+import { HttpsCompanionRelayClient } from "./companion/companionRelayClient";
+import { CompanionShareIngress } from "./companion/companionShareIngress";
 import {
   bundledChromiumExecutablePath,
   ManagedBrowser,
@@ -212,6 +224,8 @@ function readMicrophonePermission() {
 let mainWindowController: MainWindowController | undefined;
 let applicationDatabase: Database.Database | undefined;
 let unregisterChatIpc: (() => void) | undefined;
+let unregisterCompanionIpc: (() => void) | undefined;
+let unregisterCompanionPowerEvents: (() => void) | undefined;
 let unregisterActivityIpc: (() => void) | undefined;
 let unregisterActivityProtocol: (() => void) | undefined;
 let unregisterAgentIpc: (() => void) | undefined;
@@ -247,10 +261,13 @@ let journeyService: JourneyService | undefined;
 let companionInitiativeService: CompanionInitiativeService | undefined;
 let proactiveOpportunityService: ProactiveOpportunityService | undefined;
 let proactiveConversationSurface: ProactiveConversationSurface | undefined;
+let companionBridgeService: CompanionBridgeService | undefined;
+let companionMailboxProcessor: CompanionMailboxProcessor | undefined;
 let stopPromise: Promise<void> | undefined;
 let shutdownComplete = false;
 
 function openMainWindow(target?: MainWindowTarget): void {
+  companionMailboxProcessor?.start();
   const controller = mainWindowController;
   if (!controller) return;
   void controller.open(target).catch((error: unknown) => {
@@ -280,6 +297,10 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterEvolutionIpc = undefined;
     unregisterChatIpc?.();
     unregisterChatIpc = undefined;
+    unregisterCompanionIpc?.();
+    unregisterCompanionIpc = undefined;
+    unregisterCompanionPowerEvents?.();
+    unregisterCompanionPowerEvents = undefined;
     unregisterFoundationIpc?.();
     unregisterFoundationIpc = undefined;
     unregisterJourneyIpc?.();
@@ -306,6 +327,10 @@ async function stopApplicationInfrastructure(): Promise<void> {
     unregisterVoiceWakeIpc = undefined;
     session.defaultSession.setPermissionCheckHandler(null);
     session.defaultSession.setPermissionRequestHandler(null);
+    companionBridgeService?.dispose();
+    companionBridgeService = undefined;
+    await companionMailboxProcessor?.shutdown();
+    companionMailboxProcessor = undefined;
     proactiveOpportunityService?.shutdown();
     await automationScheduler?.stop();
     automationScheduler = undefined;
@@ -403,6 +428,9 @@ async function startApplication(): Promise<void> {
   unregisterPersonaIpc = registerPersonaIpc(personaService);
   const characterContextCompiler = new CharacterContextCompiler();
   const chatRepository = new ChatRepository(applicationDatabase);
+  const companionBridgeRepository = new CompanionBridgeRepository(
+    applicationDatabase,
+  );
   const companionInitiativeRepository = new CompanionInitiativeRepository(
     applicationDatabase,
   );
@@ -534,6 +562,14 @@ async function startApplication(): Promise<void> {
           runId: envelope.streamId,
           sequence: envelope.sequence,
         });
+      }
+      if (
+        envelope.event.type === "run.completed" ||
+        envelope.event.type === "run.failed" ||
+        envelope.event.type === "run.cancelled" ||
+        envelope.event.type === "run.interrupted"
+      ) {
+        companionMailboxProcessor?.start();
       }
     },
   });
@@ -739,7 +775,12 @@ async function startApplication(): Promise<void> {
     idGenerator,
     clock,
   );
-  await providerService.initialize(mcpService.listSecretReferences());
+  await providerService.initialize(
+    new Set([
+      ...mcpService.listSecretReferences(),
+      ...companionBridgeRepository.listCredentialReferences(),
+    ]),
+  );
   unregisterProviderIpc = registerProviderIpc(providerService);
   mcpService.registerConfigurationTools();
 
@@ -1251,6 +1292,112 @@ async function startApplication(): Promise<void> {
     },
   });
   await agentRuntime.initialize();
+  const companionRelayOrigin = process.env["CHARAMATE_COMPANION_RELAY_ORIGIN"];
+  const companionRelay = new HttpsCompanionRelayClient({
+    ...(companionRelayOrigin ? { pairingOrigin: companionRelayOrigin } : {}),
+  });
+  const companionShareIngress = new CompanionShareIngress({
+    agent: agentRuntime,
+    artifacts: artifactStore,
+    bridge: companionBridgeRepository,
+    chatRepository,
+    chats: chatService,
+    clock,
+    providers: providerService,
+    readRelayAsset: async (asset, signal) => {
+      const paired = companionBridgeRepository.getPairedDevice();
+      if (!paired) {
+        throw new CompanionError(
+          "COMPANION.NOT_PAIRED",
+          "当前没有已配对的 Android 手机。",
+          false,
+        );
+      }
+      return companionRelay.readAsset({
+        asset,
+        credential: await secretStore.get(paired.credentialRef),
+        relayOrigin: paired.relayOrigin,
+        ...(signal ? { signal } : {}),
+      });
+    },
+    runs: runRepository,
+  });
+  const companionBridgeServiceReference: {
+    current?: CompanionBridgeService;
+  } = {};
+  const companionMailboxProcessorInstance = new CompanionMailboxProcessor({
+    bridge: companionBridgeRepository,
+    clock,
+    ingress: companionShareIngress,
+    onStatusChange(deviceId, status) {
+      try {
+        companionBridgeServiceReference.current?.updateDeviceStatus(
+          deviceId,
+          status,
+        );
+      } catch (error) {
+        const mapped = toCompanionAppError(error);
+        logger.warn("COMPANION_STATUS_UPDATE_ERROR", {
+          code: mapped.code,
+          retryable: mapped.retryable,
+        });
+      }
+    },
+    relay: companionRelay,
+    secretStore,
+  });
+  const companionBridgeServiceInstance = new CompanionBridgeService({
+    clock,
+    hooks: {
+      beforeUnpair: () => companionMailboxProcessorInstance.pause(),
+      onBackgroundError(error) {
+        const mapped = toCompanionAppError(error);
+        logger.warn("COMPANION_BACKGROUND_ERROR", {
+          code: mapped.code,
+          retryable: mapped.retryable,
+        });
+      },
+      onPaired: () => companionMailboxProcessorInstance.reset(),
+      onUnpairFailed: () => companionMailboxProcessorInstance.resume(),
+      onUnpaired: () => companionMailboxProcessorInstance.stop(),
+    },
+    publisher: {
+      publish(companionSnapshot) {
+        const value = parseSchema(
+          CompanionDesktopSnapshotSchema,
+          companionSnapshot,
+        );
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (window.webContents.isDestroyed()) continue;
+          try {
+            window.webContents.send(COMPANION_DESKTOP_CHANNELS.changed, value);
+          } catch (error) {
+            logger.warn("COMPANION_SNAPSHOT_BROADCAST_ERROR", {
+              error: error instanceof Error ? error.message : "unknown",
+            });
+          }
+        }
+      },
+    },
+    relay: companionRelay,
+    repository: companionBridgeRepository,
+    secrets: secretStore,
+  });
+  companionBridgeServiceReference.current = companionBridgeServiceInstance;
+  companionBridgeService = companionBridgeServiceInstance;
+  companionMailboxProcessor = companionMailboxProcessorInstance;
+  unregisterCompanionIpc = registerCompanionIpc(companionBridgeServiceInstance);
+  const wakeCompanionMailbox = () => companionMailboxProcessor?.wake();
+  const startCompanionMailbox = () => companionMailboxProcessor?.start();
+  powerMonitor.on("resume", wakeCompanionMailbox);
+  powerMonitor.on("unlock-screen", wakeCompanionMailbox);
+  powerMonitor.on("user-did-become-active", startCompanionMailbox);
+  unregisterCompanionPowerEvents = () => {
+    powerMonitor.off("resume", wakeCompanionMailbox);
+    powerMonitor.off("unlock-screen", wakeCompanionMailbox);
+    powerMonitor.off("user-did-become-active", startCompanionMailbox);
+  };
+  companionMailboxProcessorInstance.start();
   proactiveOpportunityServiceInstance.initialize();
   companionInitiativeReference.current = companionInitiativeServiceInstance;
 

@@ -704,6 +704,40 @@ describe("OpenAI Responses Agent wire shape", () => {
     expect(requests).toEqual(["GET /v1/models", "GET /v1/models/gpt-5.6-sol"]);
   });
 
+  it("cancels an in-flight model metadata request", async () => {
+    let markRequestStarted!: () => void;
+    const requestStarted = new Promise<void>((resolve) => {
+      markRequestStarted = resolve;
+    });
+    const baseUrl = await listen(
+      createServer((request, response) => {
+        markRequestStarted();
+        request.once("close", () => response.destroy());
+      }),
+    );
+    const provider = new OpenAIResponsesModelProvider(
+      {
+        apiStyle: "openai-compatible",
+        baseUrl,
+        name: "Abortable compatible",
+      },
+      "test-secret",
+    );
+    const controller = new AbortController();
+
+    const resolving = provider.resolveContextLimits(
+      "gpt-5.6-sol",
+      controller.signal,
+    );
+    const cancelled = expect(resolving).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await requestStarted;
+    controller.abort();
+
+    await cancelled;
+  });
+
   it("keeps context limits unknown when neither metadata endpoint supports them", async () => {
     const baseUrl = await listen(
       createServer((_request, response) => {

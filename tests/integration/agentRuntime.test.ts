@@ -12,6 +12,7 @@ import type { ToolResult } from "../../src/shared/contracts/tool";
 import { SystemClock, type Clock } from "../../src/shared/pure/clock";
 import { CryptoIdGenerator } from "../../src/shared/pure/id";
 import { AgentRuntime } from "../../src/main/agent/agentRuntime";
+import { ChatContextService } from "../../src/main/agent/chatContextService";
 import {
   ACTIVITY_SEARCH_TOOL_NAME,
   registerActivityTool,
@@ -77,8 +78,9 @@ class ScriptedProvider implements ModelProvider {
     },
   ) {}
 
-  resolveContextLimits(modelId: string) {
+  resolveContextLimits(modelId: string, signal?: AbortSignal) {
     this.contextLimitRequests.push(modelId);
+    signal?.throwIfAborted();
     return Promise.resolve(this.contextLimits);
   }
 
@@ -381,6 +383,7 @@ function createRuntimeFor(
   fixture: RuntimeFixture,
   provider: ScriptedProvider,
   memory?: MemoryService,
+  chatContext?: ChatContextService,
 ): AgentRuntime {
   const ids = new CryptoIdGenerator();
   const clock = new SystemClock();
@@ -414,7 +417,17 @@ function createRuntimeFor(
     undefined,
     undefined,
     memory,
+    chatContext,
   );
+}
+
+function expectNoPersistedRunOrMessage(fixture: RuntimeFixture): void {
+  expect(
+    fixture.database.prepare("SELECT COUNT(*) AS count FROM runs").get(),
+  ).toEqual({ count: 0 });
+  expect(
+    fixture.database.prepare("SELECT COUNT(*) AS count FROM messages").get(),
+  ).toEqual({ count: 0 });
 }
 
 function startAgent(
@@ -506,6 +519,112 @@ async function waitForStatus(
 }
 
 describe("Agent Runtime production path", () => {
+  it("cancels model metadata preflight without creating a Run or User Message", async () => {
+    const fixture = await createFixture([]);
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    let markMetadataStarted!: () => void;
+    const metadataStarted = new Promise<void>((resolve) => {
+      markMetadataStarted = resolve;
+    });
+    vi.spyOn(fixture.provider, "resolveContextLimits").mockImplementation(
+      (_modelId, signal) => {
+        receivedSignal = signal;
+        markMetadataStarted();
+        return new Promise<ModelContextLimits>((_resolve, reject) => {
+          if (!signal) {
+            reject(new Error("missing metadata cancellation signal"));
+            return;
+          }
+          const abort = () =>
+            reject(
+              signal.reason instanceof Error
+                ? signal.reason
+                : new DOMException("cancelled", "AbortError"),
+            );
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) abort();
+        });
+      },
+    );
+
+    const starting = fixture.runtime.start(
+      {
+        attachments: [],
+        chatId: fixture.chatId,
+        content: "取消模型元数据准备",
+        execution: { mode: "chat" },
+        providerProfileId: PROFILE_ID,
+        requestedAt: REQUESTED_AT,
+      },
+      { signal: controller.signal },
+    );
+    const cancelled = expect(starting).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await metadataStarted;
+    expect(receivedSignal).toBe(controller.signal);
+    controller.abort();
+
+    await cancelled;
+    expectNoPersistedRunOrMessage(fixture);
+    fixture.database.close();
+  });
+
+  it("cancels Chat Context preflight before allocating a Run", async () => {
+    const fixture = await createFixture([]);
+    const clock = new SystemClock();
+    const chatContext = new ChatContextService(
+      new ChatRepository(fixture.database),
+      clock,
+    );
+    const runtime = createRuntimeFor(
+      fixture,
+      fixture.provider,
+      undefined,
+      chatContext,
+    );
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    let markContextStarted!: () => void;
+    const contextStarted = new Promise<void>((resolve) => {
+      markContextStarted = resolve;
+    });
+    let releaseContext!: () => void;
+    const contextRelease = new Promise<void>((resolve) => {
+      releaseContext = resolve;
+    });
+    vi.spyOn(chatContext, "prepare").mockImplementation(async (request) => {
+      receivedSignal = request.signal;
+      markContextStarted();
+      await contextRelease;
+      return { compacted: false, input: [], messages: [] };
+    });
+
+    const starting = runtime.start(
+      {
+        attachments: [],
+        chatId: fixture.chatId,
+        content: "取消上下文准备",
+        execution: { mode: "chat" },
+        providerProfileId: PROFILE_ID,
+        requestedAt: REQUESTED_AT,
+      },
+      { signal: controller.signal },
+    );
+    const cancelled = expect(starting).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await contextStarted;
+    expect(receivedSignal).toBe(controller.signal);
+    controller.abort();
+    releaseContext();
+
+    await cancelled;
+    expectNoPersistedRunOrMessage(fixture);
+    fixture.database.close();
+  });
+
   it("stamps one Persona snapshot on the Run and compiles that same snapshot into model instructions", async () => {
     const persona = {
       ...defaultPersonaSnapshot(REQUESTED_AT),

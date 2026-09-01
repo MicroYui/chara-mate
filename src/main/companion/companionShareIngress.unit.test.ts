@@ -255,10 +255,16 @@ function createHarness(
         storageKey: `${scopeId}/${artifactId}.bin`,
       }),
   );
+  const readRelayAsset = vi.fn<
+    CompanionShareIngressDependencies["readRelayAsset"]
+  >(() => Promise.resolve(options.bytes ?? Buffer.alloc(0)));
   const start = vi.fn(
     (
       request: StartRunRequest,
-      startOptions: { readonly onRunAllocated: (runId: string) => void },
+      startOptions: {
+        readonly onRunAllocated: (runId: string) => void;
+        readonly signal?: AbortSignal;
+      },
     ) => {
       startOptions.onRunAllocated(IDS.run);
       runsById.set(IDS.run, { chatId: request.chatId });
@@ -348,9 +354,7 @@ function createHarness(
         return IDS.profile;
       }),
     },
-    readRelayAsset: vi.fn(() =>
-      Promise.resolve(options.bytes ?? Buffer.alloc(0)),
-    ),
+    readRelayAsset,
     runs: { getRun: (runId) => runsById.get(runId) },
   };
 
@@ -366,10 +370,13 @@ function createHarness(
     dependencies,
     discardProvisional,
     establishProvisional,
+    getOrCreateDesktopInstanceId,
     get messageCount() {
       return messageSequence;
     },
+    insertAttachment,
     messagesByRun,
+    readRelayAsset,
     restore,
     seedClaimedRun: (
       envelope: CompanionDesktopMailboxEnvelope,
@@ -437,8 +444,11 @@ describe("CompanionShareIngress", () => {
     const harness = createHarness();
     const ingress = new CompanionShareIngress(harness.dependencies);
     const envelope = textEnvelope();
+    const controller = new AbortController();
 
-    await expect(ingress.importEnvelope(envelope)).resolves.toEqual({
+    await expect(
+      ingress.importEnvelope(envelope, { signal: controller.signal }),
+    ).resolves.toEqual({
       chatId: IDS.chat,
       messageId: IDS.message,
       submissionId: IDS.submission,
@@ -458,6 +468,7 @@ describe("CompanionShareIngress", () => {
     expect(typeof harness.start.mock.calls[0]?.[1].onRunAllocated).toBe(
       "function",
     );
+    expect(harness.start.mock.calls[0]?.[1].signal).toBe(controller.signal);
     expect(harness.establishProvisional).toHaveBeenCalledWith(IDS.chat);
     expect(
       harness.establishProvisional.mock.invocationCallOrder[0],
@@ -467,6 +478,23 @@ describe("CompanionShareIngress", () => {
     expect(harness.claimShare).toHaveBeenCalledWith(
       expect.objectContaining({ payloadSha256: sha256(canonicalPayload) }),
     );
+  });
+
+  it("does not claim or start an already-aborted text share", async () => {
+    const harness = createHarness();
+    const ingress = new CompanionShareIngress(harness.dependencies);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      ingress.importEnvelope(textEnvelope(), { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(harness.getOrCreateDesktopInstanceId).not.toHaveBeenCalled();
+    expect(harness.claimShare).not.toHaveBeenCalled();
+    expect(harness.createProvisional).not.toHaveBeenCalled();
+    expect(harness.start).not.toHaveBeenCalled();
+    expect(harness.completeShareImport).not.toHaveBeenCalled();
   });
 
   it("stores verified image bytes as one stable managed image artifact", async () => {
@@ -502,6 +530,31 @@ describe("CompanionShareIngress", () => {
       ],
       content: "分享结束了",
     });
+  });
+
+  it("does not start a Run when a first attachment import is aborted after managed asset storage", async () => {
+    const bytes = Buffer.from("real-image-bytes");
+    const harness = createHarness({ bytes });
+    const controller = new AbortController();
+    const store = harness.storeBufferWithStableId.getMockImplementation();
+    if (!store) throw new Error("Missing artifact store implementation");
+    harness.storeBufferWithStableId.mockImplementationOnce(async (...args) => {
+      const artifact = await store(...args);
+      controller.abort();
+      return artifact;
+    });
+    const ingress = new CompanionShareIngress(harness.dependencies);
+
+    await expect(
+      ingress.importEnvelope(attachmentEnvelope(bytes), {
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(harness.storeBufferWithStableId).toHaveBeenCalledOnce();
+    expect(harness.createProvisional).not.toHaveBeenCalled();
+    expect(harness.start).not.toHaveBeenCalled();
+    expect(harness.completeShareImport).not.toHaveBeenCalled();
   });
 
   it("decodes text and Markdown attachments as strict UTF-8", async () => {
@@ -639,6 +692,26 @@ describe("CompanionShareIngress", () => {
     },
   );
 
+  it("discards a new provisional Chat when Agent preflight is aborted before Run allocation", async () => {
+    const harness = createHarness();
+    const controller = new AbortController();
+    harness.start.mockImplementationOnce((_request, options) => {
+      expect(options.signal).toBe(controller.signal);
+      controller.abort();
+      options.signal?.throwIfAborted();
+      return Promise.resolve({ id: IDS.run });
+    });
+    const ingress = new CompanionShareIngress(harness.dependencies);
+
+    await expect(
+      ingress.importEnvelope(textEnvelope(), { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(harness.discardProvisional).toHaveBeenCalledWith(IDS.chat);
+    expect(harness.establishProvisional).not.toHaveBeenCalled();
+    expect(harness.completeShareImport).not.toHaveBeenCalled();
+  });
+
   it("discards a provisional Chat when start resolves without a completed User Message", async () => {
     const harness = createHarness({ returnWithoutMessage: true });
     const ingress = new CompanionShareIngress(harness.dependencies);
@@ -705,6 +778,40 @@ describe("CompanionShareIngress", () => {
         messageId: IDS.message,
       }),
     ]);
+  });
+
+  it("passes cancellation into recovery download and does not insert a missing attachment after abort", async () => {
+    const bytes = Buffer.from("image-bytes");
+    const envelope = attachmentEnvelope(bytes);
+    const harness = createHarness({ bytes });
+    const message: Message = {
+      chatId: IDS.chat,
+      content: "请处理这个附件。",
+      createdAt: NOW,
+      id: IDS.message,
+      role: "user",
+      runId: IDS.run,
+      status: "completed",
+      updatedAt: NOW,
+    };
+    harness.seedClaimedRun(envelope, message);
+    const controller = new AbortController();
+    harness.readRelayAsset.mockImplementationOnce((_asset, signal) => {
+      expect(signal).toBe(controller.signal);
+      controller.abort();
+      return Promise.resolve(bytes);
+    });
+    const ingress = new CompanionShareIngress(harness.dependencies);
+
+    await expect(
+      ingress.importEnvelope(envelope, { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(harness.readRelayAsset).toHaveBeenCalledOnce();
+    expect(harness.storeBufferWithStableId).not.toHaveBeenCalled();
+    expect(harness.insertAttachment).not.toHaveBeenCalled();
+    expect(harness.attachmentsByChat.get(IDS.chat)).toBeUndefined();
+    expect(harness.completeShareImport).not.toHaveBeenCalled();
   });
 
   it("establishes the recovered Chat without rebasing a stale predecessor cursor", async () => {

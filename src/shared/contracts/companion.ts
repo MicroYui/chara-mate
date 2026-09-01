@@ -37,10 +37,12 @@ import type {
   CompanionNotificationPermissionSchema,
   CompanionNotificationPushSchema,
   CompanionPairingClaimSchema,
+  CompanionPairingCreateRequestSchema,
   CompanionPairingGrantSchema,
   CompanionPairingTicketSchema,
   CompanionPlatformSchema,
   CompanionProtocolVersionSchema,
+  CompanionRelayOriginSchema,
   CompanionSharePayloadSchema,
   CompanionShareImportedAckResultSchema,
   CompanionShareUploadedEventSchema,
@@ -66,6 +68,7 @@ export type CompanionProtocolVersion = Static<
   typeof CompanionProtocolVersionSchema
 >;
 export type CompanionPlatform = Static<typeof CompanionPlatformSchema>;
+export type CompanionRelayOrigin = Static<typeof CompanionRelayOriginSchema>;
 export type CompanionNotificationPermission = Static<
   typeof CompanionNotificationPermissionSchema
 >;
@@ -73,6 +76,9 @@ export type CompanionDeviceStatus = Static<typeof CompanionDeviceStatusSchema>;
 export type CompanionDevice = Static<typeof CompanionDeviceSchema>;
 export type CompanionPairingTicket = Static<
   typeof CompanionPairingTicketSchema
+>;
+export type CompanionPairingCreateRequest = Static<
+  typeof CompanionPairingCreateRequestSchema
 >;
 export type CompanionPairingClaim = Static<typeof CompanionPairingClaimSchema>;
 export type CompanionPairingGrant = Static<typeof CompanionPairingGrantSchema>;

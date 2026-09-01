@@ -16,6 +16,7 @@ import {
   CompanionNotificationMessageSchema,
   CompanionNotificationPushSchema,
   CompanionPairingClaimSchema,
+  CompanionPairingCreateRequestSchema,
   CompanionPairingGrantSchema,
   CompanionPairingTicketSchema,
   CompanionSharePayloadSchema,
@@ -38,6 +39,7 @@ import {
   companionNotificationEnvelopeFixture,
   companionNotificationPushFixture,
   companionPairingClaimFixture,
+  companionPairingCreateRequestFixture,
   companionPairingGrantFixture,
   companionPairingTicketFixture,
   companionShareAckFixture,
@@ -51,6 +53,11 @@ const parsers = [parseSchema, parseSchemaWithoutCodeGeneration] as const;
 
 const validCases: readonly (readonly [string, TSchema, unknown])[] = [
   ["device", CompanionDeviceSchema, companionDeviceFixture],
+  [
+    "pairing create request",
+    CompanionPairingCreateRequestSchema,
+    companionPairingCreateRequestFixture,
+  ],
   [
     "pairing ticket",
     CompanionPairingTicketSchema,
@@ -171,6 +178,12 @@ describe("Android Companion v1 boundary contracts", () => {
     "rejects version drift and undeclared wire state through %s",
     (parse) => {
       expect(() =>
+        parse(CompanionPairingCreateRequestSchema, {
+          ...companionPairingCreateRequestFixture,
+          protocolVersion: 2,
+        }),
+      ).toThrow();
+      expect(() =>
         parse(CompanionPairingTicketSchema, {
           ...companionPairingTicketFixture,
           protocolVersion: 2,
@@ -192,6 +205,12 @@ describe("Android Companion v1 boundary contracts", () => {
         parse(CompanionPairingTicketSchema, {
           ...companionPairingTicketFixture,
           relayOrigin: "http://relay.example.test",
+        }),
+      ).toThrow();
+      expect(() =>
+        parse(CompanionPairingTicketSchema, {
+          ...companionPairingTicketFixture,
+          relayOrigin: "https://user:password@relay.example.test",
         }),
       ).toThrow();
     },

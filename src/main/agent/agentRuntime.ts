@@ -872,11 +872,18 @@ export class AgentRuntime {
 
   async start(
     request: StartRunRequest,
-    options?: { readonly onRunAllocated?: (runId: string) => void },
+    options?: {
+      readonly onRunAllocated?: (runId: string) => void;
+      readonly signal?: AbortSignal;
+    },
   ): Promise<Run> {
+    const modelRuntime = await this.providers.createChatModelRuntime(
+      request.providerProfileId,
+    );
+    options?.signal?.throwIfAborted();
     return this.#start(
       request,
-      await this.providers.createChatModelRuntime(request.providerProfileId),
+      modelRuntime,
       this.personas.getActiveSnapshot(),
       undefined,
       true,
@@ -884,6 +891,7 @@ export class AgentRuntime {
       true,
       undefined,
       options?.onRunAllocated,
+      options?.signal,
     );
   }
 
@@ -957,11 +965,16 @@ export class AgentRuntime {
     nativeWebSearchEnabled = true,
     onStarted?: (run: Run) => void,
     onRunAllocated?: (runId: string) => void,
+    signal?: AbortSignal,
   ): Promise<Run> {
+    const preflightSignal = signal ?? new AbortController().signal;
     return this.chatTurns.runSerializedTurn(request.chatId, async () => {
+      signal?.throwIfAborted();
       const limits = await modelRuntime.provider.resolveContextLimits(
         modelRuntime.snapshot.modelId,
+        signal,
       );
+      signal?.throwIfAborted();
       const imageAttachments = request.attachments.filter(
         ({ kind }) => kind === "image",
       );
@@ -984,8 +997,10 @@ export class AgentRuntime {
         try {
           for (const { storageKey } of imageAttachments) {
             preparedImages.push(await this.images.prepare(storageKey));
+            signal?.throwIfAborted();
           }
         } catch (error) {
+          signal?.throwIfAborted();
           throw new AgentError(
             "AGENT.IMAGE_INPUT_INVALID",
             error instanceof ImageInputError
@@ -1024,10 +1039,12 @@ export class AgentRuntime {
         limits,
         modelId: modelRuntime.snapshot.modelId,
         provider: modelRuntime.provider,
-        signal: new AbortController().signal,
+        signal: preflightSignal,
       });
+      signal?.throwIfAborted();
       const now = this.clock.now();
       const runId = this.ids.generate();
+      signal?.throwIfAborted();
       onRunAllocated?.(runId);
       this.writer.startRun({
         chatId: request.chatId,

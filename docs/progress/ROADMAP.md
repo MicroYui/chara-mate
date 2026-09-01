@@ -1,6 +1,6 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0–7 Done；“经历回响与跨设备陪伴”增量已完成产品定义，等待 Decision/Contract
+> 状态：Phase 0–7 Done；“经历回响与跨设备陪伴”增量正在实现，Desktop Companion Bridge 已进入 Main 集成
 > 日期：2026-09-01
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
@@ -151,7 +151,7 @@ flowchart TD
 5. **Wave 4 — 长期理解与领地支线**：Memory 自动形成闭环与 Activity 完成后，主动聊天、Self-evolution 实验和 Territory 沙盒的设计/Decision 可按各自 Gate 与所有权边界推进；Territory 共享合同由单一 integration owner 串行冻结，World runtime、Renderer fixture 和 AI 生成研究随后按所有权拆分。
 6. **Wave 5 — 全产品收口**：只集成已通过 Gate 的路径，运行完整离线、打包、E2E 和明确要求的 Live 检查。
 7. **Wave 6 — Persona 与角色对话补全（已完成）**：`CHARACTER-DIALOGUE` 已选择并实现 A1；生产具有版本化 Persona、唯一 Character Context 及跨 Text/Voice/Automation/主动对话 snapshot。显式叙事与 NPC 行动留作后续独立问题。
-8. **Wave 7 — 经历回响与跨设备陪伴（已定义）**：先完成未来事件时机和领地时刻选择两个窄 Decision，再串行冻结桌面跨设备合同；随后 Android/Relay 可在独立仓库并行实现，桌面 Bridge 由当前仓库单一 owner 接入，最后让 Chat Moment 复用既有 Territory Candidate。任何阶段都不建立云端 Agent、第二 Chat 真源或固定纪念品模板。
+8. **Wave 7 — 经历回响与跨设备陪伴（推进中）**：未来事件时机已完成最小选择，跨设备 v1 合同已冻结；当前仓库已由单一 owner 接入 Desktop Bridge 的 Main 配对、Relay mailbox、手机分享导入、IPC 与生命周期。下一步分别实现独立 Relay、Android Companion、Devices UI 和已完成 Assistant Message 的手机通知投影，再让 Chat Moment 复用既有 Territory Candidate。任何阶段都不建立云端 Agent、第二 Chat 真源或固定拍立得/纪念品模板。
 
 ## Phase 0 — 工程基线与稳定契约
 
@@ -447,7 +447,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## 后续产品增量 — 经历回响与跨设备陪伴
 
-> 当前状态：`implementing`。`EXPERIENCE-ECHO-TIMING` 已按用户要求以最小验证选择固定提前 30 分钟的一次性机会；第一个父工作包和 `ECHO-MOBILE-CONTRACT` 已完成。当前仓库 Desktop Bridge 已推进到 Schema v22：配对、opaque cursor/持久前序游标、分享导入回执、单消息单展示面持久化与 typed preload 已验证，手机文本、图片、UTF-8 文本/Markdown 和 PDF/普通文件可经受管资产进入现有 Agent Runtime，形成真实 User Message/Attachment；下一步接 Main 串行 Relay mailbox 处理器、真实配对 handler 与 IPC。独立 Relay/Android 可按冻结 v1 合同并行。Desktop 数据库/IPC 只由 Bridge owner 实现。Android Companion 与 Relay 属于独立仓库/部署单元，不把当前桌面单 package 改造成 monorepo。
+> 当前状态：`implementing`。`EXPERIENCE-ECHO-TIMING` 已按用户要求以最小验证选择固定提前 30 分钟的一次性机会；第一个父工作包和 `ECHO-MOBILE-CONTRACT` 已完成。当前仓库 Desktop Bridge 已推进到 Schema v22，并在 Main 接入真实配对 handler/Relay HTTP client、mailbox 串行消费与 ack、受管附件导入同一 Agent Runtime 的 User Message/Attachment 与 Run/Item、typed IPC 及启动/休眠恢复/取消配对生命周期。独立 Relay 服务、Android app、Devices UI 和已完成 Assistant Message 的手机通知投影仍未实现；这些是下一步的分离工作包。Desktop 数据库/IPC 只由 Bridge owner 实现，Android Companion 与 Relay 属于独立仓库/部署单元，不把当前桌面单 package 改造成 monorepo。Territory 后续继续复用现有 Candidate/生成能力自主决定生成物，不增加固定拍立得模板。
 
 ### 1. `ECHO-PROACTIVE-OPPORTUNITY`
 
@@ -461,7 +461,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ### 2. `ECHO-MOBILE-COMPANION`
 
-- **状态**：`implementing`。`ECHO-MOBILE-CONTRACT` 已于 2026-09-01 冻结 `protocolVersion = 1` 的 pairing/device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标和 ack Schema；正反例同时通过 Ajv codegen 与无 codegen validator。Desktop Bridge 的 Schema v22 本地持久化、typed preload 与托管附件导入已验证：稳定 submission 会绑定 Run，在 Provider 晚失败后恢复既有 User Message/Attachment，持久前序游标阻止重试回退 mailbox 水位；Main Relay/pairing/IPC 与 Relay/Android 实现尚未开始。
+- **状态**：`implementing`。`ECHO-MOBILE-CONTRACT` 已于 2026-09-01 冻结 `protocolVersion = 1` 的 pairing/device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标和 ack Schema；正反例同时通过 Ajv codegen 与无 codegen validator。`ECHO-DESKTOP-BRIDGE` 已在 Main 接入配对、Relay mailbox 串行消费/ack、手机分享导入同一 Run/Item、typed IPC 和应用生命周期；稳定 submission 会在 Provider 晚失败后恢复既有 User Message/Attachment，持久前序游标阻止重试回退 mailbox 水位。当前离线证据覆盖 domain unit、SQLite share-ingress integration 与无配对 Main IPC smoke；paired Relay、电源恢复、解绑和关闭联合链路留待 `ECHO-MOBILE-ACCEPTANCE`。独立 `ECHO-MAILBOX-PUSH-RELAY`、`ECHO-ANDROID-COMPANION`、Devices UI、Assistant Message 通知投影与三部署单元联合验收尚未实现。
 - **Outcome / authority**：落实产品设计 §5.2、§9.2.1 与 UI §4.4/§5.6/§11.5。Android 能收到同一 Assistant Message 的普通通知，并把单个图片或受支持文档及附文送入用户确认的 Chat；Desktop 仍是唯一 Agent/Memory/Run/Territory 真源。
 - **Scope / ownership**：父包依次包含 `ECHO-MOBILE-CONTRACT`（当前仓库 integration owner 冻结 pairing、device、Mailbox Envelope、upload、notification、cursor/ack v1 Schema）、`ECHO-MAILBOX-PUSH-RELAY`（独立 Relay）、`ECHO-ANDROID-COMPANION`（独立 Android）、`ECHO-DESKTOP-BRIDGE`（当前仓库 `src/main/companion/`）与 `ECHO-MOBILE-ACCEPTANCE`（三部署单元联合验收）。Contract 完成后 Relay/Android 可并行；Desktop Bridge 在冻结合同上实现。
 - **Dependencies**：依赖前一父包的单一消息投影结果合同、现有 Chat/Attachment/Run/Persona，以及 Android/FCM 2026-09-01 来源快照。跨设备附件统一复制到 CharaMate 管理资产，手机临时 URI、PC 绝对路径和 Relay URL 不成为持久真源。

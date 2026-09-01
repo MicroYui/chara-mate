@@ -55,7 +55,10 @@ interface RunRepositoryPort {
 interface AgentRuntimePort {
   start(
     request: StartRunRequest,
-    options: { readonly onRunAllocated: (runId: string) => void },
+    options: {
+      readonly onRunAllocated: (runId: string) => void;
+      readonly signal?: AbortSignal;
+    },
   ): Promise<unknown>;
 }
 
@@ -82,7 +85,10 @@ export interface CompanionShareIngressDependencies {
   readonly chats: ChatServicePort;
   readonly clock: Clock;
   readonly providers: ProviderPort;
-  readonly readRelayAsset: (asset: CompanionUploadAsset) => Promise<Buffer>;
+  readonly readRelayAsset: (
+    asset: CompanionUploadAsset,
+    signal?: AbortSignal,
+  ) => Promise<Buffer>;
   readonly runs: RunRepositoryPort;
 }
 
@@ -175,13 +181,14 @@ export class CompanionShareIngress {
 
   async importEnvelope(
     input: unknown,
+    options: { readonly signal?: AbortSignal } = {},
   ): Promise<CompanionShareImportedAckResult> {
     const envelope = parseSchema(CompanionDesktopMailboxEnvelopeSchema, input);
     const identity = inflightIdentity(envelope);
     const inflight = this.#inflight.get(identity);
     if (inflight) return inflight;
 
-    const task = this.#importEnvelope(envelope);
+    const task = this.#importEnvelope(envelope, options.signal);
     this.#inflight.set(identity, task);
     try {
       return await task;
@@ -194,7 +201,9 @@ export class CompanionShareIngress {
 
   async #importEnvelope(
     envelope: CompanionDesktopMailboxEnvelope,
+    signal?: AbortSignal,
   ): Promise<CompanionShareImportedAckResult> {
+    signal?.throwIfAborted();
     const desktopInstanceId =
       this.dependencies.bridge.getOrCreateDesktopInstanceId();
     if (envelope.recipient.desktopInstanceId !== desktopInstanceId) {
@@ -239,15 +248,18 @@ export class CompanionShareIngress {
     const recovered = await this.#recoverCompletedMessage(
       envelope,
       claimed.record,
+      signal,
     );
     if (recovered) return recovered;
 
-    const prepared = await this.#prepareShare(share);
+    const prepared = await this.#prepareShare(share, signal);
+    signal?.throwIfAborted();
     const chat = this.#resolveTargetChat(
       share,
       claimed.record,
       prepared.content,
     );
+    signal?.throwIfAborted();
 
     try {
       const request: StartRunRequest = {
@@ -259,6 +271,7 @@ export class CompanionShareIngress {
           this.dependencies.providers.getDefaultChatProfileId(),
         requestedAt: this.dependencies.clock.now(),
       };
+      signal?.throwIfAborted();
       await this.dependencies.agent.start(request, {
         onRunAllocated: (runId) => {
           this.dependencies.bridge.bindOrRebindShareRun({
@@ -267,13 +280,21 @@ export class CompanionShareIngress {
             updatedAt: this.dependencies.clock.now(),
           });
         },
+        ...(signal ? { signal } : {}),
       });
+      signal?.throwIfAborted();
     } catch (error) {
       const afterFailure = this.dependencies.bridge.getShareImport(
         share.submissionId,
       );
+      if (signal?.aborted) {
+        if (!afterFailure?.runId) {
+          this.#discardPendingNewChat(share, chat.id);
+        }
+        signal.throwIfAborted();
+      }
       const recoveredAfterFailure = afterFailure
-        ? await this.#recoverCompletedMessage(envelope, afterFailure)
+        ? await this.#recoverCompletedMessage(envelope, afterFailure, signal)
         : undefined;
       if (recoveredAfterFailure) return recoveredAfterFailure;
       this.#discardPendingNewChat(share, chat.id);
@@ -282,7 +303,7 @@ export class CompanionShareIngress {
 
     const current = this.dependencies.bridge.getShareImport(share.submissionId);
     const completed = current
-      ? await this.#recoverCompletedMessage(envelope, current)
+      ? await this.#recoverCompletedMessage(envelope, current, signal)
       : undefined;
     if (!completed) {
       this.#discardPendingNewChat(share, chat.id);
@@ -297,7 +318,9 @@ export class CompanionShareIngress {
   async #recoverCompletedMessage(
     envelope: CompanionDesktopMailboxEnvelope,
     record: CompanionShareImportRecord,
+    signal?: AbortSignal,
   ): Promise<CompanionShareImportedAckResult | undefined> {
+    signal?.throwIfAborted();
     if (record.state === "imported") return this.#finishImported(record);
     if (!record.runId) return undefined;
 
@@ -307,13 +330,16 @@ export class CompanionShareIngress {
     if (!message) return undefined;
     this.#assertTarget(envelope.event.share, message.chatId);
 
+    signal?.throwIfAborted();
     if (this.dependencies.chatRepository.isProvisionalChat(message.chatId)) {
       this.dependencies.chats.establishProvisional(message.chatId);
     }
     const attachmentId = await this.#ensureAttachment(
       envelope.event.share,
       message,
+      signal,
     );
+    signal?.throwIfAborted();
     const completed = this.dependencies.bridge.completeShareImport({
       ...(attachmentId ? { attachmentId } : {}),
       chatId: message.chatId,
@@ -394,14 +420,23 @@ export class CompanionShareIngress {
     }
   }
 
-  async #prepareShare(share: CompanionSharePayload): Promise<PreparedShare> {
+  async #prepareShare(
+    share: CompanionSharePayload,
+    signal?: AbortSignal,
+  ): Promise<PreparedShare> {
+    signal?.throwIfAborted();
     if (share.kind === "text") {
       return { content: share.text };
     }
-    const bytes = await this.dependencies.readRelayAsset(share.attachment);
+    const bytes = await this.dependencies.readRelayAsset(
+      share.attachment,
+      signal,
+    );
+    signal?.throwIfAborted();
     this.#validateBytes(share.attachment, bytes);
     const content = this.#attachmentContent(share, bytes);
     const kind = share.attachment.contentKind === "image" ? "image" : "file";
+    signal?.throwIfAborted();
     const artifact = await this.dependencies.artifacts.storeBufferWithStableId(
       share.submissionId,
       share.submissionId,
@@ -410,6 +445,7 @@ export class CompanionShareIngress {
       share.attachment.mediaType,
       kind,
     );
+    signal?.throwIfAborted();
     this.#validateArtifact(share, artifact, kind);
     return { artifact, content };
   }
@@ -417,7 +453,9 @@ export class CompanionShareIngress {
   async #ensureAttachment(
     share: CompanionSharePayload,
     message: Message,
+    signal?: AbortSignal,
   ): Promise<string | undefined> {
+    signal?.throwIfAborted();
     if (share.kind === "text") return undefined;
     const snapshot = this.dependencies.chatRepository.getSnapshot(
       message.chatId,
@@ -431,7 +469,7 @@ export class CompanionShareIngress {
       return existing.id;
     }
 
-    const prepared = await this.#prepareShare(share);
+    const prepared = await this.#prepareShare(share, signal);
     const artifact = prepared.artifact;
     if (!artifact) {
       throw this.#error(
@@ -439,6 +477,7 @@ export class CompanionShareIngress {
         "Companion attachment preparation returned no managed artifact.",
       );
     }
+    signal?.throwIfAborted();
     const attachment = this.dependencies.chatRepository.insertAttachment({
       ...(artifact.byteLength === undefined
         ? {}

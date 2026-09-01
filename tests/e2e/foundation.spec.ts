@@ -136,6 +136,7 @@ test("launches through the typed preload boundary", async () => {
       automationKeys: Object.keys(window.charaMate.automations).sort(),
       chatKeys: Object.keys(window.charaMate.chat).sort(),
       clipboardKeys: Object.keys(window.charaMate.clipboard).sort(),
+      companionKeys: Object.keys(window.charaMate.companion).sort(),
       evolutionKeys: Object.keys(window.charaMate.evolution).sort(),
       extensionKeys: Object.keys(window.charaMate.extensions).sort(),
       fileKeys: Object.keys(window.charaMate.files).sort(),
@@ -194,6 +195,13 @@ test("launches through the typed preload boundary", async () => {
         "subscribeChanged",
       ],
       clipboardKeys: ["writeText"],
+      companionKeys: [
+        "getSnapshot",
+        "setNotificationsEnabled",
+        "startPairing",
+        "subscribeChanged",
+        "unpair",
+      ],
       evolutionKeys: [
         "acceptCandidate",
         "archiveCandidate",
@@ -271,6 +279,7 @@ test("launches through the typed preload boundary", async () => {
         "automations",
         "chat",
         "clipboard",
+        "companion",
         "evolution",
         "extensions",
         "files",
@@ -328,6 +337,16 @@ test("launches through the typed preload boundary", async () => {
       voiceWakeKeys: ["getSnapshot", "setEnabled", "subscribe"],
       exposesRawIpcRenderer: false,
       exposesSecretReader: false,
+    });
+
+    await expect(
+      page.evaluate(() => window.charaMate.companion.getSnapshot()),
+    ).resolves.toEqual({ ok: true, value: { state: "unpaired" } });
+    await expect(
+      page.evaluate(() => window.charaMate.companion.startPairing()),
+    ).resolves.toMatchObject({
+      error: { code: "COMPANION.PROTOCOL_ERROR", retryable: false },
+      ok: false,
     });
 
     await expect

@@ -1132,6 +1132,10 @@ CharaMate Desktop 继续是唯一 Agent、Memory、Chat/Run、Persona 与 Territ
 
 跨部署 v1 合同固定为 `protocolVersion = 1` 的 pairing/device 请求、按 Desktop/Android 方向约束且使用不透明 cursor 的 Mailbox Envelope/Page/Ack、稳定 `envelopeId/submissionId/relayAssetId + sha256`、单条文本或单附件分享、只引用已完成 Assistant Message 的通知，以及只含 `chatId/title/updatedAt` 的最近 Chat 目标快照。上传以 `UploadCreateRequest/UploadReceipt` 冻结幂等元数据，实际字节作为 Relay HTTP 请求体传输，不塞进 JSON Schema；重复上传必须复用同一 `submissionId`。Relay 临时资产 URL、Android `content://` URI、PC 绝对路径和 Desktop `storageKey` 都不进入 wire；Desktop 只有在托管字节校验并写成真实 User Message/Attachment 后才能对 Desktop-bound share 返回 `share.imported`，Android-bound notification/chat-target envelope 只返回 `envelope.received`。FCM push 携带同一 Envelope 引用，只是通知投影或唤醒提示；`envelope.received` 不声称系统通知已经展示。
 
+Desktop 对 Relay 的 v1 HTTPS 绑定只使用一组同源窄端点：`POST /v1/companion/pairings`、`GET /v1/companion/pairings/{pairingId}/wait`、`POST /v1/companion/mailbox/fetch`、`POST /v1/companion/mailbox/ack`、`GET /v1/companion/assets/{relayAssetId}`、`PUT /v1/companion/devices/{deviceId}/notifications` 和 `POST /v1/companion/devices/{deviceId}/unpair`。新配对的 Relay origin 是部署配置，不做成普通用户设置；一次性 `pairingSecret` 只存在于内存 Pairing Ticket 中，作为 QR payload 短暂交给 Renderer 显示，并由 Main 以 Bearer 调用 pairing wait，不写日志或 SQLite 正文；长期 `deviceCredential` 只保存在 Main 的系统密钥存储引用中，既不进入 Renderer，也不写日志或 SQLite 正文。pairing wait 与 mailbox fetch 是可取消长询问，等待窗口由 Relay 决定，Desktop 不另行发明固定轮询频率。对可重试的 HTTP `408/425/429/5xx`，只有 Relay 返回合法的 `Retry-After`（delta-seconds 或 HTTP-date）时 Desktop 才按该值安排重试，不发明固定或指数退避数字；没有 `Retry-After`、header 非法或传输失败时，由应用启动、用户活跃、系统解锁或恢复、新 Run 完成等自然事件再次唤醒。Page 内 Envelope 必须按 cursor 前进顺序返回，ack 按同一 recipient/envelope/cursor/result 幂等，临时素材至少保留到 `share.imported` ack；空 continuation、错 recipient/device、不前进 cursor 或协议/本地持久化不变量违规会在当前 Main 进程内阻塞串行 consumer 并显示协议异常，同进程的普通 start/wake 不再重试，也不自动跳过用户分享。应用进程重启只从持久 cursor 重新校验同一项；若仍违规则再次阻塞。成功重新配对会清除进程内阻塞，首版不提供单独的“跳过/重置”动作。
+
+取消配对是可恢复操作：Relay 网络失败或本地 secret store 的暂时性读写异常时，Desktop 保留本地配对记录和 credential 引用，以便用户重试；若本地 credential 已明确缺失，或 Relay 明确返回 `401/404/410` 表示该凭据或设备关系已不可恢复，则允许 Desktop 遗忘本地配对，后续通过重新配对恢复。不得在未知远端结果或暂时性本地存储失败时静默丢弃唯一的本地恢复入口。
+
 ### 9.3 成长语义
 
 “成长”由以下可见变化构成：

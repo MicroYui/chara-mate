@@ -12,6 +12,10 @@ export const CompanionProtocolVersionSchema = Type.Literal(1);
 
 export const CompanionPlatformSchema = Type.Literal("android");
 
+export const CompanionRelayOriginSchema = Type.String({
+  pattern: "^https://(?![^/?#]*@)[^\\s]+$",
+});
+
 export const CompanionNotificationPermissionSchema = Type.Union([
   Type.Literal("unknown"),
   Type.Literal("granted"),
@@ -132,6 +136,14 @@ export const CompanionDesktopSnapshotResponseSchema = operationResponse(
   CompanionDesktopSnapshotSchema,
 );
 
+export const CompanionPairingCreateRequestSchema = Type.Object(
+  {
+    desktopInstanceId: EntityIdSchema,
+    protocolVersion: CompanionProtocolVersionSchema,
+  },
+  { additionalProperties: false },
+);
+
 export const CompanionPairingTicketSchema = Type.Object(
   {
     desktopInstanceId: EntityIdSchema,
@@ -139,9 +151,7 @@ export const CompanionPairingTicketSchema = Type.Object(
     pairingId: EntityIdSchema,
     pairingSecret: NonBlankStringSchema,
     protocolVersion: CompanionProtocolVersionSchema,
-    relayOrigin: Type.String({
-      pattern: "^https://[^\\s]+$",
-    }),
+    relayOrigin: CompanionRelayOriginSchema,
   },
   { additionalProperties: false },
 );

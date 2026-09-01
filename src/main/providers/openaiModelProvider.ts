@@ -373,28 +373,42 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
     this.supportsNativeWebSearch = true;
   }
 
-  async resolveContextLimits(modelId: string): Promise<ModelContextLimits> {
+  async resolveContextLimits(
+    modelId: string,
+    signal?: AbortSignal,
+  ): Promise<ModelContextLimits> {
+    signal?.throwIfAborted();
     let listedLimits: ModelContextLimits | undefined;
     try {
-      const page = await this.#client.models.list();
+      const page = await this.#client.models.list(
+        signal ? { signal } : undefined,
+      );
       for await (const model of page) {
         if (model.id !== modelId) continue;
         listedLimits = contextLimitsFromModel(model);
         if (listedLimits.effectiveInputTokens !== undefined) {
+          signal?.throwIfAborted();
           return listedLimits;
         }
         break;
       }
     } catch (error) {
+      signal?.throwIfAborted();
       if (!unsupportedModelMetadataEndpoint(error)) throw mapSdkError(error);
     }
+    signal?.throwIfAborted();
 
     try {
       const detailedLimits = contextLimitsFromModel(
-        await this.#client.models.retrieve(modelId),
+        await this.#client.models.retrieve(
+          modelId,
+          signal ? { signal } : undefined,
+        ),
       );
+      signal?.throwIfAborted();
       return { ...listedLimits, ...detailedLimits };
     } catch (error) {
+      signal?.throwIfAborted();
       if (unsupportedModelMetadataEndpoint(error)) return listedLimits ?? {};
       throw mapSdkError(error);
     }
