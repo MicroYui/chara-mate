@@ -5,6 +5,7 @@ import type { AgentApi } from "./agent";
 import type { ActivityApi } from "./activity";
 import type { AutomationApi } from "./automation";
 import type { ChatApi } from "./chat";
+import type { CompanionApi } from "./companion";
 import type { ExtensionsApi } from "./extensions";
 import type { EvolutionApi } from "./evolution";
 import type { LocalFilesApi } from "./files";
@@ -39,6 +40,7 @@ export interface DesktopApi {
   activity: ActivityApi;
   automations: AutomationApi;
   clipboard: ClipboardApi;
+  companion: CompanionApi;
   evolution: EvolutionApi;
   files: LocalFilesApi;
   foundation: FoundationApi;

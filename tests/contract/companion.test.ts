@@ -7,6 +7,8 @@ import {
   CompanionDeviceNotificationPreferenceRequestSchema,
   CompanionDeviceRegistrationUpdateSchema,
   CompanionDeviceSchema,
+  CompanionDesktopSnapshotResponseSchema,
+  CompanionDesktopSnapshotSchema,
   CompanionMailboxAckSchema,
   CompanionMailboxEnvelopeSchema,
   CompanionMailboxFetchRequestSchema,
@@ -139,6 +141,22 @@ const validCases: readonly (readonly [string, TSchema, unknown])[] = [
       text: "今天的分享结束了",
     },
   ],
+  [
+    "desktop paired snapshot",
+    CompanionDesktopSnapshotSchema,
+    {
+      device: {
+        displayName: companionDeviceFixture.displayName,
+        id: companionDeviceFixture.id,
+        notificationPermission: companionDeviceFixture.notificationPermission,
+        notificationsEnabled: companionDeviceFixture.notificationsEnabled,
+        pairedAt: companionDeviceFixture.pairedAt,
+        platform: companionDeviceFixture.platform,
+        status: companionDeviceFixture.status,
+      },
+      state: "paired",
+    },
+  ],
 ];
 
 describe("Android Companion v1 boundary contracts", () => {
@@ -176,6 +194,42 @@ describe("Android Companion v1 boundary contracts", () => {
           relayOrigin: "http://relay.example.test",
         }),
       ).toThrow();
+    },
+  );
+
+  it.each(parsers)(
+    "keeps Desktop snapshots free of relay credentials and mailbox state through %s",
+    (parse) => {
+      const desktopDevice = {
+        displayName: companionDeviceFixture.displayName,
+        id: companionDeviceFixture.id,
+        notificationPermission: companionDeviceFixture.notificationPermission,
+        notificationsEnabled: companionDeviceFixture.notificationsEnabled,
+        pairedAt: companionDeviceFixture.pairedAt,
+        platform: companionDeviceFixture.platform,
+        status: companionDeviceFixture.status,
+      };
+      expect(
+        parse(CompanionDesktopSnapshotResponseSchema, {
+          ok: true,
+          value: { device: desktopDevice, state: "paired" },
+        }),
+      ).toEqual({
+        ok: true,
+        value: { device: desktopDevice, state: "paired" },
+      });
+      for (const [field, value] of [
+        ["installationId", companionDeviceFixture.installationId],
+        ["deviceCredential", "must-stay-in-main"],
+        ["cursor", "must-stay-in-main"],
+      ] as const) {
+        expect(() =>
+          parse(CompanionDesktopSnapshotSchema, {
+            device: { ...desktopDevice, [field]: value },
+            state: "paired",
+          }),
+        ).toThrow();
+      }
     },
   );
 

@@ -307,6 +307,7 @@ import {
   TerritoryZoneViewResponseSchema as TerritoryWorldZoneViewResponseSchema,
 } from "../shared/schemas/territoryWorld";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
+import { createCompanionApi } from "./companionApi";
 import { createVoiceApi } from "./voiceApi";
 import { createVoiceWakeSettingsApi } from "./voiceWakeApi";
 
@@ -1416,6 +1417,7 @@ const desktopApi: CharaMateApi = Object.freeze({
       return Promise.resolve();
     },
   }),
+  companion: createCompanionApi(),
   evolution: evolutionApi,
   extensions: extensionsApi,
   files: Object.freeze({

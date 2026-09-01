@@ -1,5 +1,6 @@
-import { Type } from "@sinclair/typebox";
+import { Type, type TSchema } from "@sinclair/typebox";
 
+import { AppErrorSchema } from "./error";
 import {
   EntityIdSchema,
   NonBlankStringSchema,
@@ -55,6 +56,80 @@ export const CompanionDeviceSchema = Type.Object(
     status: CompanionDeviceStatusSchema,
   },
   { additionalProperties: false },
+);
+
+export const CompanionDesktopDeviceSchema = Type.Object(
+  {
+    displayName: NonBlankStringSchema,
+    id: EntityIdSchema,
+    notificationPermission: CompanionNotificationPermissionSchema,
+    notificationsEnabled: Type.Boolean(),
+    pairedAt: TimestampSchema,
+    platform: CompanionPlatformSchema,
+    status: CompanionDeviceStatusSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const CompanionDesktopSnapshotSchema = Type.Union([
+  Type.Object(
+    {
+      state: Type.Literal("unpaired"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      expiresAt: TimestampSchema,
+      qrPayload: NonBlankStringSchema,
+      state: Type.Literal("pairing"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      device: CompanionDesktopDeviceSchema,
+      state: Type.Literal("paired"),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const CompanionDesktopEmptyRequestSchema = Type.Object(
+  {},
+  { additionalProperties: false },
+);
+
+export const CompanionDesktopSetNotificationsEnabledRequestSchema = Type.Object(
+  {
+    deviceId: EntityIdSchema,
+    enabled: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export const CompanionDesktopUnpairRequestSchema = Type.Object(
+  {
+    deviceId: EntityIdSchema,
+  },
+  { additionalProperties: false },
+);
+
+function operationResponse<TValue extends TSchema>(value: TValue) {
+  return Type.Union([
+    Type.Object(
+      { ok: Type.Literal(true), value },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      { error: AppErrorSchema, ok: Type.Literal(false) },
+      { additionalProperties: false },
+    ),
+  ]);
+}
+
+export const CompanionDesktopSnapshotResponseSchema = operationResponse(
+  CompanionDesktopSnapshotSchema,
 );
 
 export const CompanionPairingTicketSchema = Type.Object(

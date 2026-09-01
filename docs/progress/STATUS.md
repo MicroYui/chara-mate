@@ -8,7 +8,7 @@
 
 产品方向已确认：用户一次允许重要时刻主动联系后，明确未来事件可以形成到点仍会重判的一次机会；Android 作为通知与分享入口，Desktop 保持唯一 Agent/Memory/Chat/Run/Territory 真源；显著 Chat Moment 可以由现有 Territory 生成能力自主决定表达什么，但只准备待确认 Preview，不固定拍立得等模板，也不自动修改 World。
 
-`EXPERIENCE-ECHO-TIMING` 已按用户要求不做大规模实验，选择固定在 `occursAt` 前 30 分钟获得一次重判机会；事件形成时若不足 30 分钟则不即时补发。`ECHO-PROACTIVE-OPPORTUNITY` 已完成 Memory `occursAt/timeZone`、重要时刻类别许可、持久机会、恢复重查和同一 Chat Run/气泡投影。`ECHO-MOBILE-CONTRACT` 已冻结 Android/Relay/Desktop Bridge 共用的 pairing、device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标与 ack v1 Schema；下一步是独立 Relay/Android 与当前仓库 Desktop Bridge，跨设备 Attachment ingress 和 `chat_moment` Territory 来源尚未开始。任何真实 Provider/FCM/Image Live 仍需用户明确授权。
+`EXPERIENCE-ECHO-TIMING` 已按用户要求不做大规模实验，选择固定在 `occursAt` 前 30 分钟获得一次重判机会；事件形成时若不足 30 分钟则不即时补发。`ECHO-PROACTIVE-OPPORTUNITY` 已完成 Memory `occursAt/timeZone`、重要时刻类别许可、持久机会、恢复重查和同一 Chat Run/气泡投影。`ECHO-MOBILE-CONTRACT` 已冻结 Android/Relay/Desktop Bridge 共用的 pairing、device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标与 ack v1 Schema；`ECHO-DESKTOP-BRIDGE` 的 Schema v21 单手机配对、opaque cursor、分享导入回执、单消息单展示面持久化与 Renderer-safe typed preload 边界已完成聚焦验证，下一步接手机分享的托管附件导入和 Main IPC。独立 Relay/Android 与 `chat_moment` Territory 来源尚未开始。任何真实 Provider/FCM/Image Live 仍需用户明确授权。
 
 ### 已完成绿色基线
 
@@ -84,7 +84,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 | `ECHO-MOBILE-COMPANION` | `main`（桌面合同 owner） | `implementing` | v1 合同已就绪；Relay/Android 可在独立仓库并行，Desktop Bridge 依合同接入唯一 Chat/Attachment/Run 真源 |
 | `ECHO-MAILBOX-PUSH-RELAY` | 独立 Relay owner | `contract-ready` | 待在独立部署单元实现 mailbox、临时附件、幂等 ack 与 FCM adapter |
 | `ECHO-ANDROID-COMPANION` | 独立 Android owner | `contract-ready` | 待实现配对、通知、精确消息详情、Sharesheet 与 WorkManager 上传队列 |
-| `ECHO-DESKTOP-BRIDGE` | `main` | `contract-ready` | 待实现配对状态、mailbox 消费、托管附件导入、单表面投影与 typed IPC |
+| `ECHO-DESKTOP-BRIDGE` | `main` | `focused-verified` | Schema v21 的配对状态、opaque cursor、分享幂等回执、单表面投影和 typed preload 已通过聚焦验证；正在接托管附件导入与 Main IPC |
 | `ECHO-TERRITORY-MOMENT` | `main`（Territory integration owner） | `specified` | `chat_moment` 只扩展既有 Candidate 来源且不固定物件形态；等待 `TERRITORY-MOMENT-SELECTION` 与跨设备附件合同 |
 | `TERRITORY-NPC-ACTION-DECISION` | `codex/character-dialogue-roadmap` | `done` | 选择 T1；生产 `territory.observe → territory.act`、宿主裁决与 Renderer event 已通过完整 offline、25/25 Electron E2E、package 与 packaged smoke |
 | `TERRITORY-NPC-ACTION-EXPERIMENT` | `codex/territory-npc-action-experiment` | `done` | node:test 4/4；27 样本/79 次有效 Provider 请求，T0/T1/T2 均 9/9，raw 仅保存在仓库外 |
@@ -150,6 +150,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 ## 最近绿色验证
 
+- 2026-09-01 Desktop Bridge 持久化基础：Schema v21、稳定 Desktop ID、单 Android 配对、cursor CAS、分享 claim/bind/import/ack 恢复、单消息单展示面与 Renderer-safe typed preload 完成；TypeScript、目标 ESLint/Prettier、`git diff --check`、unit 33/33、companion contract 16/16、database integration 8/8 通过。未接入真实 Relay/FCM，未运行 Provider、Image Live、build、package 或 E2E。
 - 2026-09-01 Android Companion v1 合同：pairing/device、分方向 opaque cursor mailbox、稳定 `submissionId`、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标和 ack Schema 已冻结；TypeScript、受影响 ESLint/Prettier、`git diff --check` 与 contract 128/128 通过，其中 companion 正反例同时覆盖 Ajv codegen 和无 codegen validator。未创建数据库迁移、IPC、Relay/Android 源码，未运行真实 FCM。
 - 2026-09-01 经历回响桌面闭环：Schema v20、Memory 时间事实、重要时刻类别许可、持久机会、取消/恢复、同一 Chat Run 与气泡投影完成。锁定依赖入口的完整离线层通过：contract 114/114、focused/component 448/448、integration 205/205；production build 与 Electron E2E 25/25 通过，`git diff --check`、ESLint 和 Prettier 通过。保留 2 条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示。本机 `node_modules/.bin` 为空，因此聚合脚本中的 `tsc` 名称无法解析；已直接运行同一 lockfile 安装版本的 TypeScript/ESLint/Prettier/Vitest 入口完成等价验证。未运行真实 Provider、FCM、Image Live、package、make、签名或公证。
 - 2026-08-31 智能角色体验收口：`TERRITORY-NPC-ACTION` 的 27 个有效样本、79 次目标模型请求（加格式探针与链路 smoke 共 84 次 Provider 请求）完成，T0/T1/T2 均 9/9 且无虚报成功，选择 T1。生产 `npm run verify:offline` 通过（contract 112/112、focused/component 430/430、integration 200/200），`npm run test:e2e` 含 production build 在串行 Electron 生命周期下通过 25/25，arm64 `npm run package` 与 `npm run smoke:package` 通过；packaged smoke 确认 `databaseRoundTrip=true`、`browserRoundTrip=true`、`rendererReady=true`、`characterRendererReady=true`、`singleInstance=true`、`trayReady=true`、`visibleWindowCount=0`、`wakeAssetsReady=true`。`npm run test:benchmark` 返回 `not-applicable`；保留两条既有 TanStack Virtual lint warning 和大型懒加载 chunk 提示，未运行 `make`、签名或公证。

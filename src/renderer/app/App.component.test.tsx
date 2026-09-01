@@ -306,6 +306,13 @@ function renderApp({
         };
       }),
     },
+    companion: {
+      getSnapshot: vi.fn(),
+      setNotificationsEnabled: vi.fn(),
+      startPairing: vi.fn(),
+      subscribeChanged: vi.fn(() => () => undefined),
+      unpair: vi.fn(),
+    },
     clipboard: {
       writeText: vi.fn().mockResolvedValue(undefined),
     },

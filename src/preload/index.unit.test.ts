@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CharaMateApi } from "../shared/contracts/foundation";
 import { AUTOMATION_CHANNELS } from "../shared/contracts/automation";
 import { CHAT_CHANNELS, CHAT_EVENT_CHANNELS } from "../shared/contracts/chat";
+import { COMPANION_DESKTOP_CHANNELS } from "../shared/contracts/companion";
 import { EXTENSION_CHANNELS } from "../shared/contracts/extensions";
 import { EVOLUTION_CHANNELS } from "../shared/contracts/evolution";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
@@ -82,6 +83,22 @@ beforeEach(() => {
 });
 
 describe("Phase 1 typed preload data boundary", () => {
+  it("exposes the narrow Companion API on the desktop bridge", async () => {
+    electron.ipcRenderer.invoke.mockImplementation(
+      (channel: string, input: unknown) => {
+        expect(channel).toBe(COMPANION_DESKTOP_CHANNELS.getSnapshot);
+        expect(input).toEqual({});
+        return Promise.resolve({ ok: true, value: { state: "unpaired" } });
+      },
+    );
+    const api = await loadApi();
+
+    await expect(api.companion.getSnapshot()).resolves.toEqual({
+      ok: true,
+      value: { state: "unpaired" },
+    });
+  });
+
   it("validates Persona snapshots and changed events across the preload boundary", async () => {
     const snapshot = {
       activePersonaId: personaSnapshotFixture.personaId,

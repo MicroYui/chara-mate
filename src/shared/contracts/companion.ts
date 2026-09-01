@@ -13,6 +13,12 @@ import type {
   CompanionDesktopMailboxEnvelopeSchema,
   CompanionDesktopMailboxPageSchema,
   CompanionDesktopMailboxRecipientSchema,
+  CompanionDesktopDeviceSchema,
+  CompanionDesktopEmptyRequestSchema,
+  CompanionDesktopSetNotificationsEnabledRequestSchema,
+  CompanionDesktopSnapshotResponseSchema,
+  CompanionDesktopSnapshotSchema,
+  CompanionDesktopUnpairRequestSchema,
   CompanionDeviceNotificationPreferenceRequestSchema,
   CompanionDeviceRegistrationUpdateSchema,
   CompanionDeviceSchema,
@@ -48,6 +54,14 @@ import type {
 
 export const COMPANION_PROTOCOL_VERSION = 1 as const;
 
+export const COMPANION_DESKTOP_CHANNELS = {
+  changed: "companion.desktop.changed",
+  getSnapshot: "companion.desktop.getSnapshot",
+  setNotificationsEnabled: "companion.desktop.setNotificationsEnabled",
+  startPairing: "companion.desktop.startPairing",
+  unpair: "companion.desktop.unpair",
+} as const;
+
 export type CompanionProtocolVersion = Static<
   typeof CompanionProtocolVersionSchema
 >;
@@ -76,6 +90,24 @@ export type CompanionMailboxCursor = Static<
 >;
 export type CompanionDesktopMailboxRecipient = Static<
   typeof CompanionDesktopMailboxRecipientSchema
+>;
+export type CompanionDesktopDevice = Static<
+  typeof CompanionDesktopDeviceSchema
+>;
+export type CompanionDesktopEmptyRequest = Static<
+  typeof CompanionDesktopEmptyRequestSchema
+>;
+export type CompanionDesktopSetNotificationsEnabledRequest = Static<
+  typeof CompanionDesktopSetNotificationsEnabledRequestSchema
+>;
+export type CompanionDesktopSnapshot = Static<
+  typeof CompanionDesktopSnapshotSchema
+>;
+export type CompanionDesktopSnapshotResponse = Static<
+  typeof CompanionDesktopSnapshotResponseSchema
+>;
+export type CompanionDesktopUnpairRequest = Static<
+  typeof CompanionDesktopUnpairRequestSchema
 >;
 export type CompanionAndroidMailboxRecipient = Static<
   typeof CompanionAndroidMailboxRecipientSchema
@@ -153,3 +185,17 @@ export type CompanionMailboxAck = Static<typeof CompanionMailboxAckSchema>;
 export type CompanionNotificationPush = Static<
   typeof CompanionNotificationPushSchema
 >;
+
+export interface CompanionApi {
+  getSnapshot(): Promise<CompanionDesktopSnapshotResponse>;
+  setNotificationsEnabled(
+    request: CompanionDesktopSetNotificationsEnabledRequest,
+  ): Promise<CompanionDesktopSnapshotResponse>;
+  startPairing(): Promise<CompanionDesktopSnapshotResponse>;
+  subscribeChanged(
+    listener: (snapshot: CompanionDesktopSnapshot) => void,
+  ): () => void;
+  unpair(
+    request: CompanionDesktopUnpairRequest,
+  ): Promise<CompanionDesktopSnapshotResponse>;
+}

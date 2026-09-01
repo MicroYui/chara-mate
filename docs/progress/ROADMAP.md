@@ -447,7 +447,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## 后续产品增量 — 经历回响与跨设备陪伴
 
-> 当前状态：`implementing`。`EXPERIENCE-ECHO-TIMING` 已按用户要求以最小验证选择固定提前 30 分钟的一次性机会；第一个父工作包和 `ECHO-MOBILE-CONTRACT` 已完成。下一步是独立 Relay/Android 并行实现，以及当前仓库 Desktop Bridge 接入；Desktop 数据库/IPC 只由 Bridge owner 按冻结 v1 合同实现。Android Companion 与 Relay 属于独立仓库/部署单元，不把当前桌面单 package 改造成 monorepo。
+> 当前状态：`implementing`。`EXPERIENCE-ECHO-TIMING` 已按用户要求以最小验证选择固定提前 30 分钟的一次性机会；第一个父工作包和 `ECHO-MOBILE-CONTRACT` 已完成。当前仓库 Desktop Bridge 的 Schema v21 配对、opaque cursor、分享导入回执、单消息单展示面持久化与 typed preload 已通过聚焦验证，正在接托管附件导入和 Main IPC；独立 Relay/Android 可按冻结 v1 合同并行。Desktop 数据库/IPC 只由 Bridge owner 实现。Android Companion 与 Relay 属于独立仓库/部署单元，不把当前桌面单 package 改造成 monorepo。
 
 ### 1. `ECHO-PROACTIVE-OPPORTUNITY`
 
@@ -461,7 +461,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ### 2. `ECHO-MOBILE-COMPANION`
 
-- **状态**：`implementing`。`ECHO-MOBILE-CONTRACT` 已于 2026-09-01 冻结 `protocolVersion = 1` 的 pairing/device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标和 ack Schema；正反例同时通过 Ajv codegen 与无 codegen validator。Relay/Android 尚未创建，Desktop Bridge 尚未开始。
+- **状态**：`implementing`。`ECHO-MOBILE-CONTRACT` 已于 2026-09-01 冻结 `protocolVersion = 1` 的 pairing/device、分方向 opaque cursor mailbox、稳定 submission、单素材 upload request/receipt、completed Assistant notification、最近 Chat 目标和 ack Schema；正反例同时通过 Ajv codegen 与无 codegen validator。Desktop Bridge 的 Schema v21 本地持久化与 typed preload 已聚焦验证，正在接托管附件导入和 Main IPC；Relay/Android 尚未创建。
 - **Outcome / authority**：落实产品设计 §5.2、§9.2.1 与 UI §4.4/§5.6/§11.5。Android 能收到同一 Assistant Message 的普通通知，并把单个图片或受支持文档及附文送入用户确认的 Chat；Desktop 仍是唯一 Agent/Memory/Run/Territory 真源。
 - **Scope / ownership**：父包依次包含 `ECHO-MOBILE-CONTRACT`（当前仓库 integration owner 冻结 pairing、device、Mailbox Envelope、upload、notification、cursor/ack v1 Schema）、`ECHO-MAILBOX-PUSH-RELAY`（独立 Relay）、`ECHO-ANDROID-COMPANION`（独立 Android）、`ECHO-DESKTOP-BRIDGE`（当前仓库 `src/main/companion/`）与 `ECHO-MOBILE-ACCEPTANCE`（三部署单元联合验收）。Contract 完成后 Relay/Android 可并行；Desktop Bridge 在冻结合同上实现。
 - **Dependencies**：依赖前一父包的单一消息投影结果合同、现有 Chat/Attachment/Run/Persona，以及 Android/FCM 2026-09-01 来源快照。跨设备附件统一复制到 CharaMate 管理资产，手机临时 URI、PC 绝对路径和 Relay URL 不成为持久真源。

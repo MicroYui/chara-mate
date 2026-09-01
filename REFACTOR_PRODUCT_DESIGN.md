@@ -1739,7 +1739,7 @@ userData/
 | Journey | `journeys`, `together_sessions`, `journey_moments`；Home Chat 与 Automation/Memory 只保存稳定引用，不复制其领域数据 |
 | Companionship | `companion_initiative_records`, `companion_initiative_opportunities`；引用 Chat 与 Memory Revision，不复制消息或事实正文 |
 | Automation | `automations`（只包含 Reminder 与 Agent Task）, `automation_runs` |
-| Companion Bridge | `paired_companion_devices`, `companion_mailbox_cursors`；只保存本机配对引用、协议版本和消费水位，不保存 FCM 服务凭据或远端 Chat 副本 |
+| Companion Bridge | `paired_companion_devices`, `companion_mailbox_cursors`, `companion_share_imports`, `companion_message_projections`；只保存本机配对引用、协议版本、消费水位、分享导入回执和单消息单展示面决定，不保存 FCM 服务凭据、Relay 临时字节或远端 Chat 副本 |
 | Extension | `mcp_servers`, `skill_versions`, `skill_usage` |
 | Provider | `provider_profiles`（无明文 Key） |
 | Territory | World/Zone/World Revision、Style Profile/Asset Pack、Entity Definition/Instance、来源、Change Candidate 与 Asset 所需的唯一表组；具体表在新合同实现时一次冻结 |
@@ -1760,6 +1760,7 @@ userData/
 11. 同一有效事件 Memory Revision 至多有一个开放的 `ProactiveOpportunity`；claim、取消和消费幂等，到点不等于必发消息。
 12. 每个 Android 通知只引用一个已经持久化的 Assistant Message；每个手机上传只有导入为一个真实 User Message/Attachment 后才推进 mailbox cursor。
 13. Territory 的 `chat_moment` 只保存不可变来源摘要、上游引用与附件 hash；原始附件仍由 Chat 拥有，用户删除来源后不得存在未授权秘密副本。
+14. 同一 Companion `submissionId` 只能对应同一份分享载荷和同一导入回执；同一 Assistant Message 只能持久选择 Desktop 或 Android 中一个即时展示面，重试和重启不得重新判定为另一展示面。
 
 2026-08-01 的 Phase 1 Data 实现前来源刷新使用锁定发布物 `better-sqlite3@13.0.1` 随包源码：其 [`transaction`](https://github.com/WiseLibs/better-sqlite3/blob/v13.0.1/lib/methods/transaction.js) 在同步回调成功后提交、异常时回滚，并以 savepoint 支持嵌套事务。Phase 1 因此只把“事件行、当前投影与 sequence 水位必须在一个同步事务中提交”作为正确性约束；`journal_mode`、`synchronous`、busy timeout、batch 与 checkpoint 仍留给 `MEMORY-STORAGE`，本阶段不据 README 的性能建议提前选择 WAL 或固定数值。
 
