@@ -1,10 +1,14 @@
 # CharaMate 当前状态
 
-> 更新日期：2026-09-01
+> 更新日期：2026-09-02
 
 ## 当前里程碑
 
-**经历回响与跨设备陪伴 — `done`**
+**Android Companion 视觉层级优化 — `done`**
+
+在既有发送、附件、通知与“最近收到”闭环上完成纯视觉升级：压缩品牌头部、合并状态摘要、横向组织 Composer 动作、把最近消息改为 grouped list，并统一配对、分享确认和只读详情的材质与排版。现有 View ID、消息 tag、`ACTION_SEND`、确认、私有缓存、WorkManager、Relay/Desktop 合同与真源边界全部保持不变。
+
+上一里程碑“经历回响与跨设备陪伴”的传输、Desktop、Relay、Territory Moment 与跨部署合同保持 `done`；本轮只重开并完成 Android 客户端可用性验收。
 
 产品方向已确认：用户一次允许重要时刻主动联系后，明确未来事件可以形成到点仍会重判的一次机会；Android 作为通知与分享入口，Desktop 保持唯一 Agent/Memory/Chat/Run/Territory 真源；显著 Chat Moment 可以由现有 Territory 生成能力自主决定表达什么，但只准备待确认 Preview，不固定拍立得等模板，也不自动修改 World。
 
@@ -79,6 +83,9 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 | 工作包 | Owner | 状态 | 结果 |
 | --- | --- | --- | --- |
+| `ECHO-LOCAL-COMPANION-STACK` | Desktop/Relay/Android | `done` | Relay 与 localhost TLS 代理已镜像化；主仓库以同一脚本管理 Docker、宿主 arm64 AVD、APK 构建安装、`adb reverse` 与可选 Desktop 启动，保留 named volume 与模拟器数据 |
+| `ECHO-ANDROID-VISUAL-POLISH` | 独立 Android owner | `done` | 参考 Apple HIG 的层级、分组、克制材质与可访问性原则完成配对、首页 Composer、最近消息、分享确认与详情页优化；不增加功能、协议、依赖或第二套状态 |
+| `ECHO-ANDROID-DIRECT-SEND/CARDS` | 独立 Android owner | `done` | 首页文字/单图片或文件发送、最近收到持久卡片、通知清除后回看与精确详情均已通过 API 36 模拟器真实链路验收；不改 v1 wire |
 | `ECHO-PROACTIVE-OPPORTUNITY` | `main` | `done` | Schema v20、Memory 明确时间、类别许可、持久机会、启动/恢复重查、取消/恢复与同一 Chat Run/气泡投影完成 |
 | `ECHO-MOBILE-CONTRACT` | `main`（桌面合同 owner） | `done` | pairing/device、分方向 opaque cursor mailbox、compact wake、`registration_updated`、`chat_targets.replaced`、稳定 submission、单素材 upload request/receipt 与幂等 ack v1 Schema 已冻结并实现 |
 | `ECHO-MOBILE-COMPANION` | `main`（桌面合同 owner） | `done` | Desktop、Relay、Android 三个部署单元完成并通过本地受信 HTTPS 联合验收，Desktop 仍是唯一 Chat/Attachment/Run/Memory 真源 |
@@ -133,6 +140,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 - 当前生产已支持用户明确陈述的未来 `event/commitment` 通过 `occursAt/timeZone` 和重要时刻类别许可形成一次持久 `ProactiveOpportunity`；到点仍经过 P2、并发状态与模型语义门，可以静默。它只在 Desktop Main 运行、启动或系统恢复时重查，不是精确闹钟，也不能在 PC 离线时产生新的 Agent 判断。
 - 独立 Relay、Android 与 Desktop 本地三部署链路已完成。桌宠拖放会预填同一 Chats Composer，并进入统一 Attachment/Run；图片读取真实像素，UTF-8 文本/Markdown 读取正文，PDF 与其他文件只作为未解析附件。真实 FCM/FID、物理手机与系统通知权限切换仍属于发布前 Live 验收边界。
+- 本地演示栈将 Relay 与受信 localhost TLS 代理放入 Docker；Android Emulator 在 Apple Silicon macOS 上继续使用宿主 arm64 AVD，因为 Docker Desktop 的 Linux VM 不向容器暴露 macOS Hypervisor.framework，而 Google 的 Emulator 容器路径要求 Linux KVM。统一脚本仍提供一条命令启动、状态、日志和停止；fake push 只验证 mailbox、附件与陪伴卡片，不冒充真实 FCM。
 - Territory Moment 已完成同一 Run 内稀疏提议、幂等候选和桌宠提示；表达由经历与领地风格决定，用户应用前不修改 World。真实 Image Live 未运行。
 - `CHARACTER-DIALOGUE` 已选择并实现 A1。它复用现有 Agent Runtime、Memory、Journey、Voice 与已接受 `CONTEXT-RECIPE`；实验 Arm 和 A2 状态只留在 disposable worktree，不进入生产路径。
 - Persona、revision snapshot 与 Character Context Compiler 已成为唯一生产路径；固定 `Hi Mika` 只保留为当前产品定义的唤醒短语，不再承担非唤醒场景的人格配置。
@@ -151,6 +159,9 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 ## 最近绿色验证
 
+- 2026-09-02 本地 Companion 一键栈：主仓库与 Relay 均固定 npm 官方默认源，两个 lockfile 的 `resolved` URL 已收敛到 `registry.npmjs.org`，仓库 `AGENTS.md` 明确禁止 Microsoft/Azure DevOps/Visual Studio npm 镜像；当前网络直连官方源发生 TLS reset 时，以宿主既有、lockfile integrity 校验通过的缓存完成 `npm ci --offline` 176 包安装验证，随后 `npm run companion:build` 从同一官方 URL 缓存成功生成 Linux arm64 非 root 镜像并重新编译 `better-sqlite3`。`npm run companion:up`、Compose 双容器 health、HTTP/受信 HTTPS、named volume、`adb reverse`、APK 覆盖安装与 MainActivity 冷启动均通过；Android `testDebugUnitTest` 8/8、`lintDebug` 0 error/2 个既有 warning、`assembleDebug`，Relay check 12/12、acceptance 1/1、build，以及主仓 `npm run check:fast` contract 134/134 均通过。真实 FCM/FID、物理手机与公网部署未运行。
+- 2026-09-02 Android Companion 视觉层级优化：`testDebugUnitTest`、`lintDebug`、`assembleDebugAndroidTest`、`assembleDebug` 与两仓 `git diff --check` 通过；最终 APK 已覆盖安装到保留配对数据的 API 36 模拟器。ADB/UI Automator 真实点击验证首页输入后“发送”可用并进入既有分享确认页，“最近收到”整行点击可打开对应只读详情；首页、详情和确认页最终截图已留存。为避免清空正在用于用户验收的配对与消息数据，本轮没有再次执行会重置应用数据的 instrumentation；测试 APK 已成功编译，上一轮 7/7 行为 instrumentation 保持为功能基线。
+- 2026-09-02 Android Companion 可发现性补全：应用内文字与系统文档选择器共用既有 `ShareReceiver → PrivateShareCache → WorkManager` 路径，首页展示最近 3 条已持久化陪伴消息并精确打开只读详情。`testDebugUnitTest`、`lintDebug`、`assembleDebugAndroidTest`、`assembleDebug` 与 `git diff --check` 通过；独立 API 36 模拟器 instrumentation 7/7 通过。原配对模拟器覆盖安装最终 APK 后，文字分享被 Desktop 导入为真实 User Message/Run，Agent 回复再投递为 Android 系统通知和首页卡片；PNG 经过系统文件选择器、私有缓存、Relay 上传并被 Desktop 导入为真实 Attachment。清除系统通知并重启应用后，同一回复卡片仍可回看。最终本地测试 APK 使用仅 Debug 生效的 `http://127.0.0.1:8787` loopback transport；2026-09-01 的受信 HTTPS 三部署验收仍保持有效。真实 FCM/FID、物理手机和系统权限切换未运行。
 - 2026-09-01 经历回响与跨设备陪伴完整收口：Main Schema v24、PC 桌宠附件拖放、实际附件字节/UTF-8 正文、Companion 权限与最近 Chat 同步、`M1-IN-RUN` Territory Moment 和候选导航完成。`npm run verify:offline` 通过（contract 134/134、focused/component 604/604、integration 218/218），production build、Electron E2E 25/25、arm64 package、packaged smoke 与 make/DMG 通过；`git diff --check` 通过，保留 2 条既有 TanStack Virtual warning 和大型懒加载 chunk 提示。Relay acceptance 1/1、check 12/12、build 通过。Android 8 个 JVM 单测、API 36 常规 instrumentation 4/4、assembleRelease 与 lintDebug 通过；另以本地 CA、真实 HTTPS Relay、实际 Desktop `HttpsCompanionRelayClient` 和 Android 正式 Worker 逐项完成 4/4 opt-in 联合验收，覆盖重复 claim、通知/消息去重、只读详情、PNG/Markdown/PDF、断线重试、原始字节/hash、幂等 ack 与素材清理。真实 FCM/FID、物理手机、系统权限切换、Provider 与 Image Live 未运行。
 - 2026-09-01 Assistant Message 跨设备投影与 Devices UI：Schema v23 将最近主动记录从桌面“已展示”推广为唯一即时表面“已接受”，桌面仍要求气泡真实展示，Android 只记录稳定选择/入队而不伪造系统通知结果。Desktop Bridge 新增幂等 Android mailbox enqueue、投影恢复、Relay 回执身份校验、入站/出站共享的黏性协议状态、缺失凭据锁存与重新配对恢复；Settings → Devices 提供单手机二维码、连接/通知/协议状态和解除配对，并以 operation token 避免异步响应覆盖实时事件。`npm run verify:offline` 通过：contract 130/130、focused/component 569/569、integration 213/213；production build 与完整 Electron E2E 25/25 通过，TypeScript、ESLint、Prettier 和 `git diff --check` 通过。保留 2 条既有 TanStack Virtual warning 和大型懒加载 chunk 提示。未运行 package/make、独立 Relay/Android、真实 FCM、Provider 或 Image Live。
 - 2026-09-01 Desktop Companion Bridge Main 集成：Schema v22 在既有 cursor CAS 上持久化前序游标；Main 通过系统密钥存储引用保留配对凭据，接入可取消 pairing/mailbox 长询问、pending ack 优先重放及严格 `import → cursor 校验 → ack → mark`，手机文本、图片、UTF-8 文本/Markdown、PDF/普通文件经受管资产进入现有 User Message/Attachment/Run/Item。配对回滚、过期、长询问续接、Relay/凭据失败解绑恢复、Provider 晚失败、重复/并发冲突、处理器启停/唤醒及解绑期间锁存暂停均有确定性覆盖。直接使用 lockfile 安装入口完成全量离线验证：contract 130/130、focused/component 544/544、integration 211/211，TypeScript、ESLint、Prettier、`git diff --check`、production native/build 与完整 Electron E2E 25/25 通过；Companion 的 E2E 断言当前只覆盖 typed preload、未配对 IPC 和启动/关闭 smoke，paired Relay 生命周期留待跨部署验收。保留 2 条既有 TanStack Virtual warning 和大型懒加载 chunk 提示。未接入或运行独立 Relay、Android、FCM、真实 Provider/Image Live 或 package。
@@ -186,6 +197,7 @@ Phase 0–7 当前范围已完成。Chats 会话管理统一归左侧会话项�
 
 ## 当前来源快照
 
+- 2026-09-02 复核 [Android Emulator 官方硬件加速文档](https://developer.android.com/studio/run/emulator-acceleration)与 [Google Android Emulator Container Scripts](https://github.com/google/android-emulator-container-scripts/blob/master/README.md)：macOS 官方加速路径使用 Apple Hypervisor.Framework，Google 容器脚本要求 Linux KVM，因此本地演示栈选择宿主 AVD + Docker Relay/TLS，而不是在 Docker Desktop for Mac 内运行 Emulator。
 - 2026-09-01 `codex/character-dialogue-roadmap` 已合并并推送到 `main@885706c`，本地 `main` 与 `origin/main` 一致。真实 Pilot manifest 为 `c29f0b…09ac9`，36/36 样本成功、实际 37 次 Provider 请求；A1 已选为生产路径。
 - 2026-09-01 复核 Android 官方通知权限、Sharesheet、WorkManager 与 Firebase FCM HTTP v1/message type：Android Companion 首版可保持为通知、分享和上传队列，FCM 服务凭据必须只在可信 Relay；PC 离线时不宣称可以产生新的 Agent/Memory 决策。来源链接已写入产品设计 §9.2.1。
 - 2026-08-28 复核锁定 `openai@6.49.0` Responses 类型与当前 `OpenAIResponsesModelProvider`/`AgentRuntime`/`approvalPolicy`：`defer_loading` 是逐 Tool 可选字段，`tool_search` 服务 deferred Tools；Adapter 已支持一个请求同时携带 always-loaded core 与 deferred 长尾。核心 pack 的 7 个名称属于 CharaMate correctness 边界，不是 Provider 硬限制；Chat/Agent 可见性和 Approval 执行授权继续分层。

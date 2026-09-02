@@ -30,6 +30,49 @@ npm run test:live         # explicit live suite (not part of offline regression)
 npm run test:benchmark    # explicit benchmark suite (not part of offline regression)
 ```
 
+## Dependency sources
+
+- Use each ecosystem's default official dependency sources. npm uses `https://registry.npmjs.org/`; Android keeps `google()`, `mavenCentral()` and `gradlePluginPortal()`.
+- Do not introduce Microsoft, Azure DevOps, Visual Studio or other enterprise npm mirrors in `.npmrc`, lockfiles, Dockerfiles or CI configuration.
+- Keep committed npm lockfile `resolved` URLs on the official npm registry and regenerate the lockfile with the repository `.npmrc` when dependency metadata changes.
+
+## Existing local Companion stack
+
+A working local Android Companion stack already exists. Reuse it for local development, screenshots, recordings and acceptance; do not create a second Relay, a second AVD or require a public server for the local fake-push workflow.
+
+The default sibling repository layout is:
+
+```text
+../chara-mate          # Desktop and the orchestration script
+../chara-mate-relay    # Relay Docker image and localhost TLS proxy
+../chara-mate-android  # Android Companion application
+```
+
+Override the sibling paths with `CHARAMATE_RELAY_REPO` and `CHARAMATE_ANDROID_REPO` only when the repositories are elsewhere.
+
+The existing runtime is:
+
+- Docker image `chara-mate-relay:local` plus the `nginx:alpine` TLS proxy, defined by `../chara-mate-relay/compose.local.yaml`;
+- Relay HTTP at `http://127.0.0.1:8787` for `adb reverse`, and Desktop HTTPS at `https://127.0.0.1:8443`;
+- ignored local certificates and emulator ownership state under `../chara-mate-relay/.local-stack/`, without modifying the macOS system trust store;
+- Docker named-volume Relay persistence, which must not be deleted unless the user explicitly asks to reset local Companion data;
+- host-native Apple Silicon AVD `charamate_api36`, managed by the same script. It intentionally does not run inside Docker Desktop for Mac because usable Emulator acceleration is provided by macOS Hypervisor.Framework, while Google's Emulator container path requires Linux KVM;
+- Android Debug transport `companion.debugRelayOrigin=http://127.0.0.1:8787` in the Android repository's ignored `local.properties`.
+
+Run these commands from this repository:
+
+```text
+npm run companion:build     # build/update chara-mate-relay:local from official npm sources
+npm run companion:up        # Relay + TLS + host AVD + build/install/open APK
+npm run companion:demo      # companion:up, then launch Desktop with the local CA
+npm run companion:status    # container health and connected emulator
+npm run companion:logs      # follow Relay and TLS proxy logs
+npm run companion:down      # stop containers; preserve the named volume and AVD
+npm run companion:down:all  # also stop an AVD started by the script
+```
+
+`companion:up` reuses an existing Relay image and only builds it when missing; run `companion:build` after Relay source or dependency changes. The local Compose stack uses the fake push adapter, so mailbox, text/image/document upload, notification projection and companion cards can be exercised locally. It does not prove real FCM/FID delivery; that separate live path still requires Firebase credentials and a publicly trusted HTTPS Relay. See `../chara-mate-relay/README.md`, `../chara-mate-android/README.md` and `docs/progress/STATUS.md` for current evidence and boundaries.
+
 ## Non-negotiable product rules
 
 - Text Chat, voice, automations and proactive conversations share one Run/Item runtime.

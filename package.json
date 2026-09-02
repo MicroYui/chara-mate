@@ -17,6 +17,13 @@
   },
   "scripts": {
     "browser:install": "playwright install chromium",
+    "companion:demo": "node scripts/companion-demo.mjs demo",
+    "companion:build": "node scripts/companion-demo.mjs build",
+    "companion:up": "node scripts/companion-demo.mjs up",
+    "companion:status": "node scripts/companion-demo.mjs status",
+    "companion:logs": "node scripts/companion-demo.mjs logs",
+    "companion:down": "node scripts/companion-demo.mjs down",
+    "companion:down:all": "node scripts/companion-demo.mjs down-all",
     "start": "electron-forge start",
     "build:native": "node scripts/build-native-helper.mjs",
     "build": "npm run build:native && node scripts/build.mjs",

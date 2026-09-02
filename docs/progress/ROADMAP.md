@@ -1,7 +1,7 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0–7 与“经历回响与跨设备陪伴”增量均 Done；真实 FCM、物理手机、系统权限切换与 Image Live 作为发布前 Live 验收边界单列
-> 日期：2026-09-01
+> 状态：Phase 0–7、跨设备合同以及 Android 应用内发送与“最近收到”可发现性修补均 Done；真实 FCM、物理手机、系统权限切换与 Image Live 作为发布前 Live 验收边界单列
+> 日期：2026-09-02
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
 本文件记录里程碑依赖、工作包边界和验收，不记录逐命令历史。Phase 编号表示产品集成与验收顺序，不要求所有开发工作全局串行；只有共享契约、Schema、IPC 和同一可变资源的写入必须串行。
@@ -447,7 +447,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 ## 后续产品增量 — 经历回响与跨设备陪伴
 
-> 当前状态：`done`。`EXPERIENCE-ECHO-TIMING` 已按用户要求以最小验证选择固定提前 30 分钟的一次性机会，`TERRITORY-MOMENT-SELECTION` 选择 `M1-IN-RUN`。当前仓库已推进到 Schema v24，Desktop Bridge 接入真实配对、双向 mailbox、compact wake、通知权限回传、最近 Chat 全量替换、手机分享导入、Assistant Message 单表面投影、稳定恢复、Devices UI、PC 桌宠拖放与真实附件输入。独立 Relay 和 Android Companion 已完成，手机提供精确只读消息详情、Sharesheet 私有缓存与 WorkManager 队列；本地受信 HTTPS 三部署联合链路已验证。`chat_moment` 复用既有 Territory Candidate/Preview/Apply，自主决定生成物且不增加固定模板。Android Companion 与 Relay 仍是独立仓库/部署单元，不把桌面单 package 改造成 monorepo。
+> 当前状态：`done`。`EXPERIENCE-ECHO-TIMING` 已按用户要求以最小验证选择固定提前 30 分钟的一次性机会，`TERRITORY-MOMENT-SELECTION` 选择 `M1-IN-RUN`。Schema v24、Desktop Bridge、Relay、跨设备合同和 Territory Moment 均保持 Done；用户验收发现的 Android 首页直接发送与通知清除后回看缺口也已补全。实现只增加应用内文字/单文件入口和“最近收到”持久卡片，不改 v1 wire、Desktop/Relay 真源或部署边界。
 
 ### 1. `ECHO-PROACTIVE-OPPORTUNITY`
 
@@ -469,6 +469,20 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - **PC-online boundary**：PC 唤醒、Main 运行且在线时可以重新判断事件、分析附件并回复；PC 睡眠/离线时 Relay 只排队上传或投递此前已生成消息。Android/FCM 延迟不承诺准确到秒。最近动作来自 Android 时回复 Android；否则 Desktop 活跃用气泡，Desktop idle/锁屏且 Android 可用时投递手机，任何消息不双发。
 - **Acceptance / tests**：Desktop 完整离线回归、build、25/25 Electron E2E、arm64 package/smoke 和 make 通过；Relay acceptance 1/1、check 12/12 与 build 通过；Android 8 个 JVM 单测、4 个常规 API 36 instrumentation、assembleRelease 与 lintDebug 通过。本地三部署 opt-in 验收 4/4 覆盖重复 claim、通知深链与去重、`ACTION_SEND` 临时 URI 私有缓存、PNG/Markdown、PDF 断线重试、原始字节/hash、Relay cursor/双重 ack 与素材清理。真实 FCM/FID、物理手机和系统权限切换未运行，不以 fake push 冒充 Live。
 - **Candidate deletion**：开发 fake 只进入测试；如果比较传输实现，失败 adapter、临时协议版本和部署脚本在 v1 冻结后删除，不在客户端保留 fallback。
+
+#### `ECHO-ANDROID-DIRECT-SEND/CARDS`
+
+- **状态**：`done`（2026-09-02）。用户验收发现的 Android 客户端可发现性缺口已补全，不重开 v1 wire 或三部署架构。
+- **Outcome**：已连接首页可输入并发送非空文字，或通过系统文档选择器选择一个图片/文件；已有输入作为附件附文。二者显式转换为现有 `ACTION_SEND`，继续进入同一个 Chat 目标确认、私有缓存和 WorkManager 上传路径。首页同时显示少量“最近收到”卡片，系统通知清除或应用重启后仍可打开精确只读详情。
+- **Non-goals**：不增加完整移动 Chat、回复框、未读状态、搜索、全量历史、第二上传器、新 Activity 收件箱、Relay/FCM 字段或 Desktop 逻辑。
+- **Acceptance**：已验证应用内文字和图片/文件各产生一次既有 `PendingShare`；目标 Chat 确认、断网重试和幂等语义不变；消息按接收时间稳定倒序、重复不复制、解绑清理；清除系统通知并重启应用后仍可从首页精确打开详情。Android unit、API 36 instrumentation 7/7、lint/build、APK 覆盖安装和模拟器真实链路截图均完成；文字完成 Desktop Run 与回复通知闭环，PNG 完成 Relay 上传和 Desktop Attachment 导入。
+
+#### `ECHO-ANDROID-VISUAL-POLISH`
+
+- **状态**：`done`（2026-09-02）。在不改变 v1 wire、Activity 流程或持久状态的前提下完成 Android 原生界面视觉收口。
+- **Outcome**：配对页保留清晰的一次性品牌入口；已连接首页改为紧凑状态头、双列设备摘要、一体式 Composer 和 grouped recent list；分享确认与只读详情使用同一层级、圆角、间距和语义色。设计借鉴 Apple HIG 的内容优先、相关信息分组、克制材质、排版层级与可访问性原则，但保持 Android 48 dp 触控目标，不复制 iOS 控件或增加模糊玻璃效果。
+- **Non-goals**：不增加移动聊天、回复、未读、搜索、动画系统、设计依赖、协议字段、第二套状态机或任何 Desktop/Relay 行为。
+- **Acceptance**：Android unit、lint、debug 与 androidTest APK 构建通过；最终 APK 在保留配对数据的 API 36 模拟器覆盖安装，首页输入到分享确认、最近消息到精确详情均经真实点击验证，首页、详情和确认页完成最终截图验收。
 
 ### 3. `ECHO-TERRITORY-MOMENT`
 

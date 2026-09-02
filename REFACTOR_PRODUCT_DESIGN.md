@@ -1121,12 +1121,12 @@ Journey 跟进是本节的受限特例：只有用户明确约定后才能创建
 
 CharaMate Desktop 继续是唯一 Agent、Memory、Chat/Run、Persona 与 Territory 真源。Android Companion 和 Mailbox/Push Relay 是独立部署单元，不进入桌面应用的单 npm package 或 Forge 构建：
 
-- Android 首版只负责配对、普通消息通知、打开精确 Chat/Message 的只读轻量详情、从系统 Sharesheet 分享单个图片或受支持文档及附文，以及可恢复上传队列；它不拥有完整移动 Chat、移动桌宠、Voice、Provider 配置、Memory 数据库或 Agent Runtime，也不在手机上继续多轮对话。
+- Android 首版只负责配对、普通消息通知、应用内直接发送一段文字或选择单个图片/受支持文档及附文、从系统 Sharesheet 接收同类素材、以“最近收到”卡片回看精确 Chat/Message 的只读轻量详情，以及可恢复上传队列；它不拥有完整移动 Chat、移动桌宠、Voice、Provider 配置、Memory 数据库或 Agent Runtime，也不在手机上继续多轮对话。
 - Relay 只负责设备注册、版本化传输信封、有界临时附件、cursor/ack mailbox 和 FCM 投递；它不生成话术、不检索 Memory、不保存全量 Chat，也不持有用户 Provider 凭据。手机上传只有在 Desktop 导入为真实 User Message/Attachment 后才算进入产品历史；通知只投影已经持久化的 Assistant Message，并携带精确 `chatId/messageId`。
 - 每个桌面实例首版最多配对一台 Android 手机。消息产生时只选择一个即时表面：最近用户动作来自 Android 时回复 Android；否则 Desktop 处于活跃使用时使用桌宠气泡，Desktop Main 正在运行且在线、但屏幕锁定或持续 idle 时优先 Android；不得同时双发。Push 失败不重新生成文案，也不制造第二条消息，用户回到 Desktop 后只看到同一 Chat 的未读内容。
 - 只有 Desktop 已唤醒、Main 正在运行且网络在线时，首版才承诺新的主动判断、Memory 检索、图片/文档理解和人格化回复。PC 睡眠或离线时，Relay 可以排队手机上传或投递此前已经生成的消息，但不代替 Agent 作出新决定；若未来要求 PC 完全离线仍自主推理，必须另行决定云端 Runtime 与 Memory 同步，而不能把它隐藏进轻量 Companion。
 
-通用系统分享先打开一个轻量确认面：从某条通知进入时默认回到该精确 Chat；其他 `ACTION_SEND` 入口让用户确认最近 Chat 或创建一个普通可见 Chat，不依赖猜测当前桌面会话。PC 桌宠接收图片/文档拖放时同样打开完整 Chat 并预填现有 Composer，不把附件能力塞进轻量气泡。所有入口最终复用同一 Attachment、Message 和 Run/Item 合同。
+Android 首页提供一个紧凑发送入口：非空文字或单个图片/文件及可选附文，都转换为与系统 Sharesheet 相同的 `ACTION_SEND`，再进入同一个轻量确认面，让用户选择最近 Chat 或创建普通可见 Chat，不依赖猜测当前桌面会话。系统通知负责即时触达，但不是消息的唯一入口；完整 Envelope 已持久化后，首页“最近收到”以少量只读卡片展示 Persona、来源 Chat、正文预览和时间，通知被清除或应用重启后仍可打开精确 `chatId/messageId` 详情。PC 桌宠接收图片/文档拖放时同样打开完整 Chat 并预填现有 Composer，不把附件能力塞进轻量气泡。所有入口最终复用同一 Attachment、Message 和 Run/Item 合同。
 
 2026-09-01 的移动端边界复核使用 Android 官方 [`POST_NOTIFICATIONS`](https://developer.android.com/develop/ui/views/notifications/notification-permission)、[接收简单分享数据](https://developer.android.com/training/sharing/receive)、[WorkManager 持久工作](https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work) 与 Firebase 官方 [FCM HTTP v1](https://firebase.google.com/docs/cloud-messaging/send/v1-api)、[消息类型](https://firebase.google.com/docs/cloud-messaging/customize-messages/set-message-type)、[注册管理](https://firebase.google.com/docs/cloud-messaging/manage-tokens)。Android 13+ 普通通知需要运行时授权，分享文件以临时 `content://` URI 进入，可靠上传应复制到应用私有缓存后交给持久后台工作；FCM 服务凭据只放可信 Relay。当前锁定 Firebase Messaging 25.1.2 使用 `register()` / `onRegistered(firebaseInstallationId)` 的 Firebase Installation ID 直达路径，因此 CharaMate v1 wire 仍只保存适配器中立的不透明 `pushRegistrationId`；它与 CharaMate 安装生成的领域 `installationId` 是两个独立身份，Relay 的 FCM adapter 负责映射和刷新，不把某一代 SDK 值形状写进领域合同。平台能力只约束权限、传输和后台执行，何时说话、说什么与路由哪个 Chat 仍由 CharaMate 合同决定。
 
@@ -1925,7 +1925,7 @@ Playwright 官方当前把 Electron automation 标为 experimental，因此 Phas
 14. 领地不设置全局物件数量常量，也不为性能自动收回内容；当前使用获胜的活动 Zone 直接 scene tree 与 `Assets` cache，并在跨 Zone、视口和重启时保持完整世界状态。
 15. Skill 教学产生版本化候选，replay 失败时不自动激活。
 16. 用户在 Chat 中明确陈述未来重要事件并授予类别许可后，改期/取消/安静时段/近期等价交流与重启恢复都能让一次 `ProactiveOpportunity` 正确静默或只产生一条普通 Chat 消息；到点不是必发闹钟。
-17. 配对 Android 时，同一已持久化助手消息最多投影一个设备表面；手机分享的单图片/文档和附文进入同一 Attachment/Run 路径，PC 离线时诚实排队。显著时刻可以准备不固定形态的 Territory Preview，但只有用户应用才改变 World。
+17. 配对 Android 时，同一已持久化助手消息最多投影一个设备表面；用户可以从 Companion 首页直接发送文字或单图片/文档及附文，也可以继续使用系统 Sharesheet，二者进入同一 Attachment/Run 路径，PC 离线时诚实排队。系统通知清除或应用重启后，“最近收到”仍能精确回看已持久化消息。显著时刻可以准备不固定形态的 Territory Preview，但只有用户应用才改变 World。
 
 ### 18.3 Benchmark 决策门槛
 
