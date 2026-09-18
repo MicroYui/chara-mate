@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title description">
+  <title id="title">CharaMate · 桌面上的 AI 伙伴</title>
+  <desc id="description">记得聊过的事，也有自己的生活。深蓝色背景与 CharaMate 猫形对话图标。</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1200" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#142b3c" />
+      <stop offset="1" stop-color="#263a4a" />
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop stop-color="#adcdc8" stop-opacity=".2" />
+      <stop offset="1" stop-color="#adcdc8" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="360" rx="24" fill="url(#background)" />
+  <circle cx="986" cy="180" r="246" fill="url(#glow)" />
+  <g fill="none" stroke="#b6cfd0">
+    <circle cx="969" cy="180" r="134" opacity=".13" />
+    <circle cx="969" cy="180" r="106" opacity=".22" />
+    <path d="M790 286h330" opacity=".16" />
+  </g>
+  <circle cx="867" cy="93" r="5" fill="#d8b681" />
+  <circle cx="1099" cy="210" r="4" fill="#b9d5cf" />
+  <path d="M1098 78v14m-7-7h14" stroke="#d8b681" stroke-width="2" stroke-linecap="round" />
+  <g transform="translate(886 91) scale(9.2)">
+    <path d="M3.1 6.5 4.2 2.4 7.2 4.8c.6-.2 1.2-.3 1.8-.3s1.2.1 1.8.3l3-2.4 1.1 4.1c.7.7 1.1 1.6 1.1 2.6v2.2c0 2.1-1.7 3.7-3.8 3.7H8.8L6 16.8V15h-.2A3.8 3.8 0 0 1 2 11.3V9.1c0-1 .4-1.9 1.1-2.6Z" fill="#b9d5cf" fill-opacity=".08" stroke="#d8e8e4" stroke-width=".68" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M5.7 9.8q.9-1.1 1.8 0m3 0q.9-1.1 1.8 0" fill="none" stroke="#d8e8e4" stroke-width=".65" stroke-linecap="round" />
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <text x="68" y="82" fill="#b9d5cf" font-size="19">桌面上的 AI 伙伴</text>
+    <text x="64" y="171" fill="#f4f7f8" font-size="76" font-weight="650" letter-spacing="-3">CharaMate</text>
+    <text x="68" y="230" fill="#e2e9eb" font-size="28">记得聊过的事，也有自己的生活。</text>
+    <path d="M68 276h32" stroke="#d8b681" stroke-width="3" stroke-linecap="round" />
+    <text x="114" y="283" fill="#a9bfc8" font-size="17">对话 · 记忆 · 自主生活</text>
+  </g>
+</svg>
