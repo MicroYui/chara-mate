@@ -36,7 +36,7 @@ describe("Territory source narratives", () => {
     } as unknown as TerritoryWorldRepository;
     const service = new TerritoryWorldMemoryService(
       repository,
-      { get: () => missingMemory() },
+      { get: () => missingMemory(), validateEvidenceReferences: () => [] },
       {
         getDigest: () => ({
           candidateIds: [],
@@ -52,6 +52,7 @@ describe("Territory source narratives", () => {
         }),
       },
       new FakeClock("2026-08-28T08:00:00.000Z"),
+      () => "93000000-0000-4000-8000-000000000001",
       { beginCreate } as unknown as TerritoryWorldCandidateService,
     );
 

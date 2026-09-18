@@ -53,6 +53,12 @@ const nativeHelpersDirectory = path.resolve(
   "resources/generated/native-helpers",
 );
 const nativeHelperBuildScript = path.resolve("scripts/build-native-helper.mjs");
+const localEmbeddingDirectory = path.resolve(
+  "resources/generated/local-embedding",
+);
+const localEmbeddingBuildScript = path.resolve(
+  "scripts/prepare-local-embedding.mjs",
+);
 const trayDirectory = path.resolve("resources/tray");
 const appIconPath = path.resolve("resources/CharaMate.icns");
 const signingIdentity = process.env["CHARAMATE_MACOS_SIGN_IDENTITY"]?.trim();
@@ -86,11 +92,18 @@ const config: ForgeConfig = {
         platform,
         String(architecture),
       ]);
+      if (platform !== "darwin" || architecture !== "arm64") {
+        throw new Error(
+          "The selected local encoder currently packages for macOS arm64.",
+        );
+      }
+      await runFile(process.execPath, [localEmbeddingBuildScript]);
     },
   },
   packagerConfig: {
     asar: true,
     extendInfo: {
+      LSMinimumSystemVersion: "13.3",
       NSMicrophoneUsageDescription:
         "CharaMate 使用麦克风进行本地 Hi Mika 唤醒和实时语音对话。",
     },
@@ -99,6 +112,7 @@ const config: ForgeConfig = {
     extraResource: [
       defaultPetsDirectory,
       trayDirectory,
+      localEmbeddingDirectory,
       ...(process.platform === "darwin" ? [nativeHelpersDirectory] : []),
       ...(chromiumDirectory && existsSync(chromiumDirectory)
         ? [chromiumDirectory]

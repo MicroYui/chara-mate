@@ -3,37 +3,51 @@ import { ipcRenderer } from "electron";
 import {
   VOICE_CHANNELS,
   type VoiceApi,
+  type VoiceCancelStartRequest,
   type VoiceClientCommand,
   type VoiceDriverEventRequest,
   type VoiceMutedRequest,
-  type VoicePausedRequest,
-  type VoicePreviewRequest,
-  type VoiceQuickStartRequest,
+  type VoicePausedSubmission,
+  type VoicePreviewSubmission,
+  type VoiceQuickStartSubmission,
   type VoiceSessionRequest,
   type VoiceSessionSnapshot,
-  type VoiceStartRequest,
+  type VoiceStartSubmission,
 } from "../shared/contracts/voice";
 import {
+  VoiceCancelStartRequestSchema,
+  VoiceCancelStartResponseSchema,
   VoiceClientCommandSchema,
   VoiceDriverEventRequestSchema,
   VoiceMutedRequestSchema,
   VoiceMutationResponseSchema,
-  VoicePausedRequestSchema,
+  VoicePausedSubmissionSchema,
   VoicePauseResponseSchema,
-  VoicePreviewRequestSchema,
+  VoicePreviewSubmissionSchema,
   VoicePreviewResponseSchema,
-  VoiceQuickStartRequestSchema,
+  VoiceQuickStartSubmissionSchema,
   VoiceQuickStartResponseSchema,
   VoiceSessionRequestSchema,
   VoiceSessionSnapshotSchema,
   VoiceSnapshotResponseSchema,
-  VoiceStartRequestSchema,
+  VoiceStartSubmissionSchema,
   VoiceStartResponseSchema,
 } from "../shared/schemas/voice";
 import { parseSchemaWithoutCodeGeneration } from "../shared/schemas/valueValidation";
 
 export function createVoiceApi(): VoiceApi {
   return Object.freeze({
+    cancelStart: async (input: VoiceCancelStartRequest) =>
+      parseSchemaWithoutCodeGeneration(
+        VoiceCancelStartResponseSchema,
+        await ipcRenderer.invoke(
+          VOICE_CHANNELS.cancelStart,
+          parseSchemaWithoutCodeGeneration(
+            VoiceCancelStartRequestSchema,
+            input,
+          ),
+        ),
+      ),
     end: async (input: VoiceSessionRequest) =>
       parseSchemaWithoutCodeGeneration(
         VoiceMutationResponseSchema,
@@ -47,20 +61,23 @@ export function createVoiceApi(): VoiceApi {
         VoiceSnapshotResponseSchema,
         await ipcRenderer.invoke(VOICE_CHANNELS.getActive, {}),
       ),
-    preview: async (input: VoicePreviewRequest) =>
+    preview: async (input: VoicePreviewSubmission) =>
       parseSchemaWithoutCodeGeneration(
         VoicePreviewResponseSchema,
         await ipcRenderer.invoke(
           VOICE_CHANNELS.preview,
-          parseSchemaWithoutCodeGeneration(VoicePreviewRequestSchema, input),
+          parseSchemaWithoutCodeGeneration(VoicePreviewSubmissionSchema, input),
         ),
       ),
-    quickStart: async (input: VoiceQuickStartRequest) =>
+    quickStart: async (input: VoiceQuickStartSubmission) =>
       parseSchemaWithoutCodeGeneration(
         VoiceQuickStartResponseSchema,
         await ipcRenderer.invoke(
           VOICE_CHANNELS.quickStart,
-          parseSchemaWithoutCodeGeneration(VoiceQuickStartRequestSchema, input),
+          parseSchemaWithoutCodeGeneration(
+            VoiceQuickStartSubmissionSchema,
+            input,
+          ),
         ),
       ),
     report: async (input: VoiceDriverEventRequest) =>
@@ -82,20 +99,20 @@ export function createVoiceApi(): VoiceApi {
           parseSchemaWithoutCodeGeneration(VoiceMutedRequestSchema, input),
         ),
       ),
-    setPaused: async (input: VoicePausedRequest) =>
+    setPaused: async (input: VoicePausedSubmission) =>
       parseSchemaWithoutCodeGeneration(
         VoicePauseResponseSchema,
         await ipcRenderer.invoke(
           VOICE_CHANNELS.setPaused,
-          parseSchemaWithoutCodeGeneration(VoicePausedRequestSchema, input),
+          parseSchemaWithoutCodeGeneration(VoicePausedSubmissionSchema, input),
         ),
       ),
-    start: async (input: VoiceStartRequest) =>
+    start: async (input: VoiceStartSubmission) =>
       parseSchemaWithoutCodeGeneration(
         VoiceStartResponseSchema,
         await ipcRenderer.invoke(
           VOICE_CHANNELS.start,
-          parseSchemaWithoutCodeGeneration(VoiceStartRequestSchema, input),
+          parseSchemaWithoutCodeGeneration(VoiceStartSubmissionSchema, input),
         ),
       ),
     subscribeChanged: (

@@ -3,13 +3,13 @@ import type {
   Approval,
   Run,
   RunItem,
-  UserInputResolution,
+  InputRequestResolution,
 } from "../../shared/contracts/run";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
 import type { RunEvent } from "../../shared/contracts/ipc";
 import type { RunEventService } from "./runEventService";
-import type { RunRepository } from "./runRepository";
+import type { InputResolutionProjection, RunRepository } from "./runRepository";
 
 export interface CompleteItemPatch {
   readonly artifacts?: RunItem["artifacts"];
@@ -34,7 +34,11 @@ export class RunEventWriter {
     this.#append(runId, { delta, itemId, type: "item.delta" });
   }
 
-  completeItem(itemId: string, patch: CompleteItemPatch): RunItem {
+  completeItem(
+    itemId: string,
+    patch: CompleteItemPatch,
+    projectAssistantMessage?: (item: RunItem) => void,
+  ): RunItem {
     const current = this.runs.getRunItem(itemId);
     if (!current) throw new Error(`Run item ${itemId} does not exist`);
     const endedAt = this.clock.now();
@@ -54,7 +58,12 @@ export class RunEventWriter {
       ...(patch.output === undefined ? {} : { output: patch.output }),
       status: patch.status,
     };
-    this.#append(current.runId, { item, type: "item.completed" }, endedAt);
+    this.#append(
+      current.runId,
+      { item, type: "item.completed" },
+      endedAt,
+      projectAssistantMessage,
+    );
     return item;
   }
 
@@ -87,7 +96,11 @@ export class RunEventWriter {
     return item;
   }
 
-  resolveInput(itemId: string, resolution: UserInputResolution): RunItem {
+  resolveInput(
+    itemId: string,
+    resolution: InputRequestResolution,
+    projection?: InputResolutionProjection,
+  ): RunItem {
     const current = this.runs.getRunItem(itemId);
     if (
       !current ||
@@ -116,7 +129,9 @@ export class RunEventWriter {
                   : `${questionId}: ${value.text}`,
               )
               .join("\n")
-          : "用户取消了本次补充问题。",
+          : resolution.status === "context_available"
+            ? "新的相关内容已到达，继续当前任务。"
+            : "用户取消了本次补充问题。",
       durationMs: Math.max(0, ended - started),
       endedAt: resolution.resolvedAt,
       output: resolution,
@@ -130,12 +145,17 @@ export class RunEventWriter {
       latestSequence: nextSequence,
       status: "running",
     };
-    this.events.append({
-      event: { item, run: resumed, type: "input.resolved" },
-      occurredAt: resolution.resolvedAt,
-      sequence: nextSequence,
-      streamId: run.id,
-    });
+    this.events.append(
+      {
+        event: { item, run: resumed, type: "input.resolved" },
+        occurredAt: resolution.resolvedAt,
+        sequence: nextSequence,
+        streamId: run.id,
+      },
+      undefined,
+      undefined,
+      projection,
+    );
     return item;
   }
 
@@ -197,13 +217,16 @@ export class RunEventWriter {
     return item;
   }
 
-  startRun(run: Run): Run {
-    this.events.append({
-      event: { run, type: "run.started" },
-      occurredAt: run.startedAt ?? run.createdAt,
-      sequence: 1,
-      streamId: run.id,
-    });
+  startRun(run: Run, bindAllocation?: (runId: string) => void): Run {
+    this.events.append(
+      {
+        event: { run, type: "run.started" },
+        occurredAt: run.startedAt ?? run.createdAt,
+        sequence: 1,
+        streamId: run.id,
+      },
+      bindAllocation,
+    );
     return run;
   }
 
@@ -234,14 +257,23 @@ export class RunEventWriter {
     return run;
   }
 
-  #append(runId: string, event: RunEvent, occurredAt?: Timestamp): void {
+  #append(
+    runId: string,
+    event: RunEvent,
+    occurredAt?: Timestamp,
+    projectAssistantMessage?: (item: RunItem) => void,
+  ): void {
     const run = this.#requireRun(runId);
-    this.events.append({
-      event,
-      occurredAt: occurredAt ?? this.clock.now(),
-      sequence: run.latestSequence + 1,
-      streamId: runId,
-    });
+    this.events.append(
+      {
+        event,
+        occurredAt: occurredAt ?? this.clock.now(),
+        sequence: run.latestSequence + 1,
+        streamId: runId,
+      },
+      undefined,
+      projectAssistantMessage,
+    );
   }
 
   #requireRun(runId: string): Run {

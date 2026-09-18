@@ -1,3 +1,6 @@
+import { suppliedMemoryReferences } from "../agent/memorySuppliedReferences";
+import type { MemoryEvidenceReference } from "../../shared/contracts/memoryRecall";
+import { modelTimeContext } from "../agent/modelTimeContext";
 import type {
   ApprovalDecision,
   ResolveApprovalRequest,
@@ -15,6 +18,8 @@ import type {
 } from "../../shared/contracts/run";
 import type { ToolResult } from "../../shared/contracts/tool";
 import type {
+  VoiceCancelStartRequest,
+  VoiceCancelStartResult,
   VoiceClientCommand,
   VoiceConnection,
   VoiceDriverEvent,
@@ -35,6 +40,12 @@ import type {
 import {
   VOICE_CHAT_FALLBACK_TITLE,
   VOICE_END_TOOL_NAME,
+  voiceToolResultEvents,
+  voiceHistoryItemEvent,
+  voicePreviewEvents,
+  voiceResponseCreateEvent,
+  voiceSessionRefreshEvent,
+  voiceWakeGreetingEvent,
 } from "../../shared/contracts/voice";
 import type { VoiceSettingsConfig } from "../../shared/contracts/settings";
 import type { Clock } from "../../shared/pure/clock";
@@ -46,10 +57,6 @@ import {
 import { AgentError } from "../agent/agentError";
 import { realtimeAgentInstructions } from "../agent/agentInstructions";
 import { ChatContextService } from "../agent/chatContextService";
-import {
-  createMemoryContextInput,
-  memoryContextTargetIds,
-} from "../agent/memoryContext";
 import type { RunRepository } from "../agent/runRepository";
 import type { RunEventWriter } from "../agent/runEventWriter";
 import type { SettingsRepository } from "../app/settingsRepository";
@@ -57,16 +64,34 @@ import type { ChatRepository } from "../chat/chatRepository";
 import { CHAT_CONTEXT_SUMMARY_PREFIX } from "../chat/chatContext";
 import type { ChatService } from "../chat/chatService";
 import type { ChatTitleGenerator } from "../chat/chatTitleService";
-import type { MemoryService } from "../memory/memoryService";
+import type { CognitionServiceContract } from "../cognition/cognitionTypes";
+import {
+  createCognitionContextInput,
+  cognitionContextTokenHeadroom,
+  LOCAL_COGNITION_READ_BUDGET_BYTES,
+} from "../agent/cognitionContext";
 import { CharacterContextCompiler } from "../persona/characterContext";
 import type {
   ProviderService,
   RealtimeProviderRuntime,
 } from "../providers/providerService";
+import {
+  estimateInputBudget,
+  fitsInputBudget,
+  modelInputBudget,
+} from "../providers/inputBudget";
+import { ProviderError } from "../providers/providerError";
 import { toolEvidenceHash } from "../tools/toolRegistry";
-import type { ToolDefinition, ToolRegistry } from "../tools/toolRegistry";
-import type { RealtimeSessionIssuer } from "./azureWebRtcSession";
-import { VoiceError } from "./voiceError";
+import type {
+  ToolDefinition,
+  ToolRegistry,
+  ToolResultContextMeasurement,
+} from "../tools/toolRegistry";
+import {
+  realtimeSessionRequest,
+  type RealtimeSessionIssuer,
+} from "./azureWebRtcSession";
+import { VoiceError, toVoiceAppError } from "./voiceError";
 import type { VoiceMetrics } from "./voiceMetrics";
 import type { VoiceRepository } from "./voiceRepository";
 
@@ -80,9 +105,51 @@ const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
   "cancelled",
 ]);
 
+function realtimeStartupBudget(modelId: string): number {
+  // Official gpt-realtime-2.1 model page, checked 2026-09-17. Azure deployment
+  // aliases are not model identities; do not infer their native window.
+  return modelInputBudget(
+    modelId === "gpt-realtime-2.1"
+      ? { maxContextTokens: 128_000, maxOutputTokens: 32_000 }
+      : {},
+  );
+}
+
+function oversizedVoiceContext(): ProviderError {
+  return new ProviderError(
+    "PROVIDER.CONTEXT_LIMIT_EXCEEDED",
+    "当前语音请求的指令、工具与上下文超过可用输入空间，请精简指令或整理当前会话后重试。",
+    false,
+  );
+}
+
+type VoiceResponseCommand = Extract<
+  VoiceClientCommand,
+  { type: "response.create" | "tool.result" }
+>;
+
+function knownResponseInput(
+  command: VoiceResponseCommand,
+  tools: readonly VoiceFunctionTool[],
+) {
+  return {
+    events:
+      command.type === "tool.result"
+        ? voiceToolResultEvents(command)
+        : [voiceResponseCreateEvent(command)],
+    effectiveTools: tools,
+  };
+}
+
+function assertVoiceInputFits(payload: unknown, budget: number) {
+  if (!fitsInputBudget(estimateInputBudget(payload), budget))
+    throw oversizedVoiceContext();
+}
+
 interface PreparedRealtimeTools {
   readonly aliases: Map<string, ToolDefinition>;
   readonly configs: VoiceFunctionTool[];
+  readonly wrappedArguments: ReadonlySet<string>;
 }
 
 interface PreparedVoiceConfiguration {
@@ -131,6 +198,7 @@ interface PendingVoiceTool {
   readonly definition: ToolDefinition;
   readonly generation: number;
   readonly instructions: string;
+  readonly requestId: string;
   readonly responseId: string;
   readonly runId: string;
   readonly turnId: string;
@@ -144,7 +212,14 @@ interface AgentEndRequest {
   responseId?: string;
 }
 
+interface VoiceMemoryProvenance {
+  awaiting: Map<string, MemoryEvidenceReference[]>;
+  consumed: MemoryEvidenceReference[];
+  responses: Map<string, MemoryEvidenceReference[]>;
+}
+
 interface ActiveVoice {
+  readonly memoryProvenance: Map<string, VoiceMemoryProvenance>;
   agentEndRequest?: AgentEndRequest;
   readonly assistantOutputs: Map<string, AssistantOutput>;
   audioPlaying: boolean;
@@ -154,6 +229,9 @@ interface ActiveVoice {
   defaultInstructions: string;
   readonly execution: RunExecution;
   readonly functionResponses: Set<string>;
+  readonly receivedToolCalls: Set<string>;
+  readonly receivedTranscripts: Set<string>;
+  startupRequestId?: string;
   readonly inputTurns: Map<string, string>;
   nextResponseOrder: number;
   paused: boolean;
@@ -163,14 +241,26 @@ interface ActiveVoice {
   readonly responseOrders: Map<string, number>;
   readonly responseTurns: Map<string, string>;
   realtimeTools: PreparedRealtimeTools;
-  readonly runMemoryIds: Map<string, readonly string[]>;
-  readonly runMemoryQueryIds: Map<string, readonly string[]>;
   readonly runTurns: Map<string, string>;
   snapshot: VoiceSessionSnapshot;
   readonly turnAborts: Map<string, AbortController>;
   readonly turns: Map<string, VoiceTurnRecord>;
   wakeGreetingPending: boolean;
   wakeGreetingResponseId?: string;
+}
+
+interface VoiceWork {
+  readonly abort: AbortController;
+  active?: ActiveVoice;
+  readonly turnId?: string;
+  done: Promise<void>;
+}
+
+interface VoiceStartup {
+  readonly abort: AbortController;
+  readonly requestId?: string;
+  active?: ActiveVoice;
+  task: Promise<unknown>;
 }
 
 export interface VoiceServicePublisher {
@@ -235,8 +325,26 @@ function mergePropertySchema(
   };
 }
 
+function needsRealtimeArgumentsWrapper(schema: JsonValue): boolean {
+  const root = object(schema);
+  return (
+    root?.["type"] === "object" &&
+    ["oneOf", "anyOf", "allOf", "enum", "not"].some((key) => key in root)
+  );
+}
+
 function realtimeParameters(name: string, schema: JsonValue): JsonValue {
   const root = object(schema);
+  if (needsRealtimeArgumentsWrapper(schema)) {
+    // Azure Realtime rejects these constraints at the function root. Keep the
+    // complete contract nested, then unwrap before the registry validates it.
+    return {
+      additionalProperties: false,
+      properties: { arguments: schema },
+      required: ["arguments"],
+      type: "object",
+    };
+  }
   if (root?.["type"] === "object") return schema;
   const alternatives = root?.["anyOf"];
   if (
@@ -292,6 +400,7 @@ function prepareRealtimeTools(
 ): PreparedRealtimeTools {
   const aliases = new Map<string, ToolDefinition>();
   const configs: VoiceFunctionTool[] = [];
+  const wrappedArguments = new Set<string>();
   for (const definition of registry.list()) {
     if (
       definition.descriptor.name !== VOICE_END_TOOL_NAME &&
@@ -309,6 +418,8 @@ function prepareRealtimeTools(
       );
     }
     aliases.set(alias, definition);
+    if (needsRealtimeArgumentsWrapper(definition.descriptor.inputSchema))
+      wrappedArguments.add(alias);
     configs.push({
       description: definition.descriptor.description,
       name: alias,
@@ -319,7 +430,7 @@ function prepareRealtimeTools(
       type: "function",
     });
   }
-  return { aliases, configs };
+  return { aliases, configs, wrappedArguments };
 }
 
 function history(messages: readonly Message[]): VoiceHistoryMessage[] {
@@ -328,25 +439,6 @@ function history(messages: readonly Message[]): VoiceHistoryMessage[] {
       ({ content, status }) => status === "completed" && content.trim().length,
     )
     .map(({ content, role }) => ({ content, role }));
-}
-
-function memoryEvidence(
-  memory: MemoryService | undefined,
-  query: string,
-): {
-  readonly content?: string;
-  readonly ids: readonly string[];
-  readonly queryIds: readonly string[];
-} {
-  if (!memory) return { ids: [], queryIds: [] };
-  const selection = memory.selectContext(query);
-  const value = createMemoryContextInput(selection);
-  const content = object(value)?.["content"];
-  return {
-    ...(typeof content === "string" ? { content } : {}),
-    ids: memoryContextTargetIds(value),
-    queryIds: selection.queryRelevantMemoryIds,
-  };
 }
 
 function parseToolArguments(
@@ -416,6 +508,149 @@ function toolItemStatus(
 export class VoiceService {
   #active: ActiveVoice | undefined;
   readonly #chatContext: ChatContextService;
+  readonly #work = new Set<VoiceWork>();
+  #startup: VoiceStartup | undefined;
+  #stopping: Promise<void> | undefined;
+  #closed = false;
+
+  #runWork<T>(
+    abort: AbortController,
+    operation: (signal: AbortSignal) => Promise<T>,
+    owner: { active?: ActiveVoice; turnId?: string } = {},
+  ): Promise<T> {
+    const work: VoiceWork = { abort, ...owner, done: Promise.resolve() };
+    this.#work.add(work);
+    // Register before the operation's first await or synchronous callback.
+    const task = Promise.resolve().then(() => {
+      abort.signal.throwIfAborted();
+      return operation(abort.signal);
+    });
+    work.done = task
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        this.#work.delete(work);
+      });
+    return task;
+  }
+
+  #connectionWork<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    options: {
+      requestId?: string;
+      active?: ActiveVoice;
+      preview?: boolean;
+    } = {},
+  ): Promise<T> {
+    if (this.#closed) {
+      throw new VoiceError("VOICE.SHUTTING_DOWN", "语音服务正在退出。", false);
+    }
+    if (this.#startup) {
+      throw new VoiceError(
+        "VOICE.ALREADY_ACTIVE",
+        "已有语音连接正在准备。",
+        false,
+      );
+    }
+    const startup: VoiceStartup = {
+      abort: new AbortController(),
+      ...(options.requestId ? { requestId: options.requestId } : {}),
+      ...(options.active ? { active: options.active } : {}),
+      task: Promise.resolve(),
+    };
+    this.#startup = startup;
+    let issuedPreview = false;
+    const task = this.#runWork(
+      startup.abort,
+      async (signal) => {
+        const value = await operation(signal);
+        signal.throwIfAborted();
+        issuedPreview =
+          options.preview === true && options.requestId !== undefined;
+        return value;
+      },
+      options.active ? { active: options.active } : {},
+    );
+    // External previews retain this reservation through the actual playback.
+    const completion = task.finally(() => {
+      if (!issuedPreview && this.#startup === startup)
+        this.#startup = undefined;
+    });
+    startup.task = completion;
+    return completion;
+  }
+
+  #abortWork(active?: ActiveVoice): void {
+    const connectedRequestId = (active ?? this.#active)?.startupRequestId;
+    for (const work of this.#work) {
+      if (!active || work.active === active) work.abort.abort();
+    }
+    const startup = this.#startup;
+    if (startup && (!active || startup.active === active)) {
+      startup.abort.abort(
+        new VoiceError("VOICE.START_CANCELLED", "语音准备已结束。", false),
+      );
+    }
+    if (connectedRequestId) {
+      this.#publishCommand({
+        type: "preparation.cancel",
+        requestId: connectedRequestId,
+      });
+    }
+    if (startup && (!active || startup.active === active)) {
+      if (startup.requestId) {
+        this.#publishCommand({
+          type: "preparation.cancel",
+          requestId: startup.requestId,
+        });
+      }
+    }
+  }
+
+  #joinWork(active?: ActiveVoice, turnId?: string): Promise<void> {
+    return Promise.all(
+      [...this.#work]
+        .filter(
+          (work) =>
+            (!active || work.active === active) &&
+            (!turnId || work.turnId === turnId),
+        )
+        .map((work) => work.done),
+    ).then(() => undefined);
+  }
+
+  hasPendingConnection(): boolean {
+    return this.#startup !== undefined;
+  }
+
+  async cancelStart(
+    request: VoiceCancelStartRequest,
+  ): Promise<VoiceCancelStartResult> {
+    const startup = this.#startup;
+    if (startup?.requestId === request.requestId) {
+      startup.abort.abort(
+        new VoiceError("VOICE.START_CANCELLED", "语音准备已结束。", false),
+      );
+      this.#publishCommand({
+        type: "preparation.cancel",
+        requestId: request.requestId,
+      });
+      const active = startup.active;
+      if (active && this.#active === active)
+        await this.end({ sessionId: active.record.id });
+      await Promise.allSettled([startup.task]);
+      if (this.#startup === startup) this.#startup = undefined;
+      return { outcome: "accepted" };
+    }
+    const active = this.#active;
+    if (active?.startupRequestId === request.requestId) {
+      await this.end({ sessionId: active.record.id });
+      return { outcome: "accepted" };
+    }
+    return { outcome: "not_pending" };
+  }
 
   constructor(
     private readonly repository: VoiceRepository,
@@ -435,7 +670,7 @@ export class VoiceService {
     },
     private readonly skillInstructions: (chatId?: string) => string = () => "",
     private readonly chatTitles?: ChatTitleGenerator,
-    private readonly memory?: MemoryService,
+    private readonly cognition?: Pick<CognitionServiceContract, "prepareTurn">,
     private readonly onPhaseChanged: (
       phase: VoiceSessionSnapshot["phase"] | "idle",
     ) => void = () => undefined,
@@ -444,7 +679,8 @@ export class VoiceService {
     chatContext?: ChatContextService,
     private readonly characterContext = new CharacterContextCompiler(),
   ) {
-    this.#chatContext = chatContext ?? new ChatContextService(chats, clock);
+    this.#chatContext =
+      chatContext ?? new ChatContextService(chats, clock, runs);
   }
 
   initialize(): void {
@@ -471,14 +707,6 @@ export class VoiceService {
     return this.#active?.snapshot ?? null;
   }
 
-  getMemoryContextIds(runId: string): readonly string[] {
-    return this.#active?.runMemoryIds.get(runId) ?? [];
-  }
-
-  getMemoryContextQueryIds(runId: string): readonly string[] {
-    return this.#active?.runMemoryQueryIds.get(runId) ?? [];
-  }
-
   requestEndAfterResponse(runId: string): void {
     const active = this.#active;
     const pending = active?.pendingTool;
@@ -502,55 +730,118 @@ export class VoiceService {
     active.agentEndRequest = { turnId: turn.id };
   }
 
-  shutdown(): void {
-    const active = this.#active;
-    if (!active) return;
-    this.#interruptCurrentTurn(
-      active,
-      this.clock.now(),
-      undefined,
-      "interrupted",
-    );
-    this.#publishCommand({
-      sessionId: active.record.id,
-      type: "session.close",
-    });
-    this.#finish(active, "interrupted", {
-      code: "VOICE.APP_INTERRUPTED",
-      message: "应用退出中断了语音会话。",
-      retryable: true,
-    });
-    this.#active = undefined;
+  shutdown(): Promise<void> {
+    if (this.#stopping) return this.#stopping;
+    this.#closed = true;
+    let failure: { error: unknown } | undefined;
+    try {
+      this.#abortWork();
+      const active = this.#active;
+      if (active) {
+        this.#interruptCurrentTurn(
+          active,
+          this.clock.now(),
+          undefined,
+          "interrupted",
+        );
+        this.#publishCommand({
+          sessionId: active.record.id,
+          type: "session.close",
+        });
+        this.#finish(active, "interrupted", {
+          code: "VOICE.APP_INTERRUPTED",
+          message: "应用退出中断了语音会话。",
+          retryable: true,
+        });
+        this.#active = undefined;
+      }
+    } catch (error) {
+      failure = { error };
+    }
+    this.#stopping = this.#joinWork()
+      .then(() => {
+        if (failure) throw failure.error;
+      })
+      .finally(() => {
+        this.#startup = undefined;
+      });
+    return this.#stopping;
   }
 
-  async preview(request: VoicePreviewRequest): Promise<VoicePreviewConnection> {
-    const runtime = await this.providers.createRealtimeProviderRuntime(
-      request.providerProfileId,
+  preview(
+    request: VoicePreviewRequest,
+    options: { requestId?: string } = {},
+  ): Promise<VoicePreviewConnection> {
+    return this.#connectionWork(
+      async (signal) => {
+        this.#assertCanStart();
+        const runtime = await this.providers.createRealtimeProviderRuntime(
+          request.providerProfileId,
+        );
+        signal.throwIfAborted();
+        const options = {
+          instructions: request.instructions,
+          voice: request.voice,
+        };
+        assertVoiceInputFits(
+          {
+            ...realtimeSessionRequest(runtime.snapshot.modelId, options),
+            events: voicePreviewEvents(),
+          },
+          realtimeStartupBudget(runtime.snapshot.modelId),
+        );
+        return this.issuer.issue(runtime, options, signal);
+      },
+      { ...options, preview: true },
     );
-    return this.issuer.issue(runtime, {
-      instructions: request.instructions,
-      voice: request.voice,
-    });
   }
 
-  async start(request: VoiceStartRequest): Promise<VoiceConnection> {
+  start(
+    request: VoiceStartRequest,
+    options: { requestId?: string } = {},
+  ): Promise<VoiceConnection> {
+    return this.#connectionWork(
+      (signal) => this.#start(request, signal),
+      options,
+    );
+  }
+
+  async #start(
+    request: VoiceStartRequest,
+    signal: AbortSignal,
+  ): Promise<VoiceConnection> {
     if (
       this.#active?.record.status === "interrupted" &&
       this.#active.record.chatId === request.chatId
     ) {
-      return this.#reconnect(this.#active, request.requestedAt);
+      return this.#reconnect(this.#active, request.requestedAt, signal);
     }
     this.#assertCanStart(request.chatId);
     const prepared = await this.#prepareStart(
+      signal,
       request.execution,
       request.chatId,
       request.chatProviderProfileId,
     );
+    signal.throwIfAborted();
     this.#assertCanStart(request.chatId);
     return this.#activate(request, prepared);
   }
 
-  async quickStart(request: VoiceQuickStartRequest): Promise<VoiceConnection> {
+  quickStart(
+    request: VoiceQuickStartRequest,
+    options: { requestId?: string } = {},
+  ): Promise<VoiceConnection> {
+    return this.#connectionWork(
+      (signal) => this.#quickStart(request, signal),
+      options,
+    );
+  }
+
+  async #quickStart(
+    request: VoiceQuickStartRequest,
+    signal: AbortSignal,
+  ): Promise<VoiceConnection> {
     const targetChatId = "chatId" in request ? request.chatId : undefined;
     const wakeGreeting = "origin" in request && request.origin === "voice_wake";
     this.#assertCanStart(targetChatId);
@@ -561,7 +852,8 @@ export class VoiceService {
             approvalMode: "full_access",
             mode: "agent",
           } as const);
-    const prepared = await this.#prepareStart(execution, targetChatId);
+    const prepared = await this.#prepareStart(signal, execution, targetChatId);
+    signal.throwIfAborted();
     this.#assertCanStart(targetChatId);
     if (targetChatId) {
       const target = this.chatTurns.getSnapshot({ chatId: targetChatId });
@@ -608,27 +900,36 @@ export class VoiceService {
   }
 
   async #prepareStart(
+    signal: AbortSignal,
     execution: RunExecution,
     chatId?: string,
     chatProviderProfileId?: string,
   ): Promise<PreparedVoiceStart> {
     const prepared = await this.#prepareConfiguration(
+      signal,
       execution,
       chatId,
       chatProviderProfileId,
     );
-    return this.#issueConfiguration(prepared);
+    return this.#issueConfiguration(prepared, signal);
   }
 
   async #issueConfiguration(
     prepared: PreparedVoiceConfiguration,
+    signal: AbortSignal,
   ): Promise<PreparedVoiceStart> {
     const credentialStartedAt = this.monotonicNow();
-    const issued = await this.issuer.issue(prepared.providerRuntime, {
-      instructions: prepared.defaultInstructions,
-      tools: prepared.realtimeTools.configs,
-      voice: prepared.configured.voice,
-    });
+    signal.throwIfAborted();
+    const issued = await this.issuer.issue(
+      prepared.providerRuntime,
+      {
+        instructions: prepared.defaultInstructions,
+        tools: prepared.realtimeTools.configs,
+        voice: prepared.configured.voice,
+      },
+      signal,
+    );
+    signal.throwIfAborted();
     return {
       ...prepared,
       credentialDurationMs: Math.max(
@@ -640,6 +941,7 @@ export class VoiceService {
   }
 
   async #prepareConfiguration(
+    signal: AbortSignal,
     execution: RunExecution,
     chatId?: string,
     chatProviderProfileId?: string,
@@ -654,18 +956,44 @@ export class VoiceService {
     const providerRuntime = await this.providers.createRealtimeProviderRuntime(
       configured.providerProfileId,
     );
+    signal.throwIfAborted();
     const contextProfileId = chatId
       ? (chatProviderProfileId ??
         this.#chatTitleProfileId(providerRuntime.snapshot.profileId))
       : undefined;
+    const realtimeTools = prepareRealtimeTools(this.tools, execution);
+    const budget = realtimeStartupBudget(providerRuntime.snapshot.modelId);
+    const instructionsWithoutSummary = this.#instructions(
+      configured.instructions,
+      execution,
+      undefined,
+      chatId,
+      undefined,
+      persona,
+    );
+    const startup = realtimeSessionRequest(providerRuntime.snapshot.modelId, {
+      instructions: instructionsWithoutSummary,
+      tools: realtimeTools.configs,
+      voice: configured.voice,
+    });
+    assertVoiceInputFits(startup, budget);
+    const startupInput: JsonValue[] = [
+      { content: JSON.stringify(startup), role: "developer", type: "message" },
+    ];
     const projection =
       chatId && contextProfileId
-        ? await this.#prepareChatContext(chatId, contextProfileId)
+        ? await this.#prepareChatContext(
+            chatId,
+            contextProfileId,
+            startupInput,
+            budget,
+            signal,
+          )
         : undefined;
+    signal.throwIfAborted();
     const chatContextSummary = projection?.snapshot?.summary
       ? `${CHAT_CONTEXT_SUMMARY_PREFIX}\n${projection.snapshot.summary}`
       : undefined;
-    const realtimeTools = prepareRealtimeTools(this.tools, execution);
     const defaultInstructions = this.#instructions(
       configured.instructions,
       execution,
@@ -674,37 +1002,75 @@ export class VoiceService {
       chatContextSummary,
       persona,
     );
+    const replayHistory = history(projection?.messages ?? []);
+    assertVoiceInputFits(
+      {
+        ...realtimeSessionRequest(providerRuntime.snapshot.modelId, {
+          instructions: defaultInstructions,
+          tools: realtimeTools.configs,
+          voice: configured.voice,
+        }),
+        events: replayHistory.map(voiceHistoryItemEvent),
+      },
+      budget,
+    );
     return {
       ...(chatContextSummary ? { chatContextSummary } : {}),
       configured,
       defaultInstructions,
-      history: history(projection?.messages ?? []),
+      history: replayHistory,
       persona,
       providerRuntime,
       realtimeTools,
     };
   }
 
-  async #prepareChatContext(chatId: string, profileId: string) {
+  async #prepareChatContext(
+    chatId: string,
+    profileId: string,
+    startupInput: readonly JsonValue[],
+    budget: number,
+    signal: AbortSignal,
+  ) {
     const current = this.#chatContext.project(chatId);
+    if (current.messages.length === 0) return current;
+    // Voice-only history has no previous text usage. Check that first working
+    // set locally, while keeping short Voice conversations independent of the
+    // optional text summarizer's configuration and credentials.
+    const snapshot = current.snapshot;
+    const hasTextMeasurement =
+      snapshot?.lastInputTokens !== undefined &&
+      snapshot.lastRequestBytes !== undefined &&
+      snapshot.lastModelId !== undefined;
     if (
-      current.messages.length === 0 ||
-      current.snapshot?.lastInputTokens === undefined ||
-      current.snapshot.lastRequestBytes === undefined ||
-      current.snapshot.lastModelId === undefined
+      !hasTextMeasurement &&
+      fitsInputBudget(
+        estimateInputBudget([...current.input, ...startupInput]),
+        budget,
+      )
     ) {
       return current;
     }
     const runtime = await this.providers.createChatModelRuntime(profileId);
+    signal.throwIfAborted();
     const limits = await runtime.provider.resolveContextLimits(
       runtime.snapshot.modelId,
+      signal,
     );
+    signal.throwIfAborted();
     return this.#chatContext.prepare({
+      additionalInput: startupInput,
       chatId,
-      limits,
+      limits: {
+        ...limits,
+        effectiveInputTokens: Math.min(budget, modelInputBudget(limits)),
+      },
       modelId: runtime.snapshot.modelId,
       provider: runtime.provider,
-      signal: new AbortController().signal,
+      // This projection will be replayed through Realtime, not Responses. Only
+      // the separate text-summary requests may use the text Provider's count.
+      measureInput: (input) => Promise.resolve(estimateInputBudget(input)),
+      signal,
     });
   }
 
@@ -743,6 +1109,7 @@ export class VoiceService {
     };
     this.#active = {
       assistantOutputs: new Map(),
+      memoryProvenance: new Map(),
       audioPlaying: false,
       chatProviderProfileId: request.chatProviderProfileId,
       ...(prepared.chatContextSummary
@@ -752,6 +1119,11 @@ export class VoiceService {
       defaultInstructions: prepared.defaultInstructions,
       execution: request.execution,
       functionResponses: new Set(),
+      receivedToolCalls: new Set(),
+      receivedTranscripts: new Set(),
+      ...(this.#startup?.requestId
+        ? { startupRequestId: this.#startup.requestId }
+        : {}),
       inputTurns: new Map(),
       nextResponseOrder: 0,
       paused: false,
@@ -759,14 +1131,18 @@ export class VoiceService {
       responseOrders: new Map(),
       responseTurns: new Map(),
       realtimeTools: prepared.realtimeTools,
-      runMemoryIds: new Map(),
-      runMemoryQueryIds: new Map(),
       runTurns: new Map(),
       snapshot,
       turnAborts: new Map(),
       turns: new Map(),
       wakeGreetingPending: options.wakeGreeting ?? false,
     };
+    if (this.#startup) {
+      this.#startup.active = this.#active;
+      for (const work of this.#work) {
+        if (work.abort === this.#startup.abort) work.active = this.#active;
+      }
+    }
     this.metrics?.startSession(id, createdAt);
     this.metrics?.connectionStage("credential", prepared.credentialDurationMs);
     this.#publishSnapshot();
@@ -796,28 +1172,33 @@ export class VoiceService {
     }
   }
 
-  end(request: VoiceSessionRequest): null {
+  async end(request: VoiceSessionRequest): Promise<null> {
     const active = this.#requireActive(request.sessionId);
-    this.#publishCommand({
-      enabled: false,
-      sessionId: active.record.id,
-      type: "capture.set",
-    });
-    this.#interruptCurrentTurn(
-      active,
-      this.clock.now(),
-      undefined,
-      "cancelled",
-    );
-    this.#publishCommand({
-      sessionId: active.record.id,
-      type: "session.close",
-    });
-    this.#finish(active, "completed");
+    try {
+      this.#abortWork(active);
+      this.#publishCommand({
+        enabled: false,
+        sessionId: active.record.id,
+        type: "capture.set",
+      });
+      this.#interruptCurrentTurn(
+        active,
+        this.clock.now(),
+        undefined,
+        "cancelled",
+      );
+      this.#publishCommand({
+        sessionId: active.record.id,
+        type: "session.close",
+      });
+      this.#finish(active, "completed");
+    } finally {
+      await this.#joinWork(active);
+    }
     return null;
   }
 
-  cancelRun(request: RunCancelRequest): Promise<RunCancelResult> {
+  async cancelRun(request: RunCancelRequest): Promise<RunCancelResult> {
     const run = this.runs.getRun(request.runId);
     if (!run)
       throw new AgentError("AGENT.RUN_NOT_FOUND", "Run 不存在。", false);
@@ -846,6 +1227,7 @@ export class VoiceService {
         type: "response.cancel",
       });
       this.#setPhase(active, "listening");
+      await this.#joinWork(active, turn.id);
     } else {
       this.#closeRun(run, "cancelled");
     }
@@ -889,7 +1271,7 @@ export class VoiceService {
       });
     }
     this.#setCapture(active, true);
-    void this.#continueAfterApproval(
+    this.#continueAfterApproval(
       active,
       pending,
       request.decision,
@@ -907,7 +1289,10 @@ export class VoiceService {
     return active.snapshot;
   }
 
-  async setPaused(request: VoicePausedRequest): Promise<VoicePauseResult> {
+  async setPaused(
+    request: VoicePausedRequest,
+    options: { requestId?: string } = {},
+  ): Promise<VoicePauseResult> {
     const active = this.#requireActive(request.sessionId);
     if (active.record.status !== "active") {
       throw new VoiceError(
@@ -917,7 +1302,13 @@ export class VoiceService {
       );
     }
     if (request.paused) {
-      if (active.paused) return { snapshot: active.snapshot };
+      if (active.paused) {
+        if (this.#startup?.active === active) {
+          this.#startup.abort.abort();
+          await this.#joinWork(active);
+        }
+        return { snapshot: active.snapshot };
+      }
       active.wakeGreetingPending = false;
       delete active.wakeGreetingResponseId;
       this.#setCapture(active, false);
@@ -951,82 +1342,97 @@ export class VoiceService {
       return { snapshot: active.snapshot };
     }
 
-    if (request.origin === "voice_wake") active.wakeGreetingPending = true;
-    this.#setPhase(active, "resuming");
-    try {
-      const prepared = await this.#prepareConfiguration(
-        active.execution,
-        active.record.chatId,
-        active.chatProviderProfileId,
-        active.record.persona,
-      );
-      this.#assertResumeTarget(active);
-      if (this.#canReuseConnection(active, prepared)) {
-        active.configuredInstructions = prepared.configured.instructions;
-        active.defaultInstructions = prepared.defaultInstructions;
-        if (prepared.chatContextSummary) {
-          active.chatContextSummary = prepared.chatContextSummary;
-        } else {
-          delete active.chatContextSummary;
-        }
-        active.realtimeTools = prepared.realtimeTools;
-        const requestId = this.ids.generate();
-        active.refreshRequestId = requestId;
-        this.#publishCommand({
-          instructions: prepared.defaultInstructions,
-          requestId,
-          sessionId: active.record.id,
-          tools: prepared.realtimeTools.configs,
-          type: "session.refresh",
-        });
-        return { snapshot: active.snapshot };
-      }
+    return this.#connectionWork(
+      async (signal) => {
+        if (request.origin === "voice_wake") active.wakeGreetingPending = true;
+        this.#setPhase(active, "resuming");
+        try {
+          const prepared = await this.#prepareConfiguration(
+            signal,
+            active.execution,
+            active.record.chatId,
+            active.chatProviderProfileId,
+            active.record.persona,
+          );
+          signal.throwIfAborted();
+          this.#assertResumeTarget(active);
+          if (this.#canReuseConnection(active, prepared)) {
+            if (options.requestId) active.startupRequestId = options.requestId;
+            else delete active.startupRequestId;
+            active.configuredInstructions = prepared.configured.instructions;
+            active.defaultInstructions = prepared.defaultInstructions;
+            if (prepared.chatContextSummary) {
+              active.chatContextSummary = prepared.chatContextSummary;
+            } else {
+              delete active.chatContextSummary;
+            }
+            active.realtimeTools = prepared.realtimeTools;
+            const requestId = this.ids.generate();
+            const command = {
+              instructions: prepared.defaultInstructions,
+              requestId,
+              sessionId: active.record.id,
+              tools: prepared.realtimeTools.configs,
+              type: "session.refresh",
+            } as const;
+            assertVoiceInputFits(
+              voiceSessionRefreshEvent(command),
+              realtimeStartupBudget(active.record.provider.modelId),
+            );
+            active.refreshRequestId = requestId;
+            this.#publishCommand(command);
+            return { snapshot: active.snapshot };
+          }
 
-      const issued = await this.#issueConfiguration(prepared);
-      this.#assertResumeTarget(active);
-      const replacedSessionId = active.record.id;
-      active.record = this.repository.updateSession({
-        ...active.record,
-        endedAt: request.requestedAt,
-        status: "completed",
-      });
-      const connection = this.#activate(
-        {
-          chatId: active.record.chatId,
-          chatProviderProfileId: active.chatProviderProfileId,
-          execution: active.execution,
-          requestedAt: request.requestedAt,
-        },
-        issued,
-        { wakeGreeting: request.origin === "voice_wake" },
-      );
-      this.#publishCommand({
-        sessionId: replacedSessionId,
-        type: "session.close",
-      });
-      return { connection, snapshot: this.#active!.snapshot };
-    } catch (error) {
-      if (
-        this.#active === active &&
-        active.record.status === "completed" &&
-        active.paused
-      ) {
-        const restored = { ...active.record, status: "active" as const };
-        delete restored.endedAt;
-        active.record = this.repository.updateSession(restored);
-      }
-      if (
-        this.#active === active &&
-        active.record.status === "active" &&
-        active.paused
-      ) {
-        if (request.origin === "voice_wake") {
-          active.wakeGreetingPending = false;
+          const issued = await this.#issueConfiguration(prepared, signal);
+          signal.throwIfAborted();
+          this.#assertResumeTarget(active);
+          const replacedSessionId = active.record.id;
+          active.record = this.repository.updateSession({
+            ...active.record,
+            endedAt: request.requestedAt,
+            status: "completed",
+          });
+          const connection = this.#activate(
+            {
+              chatId: active.record.chatId,
+              chatProviderProfileId: active.chatProviderProfileId,
+              execution: active.execution,
+              requestedAt: request.requestedAt,
+            },
+            issued,
+            { wakeGreeting: request.origin === "voice_wake" },
+          );
+          this.#publishCommand({
+            sessionId: replacedSessionId,
+            type: "session.close",
+          });
+          return { connection, snapshot: this.#active!.snapshot };
+        } catch (error) {
+          if (
+            this.#active === active &&
+            active.record.status === "completed" &&
+            active.paused
+          ) {
+            const restored = { ...active.record, status: "active" as const };
+            delete restored.endedAt;
+            active.record = this.repository.updateSession(restored);
+          }
+          if (
+            this.#active === active &&
+            active.record.status === "active" &&
+            active.paused
+          ) {
+            if (request.origin === "voice_wake") {
+              active.wakeGreetingPending = false;
+            }
+            this.#setPhase(active, "paused");
+          }
+          throw error;
         }
-        this.#setPhase(active, "paused");
-      }
-      throw error;
-    }
+      },
+      { ...options, active },
+    );
   }
 
   #assertResumeTarget(active: ActiveVoice): void {
@@ -1069,6 +1475,9 @@ export class VoiceService {
     );
   }
 
+  // Register follow-up work synchronously while preserving Promise rejection
+  // for malformed/late driver reports at the existing asynchronous IPC boundary.
+  // eslint-disable-next-line @typescript-eslint/require-await
   async report(
     request: VoiceDriverEventRequest,
   ): Promise<VoiceSessionSnapshot> {
@@ -1195,7 +1604,7 @@ export class VoiceService {
     } else if (event.type === "transcript.user.delta") {
       this.#appendUserTranscript(active, event.itemId, event.delta);
     } else if (event.type === "transcript.user.completed") {
-      await this.#acceptTranscript(
+      this.#acceptTranscript(
         active,
         event.itemId,
         event.transcript,
@@ -1225,9 +1634,7 @@ export class VoiceService {
     } else if (event.type === "transcript.assistant.done") {
       this.#completeAssistantTranscript(active, event);
     } else if (event.type === "tool.call") {
-      active.functionResponses.add(event.responseId);
-      this.metrics?.toolCallReceived(active.record.id, request.occurredAt);
-      void this.#handleToolCall(active, event);
+      this.#handleToolCall(active, event, request.occurredAt);
     } else if (event.type === "audio.started") {
       const turn = this.#turnForResponse(active, event.responseId);
       if (turn && turn.id === active.snapshot.turnId && !turn.interrupted) {
@@ -1286,6 +1693,7 @@ export class VoiceService {
         active.turns.set(updated.id, updated);
       }
     } else if (event.type === "connection.closed") {
+      this.#abortWork(active);
       this.metrics?.disconnected();
       this.#interruptCurrentTurn(
         active,
@@ -1322,14 +1730,24 @@ export class VoiceService {
   async #reconnect(
     active: ActiveVoice,
     requestedAt: string,
+    signal: AbortSignal,
   ): Promise<VoiceConnection> {
+    if (this.#startup) this.#startup.active = active;
+    for (const work of this.#work) {
+      if (work.abort === this.#startup?.abort) work.active = active;
+    }
     const prepared = await this.#prepareConfiguration(
+      signal,
       active.execution,
       active.record.chatId,
       active.chatProviderProfileId,
       active.record.persona,
     );
-    const issued = await this.#issueConfiguration(prepared);
+    const issued = await this.#issueConfiguration(prepared, signal);
+    signal.throwIfAborted();
+    if (this.#active !== active || active.record.status !== "interrupted") {
+      throw new VoiceError("VOICE.NOT_READY", "原语音会话已经改变。", false);
+    }
     if (!this.#sameConnectionIdentity(active, prepared)) {
       return this.#activate(
         {
@@ -1361,7 +1779,11 @@ export class VoiceService {
     active.audioPlaying = false;
     active.paused = false;
     delete active.refreshRequestId;
+    if (this.#startup?.requestId)
+      active.startupRequestId = this.#startup.requestId;
+    else delete active.startupRequestId;
     active.functionResponses.clear();
+    active.receivedToolCalls.clear();
     active.nextResponseOrder = 0;
     active.responseOrders.clear();
     active.responseTurns.clear();
@@ -1395,9 +1817,8 @@ export class VoiceService {
       configured,
       execution,
       ...(context === undefined ? {} : { memoryContext: context }),
-      now: this.clock.now(),
+      timeContext: modelTimeContext(this.clock.now()),
       skills: this.skillInstructions(chatId),
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     });
   }
 
@@ -1471,25 +1892,130 @@ export class VoiceService {
     }
   }
 
-  async #acceptTranscript(
+  #acceptTranscript(
     active: ActiveVoice,
     itemId: string,
     transcript: string,
     occurredAt: string,
-  ): Promise<void> {
+  ): void {
     const current =
       this.#turnForInput(active, itemId) ??
       this.#startTurn(active, occurredAt, itemId);
+    const abort = active.turnAborts.get(current.id);
+    if (
+      !abort ||
+      current.interrupted ||
+      current.id !== active.snapshot.turnId ||
+      active.receivedTranscripts.has(itemId)
+    )
+      return;
+    active.receivedTranscripts.add(itemId);
     active.inputTurns.set(itemId, current.id);
-    if (current.interrupted || current.id !== active.snapshot.turnId) return;
-    const evidence = memoryEvidence(this.memory, transcript);
+    void this.#runWork(
+      abort,
+      (signal) =>
+        this.#prepareTranscript(
+          active,
+          current,
+          itemId,
+          transcript,
+          occurredAt,
+          signal,
+        ),
+      {
+        active,
+        turnId: current.id,
+      },
+    ).catch((error: unknown) => {
+      if (
+        abort.signal.aborted ||
+        this.#active !== active ||
+        active.snapshot.turnId !== current.id
+      )
+        return;
+      const turn = active.turns.get(current.id);
+      if (turn) {
+        const appError = toVoiceAppError(error);
+        this.#failTurn(active, turn, this.clock.now(), false, appError);
+        this.#setPhase(active, "failed", appError);
+      }
+    });
+  }
+
+  async #prepareTranscript(
+    active: ActiveVoice,
+    current: VoiceTurnRecord,
+    itemId: string,
+    transcript: string,
+    occurredAt: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const requestId = this.ids.generate();
+    const budget = realtimeStartupBudget(active.record.provider.modelId);
+    const shellCommand = {
+      generation: current.generation,
+      instructions: this.#instructions(
+        active.configuredInstructions,
+        active.execution,
+        undefined,
+        active.record.chatId,
+        active.chatContextSummary,
+        active.record.persona,
+      ),
+      requestId,
+      sessionId: active.record.id,
+      type: "response.create",
+    } as const;
+    const shell = estimateInputBudget(
+      knownResponseInput(shellCommand, active.realtimeTools.configs),
+    );
+    if (!fitsInputBudget(shell, budget)) throw oversizedVoiceContext();
+    const preparation = await this.cognition?.prepareTurn({
+      personaId: active.record.persona.personaId,
+      chatId: active.record.chatId,
+      currentInput: transcript,
+      resourceBudget: { maxReadBytes: LOCAL_COGNITION_READ_BUDGET_BYTES },
+      contextBudget: {
+        maxTokens: cognitionContextTokenHeadroom(shell, {
+          effectiveInputTokens: budget,
+        }),
+      },
+      signal,
+    });
+    if (
+      signal.aborted ||
+      this.#active !== active ||
+      active.paused ||
+      active.record.status !== "active" ||
+      active.record.generation !== current.generation ||
+      active.turns.get(current.id)?.interrupted ||
+      active.turns.get(current.id)?.status === "failed" ||
+      current.id !== active.snapshot.turnId
+    )
+      return;
+    const preparedMemoryContext = preparation
+      ? createCognitionContextInput(preparation)
+      : undefined;
+    const context = preparedMemoryContext
+      ? object(preparedMemoryContext)?.["content"]
+      : undefined;
+    const preparedReferences = preparedMemoryContext
+      ? suppliedMemoryReferences([preparedMemoryContext])
+      : [];
     const instructions = this.#instructions(
       active.configuredInstructions,
       active.execution,
-      evidence.content,
+      typeof context === "string" ? context : undefined,
       active.record.chatId,
       active.chatContextSummary,
       active.record.persona,
+    );
+    const command = { ...shellCommand, instructions };
+    // Keep all prepared material. This final check cannot authorize unknown
+    // server audio/history, and never retries with a smaller semantic projection.
+    assertVoiceInputFits(
+      knownResponseInput(command, active.realtimeTools.configs),
+      budget,
     );
     let turn = this.repository.updateTurn({
       ...current,
@@ -1511,6 +2037,17 @@ export class VoiceService {
       transcript,
     );
     await this.chatTurns.runSerializedTurn(active.record.chatId, () => {
+      if (
+        signal.aborted ||
+        this.#active !== active ||
+        active.paused ||
+        active.record.status !== "active" ||
+        active.record.generation !== current.generation ||
+        active.turns.get(current.id)?.interrupted ||
+        active.turns.get(current.id)?.status === "failed" ||
+        current.id !== active.snapshot.turnId
+      )
+        return;
       const runId = this.ids.generate();
       this.writer.startRun({
         chatId: active.record.chatId,
@@ -1550,21 +2087,31 @@ export class VoiceService {
       });
       active.turns.set(turn.id, turn);
       active.runTurns.set(runId, turn.id);
-      active.runMemoryIds.set(runId, evidence.ids);
-      active.runMemoryQueryIds.set(runId, evidence.queryIds);
       active.record = this.repository.updateSession({
         ...active.record,
         lastRunId: runId,
       });
       active.snapshot = { ...active.snapshot, runId };
       this.#publishSnapshot();
-      this.#publishCommand({
-        generation: turn.generation,
-        instructions,
-        requestId: this.ids.generate(),
-        sessionId: active.record.id,
-        type: "response.create",
+      // A synchronous publisher may have ended/replaced this turn while Run
+      // projections were emitted. Never release its now-stale prepared response.
+      if (
+        signal.aborted ||
+        this.#active !== active ||
+        active.paused ||
+        active.record.status !== "active" ||
+        active.record.generation !== current.generation ||
+        active.snapshot.turnId !== current.id ||
+        active.turns.get(current.id)?.interrupted ||
+        active.turns.get(current.id)?.status === "failed"
+      )
+        return;
+      active.memoryProvenance.set(turn.id, {
+        awaiting: new Map([[requestId, preparedReferences]]),
+        consumed: [],
+        responses: new Map(),
       });
+      this.#publishCommand(command);
     });
   }
 
@@ -1577,6 +2124,26 @@ export class VoiceService {
     if (!turn || turn.interrupted) {
       this.metrics?.discardedLateEvent();
       return;
+    }
+    if (turn.status === "completed" || turn.status === "failed") return;
+    if (active.responseTurns.has(event.responseId)) return;
+    const provenance = active.memoryProvenance.get(turn.id);
+    const acknowledged = event.requestId
+      ? provenance?.awaiting.get(event.requestId)
+      : undefined;
+    provenance?.responses.set(event.responseId, acknowledged ?? []);
+    if (provenance && acknowledged) {
+      // response.created includes the request's response.metadata. A missing,
+      // unrelated or repeated request ID never acknowledges another request.
+      provenance.consumed = [
+        ...new Map(
+          [...provenance.consumed, ...acknowledged].map((ref) => [
+            `${ref.memoryId}:${ref.revisionId}:${ref.use}`,
+            ref,
+          ]),
+        ).values(),
+      ];
+      provenance.awaiting.delete(event.requestId!);
     }
     active.responseTurns.set(event.responseId, turn.id);
     active.responseOrders.set(event.responseId, active.nextResponseOrder);
@@ -1742,10 +2309,11 @@ export class VoiceService {
     }
   }
 
-  async #handleToolCall(
+  #handleToolCall(
     active: ActiveVoice,
     event: Extract<VoiceDriverEvent, { type: "tool.call" }>,
-  ): Promise<void> {
+    receivedAt: string,
+  ): void {
     const turn = this.#turnForResponse(active, event.responseId);
     if (
       !turn?.runId ||
@@ -1755,6 +2323,15 @@ export class VoiceService {
       this.metrics?.discardedLateEvent();
       return;
     }
+    const run = this.runs.getRun(turn.runId);
+    if (!run || TERMINAL_RUN_STATUSES.has(run.status)) return;
+    // A protocol call is accepted once, including approval and failed results.
+    // A Voice reconnect interrupts its old Run; it never replays old actions.
+    const callKey = JSON.stringify([turn.runId, event.callId]);
+    if (active.receivedToolCalls.has(callKey)) return;
+    active.receivedToolCalls.add(callKey);
+    active.functionResponses.add(event.responseId);
+    this.metrics?.toolCallReceived(active.record.id, receivedAt);
     if (active.pendingTool) {
       this.#sendStandaloneToolResult(
         active,
@@ -1769,6 +2346,14 @@ export class VoiceService {
     try {
       if (!definition) throw new Error(`Unknown Tool: ${event.name}`);
       argumentsValue = parseToolArguments(event.arguments);
+      if (active.realtimeTools.wrappedArguments.has(event.name)) {
+        const unwrapped = object(argumentsValue["arguments"]);
+        if (Object.keys(argumentsValue).length !== 1 || !unwrapped)
+          throw new TypeError(
+            "Realtime Tool input requires one arguments object",
+          );
+        argumentsValue = unwrapped as Readonly<Record<string, JsonValue>>;
+      }
       this.tools.validateInput(definition.descriptor.name, argumentsValue);
     } catch (error) {
       this.#sendStandaloneToolResult(
@@ -1786,6 +2371,7 @@ export class VoiceService {
       definition,
       generation: event.generation,
       instructions: turn.instructions,
+      requestId: this.ids.generate(),
       responseId: event.responseId,
       runId: turn.runId,
       turnId: turn.id,
@@ -1812,10 +2398,10 @@ export class VoiceService {
       this.#setPhase(active, "waiting_approval");
       return;
     }
-    await this.#executeTool(active, pending);
+    this.#launchTool(active, pending);
   }
 
-  async #continueAfterApproval(
+  #continueAfterApproval(
     active: ActiveVoice,
     pending: PendingVoiceTool,
     decision: ApprovalDecision,
@@ -1826,10 +2412,34 @@ export class VoiceService {
       this.#sendToolResult(active, pending, rejectedToolResult(reason));
       return;
     }
-    await this.#executeTool(active, pending);
+    this.#launchTool(active, pending);
+  }
+
+  #launchTool(active: ActiveVoice, pending: PendingVoiceTool): void {
+    void this.#runWork(
+      pending.abort,
+      () => this.#executeTool(active, pending),
+      {
+        active,
+        turnId: pending.turnId,
+      },
+    ).catch((error: unknown) => {
+      if (pending.abort.signal.aborted || this.#active !== active) return;
+      const turn = active.turns.get(pending.turnId);
+      if (turn)
+        this.#failTurn(
+          active,
+          turn,
+          this.clock.now(),
+          false,
+          toVoiceAppError(error),
+        );
+    });
   }
 
   async #executeTool(active: ActiveVoice, pending: PendingVoiceTool) {
+    pending.abort.signal.throwIfAborted();
+    if (this.#active !== active || active.pendingTool !== pending) return;
     const run = this.runs.getRun(pending.runId);
     if (!run || TERMINAL_RUN_STATUSES.has(run.status)) return;
     this.#setPhase(active, "using_tool");
@@ -1843,10 +2453,15 @@ export class VoiceService {
             arguments: pending.arguments,
             callId: pending.callId,
             toolName: pending.definition.descriptor.name,
+            suppliedMemoryReferences:
+              active.memoryProvenance
+                .get(pending.turnId)
+                ?.responses.get(pending.responseId) ?? [],
           },
     );
     pending.toolItemId = item.id;
     let result: ToolResult;
+    let additionalReferences: MemoryEvidenceReference[] = [];
     try {
       result = await this.tools.execute(
         pending.definition.descriptor.name,
@@ -1856,6 +2471,8 @@ export class VoiceService {
             ({ descriptor }) => descriptor.name,
           ),
           itemId: item.id,
+          measureResult: (result) =>
+            this.#measureToolResult(active, pending, result),
           onDelta: (delta) => {
             const current = this.runs.getRunItem(item.id);
             if (current?.status === "running") {
@@ -1866,11 +2483,26 @@ export class VoiceService {
           signal: pending.abort.signal,
         },
       );
+      additionalReferences = suppliedMemoryReferences([
+        {
+          type: "function_call",
+          call_id: pending.callId,
+          name: pending.definition.descriptor.name,
+          arguments: JSON.stringify(pending.arguments),
+        },
+        {
+          type: "function_call_output",
+          call_id: pending.callId,
+          output: JSON.stringify(result),
+        },
+      ]);
     } catch (error) {
       result = pending.abort.signal.aborted
         ? cancelledToolResult()
         : unexpectedToolResult(error);
     }
+    if (pending.abort.signal.aborted || !this.#isCurrentTool(active, pending))
+      return;
     const currentRun = this.runs.getRun(pending.runId);
     const currentItem = this.runs.getRunItem(item.id);
     if (!currentRun || TERMINAL_RUN_STATUSES.has(currentRun.status)) return;
@@ -1883,7 +2515,7 @@ export class VoiceService {
         status: toolItemStatus(result),
       });
     }
-    this.#sendToolResult(active, pending, result);
+    this.#sendToolResult(active, pending, result, additionalReferences);
   }
 
   #sendStandaloneToolResult(
@@ -1897,6 +2529,9 @@ export class VoiceService {
       arguments: event.arguments,
       callId: event.callId,
       toolName: event.name,
+      suppliedMemoryReferences:
+        active.memoryProvenance.get(turn.id)?.responses.get(event.responseId) ??
+        [],
     });
     this.writer.completeItem(item.id, {
       displayOutput: result.error?.message ?? result.summary,
@@ -1904,36 +2539,174 @@ export class VoiceService {
       output: result,
       status: toolItemStatus(result),
     });
-    this.#publishCommand({
+    const current = active.turns.get(turn.id);
+    if (
+      this.#active !== active ||
+      active.paused ||
+      active.record.status !== "active" ||
+      active.record.generation !== turn.generation ||
+      active.snapshot.turnId !== turn.id ||
+      !current ||
+      current.interrupted ||
+      current.status === "failed" ||
+      !turn.runId ||
+      TERMINAL_RUN_STATUSES.has(
+        this.runs.getRun(turn.runId)?.status ?? "failed",
+      )
+    )
+      return;
+    const requestId = this.ids.generate();
+    const command = {
       callId: event.callId,
       generation: event.generation,
       instructions: turn.instructions,
       output: JSON.stringify(result),
-      requestId: this.ids.generate(),
+      requestId,
       sessionId: active.record.id,
       type: "tool.result",
-    });
+    } as const;
+    if (!this.#responseFits(active, turn, command)) return;
+    this.#queueMemoryReferences(active, turn.id, requestId);
+    this.#publishCommand(command);
   }
 
   #sendToolResult(
     active: ActiveVoice,
     pending: PendingVoiceTool,
     result: ToolResult,
+    additionalReferences: MemoryEvidenceReference[] = [],
   ) {
-    if (active.pendingTool !== pending) return;
+    if (pending.abort.signal.aborted || !this.#isCurrentTool(active, pending))
+      return;
+    const command = this.#toolResultCommand(active, pending, result);
+    const turn = active.turns.get(pending.turnId);
+    if (!turn || !this.#responseFits(active, turn, command)) return;
     delete active.pendingTool;
     const run = this.runs.getRun(pending.runId);
     if (!run || TERMINAL_RUN_STATUSES.has(run.status)) return;
-    this.#publishCommand({
+    this.#queueMemoryReferences(
+      active,
+      pending.turnId,
+      pending.requestId,
+      additionalReferences,
+    );
+    this.#publishCommand(command);
+    this.#setPhase(active, "thinking");
+  }
+
+  #responseFits(
+    active: ActiveVoice,
+    turn: VoiceTurnRecord,
+    command: VoiceResponseCommand,
+  ): boolean {
+    if (
+      fitsInputBudget(
+        estimateInputBudget(
+          knownResponseInput(command, active.realtimeTools.configs),
+        ),
+        realtimeStartupBudget(active.record.provider.modelId),
+      )
+    )
+      return true;
+    const error = toVoiceAppError(oversizedVoiceContext());
+    this.#failTurn(active, turn, this.clock.now(), false, error);
+    this.#setPhase(active, "failed", error);
+    return false;
+  }
+
+  #isCurrentTool(active: ActiveVoice, pending: PendingVoiceTool): boolean {
+    const turn = active.turns.get(pending.turnId);
+    if (
+      this.#active !== active ||
+      active.pendingTool !== pending ||
+      active.record.status !== "active" ||
+      active.paused ||
+      active.record.generation !== pending.generation ||
+      active.snapshot.turnId !== pending.turnId ||
+      !turn ||
+      turn.runId !== pending.runId ||
+      turn.generation !== pending.generation ||
+      turn.interrupted
+    )
+      return false;
+    const run = this.runs.getRun(pending.runId);
+    return run !== undefined && !TERMINAL_RUN_STATUSES.has(run.status);
+  }
+
+  #toolResultCommand(
+    active: ActiveVoice,
+    pending: PendingVoiceTool,
+    result: ToolResult,
+  ): Extract<VoiceClientCommand, { type: "tool.result" }> {
+    return {
       callId: pending.callId,
       generation: pending.generation,
       instructions: pending.instructions,
       output: JSON.stringify(result),
-      requestId: this.ids.generate(),
+      requestId: pending.requestId,
       sessionId: active.record.id,
       type: "tool.result",
+    };
+  }
+
+  #measureToolResult(
+    active: ActiveVoice,
+    pending: PendingVoiceTool,
+    result: ToolResult,
+  ): Promise<ToolResultContextMeasurement> {
+    pending.abort.signal.throwIfAborted();
+    if (
+      !this.#isCurrentTool(active, pending) ||
+      !pending.toolItemId ||
+      this.runs.getRunItem(pending.toolItemId)?.status !== "running"
+    ) {
+      pending.abort.abort();
+      pending.abort.signal.throwIfAborted();
+    }
+    // Only locally visible submission/configuration; the server conversation
+    // and audio history cannot be reconstructed from transcripts or usage.
+    const measurement = estimateInputBudget(
+      knownResponseInput(
+        this.#toolResultCommand(active, pending, result),
+        active.realtimeTools.configs,
+      ),
+    );
+    return Promise.resolve({
+      kind: "realtime_submission",
+      inputBudgetTokens: realtimeStartupBudget(active.record.provider.modelId),
+      measurement,
+      conversationOccupancy: "unknown",
+      capacityBasis:
+        active.record.provider.modelId === "gpt-realtime-2.1"
+          ? "configured_name_rule"
+          : "user_limit_only",
     });
-    this.#setPhase(active, "thinking");
+  }
+
+  #queueMemoryReferences(
+    active: ActiveVoice,
+    turnId: string,
+    requestId: string,
+    additional: MemoryEvidenceReference[] = [],
+  ) {
+    const provenance = active.memoryProvenance.get(turnId);
+    if (!provenance) return;
+    // Commands reuse this turn's prepared instructions and the default
+    // conversation containing earlier transmitted Tool outputs. Snapshot at
+    // dispatch, so a later output never leaks into an older response's basis.
+    const references = [
+      ...provenance.consumed,
+      ...[...provenance.awaiting.values()].flat(),
+      ...additional,
+    ];
+    provenance.awaiting.set(requestId, [
+      ...new Map(
+        references.map((ref) => [
+          `${ref.memoryId}:${ref.revisionId}:${ref.use}`,
+          ref,
+        ]),
+      ).values(),
+    ]);
   }
 
   #responseDone(
@@ -1961,6 +2734,8 @@ export class VoiceService {
     const run = this.runs.getRun(turn.runId);
     if (!run || TERMINAL_RUN_STATUSES.has(run.status)) return;
     const output = active.assistantOutputs.get(turn.id);
+    const memoryReferences =
+      active.memoryProvenance.get(turn.id)?.consumed ?? [];
     if (output) {
       const text = this.#assistantOutputText(output);
       const message = this.chats.getMessage(output.messageId);
@@ -1979,11 +2754,27 @@ export class VoiceService {
           output: {
             messageId: output.messageId,
             responseId: output.responseId,
+            memoryReferences,
           },
           status: "completed",
         });
       }
     }
+    if (!output && memoryReferences.length) {
+      const receipt = this.writer.startItem(run.id, "assistant_message", {
+        modelId: active.record.provider.modelId,
+        responseId: turn.responseId ?? null,
+      });
+      this.writer.completeItem(receipt.id, {
+        output: {
+          messageId: null,
+          responseId: turn.responseId ?? null,
+          memoryReferences,
+        },
+        status: "completed",
+      });
+    }
+    active.memoryProvenance.delete(turn.id);
     this.writer.transition(run.id, "completed");
     const current = active.turns.get(turn.id) ?? turn;
     const updated = this.repository.updateTurn({
@@ -1994,7 +2785,9 @@ export class VoiceService {
     active.turns.set(updated.id, updated);
     active.turnAborts.delete(updated.id);
     if (updated.assistantTranscript.trim()) {
-      void this.#generateTitle(active, run, updated.assistantTranscript);
+      void this.#runWork(new AbortController(), (signal) =>
+        this.#generateTitle(active, run, updated.assistantTranscript, signal),
+      ).catch(() => undefined);
     }
     this.#setPhase(active, active.audioPlaying ? "speaking" : "listening");
   }
@@ -2003,6 +2796,7 @@ export class VoiceService {
     active: ActiveVoice,
     run: Run,
     assistantContent: string,
+    signal: AbortSignal,
   ) {
     if (!this.chatTitles) return;
     const firstUserMessage = this.chats
@@ -2017,13 +2811,14 @@ export class VoiceService {
     } catch {
       return;
     }
+    signal.throwIfAborted();
     await this.chatTitles.generate({
       assistantContent,
       chatId: run.chatId,
       firstUserContent: firstUserMessage.content,
       modelId: chatRuntime.snapshot.modelId,
       provider: chatRuntime.provider,
-      signal: new AbortController().signal,
+      signal,
     });
   }
 
@@ -2058,6 +2853,7 @@ export class VoiceService {
     }
     active.turnAborts.get(turn.id)?.abort();
     active.turnAborts.delete(turn.id);
+    active.memoryProvenance.delete(turn.id);
     this.#cancelPendingTool(active, turn, endedAt);
     if (turn.runId) {
       const run = this.runs.getRun(turn.runId);
@@ -2131,6 +2927,9 @@ export class VoiceService {
     error?: AppError,
   ) {
     if (turn.status === "completed" || turn.status === "interrupted") return;
+    active.turnAborts.get(turn.id)?.abort();
+    active.turnAborts.delete(turn.id);
+    active.memoryProvenance.delete(turn.id);
     this.#cancelPendingTool(active, turn, endedAt);
     if (turn.runId) {
       const run = this.runs.getRun(turn.runId);
@@ -2212,14 +3011,47 @@ export class VoiceService {
       return;
     }
     active.wakeGreetingPending = false;
-    this.#setPhase(active, "thinking");
-    this.#publishCommand({
+    const generation = active.record.generation;
+    const command = {
       instructions: `${active.configuredInstructions}\n\n${VOICE_WAKE_GREETING_INSTRUCTIONS}`,
       prompt: VOICE_WAKE_GREETING_PROMPT,
       requestId: this.ids.generate(),
       sessionId: active.record.id,
       type: "wake.greeting.create",
-    });
+    } as const;
+    const event = voiceWakeGreetingEvent(command);
+    const measured = estimateInputBudget(event);
+    // This constructor always supplies explicit text input and tools: []. The
+    // complete event still contributes bytes; only its known output destination
+    // is not a hidden default-conversation input. Do not relax the shared meter.
+    const measurement = {
+      ...measured,
+      unknownKinds: measured.unknownKinds.filter(
+        (kind) => kind !== "conversation",
+      ),
+    };
+    if (
+      !fitsInputBudget(
+        measurement,
+        realtimeStartupBudget(active.record.provider.modelId),
+      )
+    ) {
+      this.#setPhase(
+        active,
+        "failed",
+        toVoiceAppError(oversizedVoiceContext()),
+      );
+      return;
+    }
+    this.#setPhase(active, "thinking");
+    if (
+      this.#active !== active ||
+      active.paused ||
+      active.record.status !== "active" ||
+      active.record.generation !== generation
+    )
+      return;
+    this.#publishCommand(command);
   }
 
   #setPhase(
@@ -2243,6 +3075,7 @@ export class VoiceService {
     error?: AppError,
   ) {
     const endedAt = this.clock.now();
+    delete active.startupRequestId;
     active.record = this.repository.updateSession({
       ...active.record,
       endedAt,

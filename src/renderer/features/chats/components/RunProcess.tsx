@@ -127,7 +127,7 @@ function itemTitle(item: RunItem): string {
           return "等待并行协作";
       }
     case "tool_call":
-      return "已调用工具";
+      return item.status === "cancelled" ? "工具调用已取消" : "已调用工具";
     case "command":
       return "已运行命令";
     case "file_change":
@@ -139,7 +139,21 @@ function itemTitle(item: RunItem): string {
     case "approval":
       return "等待你确认";
     case "input_request":
-      return item.status === "waiting_input" ? "等待你回答" : "已收到补充信息";
+      if (item.status === "waiting_input") return "等待你回答";
+      if (
+        typeof item.output === "object" &&
+        item.output !== null &&
+        !Array.isArray(item.output) &&
+        item.output["status"] === "context_available"
+      )
+        return "相关环境信息已补充，继续核对";
+      return item.status === "cancelled" ||
+        (typeof item.output === "object" &&
+          item.output !== null &&
+          !Array.isArray(item.output) &&
+          item.output["status"] === "cancelled")
+        ? "已结束提问"
+        : "已收到补充信息";
     case "user_message":
       return "已收到消息";
     case "assistant_message":

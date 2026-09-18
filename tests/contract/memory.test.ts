@@ -6,7 +6,6 @@ import {
   MemoryCreateRequestSchema,
   MemoryListRequestSchema,
   MemoryRevisionSchema,
-  MemoryResolveClaimRequestSchema,
   MemoryReviseRequestSchema,
 } from "../../src/shared/schemas/memory";
 import { parseSchema } from "../../src/shared/schemas/validation";
@@ -17,7 +16,7 @@ const memoryId = "10000000-0000-4000-8000-000000000001";
 
 describe("Memory boundary contracts", () => {
   it.each(parsers)(
-    "accepts stable claim filters and explicit resolution through %s",
+    "accepts owned claim filters and free-content memory creation through %s",
     (parse) => {
       for (const channel of Object.values(MEMORY_CHANNELS)) {
         expect(parse(IpcChannelSchema, channel)).toBe(channel);
@@ -40,21 +39,22 @@ describe("Memory boundary contracts", () => {
         }),
       ).toMatchObject({ claimSlot: "preference.hobbies" });
       expect(
-        parse(MemoryResolveClaimRequestSchema, {
-          claimSlot: "preference.hobbies",
-          content: "用户喜欢玩 CS2，也喜欢胶片摄影。",
-          memoryId,
+        parse(MemoryCreateRequestSchema, {
+          confidence: 1,
+          content: "用户喜欢科幻电影。",
+          importance: 0.5,
+          reason: "用户手动创建",
+          sources: [],
+          type: "preference",
         }),
-      ).toMatchObject({ memoryId });
+      ).not.toHaveProperty("claimSlot");
     },
   );
 
   it.each(parsers)("rejects unknown claim slots through %s", (parse) => {
     expect(() =>
-      parse(MemoryResolveClaimRequestSchema, {
+      parse(MemoryListRequestSchema, {
         claimSlot: "preference.favorite_games",
-        content: "用户喜欢玩 CS2。",
-        memoryId,
       }),
     ).toThrow();
   });
@@ -102,6 +102,8 @@ describe("Memory boundary contracts", () => {
         importantMoment: true,
         memoryId,
         occursAt: timedCreate.occursAt,
+        priorDispositions: [],
+        historyStatus: "current",
         reason: timedCreate.reason,
         sourceIds: [],
         sourceType: "chat",

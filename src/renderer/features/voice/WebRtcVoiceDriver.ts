@@ -5,6 +5,14 @@ import type {
   VoiceDriverEvent,
   VoicePreviewConnection,
 } from "../../../shared/contracts/voice";
+import {
+  voiceResponseCreateEvent,
+  voiceHistoryItemEvent,
+  voicePreviewEvents,
+  voiceSessionRefreshEvent,
+  voiceWakeGreetingEvent,
+  voiceToolResultEvents,
+} from "../../../shared/contracts/voice";
 
 export interface VoiceEnvelope {
   readonly input: number;
@@ -66,22 +74,48 @@ function usage(event: RealtimeEvent) {
   const outputTokens = value["output_tokens"];
   const cachedInputTokens = inputDetails?.["cached_tokens"];
   return {
-    cachedInputTokens:
-      typeof cachedInputTokens === "number" ? cachedInputTokens : 0,
-    inputTokens: typeof inputTokens === "number" ? inputTokens : 0,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : 0,
+    ...(typeof cachedInputTokens === "number" ? { cachedInputTokens } : {}),
+    ...(typeof inputTokens === "number" ? { inputTokens } : {}),
+    ...(typeof outputTokens === "number" ? { outputTokens } : {}),
   };
 }
 
-async function gatherIce(peer: RTCPeerConnection): Promise<void> {
+async function gatherIce(
+  peer: RTCPeerConnection,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
   if (peer.iceGatheringState === "complete") return;
-  await new Promise<void>((resolve) => {
-    const changed = () => {
-      if (peer.iceGatheringState !== "complete") return;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
       peer.removeEventListener("icegatheringstatechange", changed);
-      resolve();
+      peer.removeEventListener("connectionstatechange", changed);
+      signal.removeEventListener("abort", aborted);
+    };
+    const aborted = () => {
+      cleanup();
+      reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException("Operation was aborted", "AbortError"),
+      );
+    };
+    const changed = () => {
+      if (
+        peer.connectionState === "closed" ||
+        peer.connectionState === "failed"
+      ) {
+        cleanup();
+        reject(new Error("WebRTC 连接已关闭。"));
+      } else if (peer.iceGatheringState === "complete") {
+        cleanup();
+        resolve();
+      }
     };
     peer.addEventListener("icegatheringstatechange", changed);
+    peer.addEventListener("connectionstatechange", changed);
+    signal.addEventListener("abort", aborted, { once: true });
+    changed();
   });
 }
 
@@ -90,10 +124,15 @@ async function negotiate(
   callsUrl: string,
   clientSecret: string,
   now: () => number,
+  signal: AbortSignal,
 ): Promise<{ readonly iceDurationMs: number; readonly sdpDurationMs: number }> {
-  await peer.setLocalDescription(await peer.createOffer());
+  signal.throwIfAborted();
+  const offer = await peer.createOffer();
+  signal.throwIfAborted();
+  await peer.setLocalDescription(offer);
+  signal.throwIfAborted();
   const iceStartedAt = now();
-  await gatherIce(peer);
+  await gatherIce(peer, signal);
   const iceDurationMs = Math.max(0, Math.round(now() - iceStartedAt));
   const sdp = peer.localDescription?.sdp;
   if (!sdp) throw new Error("WebRTC 无法创建本地 SDP。");
@@ -108,17 +147,20 @@ async function negotiate(
       },
       method: "POST",
       redirect: "error",
+      signal,
     });
   } catch (error) {
+    signal.throwIfAborted();
     throw new Error("WebRTC SDP 协商请求无法发出。", { cause: error });
   }
+  signal.throwIfAborted();
   if (!response.ok) {
     throw new Error(`WebRTC SDP 协商失败（HTTP ${String(response.status)}）。`);
   }
-  await peer.setRemoteDescription({
-    sdp: await response.text(),
-    type: "answer",
-  });
+  const answer = await response.text();
+  signal.throwIfAborted();
+  await peer.setRemoteDescription({ sdp: answer, type: "answer" });
+  signal.throwIfAborted();
   return {
     iceDurationMs,
     sdpDurationMs: Math.max(0, Math.round(now() - sdpStartedAt)),
@@ -142,19 +184,41 @@ export async function prepareMicrophone(
   };
 }
 
-function waitForOpen(channel: RTCDataChannel): Promise<void> {
+function waitForOpen(
+  channel: RTCDataChannel,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
   if (channel.readyState === "open") return Promise.resolve();
+  if (channel.readyState === "closed")
+    return Promise.reject(new Error("Realtime data channel 已关闭。"));
   return new Promise((resolve, reject) => {
-    const opened = () => {
+    const cleanup = () => {
+      channel.removeEventListener("open", opened);
       channel.removeEventListener("error", failed);
+      channel.removeEventListener("close", failed);
+      signal.removeEventListener("abort", aborted);
+    };
+    const opened = () => {
+      cleanup();
       resolve();
     };
     const failed = () => {
-      channel.removeEventListener("open", opened);
+      cleanup();
       reject(new Error("Realtime data channel 无法打开。"));
+    };
+    const aborted = () => {
+      cleanup();
+      reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException("Operation was aborted", "AbortError"),
+      );
     };
     channel.addEventListener("open", opened, { once: true });
     channel.addEventListener("error", failed, { once: true });
+    channel.addEventListener("close", failed, { once: true });
+    signal.addEventListener("abort", aborted, { once: true });
   });
 }
 
@@ -178,6 +242,7 @@ export class WebRtcVoiceDriver {
   readonly #channel = this.#peer.createDataChannel("oai-events");
   #animationFrame: number | undefined;
   #closed = false;
+  readonly #connectionAbort = new AbortController();
   #connectionClosedReported = false;
   readonly #completedResponses = new Set<string>();
   #currentAudioItemId: string | undefined;
@@ -258,6 +323,10 @@ export class WebRtcVoiceDriver {
     void this.#audioContext.resume().catch(() => undefined);
     const prepared =
       preparedMicrophone ?? (await prepareMicrophone(this.monotonicNow));
+    if (this.#closed) {
+      for (const track of prepared.stream.getTracks()) track.stop();
+      this.#connectionAbort.signal.throwIfAborted();
+    }
     this.#microphone = prepared.stream;
     this.#reportStage("microphone", prepared.durationMs);
     for (const track of this.#microphone.getAudioTracks()) {
@@ -272,11 +341,12 @@ export class WebRtcVoiceDriver {
       this.connection.callsUrl,
       this.connection.clientSecret,
       this.monotonicNow,
+      this.#connectionAbort.signal,
     );
     this.#reportStage("ice", negotiation.iceDurationMs);
     this.#reportStage("sdp", negotiation.sdpDurationMs);
     const dataChannelStartedAt = this.monotonicNow();
-    await waitForOpen(this.#channel);
+    await waitForOpen(this.#channel, this.#connectionAbort.signal);
     this.#reportStage(
       "data_channel",
       Math.max(0, Math.round(this.monotonicNow() - dataChannelStartedAt)),
@@ -292,6 +362,7 @@ export class WebRtcVoiceDriver {
   }
 
   handle(command: VoiceClientCommand): void {
+    if (command.type === "preparation.cancel") return;
     if (command.sessionId !== this.connection.sessionId) return;
     if (command.type === "capture.set") {
       this.setCapture(command.enabled);
@@ -308,17 +379,7 @@ export class WebRtcVoiceDriver {
     if (command.type === "session.refresh") {
       this.#pendingRefreshRequestId = command.requestId;
       try {
-        this.#send({
-          event_id: command.requestId,
-          session: {
-            instructions: command.instructions,
-            parallel_tool_calls: false,
-            tool_choice: "auto",
-            tools: command.tools,
-            type: "realtime",
-          },
-          type: "session.update",
-        });
+        this.#send(voiceSessionRefreshEvent(command));
       } catch (error) {
         this.#pendingRefreshRequestId = undefined;
         throw error;
@@ -332,27 +393,7 @@ export class WebRtcVoiceDriver {
     if (command.type === "wake.greeting.create") {
       this.#wakeGreetingAllowed = true;
       this.#suppressAudio = false;
-      this.#send({
-        event_id: command.requestId,
-        response: {
-          conversation: "none",
-          input: [
-            {
-              content: [{ text: command.prompt, type: "input_text" }],
-              role: "user",
-              type: "message",
-            },
-          ],
-          instructions: command.instructions,
-          metadata: {
-            charamate_purpose: "wake_greeting",
-            charamate_request_id: command.requestId,
-          },
-          output_modalities: ["audio"],
-          tools: [],
-        },
-        type: "response.create",
-      });
+      this.#send(voiceWakeGreetingEvent(command));
       return;
     }
     if (command.type === "response.create") {
@@ -369,20 +410,7 @@ export class WebRtcVoiceDriver {
     if (command.type === "tool.result") {
       this.#latestGeneration = command.generation;
       this.#suppressAudio = false;
-      this.#send({
-        event_id: `${command.requestId}.output`,
-        item: {
-          call_id: command.callId,
-          output: command.output,
-          type: "function_call_output",
-        },
-        type: "conversation.item.create",
-      });
-      this.#createResponse(
-        command.generation,
-        command.instructions,
-        command.requestId,
-      );
+      for (const event of voiceToolResultEvents(command)) this.#send(event);
       return;
     }
     if (command.type === "response.cancel") {
@@ -400,6 +428,7 @@ export class WebRtcVoiceDriver {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#connectionAbort.abort();
     if (this.#animationFrame !== undefined) {
       cancelAnimationFrame(this.#animationFrame);
     }
@@ -441,15 +470,9 @@ export class WebRtcVoiceDriver {
     instructions: string,
     requestId: string,
   ): void {
-    this.#send({
-      event_id: requestId,
-      response: {
-        instructions,
-        metadata: { charamate_generation: String(generation) },
-        output_modalities: ["audio"],
-      },
-      type: "response.create",
-    });
+    this.#send(
+      voiceResponseCreateEvent({ generation, instructions, requestId }),
+    );
   }
 
   async #readMessage(data: unknown): Promise<void> {
@@ -476,19 +499,7 @@ export class WebRtcVoiceDriver {
       const id = text(object(event["session"])?.["id"]);
       if (id) {
         for (const message of this.connection.history) {
-          this.#send({
-            item: {
-              content: [
-                {
-                  text: message.content,
-                  type: message.role === "user" ? "input_text" : "output_text",
-                },
-              ],
-              role: message.role,
-              type: "message",
-            },
-            type: "conversation.item.create",
-          });
+          this.#send(voiceHistoryItemEvent(message));
         }
         this.#report({ protocolSessionId: id, type: "session.ready" });
       }
@@ -588,7 +599,17 @@ export class WebRtcVoiceDriver {
           return;
         }
         this.#currentResponseId = id;
-        this.#report({ generation, responseId: id, type: "response.started" });
+        const requestId = object(object(event["response"])?.["metadata"])?.[
+          "charamate_request_id"
+        ];
+        this.#report({
+          generation,
+          responseId: id,
+          ...(typeof requestId === "string" && requestId.trim()
+            ? { requestId }
+            : {}),
+          type: "response.started",
+        });
       }
       return;
     }
@@ -1032,7 +1053,9 @@ export class WebRtcVoiceDriver {
 export async function previewVoice(
   connection: VoicePreviewConnection,
   phrase: string,
+  signal: AbortSignal,
 ): Promise<void> {
+  signal.throwIfAborted();
   const peer = new RTCPeerConnection();
   peer.addTransceiver("audio", { direction: "recvonly" });
   const channel = peer.createDataChannel("oai-events");
@@ -1060,7 +1083,15 @@ export async function previewVoice(
     resolveDone = resolve;
     rejectDone = reject;
   });
+  // Observe early failure while SDP/ICE still owns the current await.
+  void done.catch(() => undefined);
   const rejectClosed = () => rejectDone(new Error("试听连接已关闭。"));
+  const aborted = () => {
+    rejectDone(new DOMException("试听已结束。", "AbortError"));
+    channel.close();
+    peer.close();
+  };
+  signal.addEventListener("abort", aborted, { once: true });
   channel.addEventListener("close", rejectClosed);
   channel.addEventListener("error", rejectClosed);
   channel.addEventListener("message", (event) => {
@@ -1072,17 +1103,8 @@ export async function previewVoice(
       return;
     }
     if (value.type === "session.created") {
-      channel.send(
-        JSON.stringify({
-          item: {
-            content: [{ text: phrase, type: "input_text" }],
-            role: "user",
-            type: "message",
-          },
-          type: "conversation.item.create",
-        }),
-      );
-      channel.send(JSON.stringify({ type: "response.create" }));
+      for (const event of voicePreviewEvents(phrase))
+        channel.send(JSON.stringify(event));
     } else if (value.type === "output_audio_buffer.stopped") {
       resolveDone();
     } else if (value.type === "error") {
@@ -1092,12 +1114,17 @@ export async function previewVoice(
     }
   });
   try {
-    await negotiate(peer, connection.callsUrl, connection.clientSecret, () =>
-      performance.now(),
+    await negotiate(
+      peer,
+      connection.callsUrl,
+      connection.clientSecret,
+      () => performance.now(),
+      signal,
     );
-    await waitForOpen(channel);
+    await waitForOpen(channel, signal);
     await done;
   } finally {
+    signal.removeEventListener("abort", aborted);
     channel.removeEventListener("close", rejectClosed);
     channel.removeEventListener("error", rejectClosed);
     channel.close();

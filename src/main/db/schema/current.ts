@@ -1,4 +1,7 @@
-export const CURRENT_SCHEMA_VERSION = "24";
+import { COGNITION_SCHEMA_SQL } from "./cognition";
+import { COGNITIVE_MEMORY_SCHEMA_SQL } from "./cognitiveMemory";
+
+export const CURRENT_SCHEMA_VERSION = "26";
 
 export const METADATA_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS app_metadata (
@@ -61,6 +64,8 @@ export const CURRENT_SCHEMA_SQL = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   ) STRICT;
+
+
 
   CREATE TABLE IF NOT EXISTS journeys (
     id TEXT PRIMARY KEY NOT NULL,
@@ -278,7 +283,7 @@ export const CURRENT_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS territory_instance_sources (
     source_kind TEXT NOT NULL CHECK (
-      source_kind IN ('memory', 'activity_digest', 'chat_moment')
+      source_kind IN ('memory', 'activity_digest', 'chat_moment', 'character_creation')
     ),
     source_id TEXT NOT NULL,
     instance_id TEXT NOT NULL,
@@ -511,6 +516,10 @@ export const CURRENT_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS memory_revisions (
     id TEXT PRIMARY KEY NOT NULL,
     memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    predecessor_revision_id TEXT,
+    prior_dispositions_json TEXT NOT NULL DEFAULT '[]'
+      CHECK (json_valid(prior_dispositions_json)
+        AND json_type(prior_dispositions_json) = 'array'),
     content TEXT NOT NULL CHECK (length(trim(content)) > 0),
     occurs_at TEXT,
     time_zone TEXT,
@@ -519,7 +528,7 @@ export const CURRENT_SCHEMA_SQL = `
     ),
     source_type TEXT NOT NULL CHECK (
       source_type IN (
-        'chat', 'voice', 'activity', 'tool', 'user_edit', 'distillation'
+        'chat', 'voice', 'activity', 'activity_event', 'tool', 'user_edit', 'distillation'
       )
     ),
     reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
@@ -528,19 +537,34 @@ export const CURRENT_SCHEMA_SQL = `
       (occurs_at IS NULL AND time_zone IS NULL) OR
       (occurs_at IS NOT NULL AND length(trim(time_zone)) > 0)
     ),
-    UNIQUE (id, memory_id)
+    CHECK (predecessor_revision_id IS NULL OR predecessor_revision_id <> id),
+    CHECK ((predecessor_revision_id IS NULL AND json_array_length(prior_dispositions_json) = 0)
+      OR (predecessor_revision_id IS NOT NULL AND json_array_length(prior_dispositions_json) > 0)),
+    UNIQUE (id, memory_id),
+    FOREIGN KEY (predecessor_revision_id, memory_id)
+      REFERENCES memory_revisions(id, memory_id)
+      DEFERRABLE INITIALLY DEFERRED
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS memory_sources (
     id TEXT PRIMARY KEY NOT NULL,
     type TEXT NOT NULL CHECK (
       type IN (
-        'chat', 'voice', 'activity', 'tool', 'user_edit', 'distillation'
+        'chat', 'voice', 'activity', 'activity_event', 'tool', 'user_edit', 'distillation'
       )
     ),
     reference_id TEXT NOT NULL,
     label TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    raw_speaker TEXT CHECK (raw_speaker IN ('user','assistant','tool','environment')),
+    raw_length INTEGER CHECK (raw_length > 0),
+    raw_json_bytes INTEGER CHECK (raw_json_bytes > 0),
+    raw_digest TEXT CHECK (raw_digest IS NULL OR length(raw_digest) = 64),
+    raw_present INTEGER NOT NULL DEFAULT 0 CHECK (raw_present IN (0,1)),
+    CHECK (raw_present = 0 OR (raw_digest IS NOT NULL AND raw_speaker IS NOT NULL)),
+    CHECK (raw_digest IS NULL OR raw_speaker IS NOT NULL),
+    CHECK ((raw_speaker IS NULL AND raw_length IS NULL AND raw_json_bytes IS NULL)
+      OR (raw_speaker IS NOT NULL AND raw_length IS NOT NULL AND raw_json_bytes IS NOT NULL))
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS memory_revision_sources (
@@ -581,7 +605,7 @@ export const CURRENT_SCHEMA_SQL = `
     source_labels_json TEXT NOT NULL CHECK (json_valid(source_labels_json)),
     source_type TEXT NOT NULL CHECK (
       source_type IN (
-        'chat', 'voice', 'activity', 'tool', 'user_edit', 'distillation'
+        'chat', 'voice', 'activity', 'activity_event', 'tool', 'user_edit', 'distillation'
       )
     ),
     confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
@@ -699,7 +723,7 @@ export const CURRENT_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS activity_events (
     id TEXT PRIMARY KEY NOT NULL,
-    actor TEXT NOT NULL CHECK (actor IN ('user', 'agent', 'system')),
+    actor TEXT NOT NULL CHECK (actor IN ('user', 'agent', 'system', 'unknown')),
     source TEXT NOT NULL CHECK (
       source IN (
         'active_app', 'managed_browser', 'screenshot', 'idle', 'agent_run'
@@ -715,7 +739,7 @@ export const CURRENT_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS activity_episodes (
     id TEXT PRIMARY KEY NOT NULL,
-    actor TEXT NOT NULL CHECK (actor IN ('user', 'agent', 'system')),
+    actor TEXT NOT NULL CHECK (actor IN ('user', 'agent', 'system', 'unknown')),
     title TEXT NOT NULL CHECK (length(trim(title)) > 0),
     summary TEXT NOT NULL CHECK (length(trim(summary)) > 0),
     started_at TEXT NOT NULL,
@@ -1228,6 +1252,10 @@ export const CURRENT_SCHEMA_SQL = `
     ON chats(status, updated_at DESC, id);
   CREATE INDEX IF NOT EXISTS messages_chat_idx
     ON messages(chat_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS messages_run_idx
+    ON messages(run_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS messages_completed_chat_idx
+    ON messages(chat_id, created_at, id, run_id) WHERE status = 'completed';
   CREATE INDEX IF NOT EXISTS attachments_message_idx
     ON attachments(message_id, created_at, id);
   CREATE INDEX IF NOT EXISTS memories_list_idx
@@ -1258,6 +1286,10 @@ export const CURRENT_SCHEMA_SQL = `
     ON activity_events(episode_id, started_at, id);
   CREATE INDEX IF NOT EXISTS activity_events_retention_idx
     ON activity_events(distilled_at, ended_at, id);
+  CREATE INDEX IF NOT EXISTS activity_events_artifact_idx
+    ON activity_events(CAST(json_extract(details_json, '$.artifactId') AS TEXT), id);
+  CREATE INDEX IF NOT EXISTS activity_assets_created_idx
+    ON activity_assets(created_at, id);
   CREATE INDEX IF NOT EXISTS activity_episodes_time_idx
     ON activity_episodes(started_at, ended_at, id);
   CREATE INDEX IF NOT EXISTS activity_episodes_retention_idx
@@ -1279,6 +1311,10 @@ export const CURRENT_SCHEMA_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS runs_one_active_turn_per_chat_idx
     ON runs(chat_id)
     WHERE status IN ('queued', 'running', 'waiting_approval', 'needs_input');
+  CREATE INDEX IF NOT EXISTS run_items_message_source_idx
+    ON run_items(run_id, COALESCE(json_extract(output_json,'$.messageId'),
+      json_extract(input_json,'$.messageId')), sequence);
+
   CREATE INDEX IF NOT EXISTS run_items_run_idx
     ON run_items(run_id, sequence);
   CREATE INDEX IF NOT EXISTS tool_artifacts_item_idx
@@ -1303,4 +1339,7 @@ export const CURRENT_SCHEMA_SQL = `
     ON voice_turns(run_id, id);
   CREATE INDEX IF NOT EXISTS persona_revisions_created_idx
     ON persona_revisions(persona_id, revision DESC);
+
+  ${COGNITION_SCHEMA_SQL}
+  ${COGNITIVE_MEMORY_SCHEMA_SQL}
 `;

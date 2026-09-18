@@ -1,10 +1,13 @@
+import type { ActivityPerception } from "../../shared/contracts/activity";
 import type { RunEventEnvelope } from "../../shared/contracts/ipc";
 import type { Clock } from "../../shared/pure/clock";
 import { redactText } from "../../shared/pure/redaction";
 import type { AppLogger } from "../observability/logger";
-import type {
-  ActiveApplication,
-  ActiveApplicationSource,
+import {
+  mergeActivityInteractions,
+  normalizeActivityPerception,
+  type ActiveApplication,
+  type ActiveApplicationSource,
 } from "./activeApplicationSource";
 import type { ForegroundActivityObserver } from "./activityObservation";
 import type { ActivityService } from "./activityService";
@@ -14,44 +17,18 @@ import type {
 } from "./activitySystemSource";
 
 const IDLE_SAMPLE_INTERVAL_MS = 15_000;
-const SCREENSHOT_INTERVAL_MS = 15 * 60_000;
 
-export interface ManagedBrowserActivity {
+export interface ManagedBrowserActivity extends ActivityPerception {
+  readonly actor?: "agent" | "system" | "user" | "unknown";
   readonly action?: string;
   readonly title?: string;
   readonly url: string;
 }
 
 interface OpenEvent {
-  readonly actor: "agent" | "user";
+  readonly actor: "agent" | "user" | "unknown";
   readonly id: string;
   readonly key: string;
-}
-
-function toolName(envelope: RunEventEnvelope): string | undefined {
-  const event = envelope.event;
-  if (
-    (event.type !== "item.started" && event.type !== "item.completed") ||
-    (event.item.kind !== "tool_call" &&
-      event.item.kind !== "command" &&
-      event.item.kind !== "file_change") ||
-    typeof event.item.input !== "object" ||
-    event.item.input === null ||
-    Array.isArray(event.item.input)
-  ) {
-    return undefined;
-  }
-  const value = event.item.input["toolName"];
-  return typeof value === "string" ? value : undefined;
-}
-
-function controlsVisibleApplication(envelope: RunEventEnvelope): boolean {
-  const name = toolName(envelope);
-  return (
-    name?.startsWith("app.") === true ||
-    name?.startsWith("browser.") === true ||
-    name?.startsWith("computer.") === true
-  );
 }
 
 function browserDetails(input: ManagedBrowserActivity) {
@@ -63,6 +40,7 @@ function browserDetails(input: ManagedBrowserActivity) {
     ? `${parsed.origin}${parsed.pathname}`
     : parsed.protocol;
   return {
+    ...normalizeActivityPerception(input),
     ...(input.action ? { action: redactText(input.action) } : {}),
     domain: parsed.hostname || protocol,
     source: "managed_browser" as const,
@@ -73,15 +51,19 @@ function browserDetails(input: ManagedBrowserActivity) {
 
 export class ActivityCaptureCoordinator {
   #activeApplication: OpenEvent | undefined;
-  #agentUiActions = new Map<string, string>();
   #browserKey: string | undefined;
   #currentApplication: ActiveApplication | undefined;
+  #appliedApplication: ActiveApplication | undefined;
+  #pendingApplication:
+    | { application: ActiveApplication; actor: "agent" | "user" | "unknown" }
+    | undefined;
   #idle = false;
   #idleInterval: ReturnType<typeof setInterval> | undefined;
-  #lastScreenshotAt: number | undefined;
   #queue: Promise<void> = Promise.resolve();
-  #screenshotTasks = new Set<Promise<void>>();
   #started = false;
+  #sourceGeneration = 0;
+  #stopped = false;
+  #stopVisualSubscription: (() => void) | undefined;
   #stopApplicationSubscription: (() => Promise<void>) | undefined;
   #stopPauseSubscription: (() => void) | undefined;
   #stopSystemSubscription: (() => void) | undefined;
@@ -98,19 +80,42 @@ export class ActivityCaptureCoordinator {
   start(): void {
     if (this.#started) return;
     this.#started = true;
+    this.#stopped = false;
+    this.applications.setPaused(
+      this.activity.isPaused() || this.system.isIdle(),
+    );
+    this.activity.setVisualFrameSupplier((signal) =>
+      this.applications.pullVisual(signal),
+    );
+    this.#stopVisualSubscription = this.applications.subscribeVisualChanges(
+      (change) => {
+        if (!this.#stopped && !this.#idle)
+          this.activity.notifyVisualChanged(change);
+      },
+    );
     this.#stopPauseSubscription = this.activity.onPauseChanged((paused) => {
+      this.#sourceGeneration += 1;
+      this.applications.setPaused(paused || this.#idle);
       void this.#enqueue(() => {
-        if (paused) this.#closeOpenEvents();
-        else this.#refreshSystemState();
+        if (paused) {
+          this.#currentApplication = undefined;
+          this.#closeOpenEvents();
+        } else this.#refreshSystemState();
       });
     });
     this.#stopSystemSubscription = this.system.subscribe((boundary) => {
+      this.#sourceGeneration += 1;
+      this.applications.setPaused(
+        boundary === "inactive" ||
+          this.system.isIdle() ||
+          this.activity.isPaused(),
+      );
       void this.#enqueue(() => this.#handleSystemBoundary(boundary));
     });
     this.#stopApplicationSubscription = this.applications.subscribe(
       (application) => {
-        this.#currentApplication = application;
-        void this.#enqueue(() => this.#applyCurrentApplication());
+        if (!this.#started) return;
+        this.#queueApplication(application);
       },
       (error) => {
         this.logger.warn("ACTIVITY_ACTIVE_APP_SOURCE_ERROR", { error });
@@ -126,49 +131,57 @@ export class ActivityCaptureCoordinator {
 
   async stop(): Promise<void> {
     this.#started = false;
+    this.#stopped = true;
+    this.#sourceGeneration += 1;
+    this.activity.setVisualFrameSupplier(undefined);
+    this.activity.setVisualContext(undefined);
     if (this.#idleInterval) clearInterval(this.#idleInterval);
     this.#idleInterval = undefined;
     this.#stopPauseSubscription?.();
     this.#stopPauseSubscription = undefined;
     this.#stopSystemSubscription?.();
     this.#stopSystemSubscription = undefined;
+    this.#stopVisualSubscription?.();
+    this.#stopVisualSubscription = undefined;
     const stopApplicationSubscription = this.#stopApplicationSubscription;
     this.#stopApplicationSubscription = undefined;
     await stopApplicationSubscription?.();
     await this.#queue;
-    await Promise.all(this.#screenshotTasks);
+    await this.activity.stopVisualCapture();
     this.#closeOpenEvents();
   }
 
   observeBrowser(input: ManagedBrowserActivity): Promise<void> {
     return this.#enqueue(() => {
-      if (this.activity.isPaused() || this.#idle) return;
+      if (this.#stopped || this.activity.isPaused() || this.#idle) return;
       const details = browserDetails(input);
-      const actor = this.#actor();
-      const key = details.url;
-      if (this.#browserKey === key) return;
+      const actor = input.actor ?? "unknown";
+      const key = JSON.stringify({ actor, details });
+      if (this.#browserKey === key && !details.interaction) return;
       this.#browserKey = key;
-      this.activity.recordEvent(details, actor);
-      this.#captureScreenshot(actor);
+      const eventId = this.activity.recordEvent(details, actor);
+      if (eventId && actor !== "system")
+        this.#publishForeground({
+          actor,
+          appName: "Managed Chromium",
+          eventId,
+          observedAt: this.clock.now(),
+          ...(details.title ? { windowTitle: details.title } : {}),
+          ...normalizeActivityPerception(details),
+        });
+      if (eventId && actor !== "system" && details.surface) {
+        this.activity.setVisualContext({
+          actor,
+          surface: details.surface,
+          eventId,
+        });
+      }
     });
   }
 
   observeRun(envelope: RunEventEnvelope): void {
+    if (this.#stopped) return;
     const event = envelope.event;
-    if (event.type === "item.started" && controlsVisibleApplication(envelope)) {
-      this.#agentUiActions.set(event.item.id, event.item.runId);
-      void this.#enqueue(() => this.#splitForActorChange());
-      return;
-    }
-    if (event.type === "item.completed") {
-      if (this.#agentUiActions.has(event.item.id)) {
-        void this.#enqueue(() => {
-          this.#agentUiActions.delete(event.item.id);
-          this.#splitForActorChange();
-        });
-      }
-      return;
-    }
     if (event.type === "run.started" || event.type === "run.resumed") {
       this.activity.recordEvent(
         { runId: event.run.id, source: "agent_run", status: "started" },
@@ -197,19 +210,7 @@ export class ActivityCaptureCoordinator {
         "agent",
         envelope.occurredAt,
       );
-      if ([...this.#agentUiActions.values()].includes(event.run.id)) {
-        void this.#enqueue(() => {
-          for (const [itemId, runId] of this.#agentUiActions) {
-            if (runId === event.run.id) this.#agentUiActions.delete(itemId);
-          }
-          this.#splitForActorChange();
-        });
-      }
     }
-  }
-
-  #actor(): "agent" | "user" {
-    return this.#agentUiActions.size > 0 ? "agent" : "user";
   }
 
   #refreshSystemState(): void {
@@ -225,13 +226,92 @@ export class ActivityCaptureCoordinator {
     this.#applyCurrentApplication();
   }
 
-  #applyCurrentApplication(): void {
+  #queueApplication(application: ActiveApplication): void {
+    const actor = application.actor ?? "unknown";
+    const pending = this.#pendingApplication;
+    const sameObject =
+      pending &&
+      pending.actor === actor &&
+      pending.application.inputOrigin === application.inputOrigin &&
+      pending.application.appId === application.appId &&
+      pending.application.appName === application.appName &&
+      pending.application.windowTitle === application.windowTitle &&
+      pending.application.surface?.id === application.surface?.id &&
+      pending.application.surface?.epoch === application.surface?.epoch;
+    if (
+      (application.boundary === "content" ||
+        application.boundary === "interaction") &&
+      sameObject
+    ) {
+      const interaction = mergeActivityInteractions(
+        pending.application.interaction,
+        application.interaction,
+      );
+      pending.application = {
+        ...application,
+        ...(interaction ? { interaction } : {}),
+      };
+      return;
+    }
+    const captured = { application, actor };
+    const generation = this.#sourceGeneration;
+    this.#pendingApplication = captured;
+    void this.#enqueue(() => {
+      if (this.#pendingApplication === captured)
+        this.#pendingApplication = undefined;
+      const current = captured.application;
+      if (
+        !this.#started ||
+        generation !== this.#sourceGeneration ||
+        this.activity.isPaused()
+      )
+        return;
+      if (
+        current.lifecycle === "launched" ||
+        current.lifecycle === "terminated"
+      ) {
+        this.activity.recordEvent(
+          {
+            appName: current.appName,
+            ...(current.appId ? { appId: current.appId } : {}),
+            lifecycle: current.lifecycle,
+            boundary: "application",
+            source: "active_app",
+          },
+          "system",
+          current.observedAt,
+        );
+        return;
+      }
+      this.#currentApplication = current;
+      this.#applyCurrentApplication(captured.actor);
+    });
+  }
+
+  #applyCurrentApplication(
+    actor = this.#currentApplication?.actor ?? "unknown",
+    publish = true,
+  ): void {
     if (this.activity.isPaused() || this.#idle) return;
     const current = this.#currentApplication;
     if (!current) return;
-    const actor = this.#actor();
-    const key = `${actor}:${current.appId ?? current.appName}:${current.windowTitle ?? ""}`;
-    if (this.#activeApplication?.key === key) return;
+    const perception = normalizeActivityPerception(current);
+    const key = JSON.stringify({
+      actor,
+      appId: current.appId,
+      appName: current.appName,
+      windowTitle: current.windowTitle,
+      content: perception.content,
+      contentStatus: perception.contentStatus,
+      surface: perception.surface,
+      visualStatus: perception.visualStatus,
+    });
+    if (
+      this.#activeApplication?.key === key &&
+      (this.#appliedApplication === current || !current.interaction)
+    )
+      return;
+    this.#appliedApplication = current;
     if (this.#activeApplication)
       this.activity.finishEvent(this.#activeApplication.id);
     const id = this.activity.startEvent(
@@ -239,82 +319,69 @@ export class ActivityCaptureCoordinator {
         ...(current.appId ? { appId: current.appId } : {}),
         appName: current.appName,
         source: "active_app",
+        ...perception,
+        ...(current.lifecycle ? { lifecycle: current.lifecycle } : {}),
         ...(current.windowTitle ? { windowTitle: current.windowTitle } : {}),
       },
       actor,
+      current.observedAt,
     );
     this.#activeApplication = id ? { actor, id, key } : undefined;
-    if (id && actor === "user") {
-      try {
-        this.foregroundObserver?.observeForeground({
-          ...(current.appId ? { appId: redactText(current.appId) } : {}),
-          appName: redactText(current.appName),
-          eventId: id,
-          observedAt: this.clock.now(),
-          ...(current.windowTitle
-            ? { windowTitle: redactText(current.windowTitle) }
-            : {}),
-        });
-      } catch (error) {
-        this.logger.warn("ACTIVITY_FOREGROUND_OBSERVER_ERROR", {
-          error,
-          eventId: id,
-        });
-      }
+    if (id && publish)
+      this.#publishForeground({
+        actor,
+        ...(current.appId ? { appId: redactText(current.appId) } : {}),
+        appName: redactText(current.appName),
+        eventId: id,
+        observedAt: current.observedAt ?? this.clock.now(),
+        ...perception,
+        ...(current.lifecycle ? { lifecycle: current.lifecycle } : {}),
+        ...(current.windowTitle
+          ? { windowTitle: redactText(current.windowTitle) }
+          : {}),
+      });
+    this.activity.setVisualContext(
+      id && perception.surface && perception.visualStatus === "available"
+        ? { actor, eventId: id, surface: perception.surface }
+        : undefined,
+    );
+  }
+
+  #publishForeground(
+    observation: Parameters<ForegroundActivityObserver["observeForeground"]>[0],
+  ): void {
+    try {
+      this.foregroundObserver?.observeForeground(observation);
+    } catch (error) {
+      this.logger.warn("ACTIVITY_FOREGROUND_OBSERVER_ERROR", {
+        error,
+        eventId: observation.eventId,
+      });
     }
-    if (id) this.#captureScreenshot(actor);
   }
 
   #handleSystemBoundary(boundary: ActivitySystemBoundary): void {
     const nextIdle = boundary === "inactive" || this.system.isIdle();
     if (nextIdle === this.#idle) return;
     this.#idle = nextIdle;
+    this.#sourceGeneration += 1;
+    this.#currentApplication = undefined;
+    this.applications.setPaused(nextIdle || this.activity.isPaused());
     this.#closeOpenEvents();
     this.activity.recordEvent(
       { source: "idle", state: nextIdle ? "started" : "ended" },
       "system",
     );
-    if (!nextIdle) this.#applyCurrentApplication();
-  }
-
-  #splitForActorChange(): void {
-    const actor = this.#actor();
-    if (this.#activeApplication && this.#activeApplication.actor !== actor) {
-      this.#closeOpenEvents(false);
-      this.#applyCurrentApplication();
-    }
+    // Resume waits for the native owner to observe the current source again.
   }
 
   #closeOpenEvents(resetBrowserObservation = true): void {
+    this.activity.setVisualContext(undefined);
     if (this.#activeApplication) {
       this.activity.finishEvent(this.#activeApplication.id);
       this.#activeApplication = undefined;
     }
     if (resetBrowserObservation) this.#browserKey = undefined;
-  }
-
-  #captureScreenshot(actor: "agent" | "user"): void {
-    if (actor !== "user") return;
-    const capturedAt = Date.parse(this.clock.now());
-    if (
-      this.#lastScreenshotAt !== undefined &&
-      capturedAt - this.#lastScreenshotAt < SCREENSHOT_INTERVAL_MS
-    ) {
-      return;
-    }
-    this.#lastScreenshotAt = capturedAt;
-    const task = this.activity
-      .captureScreenshot(actor)
-      .catch((error: unknown) => {
-        if (this.#lastScreenshotAt === capturedAt) {
-          this.#lastScreenshotAt = undefined;
-        }
-        this.logger.warn("ACTIVITY_SCREENSHOT_ERROR", { error });
-      })
-      .finally(() => {
-        this.#screenshotTasks.delete(task);
-      });
-    this.#screenshotTasks.add(task);
   }
 
   #enqueue(task: () => Promise<void> | void): Promise<void> {

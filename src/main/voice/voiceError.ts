@@ -3,6 +3,8 @@ import { ProviderError, toProviderAppError } from "../providers/providerError";
 
 export type VoiceErrorCode =
   | "VOICE.ALREADY_ACTIVE"
+  | "VOICE.START_CANCELLED"
+  | "VOICE.SHUTTING_DOWN"
   | "VOICE.CHAT_NOT_FOUND"
   | "VOICE.END_NOT_AVAILABLE"
   | "VOICE.NOT_ACTIVE"

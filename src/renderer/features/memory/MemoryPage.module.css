@@ -339,35 +339,7 @@
 .editor > button {
   justify-self: end;
 }
-.claimNote {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-.claimComparison {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.claimComparison > div {
-  display: grid;
-  gap: 5px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
-  background: var(--surface);
-}
-.claimComparison span {
-  color: var(--text-tertiary);
-  font-size: 9.5px;
-}
-.claimComparison strong {
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 560;
-  line-height: 1.45;
-}
+
 .timeline article {
   position: relative;
   display: grid;

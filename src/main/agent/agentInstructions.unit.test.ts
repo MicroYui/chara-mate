@@ -1,3 +1,4 @@
+import { modelTimeContext } from "./modelTimeContext";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -25,13 +26,17 @@ describe("narrative agency instructions", () => {
     const instructions = realtimeAgentInstructions({
       configured: "Speak naturally.",
       execution: { mode: "chat" },
-      now: "2026-08-31T12:00:00.000Z",
-      timeZone: "Asia/Shanghai",
+      timeContext: modelTimeContext(
+        "2026-08-31T12:00:00.000Z",
+        "Asia/Shanghai",
+      ),
     });
 
     expect(instructions).toContain(
       "The user alone controls their player character's actions, dialogue, decisions, and feelings",
     );
     expect(instructions).toContain("never persist them through memory.record");
+    expect(instructions).toContain("2026-08-31T20:00:00.000");
+    expect(instructions).toContain("Asia/Shanghai");
   });
 });

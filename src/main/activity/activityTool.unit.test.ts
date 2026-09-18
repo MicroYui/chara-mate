@@ -13,6 +13,7 @@ describe("Activity Agent Tool", () => {
       observedBehaviorOnly: true,
       patterns: [
         {
+          actor: "user",
           activeDays: 3,
           episodeCount: 4,
           firstSeenAt: "2026-08-01T01:00:00.000Z",
@@ -26,7 +27,7 @@ describe("Activity Agent Tool", () => {
       periodStart: "2026-08-01T00:00:00.000Z",
       query: "Visual Studio Code",
     });
-    registerActivityTool(registry, { search });
+    registerActivityTool(registry, { search, observe: vi.fn() });
 
     const result = await registry.execute(
       ACTIVITY_SEARCH_TOOL_NAME,

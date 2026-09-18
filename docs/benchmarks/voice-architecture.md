@@ -2,7 +2,7 @@
 
 > Decision ID：`VOICE-ARCHITECTURE`
 > 状态：实现验证中；2026-08-09 产品取舍修订为 `V2 Orchestrated Native Realtime`
-> 原始实验日期：2026-08-08；最近修订：2026-08-09
+> 原始实验日期：2026-08-08；最近修订：2026-09-18（工具参数适配）
 
 ## 当前决策
 
@@ -78,21 +78,41 @@
 1. `server_vad.create_response=false`、`interrupt_response=true`。完整非空输入转写先创建 Voice Run 和用户消息，再显式请求 Realtime 回答。
 2. 每条用户话语拥有一个普通 Voice Run；自然插话中断旧 Run，下一条完整转写创建新 Run，语义与文字 Chat 的逐消息 Run 一致。
 3. Realtime 输出转写是 Chat 助手消息的来源；同一 Turn 的多个 response/output Item 按 `response_id/item_id/output_index` 聚合到唯一一条持续更新的助手消息，音频与最终持久化文本使用同一聚合值。没有文字 Agent 输出、TTS、逐句队列或“忠实朗读”prompt。
-4. Session 创建时注入当前入口允许的全部客户端 Tool。名称只做稳定 alias 映射；目标 Azure 实测不接受根级 `anyOf`，因此 Realtime 传输边界将对象联合投影为单一对象字段并集，但原 Tool Registry Schema 仍是调用参数校验的唯一权威，executor、Approval 和 Tool Result 也仍由其拥有。
+4. Session 创建时注入当前入口允许的全部客户端 Tool。名称只做稳定 alias 映射；目标 Azure 实测不接受根级 `anyOf`，因此 Realtime 传输边界将对象联合投影为单一对象字段并集；已声明object且带根级组合/enum/not约束的Schema则完整嵌入必需的arguments对象字段，来参先严格解包。原 Tool Registry Schema 仍是调用参数校验的唯一权威，executor、Approval 和 Tool Result 也仍由其拥有。
 5. Tool Result 回注后显式创建下一 response。一次只允许一个待执行/待审批调用；并发取舍见 `VOICE-TOOL-JOIN`。
 6. 既有完整 Chat 历史在连接或重连时按原角色写入 Realtime conversation。每回合额外注入当前 Skill instructions 和相关 Memory evidence。
 7. 标题仍复用 `ChatTitleService`：“语音对话” → 首转写兜底 → 首轮完成后的文字 Chat Provider 摘要。标题模型按需惰性创建，不参与 Voice 回答；其凭据或请求失败只保留当前兜底标题，不能阻断 Realtime 启动或回合。
 8. Browser snapshot 只有非空、非 `about:blank` 的当前页才算成功。2026-08-09 真人日志中，首次天气查询已从 Bing snapshot 获得结果；后续空白页被旧实现误标成功，用户打断后的下一 Turn 又被模型误述为“查询仍在加载”。生产现已把空白/空内容作为真实 Tool Error，并明确要求收到 Tool Result 或打断后不得把旧调用描述为仍在运行。
 9. 工具前 response 与 Tool Result continuation 共享同一个 Voice generation，但保留各自独立的协议 `response_id`。2026-08-09 真人天气查询中，工具和后续文本均成功，旧播放器却在工具前 response 延迟排空时把同 generation 的 continuation 一并标成停止，造成只听到前半段。生产现按 `response_id` 精确管理音频开始、停止和清空；旧 response 的停止事件只清理自身，不再静音当前 response。
 
-## 当前验证与待补证据
+## 当前验证与证据边界
 
-截至本次文档更新，确定性回归覆盖原生回答、权限过滤、Function Call 回注、写 Tool Approval、自然插话、多输出 Item 顺序聚合、Tool continuation 的 response 级音频收口、Chat/Run/Item 投影、标题复用、标题凭据失败隔离、对象联合 Tool Schema 投影、历史注入、空白 Browser snapshot 失败和播放失败上报。`npm run verify:offline` 共 `421/421` 通过（contract 69、focused/component 230、integration 122）；Electron E2E `16/16`、build、macOS arm64 package、开发与打包 smoke 均通过。目标 Azure Live 曾以生产 issuer 完整 `3/3` 通过；本次复测中原生回答与 Function Call 2/2 通过，中英混合样本首次把英文专名误识别为另一英文短语，单项立即复测通过，因此只证明链路可用，不能证明混合语言识别逐次稳定。另以正常用户数据、真实凭据和完整生产 Tool Registry 冷启动 `voice.start → voice.end` 成功。真人麦克风、扬声器、自然插话和审批气泡仍需用户在目标硬件体验确认。旧 Shared Runtime 的 `323` 项 offline、`9/9` E2E 与 `2/2` Live 不能充当新路径结果。
+早期421项offline、16项E2E及Azure 3/3、2/2等结果属于当时版本；混合专名误识别及单项重试历史保留，不能挪作当前v8证据。旧Shared Runtime的323项offline、9/9 E2E和2/2 Live也不属于现在的生产路径。最终v8于2026-09-17 UTC完整offline2682/2682、E2E29/29、Forge package和实际安装通过；source freeze `348d74ee…`、installed manifest `6ac276a1…`、ASAR `3142c75a…`。工程回归覆盖Tools、Approval、Run/Item、插话及媒体关闭合同，以下实际结果单独列出。
+
+同一v8安装版沿原两段WAV完成两次Voice Run、四个Realtime response、真实memory.record形成/改期、关闭重开及新Chat自然memory.search。原“周五下午三点、松柏工作室”改为“周六下午三点、松柏工作室，周五作废”，同一Memory以新current保留旧安排为历史；后续处理旧来源均返回empty，未将周五倒灌。第二Main的新Chat首请求没有新周六答案/current Revision ID，但**带有旧周五的Cognition，并非空Cognition**；实际自然搜索选择新current，完整ToolResult进入下一HTTP，最终正确回答当前时间、地点及周五作废。原已应用图像资产在重开后仍被Pixi加载，本次没有重新生成图像。
+
+这条链有明确质量边界：首次语音助手把“松柏工作室”复述为“盖松柏工作室”；第二段将“陶艺课”转录成“淘逸客”。原转录和持久消息保留，当前Memory没有把错误地点或课程名写为事实，最终问答正确不覆盖前面的识别/复述偏差。它证明这次改期、引用及后续采用成立，不证明专名识别逐次稳定、全部语音回答无误或后台巩固完成。
+
+数字WAV链原失败来自外部声源播完不再发送静音帧，VAD没有结束。仅在外部测试驱动保持零音源后，两次实际speech_stopped与音频结束后的零新增能量、持续采样/RTP均被观察到，原WAV和产品输入不变；它不充当实体设备证据。独立硬件链使用默认MacBook Pro麦克风和扬声器，产品原getUserMedia同一track进入Sender、保持AEC/NS/AGC，独立回录不进入Sender。初次Azure client_secrets HTTP500经真实UI重试后得到一个回合，但系统say仅合成原句开头1.51229秒，不能算完整问题通过。只固定本机已有英语Samantha声音后，复测同一原句一次：真实输入完整包含7+5问题，回复“Seven plus five is twelve.”，同一Voice Run completed；产品End先结束轨道/peer/channel，再清理观察器，App正常关闭、音量恢复。完整2.582229秒回复波形在刺激结束后的实体麦克风录音中对应，校正录音起点后约60.94ms迟差、PCM相关0.50450；结合默认内置设备和实际输出解静音支持扬声器回录。没有另调用ASR或播放听审，这些数值不是新成功阈值，不外推人类听感、自由对话、真人自然插话或复杂声学条件。TTS仅为外部刺激，不是生产Voice朗读或fallback。
+
+费用按真实请求分账。两WAV链有24个Astra generation（13份完整usage）和4个Realtime response（4份完整usage）：已知input156,416/output5,467，其中cached input37,176；另11个Astra请求（10 PFC、1标题）没有终态usage，22次input_tokens返回404，不能按0计费或称总费用完整。硬件修复复测唯一Realtime响应input9,376/output81/cache0；另6个Astra后台PFC请求在响应正文前关闭、usage均未知。cached input是input子集，不另加；没有货币总额。数字链parent6369和Main6376/6781、硬件链parent5854和Main5868均正常exit0且已查询absent，实际媒体/owner清理无错误。原v6 Schema400、v8缺静音尾及外部关停错误、硬件500和截短刺激仍独立保留，本次不是第一次自然全绿。
+
+可复核记录：`azure-voice-continuation-observer-fix-v1/live-output-v8-continuous-silence-01-review`；`final-voice-hardware-integrated-execution-preparation-v4/tts-stimulus-fix-v1/ACTUAL-REVIEW.md`；版本与工程结果 `final-package-memory-voice-execution-v1`。这是既定本地有限验收，不追加完整48重跑或新的声音质量矩阵。
 
 ## 限制、复杂度与删除证明
 
 - 原始配对每 Arm 只有 3 个合成音频回合，不能外推 p95、自然度、复杂网络或真人打断。
 - 当前选择是用户在实际体验后的产品 amendment，不声称 V2 在新的完整配对上统计显著优于 Shared Runtime。
 - Azure Realtime 与文字 Responses 模型可能在能力、计划习惯和回答质量上不同；共享 Tool/Context 不能消除 Provider 自身差异。
-- 2026-08-09 目标 Azure 对根级 `anyOf` 返回 `invalid_function_parameters`，并要求 Function Tool 参数根为不含 `oneOf`/`anyOf`/`allOf` 的 `object`；这是目标部署实测而非 OpenAI Realtime 的通用硬限制。生产投影只覆盖对象联合，无法无损表达的顶层 Schema 会在启动时显示不支持，不添加第二套 Schema 或宽松执行路径。
+- 2026-08-09 目标 Azure 对根级 `anyOf` 返回 `invalid_function_parameters`，并要求 Function Tool 参数根为不含 `oneOf`/`anyOf`/`allOf` 的 `object`；这是目标部署实测而非 OpenAI Realtime 的通用硬限制。该对象联合投影仍保留；2026-09-18新增的合法object根约束用完整嵌套参数承载，见下节，不添加第二套Registry Schema或宽松执行路径。
 - 生产已删除 `RealtimeSpeechOutput`、句子扫描/排队、`speech.create`、`startWithRuntime`、`resumeVoiceWithRuntime` 和 Shared Runtime Voice 测试。不保留 TTS fallback、架构开关、第二 Tool Registry、`ToolJoinGroup` 或实验 runner。
+
+## 2026-09-18：实际 memory.search 创建会话失败与修复
+
+固定v6实际安装版于2026-09-17 19:35:02 UTC请求Azure `gpt-realtime-2.1` 的client_secrets，返回HTTP400：`memory_search` 的根参数必须为object且不得带oneOf/anyOf/allOf/enum/not。本次24个工具中该工具的合法原Schema为object+anyOf（普通query或refs+questions），旧适配器一见object就原样发送，导致创建前失败，实际Voice Session/turn均为0。原图像成功与随后600秒外部观察超时分别保留，不能算语音通过。证据 `integration/final-azure-integrated-execution-preparation-v4/live-output-v6`。
+
+同日复核[OpenAI Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations)的object参数例子和同call_id的function_call_output；SDK为锁定openai6.49.0，TypeBox0.34.52、Ajv8.20.0。官方例子没有列出上述全部根级禁用词；具体拒绝以目标Azure实际400为准，不能推广成所有Provider的协议硬限制。
+
+修复只在Voice传输边界增加一种确定映射：原object根含这些约束时，发送`{type:object, additionalProperties:false, required:[arguments], properties:{arguments:原Schema}}`。来参必须只有一个arguments对象，解包后仍通过同ToolRegistry的原Schema、原executor和审批路径。普通object和已有对象联合投影保持原逻辑；不接受旧平铺参数作为fallback，不修改Memory Tool或共享合同。服务端保留原function_call，本地回注同call_id结果和一次response.create，不重写历史工具事件。
+
+隔离候选在原实Schema上先复现2项失败，修复后Voice四文件91/91通过，另typecheck/lint/format通过。覆盖query与refs+questions、非法额外字段/缺必需项、成功和失败ToolResult及Run/Item配对。首轮候选测试误用structuredClone丢失TypeBox符号和lint错误已保留并修正；这些是测试代码问题。两文件已核前后SHA后合入Main，候选/记录位于`integration/realtime-tool-object-schema-v1`，FREEZE `939de10467ed0d3cc2dca3bb8f80336ef8f60c3821c7465f8b0c66644ecc483f`。最终v8已实际成功创建Azure会话，并完成原两WAV形成/改期、跨进程新Chat自然检索与采用、同句实体麦克风/扬声器问答；前述91项离线结果与这些实际结果分列，失败、识别/复述偏差及缺失usage见“当前验证与证据边界”。

@@ -12,8 +12,12 @@ export default defineConfig((environment) => ({
     copyPublicDir: false,
     emptyOutDir: false,
     lib: {
-      entry: "src/main/index.ts",
-      fileName: () => "main.mjs",
+      // Forge Vite Plugin 7.11.2 merges the user lib config unchanged (checked 2026-09-15).
+      entry: {
+        main: "src/main/index.ts",
+        "memory-vector-search": "src/main/memory/memoryVectorSearch.worker.ts",
+      },
+      fileName: (_format, entryName) => `${entryName}.mjs`,
       formats: ["es"],
     },
     minify: false,

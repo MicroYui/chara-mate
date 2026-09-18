@@ -43,6 +43,7 @@ export interface RuntimeCheckpointState {
   readonly nativeWebSearchEnabled?: boolean;
   readonly pendingTool?: PendingToolCall;
   readonly pendingInput?: PendingInputRequest;
+  readonly quietCompletionAllowed?: true;
   readonly recentUsers: readonly string[];
   readonly recoveryAttemptedKeys: readonly string[];
   readonly toolNames?: readonly string[];
@@ -117,6 +118,8 @@ export function decodeRuntimeCheckpoint(
       typeof value["interactionEnabled"] !== "boolean") ||
     (value["nativeWebSearchEnabled"] !== undefined &&
       typeof value["nativeWebSearchEnabled"] !== "boolean") ||
+    (value["quietCompletionAllowed"] !== undefined &&
+      value["quietCompletionAllowed"] !== true) ||
     !validToolNames(value["toolNames"])
   ) {
     throw new TypeError("Unsupported or corrupt Agent checkpoint");

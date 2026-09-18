@@ -441,3 +441,38 @@ button:disabled {
     box-shadow: -15px 0 40px rgba(30, 37, 43, 0.12);
   }
 }
+
+.sourceEvidence {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 16px;
+  background: var(--surface);
+}
+.sourceEvidence header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sourceEvidence p {
+  margin: 0;
+}
+.sourceEvidence pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font: inherit;
+  line-height: 1.6;
+}
+.sourceEvidence img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+.sourceEvidence small,
+.sourceEvidence time {
+  color: var(--text-secondary);
+}
+.sourceEvidence button {
+  justify-self: start;
+}

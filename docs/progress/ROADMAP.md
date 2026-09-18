@@ -1,32 +1,59 @@
 # CharaMate 实施路线图
 
-> 状态：Phase 0–7、跨设备合同以及 Android 应用内发送与“最近收到”可发现性修补均 Done；真实 FCM、物理手机、系统权限切换与 Image Live 作为发布前 Live 验收边界单列
-> 日期：2026-09-02
+> 状态：本轮本地 AI 陪伴验收与 v9 本地交付 done；未来线上形态仍不在实现范围
+> 日期：2026-09-18
 > 权威来源：`REFACTOR_PRODUCT_DESIGN.md`、`CHARA_MATE_UI_DESIGN.md`、已接受的 `docs/benchmarks/<decision-id>.md`
 
 本文件记录里程碑依赖、工作包边界和验收，不记录逐命令历史。Phase 编号表示产品集成与验收顺序，不要求所有开发工作全局串行；只有共享契约、Schema、IPC 和同一可变资源的写入必须串行。
 
+## 当前增量：长期 AI 陪伴
+
+2026-09-16 新持续目标：补齐全部本地建模、实现与成熟度验收，按[本地成熟度验收](LOCAL_MATURITY_ACCEPTANCE.md)并行推进认知/生活、记忆巩固/遗忘、平台资源和形成/冷检索，root 串行集成共享契约。用户允许跨日/跨月模拟，不再要求等待真人数月使用；仍需实际产品链路、模型语义、原生与资源证据。2026-09-17 范围明确为新库初始化与本机可运行，不要求旧库升级、正式签名、公证或发售。下表保留上一轮历史基线，其中旧版本和当时的待办不代表当前阻塞；最终状态以 STATUS 和本轮验收为准。
+
+本轮收口固定为：跑完原版本的 48 个连续场景 → 已知问题定向修复/复测与关联回归 → 最终整合版完整桌面流程及既有容量/资源检查 → 关闭已知使用问题、交付并结束 Goal。局部修复不重复全部 48 个，核心链路改变才扩大相关回归；不等待真人跨日，也不增加研究题目或新实验。原失败与各版本复测分别保留。重复模型、依赖和旧构建包确认无当前/待验依赖后清理。
+
+2026-09-15 用户确认扩展为有日常和自主性的 AI 陪伴。本轮选定实现已晋级 Main：84 个 src/tests 文件（25 个新增），独立验证使用 627 文件源码冻结 v3；原 v3 在 v2 后仅追加引用显示两文件修复；当前 Main v6 另含实体引用、连续观察时钟、精确拒绝反馈、Memory v13 类型归属、独立完成依据及刚结束话题的普通承接。下面的当前增量覆盖历史“小物件必须逐件 Preview”、全画像注入、固定 top8、逐字段管理新记忆和独立 Life 原型等已被替代的范围；Phase 0–7 后文保留历史交付依赖，不构成兼容要求或本轮质量通过证明。
+
+2026-09-18 最终收口：原48及既定缺陷定向、实际桌面/语音/图像/自治、100k实际索引和2403到达容量窗已完成；最后d01历史覆盖修复在原问题上通过。v9源通过2682离线、29项Electron E2E、Forge package、packaged smoke和实际安装。原失败、不同版本、资源长尾与异步积压均保留在[本轮验收](LOCAL_MATURITY_ACCEPTANCE.md)。不再重跑48或增加新研究。
+
+### 上一轮历史基线（不作为当前待办）
+
+| 顺序 / 工作包      | 所有权、依赖与当前状态                                                                                                                                             | 验收与后续边界                                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 来源存储与持久交接 | Memory/Cognition 领域；root 唯一 Main/shared/DB owner；integration-verified。v26、唯一原文块、引用式入口、持久 outbox、同事务入队/ack 和实际消费者回收已进入 Main  | 窗口等价、当前新库创建、SQLite 回滚/重开和删除边界进入完整回归；引用与回执长期增长仍需测量                                                     |
+| 形成队列与恢复     | Memory 领域 / root 集成；integration-verified。严格未尝试有序超集替换、实际处理器绑定、部分进度接续及配置变化恢复为单一路径                                        | 原 v8/v9 真实比较、作用域合同修正与 host 失败分别保留，见[形成队列 Decision](../benchmarks/COMPANION-MEMORY-FORMATION-QUEUE.md)；无 alias 或实验开关 |
+| 认知读取与行动     | Cognition 领域 / root Main；integration-verified。C 规则与 128 KiB 原文页、当前用户和同 Run 回复供给、按需恢复旧实体、所选依据、partial Intent 保留资格已进入 Main | 不跳 FIFO 水位，分析读集与动作依据分离；部分更新不丢合法旧请求来源，完成仍须实际依据。六对容量、两个回复请求与六次旧 SSE 宿主回放各计各的分母        |
+| 多维记忆与检索     | Memory 领域 / root Provider、Worker 与资源；integration-verified。来源形成/修订、明确引用与相关搜索分开、交替融合、4B/512 编码器及 SQLite 向量 Worker 已进入 Main  | 精确版本/主体/时间/预算和异步更新资格纳入回归；不把 warm 采用或小库语义分数当独立 cold/holdout                                                       |
+| 细事件与视觉来源   | Activity 与 native observer / root 集成；integration-verified。真实 AX/DOM、对象画面、OCR/PNG、actor 与来源保护                                                    | 360 点本地语义投影比较后保留原文单一路径，未选 4B/9B 投影替换；多应用长期质量、后台能耗与共存仍需验收                                                |
+| 本地产品与打包     | root / integration-verified。当前 Main v6 的 1,734 离线、26/26 E2E、macOS arm64 package 与实际 4B/512 编码器及 Worker smoke 均通过                                 | 前一 v2 打包应用已实际形成、跨 Chat 检索并采用；首条完整 wire 未留存，不计已证实 cold，也不重新计作 v6 真实 UI 验收                                  |
+| 自然跨话题开发     | root / done；627 文件冻结 v2                                                                                                                                       | 48 条后续事件、118 次生成已完成；两次回答有支持，各 search/record 一次，但都为 warm，不计为冷检索证据                                                |
+| 独立质量与发布     | root / implementing；原 v3 独立验收结束，后验修复分别验证                                                                                                          | 12 故事/36 检查点/433 生成保留；完成依据原 8 例/18 生成，固定状态后另 8 次普通承接均成功。冷检索、复合来源遗漏、长期一致性/资源及正式发行仍待验证    |
+
+实现与范围映射见[本地方案](../research/ai-companion-local-implementation-2026-09-15.md)，命令、耗时和实际运行标识见[STATUS](STATUS.md)。高并发、社区与跨平台记忆属于[未来产品方案](../research/ai-companion-online-futures-2026-09-15.md)，本次不预建在线服务。年龄淡化与本地语义投影等被否决候选不回流生产；已完成对应清理的证据留在 Decision，原始输入、失败、数据库和补丁在仓外保存。
+
+本轮验收顺序为：已选合同与单一路径 → Main 离线及打包验证 → 自然冷延续开发 → 独立连续场景、可控时钟长期模拟与实际资源验证 → 已曝光缺口修复和最终同版复验。历史独立 holdout 执行与复核见[独立结果](../benchmarks/COMPANION-CONTINUITY-HOLDOUT.md)；该基线写作时 Final48 尚在执行；目前原48及定向收口已完成，完整结果见本轮验收，不能用历史 Done 或测试数替代实际语义证据。旧 553 文件纵向运行的 448 次请求已经结束，但 36 次 Agent 首步及唯一一次自然检索均为 warm；它不替代最终版本冷验收。完整输入预算守门已实现，代理近 258k 精确计数缺口仍需在能力边界中保留。
+
 ## 固定工程基线
 
-| 关注点 | 唯一生产选择 | 约束 |
-| --- | --- | --- |
-| 仓库与包 | 单 package、npm、精确 lockfile | 不建 monorepo，不维护第二套 package manager |
-| 桌面与打包 | Electron + Electron Forge + Forge Vite Plugin | 只保留一个构建路径；Plugin 精确锁版本并先做 packaged smoke |
-| 语言 | TypeScript strict、ESM | Main、Preload、Renderer 和共享契约统一使用 TypeScript |
-| 代码质量 | ESLint flat config + typescript-eslint/React Hooks + Prettier | 唯一 lint/format 路径；不同时维护 Biome 配置 |
-| Renderer | React、CSS Modules、CSS Custom Properties | Main 是业务状态真源；不引入第二套前端业务状态机 |
-| UI 基础 | Radix Primitives、Lucide、TanStack Virtual | 不使用完整主题型 UI 框架；Voice 波形和产品专用图标自绘 SVG |
-| 内容渲染 | `react-markdown`/remark/rehype、KaTeX、懒加载 Shiki/Mermaid | 源 Markdown 是复制真源；完成后确定性重渲染 |
-| 像素渲染 | PixiJS | 桌宠与领地共享 sprite/animation 语义，不引入完整游戏引擎 |
-| 契约 | TypeBox + Ajv、JSON Schema-first | Tool、IPC、事件和持久化边界复用同一 Schema 来源 |
-| IPC | typed `contextBridge` API | 每个领域暴露窄方法；Renderer 不直接拿 `ipcRenderer` |
-| 数据 | `better-sqlite3`、prepared SQL、领域 Repository | 不引入 ORM；journal、批量和向量布局仍由 Decision 决定 |
-| Agent | CharaMate 自有事件驱动 Harness | 不引入 LangChain/LangGraph 类总框架；Provider SDK 仅留在 Adapter 内 |
-| 外部协议 SDK | 官方 OpenAI JavaScript SDK、官方 MCP TypeScript SDK | 只在 Provider/MCP Adapter 边界使用，不拥有 Run、Tool 或 Approval 状态 |
-| Browser | `playwright-core` + 产品管理的固定 Chromium | 与 Electron E2E 的 Playwright runner 职责分开 |
-| Secrets | Electron async `safeStorage` + 统一 redaction | SQLite 只存引用；密钥不进入日志、Run、Memory 或错误 |
-| Observability | Pino + typed events/metrics | 不预建外部监控平台，不把研发指标放进产品 UI |
-| 测试 | Vitest、Testing Library、Playwright Electron E2E | 默认离线、确定性；Live 与 Benchmark 单独运行和报告 |
+| 关注点        | 唯一生产选择                                                  | 约束                                                                  |
+| ------------- | ------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 仓库与包      | 单 package、npm、精确 lockfile                                | 不建 monorepo，不维护第二套 package manager                           |
+| 桌面与打包    | Electron + Electron Forge + Forge Vite Plugin                 | 只保留一个构建路径；Plugin 精确锁版本并先做 packaged smoke            |
+| 语言          | TypeScript strict、ESM                                        | Main、Preload、Renderer 和共享契约统一使用 TypeScript                 |
+| 代码质量      | ESLint flat config + typescript-eslint/React Hooks + Prettier | 唯一 lint/format 路径；不同时维护 Biome 配置                          |
+| Renderer      | React、CSS Modules、CSS Custom Properties                     | Main 是业务状态真源；不引入第二套前端业务状态机                       |
+| UI 基础       | Radix Primitives、Lucide、TanStack Virtual                    | 不使用完整主题型 UI 框架；Voice 波形和产品专用图标自绘 SVG            |
+| 内容渲染      | `react-markdown`/remark/rehype、KaTeX、懒加载 Shiki/Mermaid   | 源 Markdown 是复制真源；完成后确定性重渲染                            |
+| 像素渲染      | PixiJS                                                        | 桌宠与领地共享 sprite/animation 语义，不引入完整游戏引擎              |
+| 契约          | TypeBox + Ajv、JSON Schema-first                              | Tool、IPC、事件和持久化边界复用同一 Schema 来源                       |
+| IPC           | typed `contextBridge` API                                     | 每个领域暴露窄方法；Renderer 不直接拿 `ipcRenderer`                   |
+| 数据          | `better-sqlite3`、prepared SQL、领域 Repository               | 不引入 ORM；journal、批量和向量布局仍由 Decision 决定                 |
+| Agent         | CharaMate 自有事件驱动 Harness                                | 不引入 LangChain/LangGraph 类总框架；Provider SDK 仅留在 Adapter 内   |
+| 外部协议 SDK  | 官方 OpenAI JavaScript SDK、官方 MCP TypeScript SDK           | 只在 Provider/MCP Adapter 边界使用，不拥有 Run、Tool 或 Approval 状态 |
+| Browser       | `playwright-core` + 产品管理的固定 Chromium                   | 与 Electron E2E 的 Playwright runner 职责分开                         |
+| Secrets       | Electron async `safeStorage` + 统一 redaction                 | SQLite 只存引用；密钥不进入日志、Run、Memory 或错误                   |
+| Observability | Pino + typed events/metrics                                   | 不预建外部监控平台，不把研发指标放进产品 UI                           |
+| 测试          | Vitest、Testing Library、Playwright Electron E2E              | 默认离线、确定性；Live 与 Benchmark 单独运行和报告                    |
 
 算法、模型、数据库参数、Voice Transport、并行度和保留阈值不属于这张固定栈表，必须经过对应 Decision。
 
@@ -247,7 +274,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - Phase 2 提供稳定 Agent、ContextCompiler 接口、Tool/Run evidence；
 - `P3-STRUCTURED-INPUT` 与 `P3-MULTIMODAL-INPUT` 只依赖 Phase 1 Attachment/Composer 和 Phase 2 Run/Provider/Tool 契约，不受 Memory Decision 阻塞，可与 Memory 研究并行；
 - `MEMORY-STORAGE`、`MEMORY-RETRIEVAL`、`CONTEXT-RECIPE`、`MEMORY-GRAPH` 依研究依赖完成；`MEMORY-FORMATION` 在 Agent Runtime 与上述 Memory 契约稳定后完成；
-- `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 在 Activity Digest/source 契约稳定后完成；后续产品修订把原来的跨日累计时长 proposal 收口为 Activity 独立检索与跨自然周稳定候选。
+- `ACTIVITY-DISTILLATION`、`ACTIVITY-RETENTION` 在 Activity Digest/source 契约稳定后完成。当前 Product §6.9 保留确定性摘要与 Activity 独立检索，长期形成统一走 Cognition→Memory；历史跨自然周候选生成链路不再属于当前行为。
 
 ### 工作包
 
@@ -255,12 +282,12 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - `P3-MULTIMODAL-INPUT`：建立一条 Main-owned 图片解码与 Provider 多模态输入路径；用户显式附加的图片直接进入模型输入，Agent 查看已知本地图片、截图或图片 artifact 时使用仅在模型与环境支持时直载的 `image.inspect`。两种入口复用媒体校验与尺寸处理；不按文件名假装看过图片，也不增加未验证的 OCR fallback。
 - `P3-MEMORY-SEMANTICS`：Memory/Revision/Source、validity、supersede、pin、archive/delete 和 Profile 投影。
 - `P3-MEMORY-RUNTIME`：唯一 Retrieval Pipeline、唯一 Context Recipe、获胜索引生命周期和 `memory.search`；模型只消费无内部 UUID、无逐条来源展开的紧凑 evidence，完整 provenance 留在 Memory 详情。
-- `MAINT-MEMORY-PROFILE-RECALL`（已完成）：在不改变 R0 的前提下，把已绑定 profile/preference 作为有界稳定画像注入 Text/Voice Context；证据不足时允许当前模型一次结构化 `memory.search`；旧无字段记录由 Memory 详情显式绑定或合并，手动新建画像/偏好必须选择字段。
+- `MAINT-MEMORY-PROFILE-RECALL`（历史基线，2026-09-15 被商业级认知/记忆重构替代，不再作为当前验收）：在不改变 R0 的前提下，把已绑定 profile/preference 作为有界稳定画像注入 Text/Voice Context；证据不足时允许当前模型一次结构化 `memory.search`；旧无字段记录由 Memory 详情显式绑定或合并，手动新建画像/偏好必须选择字段。
 - `P3-MEMORY-FORMATION`：Chat/Agent 始终加载的唯一 `memory.record`，明确陈述直接形成/修订，推断与执行观察候选化；profile/preference 使用闭集稳定 claim slot，宿主从当前 Run 私有 allowlist 解析字段 owner，模型不接触 Memory/Revision ID；缺失目标、内部错 ID、冲突和旧数据首次绑定转候选或拒绝；Main 绑定来源并保证重复/恢复幂等。
 - `P3-MEMORY-UI`：搜索、筛选、来源、Revision、画像、候选与领地入口；Graph 未晋级时没有入口。
 - `P3-ACTIVITY-CAPTURE`：Active App、Managed Browser、Screenshot/OCR metadata、Idle 和 Agent Run 区分；macOS Active App 使用 `NSWorkspace`/Accessibility 事件通知，15 秒只采样进程内 idle 状态，不周期性启动 AppleScript。Activity 截图以逻辑像素获取一次 PNG并异步落盘，不阻塞 metadata event 队列。
 - `P3-ACTIVITY-DISTILL`：确定性 Episode 边界与 Daily/Weekly Digest、evidence 和保留生命周期；不把跨日累计时长与全部 Episode 来源直接写成长期 Memory 候选。
-- `MAINT-ACTIVITY-AGENT-RECALL`：增加 Activity-owned `activity.search` 紧凑事实检索；同一标签跨至少两个已完成自然周时，只用最近两个 Weekly Digest 形成可确认、可更新且不持续膨胀的 `activity_digest`，不推断偏好或用途。
+- `MAINT-ACTIVITY-AGENT-RECALL`：保留 Activity-owned `activity.search` 紧凑事实检索。2026-08-28 的跨周候选形成作为历史版本记录；当前成熟度包移除其自动生成与替换链路，验证跨周摘要可查、不会新增确认负担及已有 Memory/来源保持可读。
 - `P3-ACTIVITY-RETENTION`：获胜保留策略、文件/缩略图/OCR/索引/行一致清理、orphan sweep。
 - `P3-BENCHMARK`：LongMemEval、LoCoMo 与冻结中文产品集的 Retrieval、Answer、Storage 和 Activity 记录。
 
@@ -270,7 +297,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - 用户图片附件及 Agent 已知的本地图片/artifact 都能让支持视觉输入的目标 Provider 读取真实像素内容；不支持的模型明确说明能力不可用，路径文字或缩略图不算语义读取成功；
 - Memory 编辑产生 Revision，改口后旧事实不进入默认 Context，所有投影可追溯；
 - Chat/Agent 的明确耐久陈述无需手动新建即可进入后续 Run Context；跨 Chat 改口在证据可辨识时沿同一 Memory ID 产生 Revision，错 ID、未命中、同字段冲突与同类字段歧义不制造第二条 active 事实；推断和执行观察只进入带原因/来源的待确认候选，重复调用与重启不重复写入；
-- Text 与 Voice 都能在自然同义问法未命中 R0 时读取已绑定稳定画像；证据不足时只通过同一 R0 完成一次结构化再检索；旧无字段画像/偏好不被静默猜测绑定，用户确认合并后只有一个 active 字段 owner；
+- Text 与 Voice 共享当前认知准备与需求驱动的 Memory 检索：不全量注入画像、不限一次查询；覆盖不足时按新问题继续，已充分或无新信息时停止。候选与最终证据区分主体、修订、来源和时间，当前用户修正优先于过时事实。旧手工字段的可编辑能力保留，但新自动形成不硬套固定画像字段；
 - 发布物只加载一个 Retrieval/Context/Graph 结果，失败候选模型、依赖、表和设置不存在；
 - Activity 被压缩成少量 Episode/Digest，原始事件不进入普通长期检索；
 - Text/Voice Agent 能按需检索不含内部 ID、窗口原文或逐条来源的 Activity 聚合；同一稳定行为候选拒绝后不重复、接受后不堆叠，旧累计时长 Memory 只经用户确认的替换 Revision 收口；
@@ -352,7 +379,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 - Automation 的 Tool、审批、取消、结果和失败与手动 Run 完全同构；
 - 内部 Journey/Session 在多条长期经历、多次共同活动、切换和重启后仍保持全局唯一活跃态、准确 Home Chat 与续接点；自然语言歧义只询问具体事情，不让用户选择 Chat 或内部对象；
 - Activity 观察不会直接创建 Session/Journey；Agent 对证据不足或歧义观察保持沉默，合适时通过普通 Chat Run 发起对话，匹配既有 Journey 时自动路由到其 Home Chat，关闭气泡不会追问；
-- macOS Settings 展示的辅助功能授权进程与实际读取窗口标题的进程一致；没有非空标题时不产生陪伴 Provider 请求；主动消息被唯一即时表面接受后的 5 分钟内不再次请求语义门，冷却结束后只向 Agent 提供最近 3 次主动记录并由其判断是否语义重复；桌面气泡要求真实展示，Android 投影不伪造操作系统展示；
+- macOS Settings 展示的辅助功能授权进程与实际读取内容的进程一致；感知按事实与对象变化发布，不能仅用窗口标题作为有效性门槛。统一 Cognition 决定注意、记忆需求和动作；用户输入、休眠、过期与取消撤销旧决定。主动消息被唯一即时表面接受后的 5 分钟内不再主动搭话；最近 3 次实际表面结果参与语义判断，但不阻止角色安静活动。桌面气泡要求真实展示，Android 投影不伪造系统展示；
 - 全新话题气泡在首个回复前不进入最近、搜索或归档列表，也不提供“打开完整 Chat”；20 秒无回复、主动关闭或异常重启后临时 Chat/Run/消息被清理，首个文字或气泡语音回复原子转正同一个 Chat。已有 Chat 的气泡可在主窗口关闭时完成至少两轮连续短文字往返；每轮用户消息、助手回答和 Run 都出现在发起时绑定的同一 Chat，回复期间不会被新主动开场替换，关闭气泡不删除已正式建立的 Chat 或 Run，“打开完整 Chat”准确进入该 Chat；
 - 当前在场提示跨六页可见但不含计时、所属长期经历或状态按钮；Chats 只有普通最近/已归档列表，不出现“同行中 / 待续共处 / 同行回望”、详情抽屉或 Journey/Session/Home Chat 名词；通过普通对话完成开始、切换、暂停、结束、完成、重开、一次跟进、范围纠正和可见 Memory 旅程；
 - 后台 Approval 不被伪装为成功，气泡始终跳转同一 Chat Item；
@@ -453,7 +480,7 @@ Phase 0 完成。UI、Data/IPC、Provider 三个工作包可以并行；共享�
 
 - **状态**：`done`（2026-09-01）。Schema v20、Memory 明确时间、类别许可、持久机会、启动/恢复重查、取消/恢复、同一 Chat Run 与气泡投影均已完成并通过完整离线层、build 和 25/25 Electron E2E。
 - **Outcome / authority**：落实产品设计 §4.9、§6.3、§9.2 与 UI §4.4。用户一次允许“重要时刻主动联系我”后，明确未来 `event/commitment` 可以形成一个持久、可取消、到点仍会重判的机会；消息继续由同一 Persona、Chat Run 和 P2 主动策略产生。
-- **Scope / owner**：`main` 是 Memory/Settings/Journey shared contract、Schema/migration 和集成 owner；范围包含 `occursAt/timeZone`、许可状态、`ProactiveOpportunity` repository/service、启动/恢复重查、同一语义门、单一消息投影结果合同和 Settings 最小开关。
+- **Scope / owner**：`main` 是 Memory/Settings/Journey shared contract、Schema/migration 和集成 owner；范围包含 `occursAt/timeZone`、许可状态、`ProactiveOpportunity` repository/service、启动/恢复重查、统一 Cognition 线索与取消、单一消息投影结果合同和 Settings 最小开关。
 - **Dependencies / Gate**：依赖既有 Memory Formation、Chat Context、Automation 已验证的“数据库 claim 是真源、timer 只唤醒”语义、P2 Policy 和 Journey/Home Chat；`EXPERIENCE-ECHO-TIMING` 已完成并写入中文 Decision Record。
 - **Non-goals**：不从模糊日期或纯模型推断创建机会，不预写通知，不承诺精确到秒，不增加日历 recurrence、事件管理页、长期外呼状态机、云端 Agent 或新的主动频率策略。
 - **Acceptance / tests**：fake clock 覆盖形成、改期、取消、删除、关闭许可、许可重新开启或 Memory 恢复时仍在未来的同 Revision 重开、到点静默/发送、休眠恢复和重复 claim；每个有效 Revision 至多一个开放机会，旧机会不发送；消息先写唯一 Chat/Run，再交付一个表面；运行 shared contract、DB/integration、Settings component、focused、full offline、build 和受影响 Electron E2E。

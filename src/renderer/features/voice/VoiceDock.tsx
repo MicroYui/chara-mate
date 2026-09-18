@@ -24,7 +24,7 @@ interface VoiceDockProps {
   readonly onMutedChange: (muted: boolean) => void;
   readonly onPausedChange: (paused: boolean) => void;
   readonly onRetry: () => void;
-  readonly snapshot: VoiceSessionSnapshot;
+  readonly snapshot: VoiceSessionSnapshot | null;
   readonly store: VoiceStore;
 }
 
@@ -41,6 +41,23 @@ export function VoiceDock({
     store.subscribeEnvelope,
     store.getEnvelope,
   );
+  if (!snapshot) {
+    return (
+      <section className={styles["dock"]} aria-label="Realtime 语音">
+        <div className={styles["body"]}>
+          <strong>正在准备语音…</strong>
+        </div>
+        <button
+          className={`${styles["roundButton"]} ${styles["endButton"]}`}
+          type="button"
+          aria-label="结束语音"
+          onClick={onEnd}
+        >
+          <PhoneOff aria-hidden="true" size={16} />
+        </button>
+      </section>
+    );
+  }
   const level =
     snapshot.phase === "paused" || snapshot.phase === "resuming"
       ? 0

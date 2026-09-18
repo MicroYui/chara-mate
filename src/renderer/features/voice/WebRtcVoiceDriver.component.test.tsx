@@ -4,103 +4,21 @@ import type {
   VoiceApi,
   VoiceConnection,
 } from "../../../shared/contracts/voice";
+import {
+  voiceToolResultEvents,
+  voicePreviewEvents,
+  VOICE_PREVIEW_PHRASE,
+} from "../../../shared/contracts/voice";
+import { VoiceDriverEventRequestSchema } from "../../../shared/schemas/voice";
+import { parseSchema } from "../../../shared/schemas/validation";
 import { previewVoice, WebRtcVoiceDriver } from "./WebRtcVoiceDriver";
 
-class FakeDataChannel extends EventTarget {
-  readonly sent: string[] = [];
-  readyState: RTCDataChannelState = "open";
-
-  close(): void {
-    this.readyState = "closed";
-    this.dispatchEvent(new Event("close"));
-  }
-
-  emit(value: unknown): void {
-    this.dispatchEvent(
-      new MessageEvent("message", { data: JSON.stringify(value) }),
-    );
-  }
-
-  send(value: string): void {
-    this.sent.push(value);
-  }
-}
-
-class FakePeerConnection extends EventTarget {
-  static latest: FakePeerConnection | undefined;
-  readonly channel = new FakeDataChannel();
-  connectionState: RTCPeerConnectionState = "connected";
-  iceGatheringState: RTCIceGatheringState = "complete";
-  localDescription: RTCSessionDescription | null = null;
-
-  constructor() {
-    super();
-    FakePeerConnection.latest = this;
-  }
-
-  addTrack(): void {}
-  addTransceiver(): RTCRtpTransceiver {
-    return {} as RTCRtpTransceiver;
-  }
-  close(): void {}
-  createDataChannel(): RTCDataChannel {
-    return this.channel as unknown as RTCDataChannel;
-  }
-  createOffer(): Promise<RTCSessionDescriptionInit> {
-    return Promise.resolve({ sdp: "offer-sdp", type: "offer" });
-  }
-  setLocalDescription(description: RTCSessionDescriptionInit): Promise<void> {
-    this.localDescription = description as RTCSessionDescription;
-    return Promise.resolve();
-  }
-  setRemoteDescription(): Promise<void> {
-    const event = new Event("track");
-    Object.defineProperties(event, {
-      streams: { value: [{}] },
-      track: { value: {} },
-    });
-    this.dispatchEvent(event);
-    return Promise.resolve();
-  }
-}
-
-class FakeAnalyser {
-  fftSize = 256;
-  connect(): void {}
-  disconnect(): void {}
-  getByteTimeDomainData(samples: Uint8Array): void {
-    samples.fill(128);
-  }
-}
-
-class FakeGain {
-  readonly gain = { value: 0 };
-  connect(): void {}
-}
-
-class FakeAudioContext {
-  readonly currentTime = 4;
-  readonly destination = {};
-  state: AudioContextState = "suspended";
-
-  createAnalyser(): AnalyserNode {
-    return new FakeAnalyser() as unknown as AnalyserNode;
-  }
-  createGain(): GainNode {
-    return new FakeGain() as unknown as GainNode;
-  }
-  createMediaStreamSource() {
-    return { connect: () => undefined, disconnect: () => undefined };
-  }
-  close(): Promise<void> {
-    this.state = "closed";
-    return Promise.resolve();
-  }
-  resume(): Promise<void> {
-    this.state = "running";
-    return Promise.resolve();
-  }
-}
+import {
+  FakePeerConnection,
+  type FakeDataChannel,
+  FakeAudioContext,
+  installVoiceBrowserFixture,
+} from "../../../../tests/fixtures/webrtcVoiceBrowser";
 
 const connection: VoiceConnection = {
   callsUrl: "https://unit.openai.azure.com/openai/v1/realtime/calls",
@@ -123,6 +41,9 @@ function api() {
   return {
     report,
     value: {
+      cancelStart: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: { outcome: "accepted" } }),
       end: vi.fn(),
       getActive: vi.fn(),
       preview: vi.fn(),
@@ -142,27 +63,7 @@ function sent(channel: FakeDataChannel) {
 }
 
 beforeEach(() => {
-  const track = { enabled: false, stop: vi.fn() };
-  const stream = {
-    getAudioTracks: () => [track],
-    getTracks: () => [track],
-  };
-  vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
-  vi.stubGlobal("AudioContext", FakeAudioContext);
-  vi.stubGlobal(
-    "requestAnimationFrame",
-    vi.fn(() => 1),
-  );
-  vi.stubGlobal("cancelAnimationFrame", vi.fn());
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("answer-sdp")));
-  Object.defineProperty(navigator, "mediaDevices", {
-    configurable: true,
-    value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
-  });
-  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
-  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(
-    () => undefined,
-  );
+  installVoiceBrowserFixture();
 });
 
 afterEach(() => {
@@ -175,6 +76,124 @@ afterEach(() => {
 });
 
 describe("WebRTC Voice driver", () => {
+  it.each(["response.done", "wake.greeting.done"] as const)(
+    "preserves usage presence from actual driver %s reports through the shared schema",
+    async (type) => {
+      const fixture = api();
+      const driver = new WebRtcVoiceDriver(fixture.value, connection, vi.fn());
+      await driver.connect();
+      try {
+        const channel = FakePeerConnection.latest?.channel;
+        if (!channel) throw new Error("Missing fake data channel");
+        const cases = [
+          {
+            wire: {
+              input_tokens: 10,
+              input_token_details: { cached_tokens: 2 },
+              output_tokens: 4,
+            },
+            expected: {
+              cachedInputTokens: 2,
+              inputTokens: 10,
+              outputTokens: 4,
+            },
+          },
+          {
+            wire: {
+              input_tokens: 0,
+              input_token_details: { cached_tokens: 0 },
+              output_tokens: 0,
+            },
+            expected: { cachedInputTokens: 0, inputTokens: 0, outputTokens: 0 },
+          },
+          { wire: undefined, expected: undefined },
+          { wire: {}, expected: {} },
+          { wire: { input_tokens: 10 }, expected: { inputTokens: 10 } },
+          { wire: { output_tokens: 4 }, expected: { outputTokens: 4 } },
+          {
+            wire: { input_token_details: { cached_tokens: 2 } },
+            expected: { cachedInputTokens: 2 },
+          },
+        ];
+        for (const [index, sample] of cases.entries()) {
+          const requestId = `10000000-0000-4000-8000-${String(index + 20).padStart(12, "0")}`;
+          const responseId = `usage-${String(index)}`;
+          const generation = index + 1;
+          if (type === "wake.greeting.done") {
+            driver.handle({
+              instructions: "简短欢迎。",
+              prompt: "Hi",
+              requestId,
+              sessionId: connection.sessionId,
+              type: "wake.greeting.create",
+            });
+          } else {
+            driver.handle({
+              generation,
+              instructions: "简短回答。",
+              requestId,
+              sessionId: connection.sessionId,
+              type: "response.create",
+            });
+          }
+          channel.emit({
+            type: "response.created",
+            response: {
+              id: responseId,
+              metadata: {
+                charamate_request_id: requestId,
+                ...(type === "wake.greeting.done"
+                  ? { charamate_purpose: "wake_greeting" }
+                  : { charamate_generation: String(generation) }),
+              },
+            },
+          });
+          channel.emit({
+            type: "response.done",
+            response: {
+              id: responseId,
+              status: "completed",
+              ...(sample.wire === undefined ? {} : { usage: sample.wire }),
+            },
+          });
+          await vi.waitFor(() =>
+            expect(
+              fixture.report.mock.calls.filter(
+                ([request]) => request.event.type === type,
+              ),
+            ).toHaveLength(index + 1),
+          );
+          const request = fixture.report.mock.calls
+            .map(([value]) => value)
+            .find(
+              (value) =>
+                (value.event.type === "response.done" ||
+                  value.event.type === "wake.greeting.done") &&
+                value.event.type === type &&
+                value.event.responseId === responseId,
+            );
+          if (!request) {
+            throw new Error("Missing actual driver completion report");
+          }
+          const parsed = parseSchema(VoiceDriverEventRequestSchema, request);
+          expect(parsed).toEqual(request);
+          expect(parsed.event).toEqual({
+            type,
+            responseId,
+            status: "completed",
+            hasAudio: false,
+            ...(type === "response.done" ? { generation } : {}),
+            ...(sample.expected === undefined
+              ? {}
+              : { usage: sample.expected }),
+          });
+        }
+      } finally {
+        driver.close();
+      }
+    },
+  );
+
   it("seeds Chat history and creates a native Realtime response without a speech script", async () => {
     const fixture = api();
     const driver = new WebRtcVoiceDriver(fixture.value, connection, vi.fn());
@@ -226,12 +245,68 @@ describe("WebRTC Voice driver", () => {
       event_id: "10000000-0000-4000-8000-000000000002",
       response: {
         instructions: "直接自然回答。",
-        metadata: { charamate_generation: "1" },
+        metadata: {
+          charamate_generation: "1",
+          charamate_request_id: "10000000-0000-4000-8000-000000000002",
+        },
         output_modalities: ["audio"],
       },
       type: "response.create",
     });
     expect(JSON.stringify(sent(channel).at(-1))).not.toContain("input_text");
+    driver.close();
+  });
+
+  it("reports only metadata actually echoed by response.created", async () => {
+    const fixture = api();
+    const driver = new WebRtcVoiceDriver(fixture.value, connection, vi.fn());
+    await driver.connect();
+    const channel = FakePeerConnection.latest?.channel;
+    if (!channel) throw new Error("Missing fake data channel");
+    const requestId = "10000000-0000-4000-8000-000000000020";
+    driver.handle({
+      generation: 1,
+      instructions: "自然回应。",
+      requestId,
+      sessionId: connection.sessionId,
+      type: "response.create",
+    });
+    channel.emit({
+      type: "response.created",
+      response: {
+        id: "response-correlated",
+        metadata: {
+          charamate_generation: "1",
+          charamate_request_id: requestId,
+        },
+      },
+    });
+    channel.emit({
+      type: "response.created",
+      response: {
+        id: "response-unlinked",
+        metadata: { charamate_generation: "1" },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(
+        fixture.report.mock.calls.map(([request]) => request.event),
+      ).toEqual(
+        expect.arrayContaining([
+          {
+            type: "response.started",
+            generation: 1,
+            responseId: "response-correlated",
+            requestId,
+          },
+          {
+            type: "response.started",
+            generation: 1,
+            responseId: "response-unlinked",
+          },
+        ]),
+      ),
+    );
     driver.close();
   });
 
@@ -614,15 +689,20 @@ describe("WebRTC Voice driver", () => {
       });
     });
 
-    driver.handle({
+    const command = {
       callId: "call-weather",
       generation: 2,
       instructions: "使用工具后回答。",
       output: '{"status":"success","summary":"晴"}',
       requestId: "10000000-0000-4000-8000-000000000004",
       sessionId: connection.sessionId,
-      type: "tool.result",
-    });
+      type: "tool.result" as const,
+    };
+    const beforeResult = channel.sent.length;
+    driver.handle(command);
+    expect(channel.sent.slice(beforeResult)).toEqual(
+      voiceToolResultEvents(command).map((event) => JSON.stringify(event)),
+    );
     expect(sent(channel).slice(-2)).toEqual([
       {
         event_id: "10000000-0000-4000-8000-000000000004.output",
@@ -637,7 +717,10 @@ describe("WebRTC Voice driver", () => {
         event_id: "10000000-0000-4000-8000-000000000004",
         response: {
           instructions: "使用工具后回答。",
-          metadata: { charamate_generation: "2" },
+          metadata: {
+            charamate_generation: "2",
+            charamate_request_id: "10000000-0000-4000-8000-000000000004",
+          },
           output_modalities: ["audio"],
         },
         type: "response.create",
@@ -802,7 +885,8 @@ describe("WebRTC Voice driver", () => {
         clientSecret: connection.clientSecret,
         expiresAt: connection.expiresAt,
       },
-      "你好，我是 CharaMate。",
+      VOICE_PREVIEW_PHRASE,
+      new AbortController().signal,
     );
     await vi.waitFor(() => expect(FakePeerConnection.latest).toBeDefined());
     const channel = FakePeerConnection.latest?.channel;
@@ -816,7 +900,7 @@ describe("WebRTC Voice driver", () => {
     expect(sent(channel)).toEqual([
       {
         item: {
-          content: [{ text: "你好，我是 CharaMate。", type: "input_text" }],
+          content: [{ text: VOICE_PREVIEW_PHRASE, type: "input_text" }],
           role: "user",
           type: "message",
         },
@@ -824,6 +908,9 @@ describe("WebRTC Voice driver", () => {
       },
       { type: "response.create" },
     ]);
+    expect(channel.sent).toEqual(
+      voicePreviewEvents().map((event) => JSON.stringify(event)),
+    );
     channel.emit({ type: "output_audio_buffer.stopped" });
 
     await expect(task).resolves.toBeUndefined();
@@ -832,3 +919,82 @@ describe("WebRTC Voice driver", () => {
     ).toBeNull();
   });
 });
+
+it.each(["ice", "sdp", "channel"] as const)(
+  "closes the actual %s preparation wait and releases its listeners",
+  async (stage) => {
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const driver = new WebRtcVoiceDriver(api().value, connection, vi.fn());
+    const peer = FakePeerConnection.latest!;
+    const channel = peer.channel;
+    let signal: AbortSignal | undefined;
+    if (stage === "ice") {
+      peer.iceGatheringState = "gathering";
+      const add = peer.addEventListener.bind(peer);
+      vi.spyOn(peer, "addEventListener").mockImplementation(
+        (type, listener, options) => {
+          add(type, listener, options);
+          if (type === "icegatheringstatechange") enter();
+        },
+      );
+    } else if (stage === "sdp") {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<typeof fetch>(
+          (_url, options) =>
+            new Promise((_resolve, reject) => {
+              signal = options?.signal ?? undefined;
+              if (!signal) throw new Error("SDP has no owned signal");
+              signal.addEventListener(
+                "abort",
+                () => {
+                  const reason: unknown = signal?.reason;
+                  reject(
+                    reason instanceof Error
+                      ? reason
+                      : new DOMException("Operation was aborted", "AbortError"),
+                  );
+                },
+                { once: true },
+              );
+              enter();
+            }),
+        ),
+      );
+    } else {
+      channel.readyState = "connecting";
+      const add = channel.addEventListener.bind(channel);
+      vi.spyOn(channel, "addEventListener").mockImplementation(
+        (type, listener, options) => {
+          add(type, listener, options);
+          if (type === "open") enter();
+        },
+      );
+    }
+    const removedPeer = vi.spyOn(peer, "removeEventListener");
+    const removedChannel = vi.spyOn(channel, "removeEventListener");
+    const task = driver.connect().catch((error: unknown) => error);
+    await entered;
+    driver.close();
+    expect(await task).toMatchObject({ name: "AbortError" });
+    expect(peer.connectionState).toBe("closed");
+    expect(channel.readyState).toBe("closed");
+    if (stage === "ice")
+      expect(
+        removedPeer.mock.calls.some(
+          ([type]) => type === "icegatheringstatechange",
+        ),
+      ).toBe(true);
+    if (stage === "sdp") expect(signal?.aborted).toBe(true);
+    if (stage === "channel")
+      expect(removedChannel.mock.calls.some(([type]) => type === "open")).toBe(
+        true,
+      );
+    expect(
+      document.querySelector("audio[data-charamate-voice-output]"),
+    ).toBeNull();
+  },
+);

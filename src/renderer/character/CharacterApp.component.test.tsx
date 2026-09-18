@@ -117,7 +117,9 @@ function renderCharacter(
     .mockImplementation((request) => {
       const snapshot = {
         ...ACTIVE_VOICE,
-        phase: request.paused ? ("paused" as const) : ("listening" as const),
+        phase: request.request.paused
+          ? ("paused" as const)
+          : ("listening" as const),
       };
       voiceListener?.(snapshot);
       return Promise.resolve({
@@ -152,6 +154,9 @@ function renderCharacter(
   const focusTerritoryMoment =
     vi.fn<CharacterWindowApi["focusTerritoryMoment"]>();
   const voice: VoiceApi = {
+    cancelStart: vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { outcome: "accepted" } }),
     end,
     getActive: vi.fn().mockResolvedValue({ ok: true, value: null }),
     preview: vi.fn(),
@@ -317,14 +322,16 @@ describe("Character chat control", () => {
 
     fireEvent.click(startButton);
     await waitFor(() => expect(quickStart).toHaveBeenCalledOnce());
-    expect(typeof quickStart.mock.calls[0]?.[0].requestedAt).toBe("string");
+    expect(typeof quickStart.mock.calls[0]?.[0].request.requestedAt).toBe(
+      "string",
+    );
     const pauseButton = await screen.findByRole("button", {
       name: "暂停语音聊天",
     });
 
     fireEvent.click(pauseButton);
     await waitFor(() => expect(setPaused).toHaveBeenCalledTimes(1));
-    const pauseRequest = setPaused.mock.calls[0]?.[0];
+    const pauseRequest = setPaused.mock.calls[0]?.[0].request;
     expect(pauseRequest).toMatchObject({
       paused: true,
       sessionId: ACTIVE_VOICE.sessionId,
@@ -336,7 +343,7 @@ describe("Character chat control", () => {
 
     fireEvent.click(resumeButton);
     await waitFor(() => expect(setPaused).toHaveBeenCalledTimes(2));
-    const resumeRequest = setPaused.mock.calls[1]?.[0];
+    const resumeRequest = setPaused.mock.calls[1]?.[0].request;
     expect(resumeRequest).toMatchObject({
       paused: false,
       sessionId: ACTIVE_VOICE.sessionId,
@@ -418,14 +425,14 @@ describe("Character chat control", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "在同一对话中语音回复" }),
     );
-    await waitFor(() =>
-      expect(quickStart).toHaveBeenCalledWith(
-        expect.objectContaining({
-          chatId: bubble.chatId,
-          execution: { mode: "chat" },
-        }),
-      ),
-    );
+    await waitFor(() => {
+      const submitted = quickStart.mock.calls[0]?.[0];
+      expect(submitted?.requestId).toEqual(expect.any(String));
+      expect(submitted?.request).toMatchObject({
+        chatId: bubble.chatId,
+        execution: { mode: "chat" },
+      });
+    });
     expect(dismissProactiveBubble).not.toHaveBeenCalled();
     expect(focusConversation).not.toHaveBeenCalled();
     await waitFor(() =>

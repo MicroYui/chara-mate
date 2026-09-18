@@ -696,9 +696,20 @@ export class TerritoryWorldRepository {
     return this.getSnapshot();
   }
 
-  restoreRevision(revisionId: string, now: Timestamp): TerritoryWorldSnapshot {
+  restoreRevision(
+    revisionId: string,
+    now: Timestamp,
+    expectedCurrentRevisionId: string,
+  ): TerritoryWorldSnapshot {
     const restore = this.database.transaction(() => {
       const world = this.requireWorld();
+      if (world.current_revision_id !== expectedCurrentRevisionId) {
+        throw new TerritoryError(
+          "TERRITORY.REVISION_CONFLICT",
+          "领地已有新的变化，这次撤销没有执行。请查看当前物件后再操作。",
+          false,
+        );
+      }
       const current = this.requireRevision(world.current_revision_id);
       const target = this.requireRevision(revisionId);
       const purged = this.listPurgedIds();
@@ -1178,56 +1189,69 @@ export class TerritoryWorldRepository {
     changeSet: TerritoryWorldChangeSet,
     previewGroups: TerritoryChangeCandidate["previewGroups"],
     now: Timestamp,
+    apply = false,
   ): TerritoryWorldSnapshot {
-    const parsedChangeSet = parseSchema(
-      TerritoryWorldChangeSetSchema,
-      changeSet,
-    );
-    const candidate = this.requireCandidate(candidateId);
-    if (candidate.status !== "generating")
-      this.throwCandidateState(candidateId);
-    const snapshot = this.getSnapshot();
-    const nextStatus =
-      candidate.baseRevisionId === snapshot.world.currentRevision.id
-        ? "ready"
-        : "stale";
-    if (nextStatus === "ready") {
-      const views = snapshot.world.zones
-        .filter((zone) => zone.status === "active")
-        .map((zone) =>
-          this.getZoneView({
-            revisionId: snapshot.world.currentRevision.id,
-            zoneId: zone.id,
-          }),
-        );
-      const issues = validateTerritoryWorldChangeSet(
-        parsedChangeSet,
-        snapshot,
-        views,
+    return this.database.transaction(() => {
+      const parsedChangeSet = parseSchema(
+        TerritoryWorldChangeSetSchema,
+        changeSet,
       );
-      if (issues.length > 0) {
-        throw new TerritoryError(
-          "TERRITORY.CHANGESET_INVALID",
-          issues[0]!.message,
-          false,
+      const candidate = this.requireCandidate(candidateId);
+      if (candidate.status !== "generating")
+        this.throwCandidateState(candidateId);
+      const snapshot = this.getSnapshot();
+      const nextStatus =
+        candidate.baseRevisionId === snapshot.world.currentRevision.id
+          ? "ready"
+          : "stale";
+      if (nextStatus === "ready") {
+        const views = snapshot.world.zones
+          .filter((zone) => zone.status === "active")
+          .map((zone) =>
+            this.getZoneView({
+              revisionId: snapshot.world.currentRevision.id,
+              zoneId: zone.id,
+            }),
+          );
+        const issues = validateTerritoryWorldChangeSet(
+          parsedChangeSet,
+          snapshot,
+          views,
         );
+        if (issues.length > 0) {
+          throw new TerritoryError(
+            "TERRITORY.CHANGESET_INVALID",
+            issues[0]!.message,
+            false,
+          );
+        }
       }
-    }
-    this.database
-      .prepare(
-        `UPDATE territory_change_candidates
+      this.database
+        .prepare(
+          `UPDATE territory_change_candidates
             SET status = ?, change_set_json = ?, preview_groups_json = ?,
                 error_json = NULL, updated_at = ?
           WHERE candidate_id = ?`,
-      )
-      .run(
-        nextStatus,
-        serializeForPersistence(parsedChangeSet),
-        serializeForPersistence(previewGroups),
-        now,
-        candidateId,
-      );
-    return this.getSnapshot();
+        )
+        .run(
+          nextStatus,
+          serializeForPersistence(parsedChangeSet),
+          serializeForPersistence(previewGroups),
+          now,
+          candidateId,
+        );
+      if (apply && nextStatus === "ready") {
+        if (candidate.intent !== "item") {
+          throw new TerritoryError(
+            "TERRITORY.CHANGESET_INVALID",
+            "自主创作只能应用一个新物件。",
+            false,
+          );
+        }
+        return this.applyCandidate(candidateId, now);
+      }
+      return this.getSnapshot();
+    })();
   }
 
   failCandidate(

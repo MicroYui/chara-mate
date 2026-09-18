@@ -1,5 +1,7 @@
 # MEMORY-GRAPH：个人记忆是否需要图关系
 
+> 2026-09-16 当前状态：以下 G0 NONE 是早期 R0/top8 基线的原实验结论和当时删除证明，不再描述 Main v21 的完整 schema。当前同一 Memory 域已有具备来源的实体/修订关系，并在必要时做一次受预算约束的关系扩展，另见 MEMORY-EXPANSION-REPLACEMENT、MEMORY-REVISION-LIFECYCLE。没有新增独立图数据库、图产品界面或运行时 Arm；当前选择不改写本记录六题的历史结果。
+
 ## 问题与边界
 
 本 Decision 只回答：在已选 Retrieval/Context Pipeline 上，SQLite 内嵌的一跳关系是否带来足够的最终回答收益。图不是默认架构；若收益不能覆盖实体、边、Revision evidence、索引和 UI 状态，产品不创建图表、图检索分支或空图谱入口。

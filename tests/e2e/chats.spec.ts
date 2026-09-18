@@ -1,3 +1,4 @@
+import { companionModelReply } from "../fixtures/companionModel";
 import { mkdtemp, rm } from "node:fs/promises";
 import {
   createServer,
@@ -55,6 +56,16 @@ async function startFakeProvider() {
   });
   let firstTitleReleased = false;
   const server = createServer((request, response) => {
+    if (request.url?.endsWith("/responses/input_tokens")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          object: "response.input_tokens",
+          input_tokens: 100,
+        }),
+      );
+      return;
+    }
     if (request.method === "GET") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
@@ -71,6 +82,11 @@ async function startFakeProvider() {
     void requestText(request).then(async (body) => {
       responseSequence += 1;
       const id = `chat-response-${String(responseSequence)}`;
+      const companionReply = companionModelReply(body);
+      if (companionReply !== undefined) {
+        writeAnswer(response, id, companionReply);
+        return;
+      }
       if (body.includes("Generate one concise chat title")) {
         if (!firstTitleReleased) await firstTitleGate;
         writeAnswer(

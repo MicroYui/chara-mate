@@ -4,6 +4,7 @@ import type { JsonValue } from "../../shared/contracts/primitives";
 import type {
   TerritoryCandidateMutationResult,
   TerritoryCreateChangeCandidateRequest,
+  TerritoryPetActionObservation,
   TerritoryPerformPetActionRequest,
 } from "../../shared/contracts/territoryWorld";
 import type { ToolResult } from "../../shared/contracts/tool";
@@ -13,7 +14,8 @@ import {
 } from "../../shared/schemas/territoryWorld";
 import { parseSchema } from "../../shared/schemas/validation";
 import type { ToolRegistry } from "../tools/toolRegistry";
-import { toTerritoryAppError } from "./territoryError";
+import type { RunRepository } from "../agent/runRepository";
+import { TerritoryError, toTerritoryAppError } from "./territoryError";
 import type { TerritoryWorldCandidateService } from "./territoryWorldCandidateService";
 import type { TerritoryWorldService } from "./territoryWorldService";
 
@@ -43,32 +45,153 @@ const TerritoryGenerateItemToolInputSchema = Type.Object(
 );
 
 interface TerritoryToolDependencies {
-  readonly candidates: Pick<TerritoryWorldCandidateService, "create">;
+  readonly candidates: Pick<
+    TerritoryWorldCandidateService,
+    "createAutonomousItem"
+  >;
+  readonly runs: Pick<
+    RunRepository,
+    "getRun" | "getRunItem" | "latestUserMessageId"
+  >;
   readonly territory: Pick<
     TerritoryWorldService,
     "getSnapshot" | "observePetActions" | "performPetAction"
   >;
 }
 
+function observationModelContent(observation: TerritoryPetActionObservation) {
+  // Adjacent instances may share a tile definition and layout dimensions.
+  // Keep every instance and its order while sending those identical fields once.
+  const { nodes, ...context } = observation;
+  const projected = nodes.map(
+    ({ instanceId, definition, content, placement, layout }) => {
+      const { point, ...sharedPlacement } =
+        placement.kind === "zone"
+          ? placement
+          : { ...placement, point: undefined };
+      const { rootInstanceId, rootGridPoint, originPx, ...sharedLayout } =
+        layout.status === "available"
+          ? layout
+          : {
+              ...layout,
+              rootInstanceId: undefined,
+              rootGridPoint: undefined,
+              originPx: undefined,
+            };
+      return {
+        shared: {
+          definition,
+          content,
+          placement: sharedPlacement,
+          layout: sharedLayout,
+        },
+        node: {
+          instanceId,
+          placement: point === undefined ? {} : { point },
+          layout:
+            rootInstanceId === undefined
+              ? {}
+              : { rootInstanceId, rootGridPoint, originPx },
+        },
+      };
+    },
+  );
+  const nodeGroups: {
+    shared: (typeof projected)[number]["shared"];
+    nodes: (typeof projected)[number]["node"][];
+  }[] = [];
+  let previousShared: string | undefined;
+  for (const { shared, node } of projected) {
+    const key = JSON.stringify(shared);
+    const previous = nodeGroups.at(-1);
+    if (previous && key === previousShared) previous.nodes.push(node);
+    else nodeGroups.push({ shared, nodes: [node] });
+    previousShared = key;
+  }
+  return { ...context, nodeGroups };
+}
+
 function summarizeInput(input: Readonly<Record<string, JsonValue>>): string {
   const name = input["name"];
   return typeof name === "string" && name.trim()
-    ? `生成领地物件候选“${name.trim()}”`
-    : "生成领地物件候选";
+    ? `生成领地物件“${name.trim()}”`
+    : "生成领地物件";
 }
 
-function failedResult(
+export function territoryCreationToolResult(
   generated: TerritoryCandidateMutationResult,
-): ToolResult | undefined {
+): ToolResult {
   const candidate = generated.snapshot.candidates.find(
     ({ id }) => id === generated.candidateId,
   );
-  if (!candidate) throw new Error("Generated Territory candidate is missing");
-  if (candidate.status !== "failed") return undefined;
+  if (!candidate)
+    throw new TerritoryError(
+      "TERRITORY.CANDIDATE_NOT_FOUND",
+      "没有找到这次创作的结果。",
+      false,
+    );
+  if (
+    candidate.status === "applied" &&
+    candidate.changeSet &&
+    candidate.appliedRevisionId
+  ) {
+    const definition = candidate.changeSet.mutations.find(
+      (mutation) => mutation.kind === "definition.put",
+    );
+    const instance = candidate.changeSet.mutations.find(
+      (mutation) => mutation.kind === "instance.put",
+    );
+    if (
+      definition?.kind !== "definition.put" ||
+      instance?.kind !== "instance.put"
+    ) {
+      throw new TerritoryError(
+        "TERRITORY.CHANGESET_INVALID",
+        "创作结果缺少物件。",
+        false,
+      );
+    }
+    const inCollection = instance.instance.placement.kind === "collection";
+    const worldRevisionChangedSinceCreation =
+      generated.snapshot.world.currentRevision.id !==
+      candidate.appliedRevisionId;
+    return {
+      artifacts: [],
+      modelContent: {
+        candidateId: candidate.id,
+        worldRevisionChangedSinceCreation,
+        instanceId: instance.instance.id,
+        name: definition.definition.name,
+        placement: worldRevisionChangedSinceCreation
+          ? null
+          : instance.instance.placement,
+        revisionId: candidate.appliedRevisionId,
+        status: "applied",
+        nextAction: worldRevisionChangedSinceCreation
+          ? "This is the result of an earlier completed creation. The World has changed since then, so the current placement is unknown. Do not create it again; observe the current Territory before describing where it is."
+          : inCollection
+            ? "The object was created and saved in the collection because no placement was available. Do not claim it is in the room."
+            : "The object was created and placed. Describe only the actual result if useful to the conversation.",
+      },
+      retryable: false,
+      status: "success",
+      summary: worldRevisionChangedSinceCreation
+        ? `“${definition.definition.name}”此前已完成，领地后来有了新变化`
+        : `“${definition.definition.name}”已${inCollection ? "放入收藏" : "放进领地"}`,
+    };
+  }
   const error = candidate.error ?? {
-    code: "TERRITORY.IMAGE_PROCESSING_FAILED",
-    message: "领地图片生成失败，请在 Territory 中重试。",
-    retryable: true,
+    code:
+      candidate.status === "stale"
+        ? "TERRITORY.REVISION_CONFLICT"
+        : "TERRITORY.INVALID_CANDIDATE_STATE",
+    message:
+      candidate.status === "stale"
+        ? "领地已有新变化，这次创作没有应用。"
+        : candidate.status === "cancelled"
+          ? "这次领地创作已取消。"
+          : "这次创作还没有应用到领地。",
+    retryable: false,
   };
   return {
     artifacts: [],
@@ -76,12 +199,47 @@ function failedResult(
     modelContent: {
       candidateId: candidate.id,
       error,
+      status: candidate.status,
       retryAvailableInTerritory: error.retryable,
-      status: "failed",
+      nextAction:
+        "Continue the conversation using the actual result. Do not claim the World changed or automatically retry a stale, cancelled, or failed creation.",
     },
-    retryable: error.retryable,
-    status: error.retryable ? "error" : "needs_input",
-    summary: `领地候选生成失败：${error.message}`,
+    retryable: false,
+    status: candidate.status === "cancelled" ? "cancelled" : "error",
+    summary: error.message,
+  };
+}
+
+export function territoryCreationFailure(
+  error: unknown,
+  signal?: AbortSignal,
+): ToolResult {
+  if (signal?.aborted) {
+    return {
+      artifacts: [],
+      modelContent: {
+        status: "cancelled",
+        nextAction:
+          "This creation was cancelled. Do not claim it succeeded or automatically retry it.",
+      },
+      retryable: false,
+      status: "cancelled",
+      summary: "这次领地创作已取消。",
+    };
+  }
+  const appError = toTerritoryAppError(error);
+  return {
+    artifacts: [],
+    error: appError,
+    modelContent: {
+      error: appError,
+      status: "failed",
+      nextAction:
+        "Continue the conversation without claiming the creation succeeded.",
+    },
+    retryable: false,
+    status: "error",
+    summary: `领地创作未完成：${appError.message}`,
   };
 }
 
@@ -124,7 +282,7 @@ export function registerTerritoryTools(
   registry.register({
     descriptor: {
       description:
-        "Generate one editable transparent 2.5D object as a Territory World candidate. Supply a short user-visible name and one or two poetic, sensory story sentences separately from the visualPrompt. Keep the story faithful to known evidence; never expose prompts, model/provider terms, dimensions, or internal IDs, and never infer user preferences from observed Activity. The current Zone and its Style Profile are frozen automatically. The current World is never changed until the user reviews and applies the candidate in Territory.",
+        "Create one new editable transparent 2.5D object in the Territory during this Run, either for the user or as your own creative activity. Supply a short user-visible name and one or two poetic, sensory story sentences separately from the visualPrompt. Keep the story faithful to known evidence; never expose prompts, model/provider terms, dimensions, or internal IDs, and never infer user preferences from observed Activity. The current Zone and its Style Profile are frozen automatically. When the source and current World revision remain valid, the host places the new object automatically or saves it to the collection if there is no space. It never moves or replaces existing content. Wait for the actual result before describing it as created. Use the Territory editor Preview for large changes.",
       effect: "write",
       idempotency: "non_idempotent",
       inputSchema: TerritoryGenerateItemToolInputSchema,
@@ -132,10 +290,49 @@ export function registerTerritoryTools(
       name: "territory.generate_item",
       namespace: "territory",
       source: "builtin",
-      summary: "生成可编辑领地物件候选",
+      summary: "创作领地小物件",
     },
     execute: async (input, context) => {
       const request = parseSchema(TerritoryGenerateItemToolInputSchema, input);
+      context.signal.throwIfAborted();
+      const run = dependencies.runs.getRun(context.runId);
+      const item = dependencies.runs.getRunItem(context.itemId);
+      if (
+        !run ||
+        run.status !== "running" ||
+        !item ||
+        item.runId !== run.id ||
+        item.kind !== "tool_call" ||
+        item.status !== "running"
+      ) {
+        return territoryCreationFailure(
+          new TerritoryError(
+            "TERRITORY.SOURCE_NOT_FOUND",
+            "这次创作没有有效的运行来源。",
+            false,
+          ),
+        );
+      }
+      const sourceMessageId = dependencies.runs.latestUserMessageId(
+        run.id,
+        item.sequence,
+      );
+      const assertSourceValid = () => {
+        const current = dependencies.runs.getRun(context.runId);
+        if (
+          !current ||
+          current.status !== "running" ||
+          current.persona.personaId !== run.persona.personaId ||
+          current.persona.revision !== run.persona.revision ||
+          dependencies.runs.latestUserMessageId(run.id) !== sourceMessageId
+        ) {
+          throw new TerritoryError(
+            "TERRITORY.SOURCE_NOT_FOUND",
+            "这次创作的运行来源已失效。",
+            false,
+          );
+        }
+      };
       const snapshot = dependencies.territory.getSnapshot();
       const candidateRequest: TerritoryCreateChangeCandidateRequest = {
         baseRevisionId: snapshot.world.currentRevision.id,
@@ -148,40 +345,32 @@ export function registerTerritoryTools(
         prompt: `${request.name.trim()}：${request.visualPrompt.trim()}`,
         providerProfileId: context.providerProfileId ?? null,
         scope: { kind: "zone", zoneId: snapshot.world.activeZoneId },
-        sources: [],
+        sources: [
+          {
+            id: context.itemId,
+            kind: "character_creation",
+            label: request.name.trim(),
+            occurredAt: run.startedAt ?? run.createdAt,
+            personaRef: {
+              personaId: run.persona.personaId,
+              revision: run.persona.revision,
+            },
+            runId: run.id,
+          },
+        ],
       };
-      context.onDelta(`正在生成“${request.name.trim()}”的领地预览…`);
-      const generated = await dependencies.candidates.create(
-        candidateRequest,
-        context.signal,
-      );
-      const failed = failedResult(generated);
-      if (failed) return failed;
-      const candidate = generated.snapshot.candidates.find(
-        ({ id }) => id === generated.candidateId,
-      );
-      if (!candidate || candidate.status !== "ready" || !candidate.changeSet) {
-        throw new Error("Unexpected Territory candidate state");
+      context.onDelta(`正在创作“${request.name.trim()}”…`);
+      try {
+        return territoryCreationToolResult(
+          await dependencies.candidates.createAutonomousItem(
+            candidateRequest,
+            assertSourceValid,
+            context.signal,
+          ),
+        );
+      } catch (error) {
+        return territoryCreationFailure(error, context.signal);
       }
-      const definition = candidate.changeSet.mutations.find(
-        (mutation) => mutation.kind === "definition.put",
-      );
-      return {
-        artifacts: [],
-        modelContent: {
-          candidateId: candidate.id,
-          name:
-            definition?.kind === "definition.put"
-              ? definition.definition.name
-              : request.name.trim(),
-          nextAction: "Ask the user to review and apply it in Territory.",
-          previewGroups: candidate.previewGroups,
-          status: "awaiting_confirmation",
-        },
-        retryable: false,
-        status: "success",
-        summary: `“${request.name.trim()}”预览已生成，等待确认`,
-      };
     },
     summarize: summarizeInput,
   });
@@ -189,7 +378,7 @@ export function registerTerritoryTools(
   registry.register({
     descriptor: {
       description:
-        "Read the current active Territory zone before choosing a pet action. Returns the current World revision, pet state, and compact typed affordances for reachable and unreachable objects. Call this only when the user asks about or invites an in-world Territory action; do not use it for ordinary conversation.",
+        "Read the current active Territory zone and its placed display before choosing a pet action. nodeGroups preserve every placed instance in order: each node inherits its group's shared fields; merge the shared and node placement/layout subobjects. Shared content includes the Definition name, description, anchors and visual dimensions. targets refer to the actionable instance IDs. A layout originPx and sizePx describe a rectangle in Zone world pixels, including possible transparent margins, not a screenshot or proof of visibility. rootGridPoint is the placed ancestor grid origin, neither an attachment position nor the pet destination. Unavailable references remain unavailable. Collection items and other zones are outside this observation. Use it when an in-world action or display is relevant to the conversation or your own current activity; do not inspect merely to answer ordinary conversation.",
       effect: "read",
       idempotency: "idempotent",
       inputSchema: TerritoryEmptyRequestSchema,
@@ -205,7 +394,7 @@ export function registerTerritoryTools(
         const observation = dependencies.territory.observePetActions();
         return Promise.resolve({
           artifacts: [],
-          modelContent: observation,
+          modelContent: observationModelContent(observation),
           retryable: false,
           status: "success",
           summary: `已观察「${observation.zone.name}」的 ${String(observation.targets.length)} 个可互动目标`,
@@ -234,6 +423,7 @@ export function registerTerritoryTools(
         TerritoryPerformPetActionRequestSchema,
         input,
       );
+      context.signal.throwIfAborted();
       context.onDelta(`正在领地中${actionLabel(request.action)}…`);
       try {
         const performed = dependencies.territory.performPetAction(request);

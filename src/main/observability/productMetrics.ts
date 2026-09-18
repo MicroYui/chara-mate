@@ -1,3 +1,7 @@
+import type {
+  MemoryCanonicalStorageStats,
+  MemorySourceReclamation,
+} from "../../shared/contracts/memoryRecall";
 import type Database from "better-sqlite3";
 
 export interface ProductMetricsSnapshot {
@@ -20,6 +24,7 @@ export interface ProductMetricsSnapshot {
     readonly pendingCandidates: number;
     readonly revisions: number;
     readonly usages: number;
+    readonly canonical: MemoryCanonicalStorageStats;
   };
   readonly storage: {
     readonly activityAssetBytes: number;
@@ -71,7 +76,18 @@ export const emptyProductMetricsSnapshot = (): ProductMetricsSnapshot => ({
     assets: zeroAssets(),
     candidates: zeroCandidates(),
   },
-  memory: { active: 0, pendingCandidates: 0, revisions: 0, usages: 0 },
+  memory: {
+    active: 0,
+    pendingCandidates: 0,
+    revisions: 0,
+    usages: 0,
+    canonical: {
+      presentSources: 0,
+      releasedSources: 0,
+      rawUtf16Bytes: 0,
+      quoteUtf8Bytes: 0,
+    },
+  },
   storage: {
     activityAssetBytes: 0,
     attachmentBytes: 0,
@@ -82,7 +98,13 @@ export const emptyProductMetricsSnapshot = (): ProductMetricsSnapshot => ({
 });
 
 export class ProductMetrics implements ProductMetricsReader {
-  constructor(private readonly database: Database.Database) {}
+  constructor(
+    private readonly database: Database.Database,
+    private readonly memory: Pick<
+      MemorySourceReclamation,
+      "canonicalStorageStats"
+    >,
+  ) {}
 
   snapshot(): ProductMetricsSnapshot {
     const scalar = (sql: string): number =>
@@ -130,6 +152,7 @@ export class ProductMetrics implements ProductMetricsReader {
         ),
         revisions: scalar("SELECT COUNT(*) AS value FROM memory_revisions"),
         usages: scalar("SELECT COUNT(*) AS value FROM memory_usage"),
+        canonical: this.memory.canonicalStorageStats(),
       },
       storage: {
         activityAssetBytes: scalar(

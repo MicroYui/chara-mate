@@ -165,6 +165,9 @@ if (
   result.browserRoundTrip !== true ||
   result.characterRendererReady !== true ||
   result.databaseRoundTrip !== true ||
+  !Number.isInteger(result.localEmbeddingDimensions) ||
+  result.localEmbeddingDimensions <= 0 ||
+  result.memoryWorkerReady !== true ||
   !Array.isArray(result.petIds) ||
   !result.petIds.includes("columbinya") ||
   !result.petIds.includes("linnea") ||

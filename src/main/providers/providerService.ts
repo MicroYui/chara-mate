@@ -94,6 +94,20 @@ function recordToProfile(record: ProviderRecord): ProviderProfile {
 }
 
 export class ProviderService {
+  #changed: (() => void) | undefined;
+
+  setChangedListener(listener: () => void): void {
+    this.#changed = listener;
+  }
+
+  private notifyChanged(): void {
+    try {
+      this.#changed?.();
+    } catch (error) {
+      this.logger.warn("PROVIDER_CHANGE_OBSERVER_ERROR", { error });
+    }
+  }
+
   constructor(
     private readonly repository: ProviderProfileRepository,
     private readonly secretStore: ProviderSecretStore,
@@ -179,11 +193,12 @@ export class ProviderService {
         false,
       );
     }
-    const apiKey = await this.secretStore.get(record.apiKeyRef);
+    const snapshot = this.createSnapshot(profileId, modelId);
     const profile = normalizeProviderDraft(recordToDraft(record));
+    const apiKey = await this.secretStore.get(record.apiKeyRef);
     return {
       provider: this.modelProviderFactory(profile, apiKey),
-      snapshot: this.createSnapshot(profileId, modelId),
+      snapshot,
     };
   }
 
@@ -421,6 +436,7 @@ export class ProviderService {
     if (existing?.apiKeyRef && existing.apiKeyRef !== nextSecretRef) {
       await this.#deleteOrphanedSecret(existing.apiKeyRef);
     }
+    this.notifyChanged();
     return recordToProfile(saved);
   }
 

@@ -1,6 +1,23 @@
+import { isDeepStrictEqual } from "node:util";
+import { Type } from "@sinclair/typebox";
+
+import type {
+  ActivityVisualLookupResult,
+  ActivityVisualMatch,
+} from "../../shared/contracts/activity";
+import {
+  ActivityImageTargetSchema,
+  ActivityVisualReferenceSchema,
+} from "../../shared/schemas/activity";
+
+import { suppliedMemoryReferences } from "./memorySuppliedReferences";
+
+import { modelTimeContext, modelTimeInstructions } from "./modelTimeContext";
 import type {
   ApprovalDecision,
   ApprovalNavigationTarget,
+  CancelStartRequest,
+  CancelStartResult,
   ResolveApprovalRequest,
   ResolveUserInputRequest,
   ResumeRunRequest,
@@ -21,14 +38,21 @@ import type {
   RunCancelRequest,
   RunCancelResult,
   UserInputResolution,
+  InputRequestResolution,
 } from "../../shared/contracts/run";
-import type { ToolDefinition, ToolRegistry } from "../tools/toolRegistry";
+import type {
+  ToolDefinition,
+  ToolRegistry,
+  ToolResultContextMeasurement,
+} from "../tools/toolRegistry";
+import { fitsInputBudget, modelInputBudget } from "../providers/inputBudget";
 import type { ToolDescriptor, ToolResult } from "../../shared/contracts/tool";
 import { ToolResultSchema } from "../../shared/schemas/tool";
 import {
   PlanUpdateSchema,
   RequestUserInputArgumentsSchema,
   UserInputResolutionSchema,
+  InputRequestResolutionSchema,
 } from "../../shared/schemas/run";
 import { parseSchema } from "../../shared/schemas/validation";
 import type { Clock } from "../../shared/pure/clock";
@@ -37,8 +61,25 @@ import { redactText } from "../../shared/pure/redaction";
 import type { ChatRepository } from "../chat/chatRepository";
 import type { ChatService } from "../chat/chatService";
 import type { ChatTitleGenerator } from "../chat/chatTitleService";
-import { ACTIVITY_SEARCH_TOOL_NAME } from "../activity/activityTool";
-import type { MemoryService } from "../memory/memoryService";
+import {
+  ACTIVITY_OBSERVE_TOOL_NAME,
+  ACTIVITY_SEARCH_TOOL_NAME,
+} from "../activity/activityTool";
+import type {
+  CognitionDispatchRequest,
+  CognitionServiceContract,
+} from "../cognition/cognitionTypes";
+import {
+  createCognitionContextInput,
+  cognitionContextTokenHeadroom,
+  estimatedCognitionContextTokens,
+  isCognitionContextInput,
+  isOrdinaryCognitionContextInput,
+  retainedCognitionContextInputs,
+  LOCAL_COGNITION_READ_BUDGET_BYTES,
+  materializeCognitionContextInput,
+  shareSelectedObservationBodies,
+} from "./cognitionContext";
 import {
   MEMORY_FORMATION_TOOL_NAME,
   MEMORY_SEARCH_TOOL_NAME,
@@ -52,7 +93,12 @@ import { ProviderError, toProviderAppError } from "../providers/providerError";
 import { toolEvidenceHash } from "../tools/toolRegistry";
 import type { CheckpointPhase } from "./checkpointRepository";
 import type { CheckpointRepository } from "./checkpointRepository";
-import { ContextCompiler, isCurrentPlanContextInput } from "./contextCompiler";
+import {
+  ContextCompiler,
+  isCurrentPlanContextInput,
+  retainedToolContextInputs,
+  type ContextInputMeasurement,
+} from "./contextCompiler";
 import {
   collectModelTurn,
   supportsStrictToolSchema,
@@ -62,10 +108,15 @@ import {
   type ModelFunctionCall,
   type ModelFunctionTool,
   type ModelProvider,
+  type ModelRequest,
   type ModelToolNamespace,
 } from "./modelProvider";
 import { detectToolCycle, semanticToolSignature } from "./loopGuard";
-import { requiresApproval, toolAllowedInExecution } from "./approvalPolicy";
+import {
+  CHAT_INTERNAL_TOOL_NAMES,
+  requiresApproval,
+  toolAllowedInExecution,
+} from "./approvalPolicy";
 import { AgentError } from "./agentError";
 import {
   AttachmentInputError,
@@ -75,15 +126,20 @@ import {
 import { ChatContextService } from "./chatContextService";
 import {
   ImageInputError,
+  IMAGE_REFERENCE_TYPE,
+  imageInputKey,
+  type ImageInputSource,
   type ImageInputProvider,
   type PreparedImageInput,
 } from "./imageInput";
 import {
-  createMemoryContextInput,
   isMemoryContextInput,
   materializeMemoryContextInput,
 } from "./memoryContext";
-import { TEXT_AGENT_BASE_INSTRUCTIONS } from "./agentInstructions";
+import {
+  executionInstructions,
+  TEXT_AGENT_BASE_INSTRUCTIONS,
+} from "./agentInstructions";
 import { CharacterContextCompiler } from "../persona/characterContext";
 import { COLLABORATION_DISPATCH_TOOL_NAME } from "./collaborationTool";
 import type { RunRepository } from "./runRepository";
@@ -113,6 +169,8 @@ const USER_ATTACHMENT_KINDS = new Set<ArtifactKind>([
 ]);
 
 const ALWAYS_LOADED_CLIENT_TOOLS = new Set([
+  ACTIVITY_OBSERVE_TOOL_NAME,
+  "companion.life",
   "file.list",
   "file.read",
   "file.search",
@@ -122,6 +180,7 @@ const ALWAYS_LOADED_CLIENT_TOOLS = new Set([
   "command.run",
   "plan.update",
   MEMORY_FORMATION_TOOL_NAME,
+  MEMORY_SEARCH_TOOL_NAME,
   COMPANIONSHIP_UPDATE_TOOL_NAME,
   IMPORTANT_MOMENT_OUTREACH_TOOL_NAME,
   TERRITORY_MOMENT_SURPRISES_TOOL_NAME,
@@ -145,31 +204,35 @@ const USER_INPUT_TOOL: ModelFunctionTool = {
 };
 const IMAGE_INSPECT_NAMESPACE = "image";
 const IMAGE_INSPECT_TOOL_NAME = "image.inspect";
-const IMAGE_REFERENCE_TYPE = "charamate_image_reference";
 const IMAGE_INSPECT_ALLOWED_TOOL = {
   name: IMAGE_INSPECT_TOOL_NAME,
   namespace: IMAGE_INSPECT_NAMESPACE,
 } as const;
+const ImageInspectArgumentsSchema = Type.Object(
+  {
+    path: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description:
+          "Absolute path, workspace-relative path, or artifact storage key",
+      }),
+    ),
+    activity: Type.Optional(ActivityImageTargetSchema),
+  },
+  { additionalProperties: false, minProperties: 1, maxProperties: 1 },
+);
+const ActivityImageSourceSchema = Type.Object(
+  { activity: ActivityVisualReferenceSchema },
+  { additionalProperties: false },
+);
 const IMAGE_INSPECT_TOOL: ModelFunctionTool = {
   deferLoading: false,
   description:
-    "Load the real pixels of a known local image or image artifact into the next model turn.",
-  inputSchema: {
-    additionalProperties: false,
-    properties: {
-      path: {
-        description:
-          "Absolute path, workspace-relative path, or artifact storage key",
-        minLength: 1,
-        type: "string",
-      },
-    },
-    required: ["path"],
-    type: "object",
-  },
+    "Read real image pixels. Supply exactly one of path or activity. To find a past desktop/window image, call this tool with {activity:{search:{...}}}, using literal text, time or surface; the result contains references, not pixels. Then call this tool with {activity:{reference:...}} to read one exact image. {activity:{current:true}} reads the actual latest available capture, never a substitute for missing past images. Source references already supplied in context can be read directly. Captured contents do not prove what the user read, intended or preferred.",
+  inputSchema: ImageInspectArgumentsSchema,
   name: IMAGE_INSPECT_TOOL_NAME,
   namespace: IMAGE_INSPECT_NAMESPACE,
-  strict: true,
+  strict: supportsStrictToolSchema(ImageInspectArgumentsSchema),
 };
 
 interface ProviderRuntimeFactory {
@@ -183,7 +246,17 @@ interface PendingSteering {
   readonly content: string;
 }
 
+interface RunPreparation {
+  readonly abort: AbortController;
+  readonly signal: AbortSignal;
+  readonly task: Promise<unknown>;
+  readonly requestId?: string;
+  runId?: string;
+  active?: ActiveRun;
+}
+
 interface ActiveRun {
+  startRequestId?: string;
   readonly abort: AbortController;
   data: RuntimeCheckpointState;
   generation: number;
@@ -192,12 +265,17 @@ interface ActiveRun {
   readonly provider: ModelProvider;
   readonly runId: string;
   readonly steering: PendingSteering[];
+  inputRevision: number;
+  cognitionInputRevision: number;
   readonly steeringWaiters: Set<() => void>;
   readonly tools: ToolRegistry;
   interruptRequested: boolean;
   interruptionError?: AppError;
   task?: Promise<void>;
-  readonly inputWaiters: Map<string, (resolution: UserInputResolution) => void>;
+  readonly inputWaiters: Map<
+    string,
+    (resolution: InputRequestResolution) => void
+  >;
   readonly waiters: Map<string, (decision: ApprovalDecision) => void>;
 }
 
@@ -240,7 +318,7 @@ function messageInput(content: string): JsonValue {
 
 function imageMessageReference(
   text: string,
-  sources: readonly string[],
+  sources: readonly ImageInputSource[],
 ): JsonValue {
   return {
     content: [
@@ -291,33 +369,48 @@ async function materializeModelInput(
   value: JsonValue,
   images: ImageInputProvider | undefined,
   cache: Map<string, PreparedImageInput>,
+  signal?: AbortSignal,
 ): Promise<JsonValue> {
+  signal?.throwIfAborted();
   if (Array.isArray(value)) {
     const materialized: JsonValue[] = [];
-    for (const item of value) {
-      materialized.push(await materializeModelInput(item, images, cache));
+    for (const item of shareSelectedObservationBodies(value)) {
+      materialized.push(
+        await materializeModelInput(item, images, cache, signal),
+      );
     }
     return materialized;
   }
   if (typeof value !== "object" || value === null) return value;
+  if (isCognitionContextInput(value))
+    return materializeCognitionContextInput(value);
   if (isMemoryContextInput(value)) {
     return materializeMemoryContextInput(value);
   }
   if (value["type"] === IMAGE_REFERENCE_TYPE) {
-    const source = value["source"];
-    if (typeof source !== "string" || !source || !images) {
+    if (!images) {
       throw new ImageInputError("图片引用已失效，无法恢复真实像素。");
     }
-    let prepared = cache.get(source);
+    const source = parseImageInputSource(value["source"]);
+    const key = imageInputKey(source);
+    // Activity owns source/revision/asset availability. Recheck it for each
+    // materialization; an in-memory image must not conceal source reclamation.
+    let prepared = typeof source === "string" ? cache.get(key) : undefined;
     if (!prepared) {
-      prepared = await images.prepare(source);
-      cache.set(source, prepared);
+      prepared = await images.prepare(source, signal);
+      signal?.throwIfAborted();
+      cache.set(key, prepared);
     }
     return prepared.content;
   }
   const materialized: Record<string, JsonValue> = {};
   for (const [name, nested] of Object.entries(value)) {
-    materialized[name] = await materializeModelInput(nested, images, cache);
+    materialized[name] = await materializeModelInput(
+      nested,
+      images,
+      cache,
+      signal,
+    );
   }
   return materialized;
 }
@@ -351,13 +444,66 @@ function toolOutput(callId: string, result: ToolResult): JsonValue {
   };
 }
 
-function userInputOutput(
+function completedToolState(
+  data: RuntimeCheckpointState,
+  pending: PendingToolCall,
+  descriptor: ToolDescriptor | undefined,
+  result: ToolResult,
+): RuntimeCheckpointState {
+  const next = { ...data };
+  delete next.pendingTool;
+  delete next.allowedTools;
+  let input = hasToolOutput(data.input, pending.callId)
+    ? data.input
+    : [...data.input, toolOutput(pending.callId, result)];
+  const planUpdated =
+    descriptor?.itemKind === "plan" && result.status === "success";
+  if (planUpdated)
+    input = input.filter((item) => !isCurrentPlanContextInput(item));
+  return {
+    ...next,
+    ...(planUpdated
+      ? { currentPlan: parseCurrentPlan(pending.arguments) }
+      : {}),
+    boundaries: [],
+    recoveryAttemptedKeys: [],
+    input,
+    handoff: {
+      ...data.handoff,
+      ...(planUpdated
+        ? {}
+        : {
+            currentProgress: [
+              ...data.handoff.currentProgress,
+              `${pending.name}: ${result.summary}`,
+            ],
+          }),
+      nextSteps: [],
+    },
+  };
+}
+
+function inputRequestOutput(
   callId: string,
-  resolution: UserInputResolution,
+  resolution:
+    | InputRequestResolution
+    | Omit<
+        Extract<InputRequestResolution, { status: "context_available" }>,
+        "resolvedAt"
+      >,
 ): JsonValue {
+  // Acceptance time belongs to the durable event, not to the premeasured input.
+  const output =
+    resolution.status === "context_available"
+      ? {
+          status: resolution.status,
+          attemptId: resolution.attemptId,
+          evidenceIds: resolution.evidenceIds,
+        }
+      : resolution;
   return {
     call_id: callId,
-    output: JSON.stringify(resolution),
+    output: JSON.stringify(output),
     type: "function_call_output",
   };
 }
@@ -395,15 +541,9 @@ function isImageInspectCall(call: ModelFunctionCall): boolean {
   );
 }
 
-function imagePath(value: Readonly<Record<string, JsonValue>>): string {
-  if (Object.keys(value).some((name) => name !== "path")) {
-    throw new TypeError("image.inspect accepts only path");
-  }
-  const path = value["path"];
-  if (typeof path !== "string" || path.trim().length === 0) {
-    throw new TypeError("image.inspect path must be a non-empty string");
-  }
-  return path;
+function parseImageInputSource(value: JsonValue | undefined): ImageInputSource {
+  if (typeof value === "string" && value.trim()) return value;
+  return parseSchema(ActivityImageSourceSchema, value);
 }
 
 function containsImageInput(value: JsonValue): boolean {
@@ -486,7 +626,8 @@ function toolDisplayOutput(result: ToolResult, toolName?: string): string {
     toolName === TERRITORY_MOMENT_SURPRISES_TOOL_NAME ||
     toolName === TERRITORY_PROPOSE_MOMENT_TOOL_NAME ||
     toolName === MEMORY_SEARCH_TOOL_NAME ||
-    toolName === ACTIVITY_SEARCH_TOOL_NAME
+    toolName === ACTIVITY_SEARCH_TOOL_NAME ||
+    toolName === ACTIVITY_OBSERVE_TOOL_NAME
   ) {
     return result.summary;
   }
@@ -572,11 +713,17 @@ function toolScopeResult(): ToolResult {
   };
 }
 
-function imageInspectionResult(image: PreparedImageInput): ToolResult {
+function imageInspectionResult(
+  image: PreparedImageInput,
+  source: ImageInputSource,
+  observation?: ActivityVisualMatch,
+): ToolResult {
   const modelContent = {
     byteLength: image.byteLength,
     height: image.height,
     loaded: true,
+    source,
+    ...(observation ? { observation: asJsonValue(observation) } : {}),
     mediaType: image.mediaType,
     width: image.width,
   } satisfies JsonValue;
@@ -610,6 +757,39 @@ function imageInspectionError(error: unknown): ToolResult {
     retryable: false,
     status: "error",
     summary: "图片读取失败",
+  };
+}
+
+function visualLookupToolResult(
+  lookup: ActivityVisualLookupResult,
+): ToolResult {
+  const modelContent = asJsonValue(lookup);
+  return {
+    artifacts: [],
+    evidenceHash: toolEvidenceHash(modelContent),
+    modelContent,
+    retryable: false,
+    status: "success",
+    summary: `找到 ${String(lookup.observations.length)} 个画面来源${lookup.complete ? "" : "，另有未返回范围"}；尚未读取像素`,
+  };
+}
+
+function visualLookupPrefix(
+  lookup: ActivityVisualLookupResult,
+  count: number,
+): ActivityVisualLookupResult {
+  if (count === lookup.observations.length) return lookup;
+  const observations = lookup.observations.slice(0, count);
+  const last = observations.at(-1);
+  return {
+    ...lookup,
+    observations,
+    complete: false,
+    omittedReason: "context_budget",
+    continuation: {
+      ...lookup.request,
+      ...(last ? { before: last.position } : {}),
+    },
   };
 }
 
@@ -822,8 +1002,18 @@ function initialCheckpoint(
   };
 }
 
+export interface RunAllocationReservation {
+  /** Reads the persisted reservation before and after asynchronous preflight. */
+  existing(): Run | undefined;
+  /** Called within the transaction that persists Run + run.started. */
+  bind(runId: string): void;
+}
+
 export class AgentRuntime {
   readonly #active = new Map<string, ActiveRun>();
+  readonly #preparations = new Set<RunPreparation>();
+  #closed = false;
+  #stopping: Promise<void> | undefined;
   readonly #characterContext = new CharacterContextCompiler();
   readonly #chatContext: ChatContextService;
 
@@ -844,103 +1034,121 @@ export class AgentRuntime {
     private readonly additionalInstructions: (run: Run) => string = () => "",
     private readonly chatTitles?: ChatTitleGenerator,
     private readonly images?: ImageInputProvider,
-    private readonly memory?: MemoryService,
+    private readonly cognition?: Pick<CognitionServiceContract, "prepareTurn">,
     chatContext?: ChatContextService,
     private readonly attachmentInputs?: AttachmentInputProvider,
+    private readonly beforeUserInteraction: (
+      continuingRunId?: string,
+    ) => Promise<void> = () => Promise.resolve(),
   ) {
-    this.#chatContext = chatContext ?? new ChatContextService(chats, clock);
+    this.#chatContext =
+      chatContext ?? new ChatContextService(chats, clock, runs);
   }
 
   async initialize(): Promise<void> {
-    for (const run of this.runs.listRunsByStatus([
-      "queued",
-      "running",
-      "waiting_approval",
-      "needs_input",
-    ])) {
-      const checkpoint = this.checkpoints.get(run.id);
-      if (
-        checkpoint &&
-        (run.status === "waiting_approval" || checkpoint.phase === "input")
-      ) {
-        try {
-          const modelRuntime = await this.providers.createChatModelRuntime(
-            run.provider.profileId,
-            run.provider.modelId,
-          );
-          const data = decodeRuntimeCheckpoint(checkpoint.context);
-          const limits =
-            data.contextLimits ??
-            (await modelRuntime.provider.resolveContextLimits(
+    return this.#prepare({}, async (preparation) => {
+      for (const run of this.runs.listRunsByStatus([
+        "queued",
+        "running",
+        "waiting_approval",
+        "needs_input",
+      ])) {
+        preparation.signal.throwIfAborted();
+        preparation.runId = run.id;
+        const checkpoint = this.checkpoints.get(run.id);
+        if (
+          checkpoint &&
+          (run.status === "waiting_approval" ||
+            checkpoint.phase === "input" ||
+            checkpoint.phase === "approval")
+        ) {
+          try {
+            const modelRuntime = await this.providers.createChatModelRuntime(
+              run.provider.profileId,
               run.provider.modelId,
-            ));
-          this.#launch(
-            this.#createActiveRun(
+            );
+            preparation.signal.throwIfAborted();
+            const data = decodeRuntimeCheckpoint(checkpoint.context);
+            const limits =
+              data.contextLimits ??
+              (await modelRuntime.provider.resolveContextLimits(
+                run.provider.modelId,
+                preparation.signal,
+              ));
+            preparation.signal.throwIfAborted();
+            const active = this.#createActiveRun(
               run.id,
               modelRuntime.provider,
               limits,
               data,
               checkpoint.generation,
-            ),
-            checkpoint.phase,
-          );
-          continue;
-        } catch {
-          // Fall through to an explicit interrupted boundary below.
+            );
+            this.#restoreSteering(active, checkpoint.lastCompletedSequence);
+            this.#launch(active, checkpoint.phase, preparation);
+            continue;
+          } catch {
+            preparation.signal.throwIfAborted();
+            // Fall through to an explicit interrupted boundary below.
+          }
         }
-      }
-      for (const item of this.runs.listRunItems(run.id)) {
-        if (item.status === "running") {
-          this.writer.completeItem(item.id, {
-            error: {
-              code: "AGENT.APP_INTERRUPTED",
-              message: "应用在这个边界中断，可从最近 checkpoint 继续。",
-              retryable: true,
-            },
-            status: "interrupted",
-          });
+        for (const item of this.runs.listRunItems(run.id)) {
+          if (item.status === "running") {
+            this.writer.completeItem(item.id, {
+              error: {
+                code: "AGENT.APP_INTERRUPTED",
+                message: "应用在这个边界中断，可从最近 checkpoint 继续。",
+                retryable: true,
+              },
+              status: "interrupted",
+            });
+          }
         }
-      }
-      for (const message of this.chats.listRunMessages(run.id)) {
-        if (message.status === "streaming") {
-          this.chats.updateMessage({
-            ...message,
-            status: "interrupted",
-            updatedAt: this.clock.now(),
-          });
+        for (const message of this.chats.listRunMessages(run.id)) {
+          if (message.status === "streaming") {
+            this.chats.updateMessage({
+              ...message,
+              status: "interrupted",
+              updatedAt: this.clock.now(),
+            });
+          }
         }
+        this.writer.transition(run.id, "interrupted", {
+          code: "AGENT.APP_INTERRUPTED",
+          message: "上次运行被应用退出中断，可从最近边界继续。",
+          retryable: true,
+        });
       }
-      this.writer.transition(run.id, "interrupted", {
-        code: "AGENT.APP_INTERRUPTED",
-        message: "上次运行被应用退出中断，可从最近边界继续。",
-        retryable: true,
-      });
-    }
+    });
   }
 
   async start(
     request: StartRunRequest,
     options?: {
+      readonly requestId?: string;
       readonly onRunAllocated?: (runId: string) => void;
       readonly signal?: AbortSignal;
     },
   ): Promise<Run> {
-    const modelRuntime = await this.providers.createChatModelRuntime(
-      request.providerProfileId,
-    );
-    options?.signal?.throwIfAborted();
-    return this.#start(
-      request,
-      modelRuntime,
-      this.personas.getActiveSnapshot(),
-      undefined,
-      true,
-      true,
-      true,
-      undefined,
-      options?.onRunAllocated,
-      options?.signal,
-    );
+    return this.#prepare(options ?? {}, async (preparation) => {
+      await this.beforeUserInteraction();
+      preparation.signal.throwIfAborted();
+      const modelRuntime = await this.providers.createChatModelRuntime(
+        request.providerProfileId,
+      );
+      preparation.signal.throwIfAborted();
+      return this.#start(
+        preparation,
+        request,
+        modelRuntime,
+        this.personas.getActiveSnapshot(),
+        undefined,
+        true,
+        true,
+        true,
+        undefined,
+        options?.onRunAllocated,
+      );
+    });
   }
 
   async startAutomation(
@@ -951,15 +1159,21 @@ export class AgentRuntime {
       readonly toolNames?: readonly string[];
     },
   ): Promise<Run> {
-    return this.#start(
-      request,
-      await this.providers.createChatModelRuntime(
+    return this.#prepare({}, async (preparation) => {
+      const modelRuntime = await this.providers.createChatModelRuntime(
         request.providerProfileId,
         options.modelId,
-      ),
-      options.persona,
-      options.toolNames,
-    );
+      );
+      preparation.signal.throwIfAborted();
+      return this.#start(
+        preparation,
+        request,
+        modelRuntime,
+        options.persona,
+        options.toolNames,
+        false,
+      );
+    });
   }
 
   async startAssistantInitiated(
@@ -967,43 +1181,68 @@ export class AgentRuntime {
     options: {
       readonly modelId: string;
       readonly onStarted?: (run: Run) => void;
+      readonly allocation?: RunAllocationReservation;
+      readonly prepareCognitionContext?: CognitionDispatchRequest["prepareContext"];
+      readonly quietCompletionAllowed?: true;
       readonly persona: PersonaSnapshot;
       readonly toolNames?: readonly string[];
     },
   ): Promise<Run> {
-    return this.#start(
-      request,
-      await this.providers.createChatModelRuntime(
+    return this.#prepare({}, async (preparation) => {
+      const modelRuntime = await this.providers.createChatModelRuntime(
         request.providerProfileId,
         options.modelId,
-      ),
-      options.persona,
-      options.toolNames ?? [],
-      false,
-      false,
-      false,
-      options.onStarted,
-    );
+      );
+      preparation.signal.throwIfAborted();
+      return this.#start(
+        preparation,
+        request,
+        modelRuntime,
+        options.persona,
+        options.toolNames ?? [],
+        false,
+        false,
+        false,
+        options.onStarted,
+        undefined,
+        options.allocation,
+        options.prepareCognitionContext,
+        options.quietCompletionAllowed,
+      );
+    });
   }
 
   async startInlineConversation(
     request: StartRunRequest,
-    options: { readonly onRunAllocated: (runId: string) => void },
+    options: {
+      readonly onRunAllocated: (runId: string) => void;
+      readonly signal?: AbortSignal;
+    },
   ): Promise<Run> {
-    return this.#start(
-      request,
-      await this.providers.createChatModelRuntime(request.providerProfileId),
-      this.personas.getActiveSnapshot(),
-      undefined,
-      true,
-      false,
-      true,
-      undefined,
-      options.onRunAllocated,
-    );
+    return this.#prepare(options, async (preparation) => {
+      await this.beforeUserInteraction();
+      preparation.signal.throwIfAborted();
+      const modelRuntime = await this.providers.createChatModelRuntime(
+        request.providerProfileId,
+      );
+      preparation.signal.throwIfAborted();
+      return this.#start(
+        preparation,
+        request,
+        modelRuntime,
+        this.personas.getActiveSnapshot(),
+        undefined,
+        true,
+        false,
+        true,
+        undefined,
+        options.onRunAllocated,
+      );
+    });
   }
 
   async #start(
+    preparation: RunPreparation,
     request: StartRunRequest,
     modelRuntime: ChatModelRuntime,
     persona: PersonaSnapshot,
@@ -1013,11 +1252,16 @@ export class AgentRuntime {
     nativeWebSearchEnabled = true,
     onStarted?: (run: Run) => void,
     onRunAllocated?: (runId: string) => void,
-    signal?: AbortSignal,
+    allocation?: RunAllocationReservation,
+    prepareCognitionContext?: CognitionDispatchRequest["prepareContext"],
+    quietCompletionAllowed?: true,
   ): Promise<Run> {
-    const preflightSignal = signal ?? new AbortController().signal;
+    const signal = preparation.signal;
+    const preflightSignal = signal;
     return this.chatTurns.runSerializedTurn(request.chatId, async () => {
       signal?.throwIfAborted();
+      const existing = allocation?.existing();
+      if (existing) return existing;
       const limits = await modelRuntime.provider.resolveContextLimits(
         modelRuntime.snapshot.modelId,
         signal,
@@ -1087,7 +1331,7 @@ export class AgentRuntime {
         }
         try {
           for (const { storageKey } of imageAttachments) {
-            preparedImages.push(await this.images.prepare(storageKey));
+            preparedImages.push(await this.images.prepare(storageKey, signal));
             signal?.throwIfAborted();
           }
         } catch (error) {
@@ -1112,10 +1356,101 @@ export class AgentRuntime {
               modelText,
               imageAttachments.map(({ storageKey }) => storageKey),
             )
-          : messageInput(modelText);
-      const memoryContext = this.memory
-        ? createMemoryContextInput(this.memory.selectContext(request.content))
-        : undefined;
+          : recordTriggerMessage
+            ? messageInput(modelText)
+            : ({
+                content: modelText,
+                role: "developer",
+                type: "message",
+              } satisfies JsonValue);
+      const runId = this.ids.generate();
+      const preparingAt = this.clock.now();
+      const prospectiveRun: Run = {
+        chatId: request.chatId,
+        createdAt: preparingAt,
+        execution: request.execution,
+        id: runId,
+        latestSequence: 1,
+        persona,
+        provider: modelRuntime.snapshot,
+        source: "text",
+        startedAt: preparingAt,
+        status: "running",
+      };
+      const requestOptions = {
+        ...(toolNames === undefined ? {} : { toolNames }),
+        interactionEnabled,
+        nativeWebSearchEnabled,
+      };
+      const imageCache = new Map<string, PreparedImageInput>();
+      imageAttachments.forEach((attachment, index) => {
+        const image = preparedImages[index];
+        if (image) imageCache.set(attachment.storageKey, image);
+      });
+      const measureInput: ContextInputMeasurement = async (input, options) => {
+        signal.throwIfAborted();
+        const materialized = await materializeModelInput(
+          input as JsonValue,
+          this.images,
+          imageCache,
+          signal,
+        );
+        signal.throwIfAborted();
+        return modelRuntime.provider.measureInput(
+          this.#modelRequest(
+            prospectiveRun,
+            materialized as JsonValue[],
+            requestOptions,
+            limits,
+          ),
+          signal,
+          options,
+        );
+      };
+      // Only optional conversational context uses remaining token headroom.
+      // A selected action has already chosen its necessary basis; materialize
+      // that complete set under a separate read-resource allowance, then count
+      // the full input together with tools, instructions and conversation.
+      const shell = prepareCognitionContext
+        ? undefined
+        : await measureInput([currentInput]);
+      const materialBudget = {
+        maxTokens: shell ? cognitionContextTokenHeadroom(shell, limits) : 0,
+      };
+      const backgroundFrameFits =
+        materialBudget.maxTokens >=
+        estimatedCognitionContextTokens({
+          text: "",
+          situationIds: [],
+          intentIds: [],
+          evidenceIds: [],
+        });
+      const cognition = prepareCognitionContext
+        ? prepareCognitionContext({
+            // Selected local raw-read guard; complete required material is
+            // measured independently of the full request token limit. See
+            // COGNITION-DYNAMIC-ACTION-BUDGET for observed resource costs.
+            maxReadBytes: LOCAL_COGNITION_READ_BUDGET_BYTES,
+            signal,
+          })
+        : backgroundFrameFits
+          ? await this.cognition?.prepareTurn({
+              personaId: persona.personaId,
+              chatId: request.chatId,
+              currentInput: request.content,
+              resourceBudget: {
+                maxReadBytes: LOCAL_COGNITION_READ_BUDGET_BYTES,
+              },
+              contextBudget: materialBudget,
+              signal,
+            })
+          : undefined;
+      signal.throwIfAborted();
+      const memoryContext =
+        cognition &&
+        (prepareCognitionContext || cognition.text || cognition.evidencePack)
+          ? createCognitionContextInput(cognition)
+          : undefined;
       const preparedContext = await this.#chatContext.prepare({
         additionalInput: [
           ...(memoryContext ? [memoryContext] : []),
@@ -1125,25 +1460,32 @@ export class AgentRuntime {
         limits,
         modelId: modelRuntime.snapshot.modelId,
         provider: modelRuntime.provider,
+        measureInput,
         signal: preflightSignal,
       });
       signal?.throwIfAborted();
       const now = this.clock.now();
-      const runId = this.ids.generate();
       signal?.throwIfAborted();
+      const reserved = allocation?.existing();
+      if (reserved) return reserved;
+      preparation.runId = runId;
       onRunAllocated?.(runId);
-      this.writer.startRun({
-        chatId: request.chatId,
-        createdAt: now,
-        execution: request.execution,
-        id: runId,
-        latestSequence: 1,
-        persona,
-        provider: modelRuntime.snapshot,
-        source: "text",
-        startedAt: now,
-        status: "running",
-      });
+      signal.throwIfAborted();
+      this.writer.startRun(
+        {
+          chatId: request.chatId,
+          createdAt: now,
+          execution: request.execution,
+          id: runId,
+          latestSequence: 1,
+          persona,
+          provider: modelRuntime.snapshot,
+          source: "text",
+          startedAt: now,
+          status: "running",
+        },
+        allocation ? (runId) => allocation.bind(runId) : undefined,
+      );
 
       if (preparedContext.compacted) {
         const compactionItem = this.writer.startItem(
@@ -1209,17 +1551,23 @@ export class AgentRuntime {
         runId,
         modelRuntime.provider,
         limits,
-        initialCheckpoint(
-          currentInput,
-          memoryContext,
-          request.content,
-          preparedContext.input,
-          toolNames,
-          interactionEnabled,
-          nativeWebSearchEnabled,
-        ),
+        {
+          ...initialCheckpoint(
+            currentInput,
+            memoryContext,
+            request.content,
+            preparedContext.input,
+            toolNames,
+            interactionEnabled,
+            nativeWebSearchEnabled,
+          ),
+          ...(quietCompletionAllowed ? { quietCompletionAllowed } : {}),
+        },
         0,
       );
+      // Initial preparation already supplied this input, including a selected
+      // autonomous action whose basis must not be prepared a second time.
+      state.cognitionInputRevision = state.inputRevision;
       imageAttachments.forEach((attachment, index) => {
         const prepared = preparedImages[index];
         if (prepared) state.imageCache.set(attachment.storageKey, prepared);
@@ -1227,17 +1575,21 @@ export class AgentRuntime {
       this.#saveCheckpoint(state, "model");
       const started = this.#requireRun(runId);
       onStarted?.(started);
-      this.#launch(state);
+      this.#launch(state, "model", preparation);
       return started;
     });
   }
 
-  steer(request: SteerRunRequest): { runId: string } {
+  async steer(request: SteerRunRequest): Promise<{ runId: string }> {
+    this.#assertOpen();
     const active = this.#active.get(request.runId);
     const run = this.#requireRun(request.runId);
     if (
       !active ||
-      (run.status !== "running" && run.status !== "waiting_approval")
+      active.abort.signal.aborted ||
+      (run.status !== "running" &&
+        run.status !== "waiting_approval" &&
+        !(run.status === "needs_input" && active.data.pendingInput))
     ) {
       throw new AgentError(
         "AGENT.RUN_NOT_ACTIVE",
@@ -1245,11 +1597,66 @@ export class AgentRuntime {
         false,
       );
     }
-    this.#queueSteering(active, run, request);
-    return { runId: run.id };
+    const inputRevision = active.inputRevision;
+    const checkpoint = this.checkpoints.get(run.id);
+    const pendingInput = active.data.pendingInput;
+    const pendingTool = active.data.pendingTool;
+    if (
+      run.status !== "running" &&
+      (!checkpoint ||
+        (run.status === "needs_input" &&
+          this.runs.getRunItem(pendingInput!.itemId)?.status !==
+            "waiting_input") ||
+        (run.status === "waiting_approval" &&
+          (!pendingTool?.approvalId ||
+            this.runs.getApproval(pendingTool.approvalId)?.status !==
+              "pending")))
+    ) {
+      throw new AgentError(
+        "AGENT.RUN_NOT_ACTIVE",
+        "该 Run 的等待边界已变化，请按当前状态继续。",
+        false,
+      );
+    }
+    return this.#prepare({ runId: run.id }, async (preparation) => {
+      await this.beforeUserInteraction(run.id);
+      preparation.signal.throwIfAborted();
+      const current = this.#requireRun(run.id);
+      if (
+        this.#active.get(run.id) !== active ||
+        active.abort.signal.aborted ||
+        active.inputRevision !== inputRevision ||
+        !["running", "waiting_approval", "needs_input"].includes(
+          current.status,
+        ) ||
+        (current.status === "needs_input" && !active.data.pendingInput) ||
+        // A running model may legitimately progress while yielding. A message
+        // submitted to an existing wait must still target that exact boundary.
+        (run.status !== "running" &&
+          ((current.status !== run.status && current.status !== "running") ||
+            !isDeepStrictEqual(this.checkpoints.get(run.id), checkpoint) ||
+            !isDeepStrictEqual(active.data.pendingInput, pendingInput) ||
+            !isDeepStrictEqual(active.data.pendingTool, pendingTool)))
+      ) {
+        throw new AgentError(
+          "AGENT.RUN_NOT_ACTIVE",
+          "追加消息等待执行权时 Run 已变化，请按当前状态继续。",
+          false,
+        );
+      }
+      this.#queueSteering(active, current, request);
+      if (current.status === "needs_input" && active.data.pendingInput) {
+        this.#supersedePendingInput(active, request.requestedAt);
+      }
+      if (current.status === "waiting_approval") {
+        this.#supersedePendingApproval(active, request.requestedAt);
+      }
+      return { runId: run.id };
+    });
   }
 
   async resume(request: ResumeRunRequest): Promise<{ runId: string }> {
+    this.#assertOpen();
     const run = this.#requireRun(request.runId);
     if (run.source === "voice") {
       throw new AgentError(
@@ -1258,20 +1665,6 @@ export class AgentRuntime {
         false,
       );
     }
-    return this.#resume(
-      request,
-      await this.providers.createChatModelRuntime(
-        run.provider.profileId,
-        run.provider.modelId,
-      ),
-    );
-  }
-
-  async #resume(
-    request: ResumeRunRequest,
-    modelRuntime: ChatModelRuntime,
-  ): Promise<{ runId: string }> {
-    const run = this.#requireRun(request.runId);
     if (run.status !== "interrupted" && run.status !== "needs_input") {
       throw new AgentError(
         "AGENT.RUN_NOT_RESUMABLE",
@@ -1295,58 +1688,98 @@ export class AgentRuntime {
       );
     }
     const data = decodeRuntimeCheckpoint(checkpoint.context);
-    const limits =
-      data.contextLimits ??
-      (await modelRuntime.provider.resolveContextLimits(run.provider.modelId));
-    this.writer.resume(run.id);
-    const active = this.#createActiveRun(
-      run.id,
-      modelRuntime.provider,
-      limits,
-      data,
-      checkpoint.generation,
-    );
-    for (const item of this.runs.listRunItems(run.id)) {
+    return this.#prepare({ runId: run.id }, async (preparation) => {
+      await this.beforeUserInteraction(run.id);
+      preparation.signal.throwIfAborted();
+      const modelRuntime = await this.providers.createChatModelRuntime(
+        run.provider.profileId,
+        run.provider.modelId,
+      );
+      preparation.signal.throwIfAborted();
+      const limits =
+        data.contextLimits ??
+        (await modelRuntime.provider.resolveContextLimits(
+          run.provider.modelId,
+          preparation.signal,
+        ));
+      preparation.signal.throwIfAborted();
       if (
-        item.kind === "user_message" &&
-        item.sequence > checkpoint.lastCompletedSequence &&
-        typeof item.input === "object" &&
-        item.input !== null &&
-        !Array.isArray(item.input) &&
-        typeof item.input["content"] === "string"
+        !isDeepStrictEqual(this.#requireRun(run.id), run) ||
+        this.#active.has(run.id) ||
+        !isDeepStrictEqual(this.checkpoints.get(run.id), checkpoint)
       ) {
-        active.steering.push({ content: item.input["content"] });
+        throw new AgentError(
+          "AGENT.RUN_NOT_RESUMABLE",
+          "等待恢复期间 Run 或 checkpoint 已变化。",
+          false,
+        );
       }
+      this.writer.resume(run.id);
+      const active = this.#createActiveRun(
+        run.id,
+        modelRuntime.provider,
+        limits,
+        data,
+        checkpoint.generation,
+      );
+      this.#restoreSteering(active, checkpoint.lastCompletedSequence);
+      this.#launch(active, checkpoint.phase, preparation);
+      return { runId: run.id };
+    });
+  }
+
+  #restoreSteering(active: ActiveRun, afterSequence: number): void {
+    for (const content of this.runs.steeringMessagesAfter(
+      active.runId,
+      afterSequence,
+    )) {
+      active.steering.push({ content });
+      active.inputRevision += 1;
     }
-    this.#launch(active, checkpoint.phase);
-    return { runId: run.id };
   }
 
   async cancel(request: RunCancelRequest): Promise<RunCancelResult> {
-    const run = this.#requireRun(request.runId);
-    if (TERMINAL_STATUSES.has(run.status)) {
-      return {
-        outcome: "already_terminal",
-        runId: run.id,
-        status: run.status as Extract<
-          Run["status"],
-          "interrupted" | "completed" | "failed" | "cancelled"
-        >,
-      };
-    }
-    const active = this.#active.get(run.id);
-    if (!active) {
-      for (const item of this.runs.listRunItems(run.id)) {
-        if (item.status === "waiting_input") {
-          this.writer.completeItem(item.id, { status: "cancelled" });
-        }
+    return this.#prepare<RunCancelResult>({}, async (preparation) => {
+      const preparing = [...this.#preparations].filter(
+        ({ runId }) => runId === request.runId,
+      );
+      for (const entry of preparing)
+        entry.abort.abort(
+          new AgentError(
+            "AGENT.PREPARATION_CANCELLED",
+            "已停止本次执行准备。",
+            false,
+          ),
+        );
+      await Promise.allSettled(preparing.map(({ task }) => task));
+      preparation.signal.throwIfAborted();
+      const run = this.#requireRun(request.runId);
+      if (TERMINAL_STATUSES.has(run.status)) {
+        return {
+          outcome: "already_terminal",
+          runId: run.id,
+          status: run.status as Extract<
+            Run["status"],
+            "interrupted" | "completed" | "failed" | "cancelled"
+          >,
+        };
       }
-      this.writer.transition(run.id, "cancelled");
+      const active = this.#active.get(run.id);
+      if (!active) {
+        for (const item of this.runs.listRunItems(run.id)) {
+          if (item.status === "waiting_input") {
+            this.writer.completeItem(item.id, { status: "cancelled" });
+          }
+        }
+        this.writer.transition(run.id, "cancelled");
+        return { outcome: "accepted", runId: run.id };
+      }
+      active.abort.abort(
+        new DOMException("Run cancelled by user", "AbortError"),
+      );
+      await active.task;
       return { outcome: "accepted", runId: run.id };
-    }
-    active.abort.abort(new DOMException("Run cancelled by user", "AbortError"));
-    await active.task;
-    return { outcome: "accepted", runId: run.id };
+    });
   }
 
   getPendingApproval(): Approval | null {
@@ -1371,7 +1804,8 @@ export class AgentRuntime {
     };
   }
 
-  resolveApproval(request: ResolveApprovalRequest): Approval {
+  async resolveApproval(request: ResolveApprovalRequest): Promise<Approval> {
+    this.#assertOpen();
     const approval = this.runs.getApproval(request.approvalId);
     if (!approval) {
       throw new AgentError(
@@ -1389,20 +1823,311 @@ export class AgentRuntime {
         false,
       );
     }
-    const resolved = this.writer.resolveApproval({
-      ...approval,
-      decidedAt: request.decidedAt,
-      ...(request.reason === undefined
-        ? {}
-        : { decisionReason: request.reason }),
-      status: request.decision,
+    const run = this.#requireRun(approval.runId);
+    const checkpoint = this.checkpoints.get(run.id);
+    const item = this.runs.getRunItem(approval.itemId);
+    if (
+      run.status !== "waiting_approval" ||
+      item?.status !== "waiting_approval" ||
+      !checkpoint ||
+      active.abort.signal.aborted ||
+      active.data.pendingTool?.approvalId !== approval.id
+    ) {
+      throw new AgentError(
+        "AGENT.APPROVAL_NOT_PENDING",
+        "审批与当前 Run 的等待边界不一致。",
+        false,
+      );
+    }
+    const inputRevision = active.inputRevision;
+    return this.#prepare({ runId: run.id }, async (preparation) => {
+      await this.beforeUserInteraction(run.id);
+      preparation.signal.throwIfAborted();
+      if (
+        this.#active.get(run.id) !== active ||
+        active.abort.signal.aborted ||
+        active.inputRevision !== inputRevision ||
+        !isDeepStrictEqual(this.#requireRun(run.id), run) ||
+        !isDeepStrictEqual(this.checkpoints.get(run.id), checkpoint) ||
+        !isDeepStrictEqual(this.runs.getApproval(approval.id), approval) ||
+        !isDeepStrictEqual(this.runs.getRunItem(approval.itemId), item) ||
+        active.data.pendingTool?.approvalId !== approval.id
+      ) {
+        throw new AgentError(
+          "AGENT.APPROVAL_NOT_PENDING",
+          "等待执行权期间审批或 Run 已变化。",
+          false,
+        );
+      }
+      const resolved = this.writer.resolveApproval({
+        ...approval,
+        decidedAt: request.decidedAt,
+        ...(request.reason === undefined
+          ? {}
+          : { decisionReason: request.reason }),
+        status: request.decision,
+      });
+      active.waiters.get(approval.id)?.(request.decision);
+      active.waiters.delete(approval.id);
+      return resolved;
     });
-    active.waiters.get(approval.id)?.(request.decision);
-    active.waiters.delete(approval.id);
-    return resolved;
+  }
+
+  async continueWithCognitionContext(request: {
+    readonly runId: string;
+    readonly itemId: string;
+    readonly attemptId: string;
+    readonly requestedAt: string;
+    readonly signal: AbortSignal;
+    readonly prepareContext: CognitionDispatchRequest["prepareContext"];
+    readonly assertCurrent: () => void;
+    readonly onAccepted: (receipt: {
+      resolvedAt: string;
+      evidenceIds: string[];
+    }) => void;
+  }): Promise<{ runId: string }> {
+    this.#assertOpen();
+    const run = this.#requireRun(request.runId);
+    const item = this.runs.getRunItem(request.itemId);
+    const notPending = () =>
+      new AgentError(
+        "AGENT.INPUT_NOT_PENDING",
+        "环境补充与当前等待问题不一致。",
+        false,
+      );
+    if (!item || item.runId !== run.id || item.kind !== "input_request") {
+      throw notPending();
+    }
+    if (item.status === "completed") {
+      const prior = parseSchema(InputRequestResolutionSchema, item.output);
+      if (
+        prior.status === "context_available" &&
+        prior.attemptId === request.attemptId
+      ) {
+        return { runId: run.id };
+      }
+      throw notPending();
+    }
+    const checkpoint = this.checkpoints.get(run.id);
+    if (
+      !checkpoint ||
+      run.status !== "needs_input" ||
+      item.status !== "waiting_input"
+    ) {
+      throw notPending();
+    }
+    const data = decodeRuntimeCheckpoint(checkpoint.context);
+    const pending = data.pendingInput;
+    if (!pending || pending.itemId !== item.id) throw notPending();
+    const previousActive = this.#active.get(run.id);
+    const inputRevision = previousActive?.inputRevision;
+    return this.#prepare(
+      { runId: run.id, signal: request.signal },
+      async (preparation) => {
+        let active = previousActive;
+        const signal = previousActive
+          ? AbortSignal.any([preparation.signal, previousActive.abort.signal])
+          : preparation.signal;
+        const assertBoundary = () => {
+          signal.throwIfAborted();
+          active?.abort.signal.throwIfAborted();
+          request.assertCurrent();
+          if (
+            this.#active.get(run.id) !== previousActive ||
+            previousActive?.inputRevision !== inputRevision ||
+            (previousActive &&
+              previousActive.data.pendingInput?.itemId !== item.id) ||
+            !isDeepStrictEqual(this.#requireRun(run.id), run) ||
+            !isDeepStrictEqual(this.runs.getRunItem(item.id), item) ||
+            !isDeepStrictEqual(this.checkpoints.get(run.id), checkpoint)
+          )
+            throw notPending();
+        };
+        const checked = async <T>(operation: () => Promise<T>): Promise<T> => {
+          try {
+            const result = await operation();
+            assertBoundary();
+            return result;
+          } catch (error) {
+            assertBoundary();
+            throw error;
+          }
+        };
+        assertBoundary();
+        if (!active) {
+          const runtime = await checked(() =>
+            this.providers.createChatModelRuntime(
+              run.provider.profileId,
+              run.provider.modelId,
+            ),
+          );
+          const limits =
+            data.contextLimits ??
+            (await checked(() =>
+              runtime.provider.resolveContextLimits(
+                run.provider.modelId,
+                signal,
+              ),
+            ));
+          active = this.#createActiveRun(
+            run.id,
+            runtime.provider,
+            limits,
+            data,
+            checkpoint.generation,
+          );
+          this.#restoreSteering(active, checkpoint.lastCompletedSequence);
+        }
+        const target = active;
+        const context = request.prepareContext({
+          maxReadBytes: LOCAL_COGNITION_READ_BUDGET_BYTES,
+          signal,
+        });
+        assertBoundary();
+        if (
+          context.decisionAttemptId !== request.attemptId ||
+          context.evidenceIds.length === 0
+        ) {
+          throw new TypeError(
+            "Environment continuation requires its complete selected context",
+          );
+        }
+        const availability = {
+          status: "context_available" as const,
+          attemptId: request.attemptId,
+          evidenceIds: context.evidenceIds,
+        };
+        if (hasToolOutput(data.input, pending.callId)) throw notPending();
+        const projected: RuntimeCheckpointState = {
+          ...target.data,
+          input: [
+            ...data.input.filter(
+              (value) => !isOrdinaryCognitionContextInput(value),
+            ),
+            createCognitionContextInput(context),
+            inputRequestOutput(pending.callId, availability),
+          ],
+        };
+        delete (projected as { lastUsage?: unknown }).lastUsage;
+        delete (projected as { lastRequestBytes?: number }).lastRequestBytes;
+        const modelInput = await checked(() =>
+          materializeModelInput(
+            projected.input as JsonValue,
+            this.images,
+            target.imageCache,
+            signal,
+          ),
+        );
+        const modelRequest = this.#modelRequest(
+          run,
+          modelInput as JsonValue[],
+          projected,
+          target.limits,
+          target.tools,
+        );
+        const budget = modelInputBudget(
+          target.limits,
+          modelRequest.maxOutputTokens,
+        );
+        let measurement = await checked(() =>
+          target.provider.measureInput(modelRequest, signal),
+        );
+        if (
+          !fitsInputBudget(measurement, budget) &&
+          measurement.exactInputTokens === undefined
+        ) {
+          measurement = await checked(() =>
+            target.provider.measureInput(modelRequest, signal, {
+              requireExact: true,
+            }),
+          );
+        }
+        if (!fitsInputBudget(measurement, budget)) {
+          throw new ProviderError(
+            "PROVIDER.CONTEXT_LIMIT_EXCEEDED",
+            "环境补充无法与当前完整请求共同容纳。",
+            false,
+          );
+        }
+        assertBoundary();
+        const resolution = parseSchema(InputRequestResolutionSchema, {
+          ...availability,
+          resolvedAt: this.clock.now(),
+        });
+        let accepted = false;
+        let publicationError: unknown;
+        const abortOwnedPreparation = () => {
+          target.interruptRequested = this.#closed;
+          target.abort.abort(preparation.abort.signal.reason);
+        };
+        try {
+          try {
+            this.writer.resolveInput(item.id, resolution, {
+              commit: (_resolved, resumed) => {
+                assertBoundary();
+                this.checkpoints.save({
+                  runId: run.id,
+                  context: checkpointJson(projected),
+                  generation: checkpoint.generation + 1,
+                  lastCompletedSequence: resumed.latestSequence,
+                  phase: "input",
+                  updatedAt: resolution.resolvedAt,
+                });
+                request.onAccepted({
+                  resolvedAt: resolution.resolvedAt,
+                  evidenceIds: [...context.evidenceIds],
+                });
+              },
+              afterCommit: () => {
+                accepted = true;
+                target.data = projected;
+                target.generation = checkpoint.generation + 1;
+                // Only Stop/shutdown owns the accepted Run; PFC cancellation does not.
+                preparation.abort.signal.addEventListener(
+                  "abort",
+                  abortOwnedPreparation,
+                  { once: true },
+                );
+                if (preparation.abort.signal.aborted) abortOwnedPreparation();
+              },
+            });
+          } catch (error) {
+            if (!accepted) throw error;
+            publicationError = error;
+          }
+          if (previousActive) {
+            target.inputWaiters.get(item.id)?.(resolution);
+            target.inputWaiters.delete(item.id);
+          } else if (this.#closed) {
+            this.writer.transition(run.id, "interrupted", {
+              code: "AGENT.APP_INTERRUPTED",
+              message: "应用退出中断了执行，可从已接纳的上下文继续。",
+              retryable: true,
+            });
+          } else {
+            // This is an existing Run, not a child owned by the PFC preparation.
+            this.#launch(target, "input");
+          }
+          if (publicationError !== undefined) {
+            throw publicationError instanceof Error
+              ? publicationError
+              : new Error("Input resolution publication failed", {
+                  cause: publicationError,
+                });
+          }
+          return { runId: run.id };
+        } finally {
+          preparation.abort.signal.removeEventListener(
+            "abort",
+            abortOwnedPreparation,
+          );
+        }
+      },
+    );
   }
 
   async resolveUserInput(request: ResolveUserInputRequest): Promise<Run> {
+    this.#assertOpen();
     const run = this.#requireRun(request.runId);
     const item = this.runs.getRunItem(request.itemId);
     if (!item || item.runId !== run.id || item.kind !== "input_request") {
@@ -1436,60 +2161,218 @@ export class AgentRuntime {
         false,
       );
     }
-    let active = this.#active.get(run.id);
-    let launchAfterResolution = false;
-    if (!active) {
-      const modelRuntime = await this.providers.createChatModelRuntime(
-        run.provider.profileId,
-        run.provider.modelId,
-      );
-      const data = decodeRuntimeCheckpoint(checkpoint.context);
-      const limits =
-        data.contextLimits ??
-        (await modelRuntime.provider.resolveContextLimits(
-          run.provider.modelId,
-        ));
-      active = this.#createActiveRun(
-        run.id,
-        modelRuntime.provider,
-        limits,
-        data,
-        checkpoint.generation,
-      );
-      launchAfterResolution = true;
-    }
-    if (active.data.pendingInput?.itemId !== item.id) {
+    const previousActive = this.#active.get(run.id);
+    const inputRevision = previousActive?.inputRevision;
+    const checkpointData = decodeRuntimeCheckpoint(checkpoint.context);
+    if (
+      checkpointData.pendingInput?.itemId !== item.id ||
+      previousActive?.abort.signal.aborted ||
+      (previousActive && previousActive.data.pendingInput?.itemId !== item.id)
+    ) {
       throw new AgentError(
         "AGENT.INPUT_NOT_PENDING",
         "补充问题与当前 checkpoint 不一致。",
         false,
       );
     }
+    return this.#prepare({ runId: run.id }, async (preparation) => {
+      await this.beforeUserInteraction(run.id);
+      preparation.signal.throwIfAborted();
+      let active = previousActive;
+      let launchAfterResolution = false;
+      if (!active) {
+        const modelRuntime = await this.providers.createChatModelRuntime(
+          run.provider.profileId,
+          run.provider.modelId,
+        );
+        preparation.signal.throwIfAborted();
+        const data = decodeRuntimeCheckpoint(checkpoint.context);
+        const limits =
+          data.contextLimits ??
+          (await modelRuntime.provider.resolveContextLimits(
+            run.provider.modelId,
+            preparation.signal,
+          ));
+        preparation.signal.throwIfAborted();
+        active = this.#createActiveRun(
+          run.id,
+          modelRuntime.provider,
+          limits,
+          data,
+          checkpoint.generation,
+        );
+        this.#restoreSteering(active, checkpoint.lastCompletedSequence);
+        launchAfterResolution = true;
+      }
+      if (active.data.pendingInput?.itemId !== item.id) {
+        throw new AgentError(
+          "AGENT.INPUT_NOT_PENDING",
+          "补充问题与当前 checkpoint 不一致。",
+          false,
+        );
+      }
 
-    this.writer.resolveInput(item.id, resolution);
-    active.inputWaiters.get(item.id)?.(resolution);
-    active.inputWaiters.delete(item.id);
-    if (launchAfterResolution) this.#launch(active, "input");
-    return this.#requireRun(run.id);
+      if (
+        this.#active.get(run.id) !== previousActive ||
+        active.abort.signal.aborted ||
+        previousActive?.inputRevision !== inputRevision ||
+        !isDeepStrictEqual(this.#requireRun(run.id), run) ||
+        !isDeepStrictEqual(this.checkpoints.get(run.id), checkpoint) ||
+        !isDeepStrictEqual(this.runs.getRunItem(item.id), item)
+      ) {
+        throw new AgentError(
+          "AGENT.INPUT_NOT_PENDING",
+          "等待执行权期间补充问题或 Run 已变化。",
+          false,
+        );
+      }
+      this.writer.resolveInput(item.id, resolution);
+      active.inputWaiters.get(item.id)?.(resolution);
+      active.inputWaiters.delete(item.id);
+      if (launchAfterResolution) this.#launch(active, "input", preparation);
+      return this.#requireRun(run.id);
+    });
   }
 
-  async interruptAll(): Promise<void> {
-    const tasks = [...this.#active.values()].flatMap((active) => {
-      const status = this.runs.getRun(active.runId)?.status;
-      if (status === "waiting_approval" || status === "needs_input") {
-        return [];
+  #assertOpen(): void {
+    if (this.#closed) {
+      throw new AgentError(
+        "AGENT.APP_SHUTTING_DOWN",
+        "应用正在退出，不能开始新的执行准备。",
+        false,
+      );
+    }
+  }
+
+  #prepare<TResult>(
+    scope: {
+      readonly requestId?: string;
+      readonly runId?: string;
+      readonly signal?: AbortSignal;
+    },
+    operation: (preparation: RunPreparation) => Promise<TResult>,
+  ): Promise<TResult> {
+    try {
+      this.#assertOpen();
+    } catch (error) {
+      return Promise.reject(
+        error instanceof Error
+          ? error
+          : new Error("Execution preparation failed", { cause: error }),
+      );
+    }
+    if (
+      scope.requestId &&
+      ([...this.#preparations].some(
+        ({ requestId }) => requestId === scope.requestId,
+      ) ||
+        [...this.#active.values()].some(
+          ({ startRequestId }) => startRequestId === scope.requestId,
+        ))
+    ) {
+      return Promise.reject(
+        new AgentError(
+          "AGENT.REQUEST_IN_PROGRESS",
+          "这次发送仍在处理中。",
+          false,
+        ),
+      );
+    }
+    const abort = new AbortController();
+    const signal = scope.signal
+      ? AbortSignal.any([abort.signal, scope.signal])
+      : abort.signal;
+    // Register before entering any user callback or asynchronous dependency.
+    const task = Promise.resolve()
+      .then(() => {
+        signal.throwIfAborted();
+        return operation(preparation);
+      })
+      .finally(async () => {
+        try {
+          // Only a Run launched by this operation belongs to its cancellation.
+          // An existing target of steer/approval is not an allocated child.
+          const active = preparation.active;
+          if (signal.aborted && active) {
+            active.interruptRequested = this.#closed;
+            active.abort.abort(signal.reason);
+            await active.task;
+          }
+        } finally {
+          this.#preparations.delete(preparation);
+        }
+      });
+    const preparation: RunPreparation = {
+      abort,
+      signal,
+      task,
+      ...(scope.requestId ? { requestId: scope.requestId } : {}),
+      ...(scope.runId ? { runId: scope.runId } : {}),
+    };
+    this.#preparations.add(preparation);
+    return task;
+  }
+
+  async cancelStart(request: CancelStartRequest): Promise<CancelStartResult> {
+    return this.#prepare<CancelStartResult>({}, async (control) => {
+      const preparing = [...this.#preparations].find(
+        ({ requestId }) => requestId === request.requestId,
+      );
+      const active = [...this.#active.values()].find(
+        ({ startRequestId }) => startRequestId === request.requestId,
+      );
+      if (!preparing && !active) {
+        return { requestId: request.requestId, outcome: "not_pending" };
       }
-      return [
-        (async () => {
-          active.interruptRequested = true;
-          active.abort.abort(
-            new DOMException("Application is shutting down", "AbortError"),
-          );
-          await active.task;
-        })(),
-      ];
+      preparing?.abort.abort(
+        new AgentError(
+          "AGENT.PREPARATION_CANCELLED",
+          "已停止本次发送准备。",
+          false,
+        ),
+      );
+      if (active) {
+        active.abort.abort(
+          new DOMException("Run cancelled by user", "AbortError"),
+        );
+      }
+      if (preparing) await Promise.allSettled([preparing.task]);
+      await active?.task;
+      control.signal.throwIfAborted();
+      const runId = active?.runId ?? preparing?.runId;
+      const run = runId ? this.runs.getRun(runId) : undefined;
+      if (run)
+        await this.cancel({ runId: run.id, requestedAt: request.requestedAt });
+      return {
+        requestId: request.requestId,
+        outcome: "accepted",
+        ...(run ? { runId: run.id } : {}),
+      };
     });
-    await Promise.allSettled(tasks);
+  }
+
+  interruptAll(): Promise<void> {
+    if (this.#stopping) return this.#stopping;
+    this.#closed = true;
+    const reason = new AgentError(
+      "AGENT.APP_SHUTTING_DOWN",
+      "应用退出中断了执行准备。",
+      false,
+    );
+    const preparing = [...this.#preparations];
+    for (const entry of preparing) entry.abort.abort(reason);
+    const tasks = [...this.#active.values()].map((active) => {
+      active.interruptRequested = true;
+      active.abort.abort(
+        new DOMException("Application is shutting down", "AbortError"),
+      );
+      return active.task;
+    });
+    this.#stopping = Promise.allSettled([
+      ...preparing.map(({ task }) => task),
+      ...tasks,
+    ]).then(() => undefined);
+    return this.#stopping;
   }
 
   #createActiveRun(
@@ -1522,6 +2405,21 @@ export class AgentRuntime {
       provider,
       runId,
       steering: [],
+      inputRevision: 0,
+      // A recovered user conversation reads current committed state at its next
+      // request. Autonomous-only recovery retains its already selected basis.
+      cognitionInputRevision: [
+        restoredData.currentUserInput,
+        restoredData.latestUserInput,
+      ].some(
+        (value) =>
+          value !== null &&
+          typeof value === "object" &&
+          !Array.isArray(value) &&
+          value["role"] === "user",
+      )
+        ? -1
+        : 0,
       steeringWaiters: new Set(),
       tools: this.tools,
       interruptRequested: false,
@@ -1529,7 +2427,18 @@ export class AgentRuntime {
     };
   }
 
-  #launch(active: ActiveRun, phase: CheckpointPhase = "model"): void {
+  #launch(
+    active: ActiveRun,
+    phase: CheckpointPhase = "model",
+    preparation?: RunPreparation,
+  ): void {
+    if (preparation) preparation.active = active;
+    if (preparation?.requestId) active.startRequestId = preparation.requestId;
+    if (preparation?.signal.aborted) {
+      active.interruptRequested = this.#closed;
+      active.abort.abort(preparation.signal.reason);
+    }
+    if (TERMINAL_STATUSES.has(this.#requireRun(active.runId).status)) return;
     this.#active.set(active.runId, active);
     const task = this.#drive(active, phase)
       .catch((error: unknown) => this.#handleDriveFailure(active, error))
@@ -1565,18 +2474,10 @@ export class AgentRuntime {
 
     while (true) {
       active.abort.signal.throwIfAborted();
-      this.#mergeSteering(active);
-      this.#compactIfNeeded(active);
-      // Keep the byte baseline in the same persisted-reference representation
-      // that ContextCompiler measures. Provider-only image pixels are
-      // materialized below and must never inflate the checkpoint.
-      const requestBytes = Buffer.byteLength(
-        JSON.stringify(active.data.input),
-        "utf8",
-      );
       const shouldRecordChatUsage =
         active.data.chatContextUsageRecorded !== true;
       const turn = await this.#modelTurn(active);
+      const turnInputRevision = turn.inputRevision;
       const checkpointWithoutAllowedTools = { ...active.data };
       delete checkpointWithoutAllowedTools.allowedTools;
       const nextInput = [
@@ -1589,11 +2490,12 @@ export class AgentRuntime {
         chatContextUsageRecorded: true,
         forcedCompactionAttempted: false,
         input: nextInput,
-        lastRequestBytes: requestBytes,
+        lastRequestBytes: turn.requestBytes,
         lastUsage: turn.usage,
       };
       if (
         shouldRecordChatUsage &&
+        turn.usage.inputTokens !== undefined &&
         !active.data.input.some(containsImageInput)
       ) {
         const run = this.#requireRun(active.runId);
@@ -1601,7 +2503,7 @@ export class AgentRuntime {
           chatId: run.chatId,
           inputTokens: turn.usage.inputTokens,
           modelId: run.provider.modelId,
-          requestBytes,
+          requestBytes: turn.requestBytes,
         });
       }
 
@@ -1632,9 +2534,13 @@ export class AgentRuntime {
       }
 
       for (const call of turn.functionCalls) {
-        await this.#handleToolCall(active, call);
+        if (active.inputRevision !== turnInputRevision) {
+          this.#skipSupersededCall(active, call);
+        } else {
+          await this.#handleToolCall(active, call);
+        }
       }
-      const hadSteering = active.steering.length > 0;
+      const hadSteering = active.inputRevision !== turnInputRevision;
       if (turn.status === "cancelled" && !hadSteering) {
         await this.#awaitSteering(active);
       }
@@ -1649,10 +2555,12 @@ export class AgentRuntime {
       ) {
         continue;
       }
-      if (turn.text.trim()) {
+      if (turn.text.trim() || active.data.quietCompletionAllowed) {
         const completedRun = this.writer.transition(active.runId, "completed");
         this.checkpoints.delete(active.runId);
-        await this.#generateFirstTurnTitle(active, completedRun, turn.text);
+        if (turn.text.trim()) {
+          await this.#generateFirstTurnTitle(active, completedRun, turn.text);
+        }
         return;
       }
       throw new GuardTerminalError({
@@ -1683,7 +2591,12 @@ export class AgentRuntime {
     });
   }
 
-  #availableTools(active: ActiveRun, run = this.#requireRun(active.runId)) {
+  #availableTools(
+    active: Pick<ActiveRun, "tools" | "runId"> & {
+      readonly data: Pick<RuntimeCheckpointState, "toolNames">;
+    },
+    run = this.#requireRun(active.runId),
+  ) {
     return active.tools
       .list()
       .filter(
@@ -1693,7 +2606,10 @@ export class AgentRuntime {
       );
   }
 
-  #toolSelected(active: ActiveRun, name: string): boolean {
+  #toolSelected(
+    active: { readonly data: Pick<RuntimeCheckpointState, "toolNames"> },
+    name: string,
+  ): boolean {
     return (
       active.data.toolNames === undefined ||
       active.data.toolNames.includes(name)
@@ -1723,13 +2639,93 @@ export class AgentRuntime {
         )
         .map(({ descriptor }) => descriptor.name),
     );
-    return active.tools
-      .search(query, active.tools.list().length)
-      .filter(({ descriptor }) => available.has(descriptor.name))
-      .slice(0, limit);
+    return active.tools.search(query, limit, available);
   }
 
-  async #modelTurn(active: ActiveRun): Promise<CollectedModelTurn> {
+  #modelRequest(
+    run: Run,
+    input: readonly JsonValue[],
+    options: Pick<
+      RuntimeCheckpointState,
+      | "toolNames"
+      | "interactionEnabled"
+      | "nativeWebSearchEnabled"
+      | "allowedTools"
+    >,
+    limits: ModelContextLimits,
+    tools: ToolRegistry = this.tools,
+  ): ModelRequest {
+    const registeredTools = this.#availableTools(
+      { tools, runId: run.id, data: options },
+      run,
+    );
+    const groupedToolNamespaces = groupModelTools(registeredTools);
+    const baseToolNamespaces =
+      options.interactionEnabled === false
+        ? groupedToolNamespaces
+        : withUserInputTool(groupedToolNamespaces);
+    const toolNamespaces =
+      this.images &&
+      limits.supportsVision !== false &&
+      (options.toolNames === undefined ||
+        options.toolNames.includes(IMAGE_INSPECT_TOOL_NAME))
+        ? withImageInspectTool(baseToolNamespaces)
+        : baseToolNamespaces;
+    const extra = [
+      this.#characterContext.compile(run.persona),
+      this.additionalInstructions(run),
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
+    const instructions = [
+      TEXT_AGENT_BASE_INSTRUCTIONS,
+      modelTimeInstructions(modelTimeContext(this.clock.now())),
+      executionInstructions(run.execution),
+      extra,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const alwaysLoadedAllowedTools = registeredTools
+      .filter(({ descriptor }) =>
+        ALWAYS_LOADED_CLIENT_TOOLS.has(descriptor.name),
+      )
+      .map(({ descriptor }) => ({
+        name: descriptor.name,
+        namespace: descriptor.namespace,
+      }));
+    const allowedTools = options.allowedTools
+      ? uniqueAllowedTools([
+          USER_INPUT_ALLOWED_TOOL,
+          ...alwaysLoadedAllowedTools,
+          ...(this.images &&
+          limits.supportsVision !== false &&
+          (options.toolNames === undefined ||
+            options.toolNames.includes(IMAGE_INSPECT_TOOL_NAME))
+            ? [IMAGE_INSPECT_ALLOWED_TOOL]
+            : []),
+          ...options.allowedTools,
+        ])
+      : undefined;
+    return {
+      ...(allowedTools === undefined ? {} : { allowedTools }),
+      input,
+      instructions,
+      ...(limits.maxOutputTokens === undefined
+        ? {}
+        : { maxOutputTokens: limits.maxOutputTokens }),
+      modelId: run.provider.modelId,
+      nativeWebSearch: options.nativeWebSearchEnabled !== false,
+      toolNamespaces,
+    };
+  }
+
+  async #modelTurn(active: ActiveRun): Promise<
+    CollectedModelTurn & {
+      readonly requestBytes: number;
+      readonly inputRevision: number;
+    }
+  > {
     const run = this.#requireRun(active.runId);
     const item = this.writer.startItem(run.id, "assistant_message", {
       modelId: run.provider.modelId,
@@ -1762,78 +2758,46 @@ export class AgentRuntime {
       pendingDelta = "";
     };
     const deltaBatcher = new RunDeltaBatcher(flushDelta);
+    let attemptedRequest: ModelRequest | undefined;
+    let attemptedInputRevision: number | undefined;
 
     try {
-      const modelInput = (await materializeModelInput(
-        active.data.input as JsonValue,
-        this.images,
-        active.imageCache,
-      )) as JsonValue[];
-      const registeredTools = this.#availableTools(active, run);
-      const groupedToolNamespaces = groupModelTools(registeredTools);
-      const baseToolNamespaces =
-        active.data.interactionEnabled === false
-          ? groupedToolNamespaces
-          : withUserInputTool(groupedToolNamespaces);
-      const toolNamespaces =
-        run.execution.mode === "agent" &&
-        this.images &&
-        active.limits.supportsVision !== false &&
-        this.#toolSelected(active, IMAGE_INSPECT_TOOL_NAME)
-          ? withImageInspectTool(baseToolNamespaces)
-          : baseToolNamespaces;
-      const extra = [
-        this.#characterContext.compile(run.persona),
-        this.additionalInstructions(run),
-      ]
-        .filter(Boolean)
-        .join("\n\n")
-        .trim();
-      const instructions = [
-        TEXT_AGENT_BASE_INSTRUCTIONS,
-        `Current timestamp: ${this.clock.now()}. User system time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}. Interpret relative dates such as today in that time zone.`,
-        run.execution.mode === "chat"
-          ? "This Run is Chat mode. You may use the provided idempotent read-only query and plan tools. Never perform write, critical, or other external-effect actions; memory.record, companionship.update, companion.important_moment_outreach, companion.territory_moment_surprises, and territory.propose_moment are the only internal persistence exceptions. Ask the user to switch explicitly to Agent mode when another action is required."
-          : "This Run is Agent mode. Follow its approval decisions and continue after structured rejection when a legitimate alternative exists.",
-        extra,
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-      const alwaysLoadedAllowedTools = registeredTools
-        .filter(({ descriptor }) =>
-          ALWAYS_LOADED_CLIENT_TOOLS.has(descriptor.name),
-        )
-        .map(({ descriptor }) => ({
-          name: descriptor.name,
-          namespace: descriptor.namespace,
-        }));
-      const allowedTools = active.data.allowedTools
-        ? uniqueAllowedTools([
-            USER_INPUT_ALLOWED_TOOL,
-            ...alwaysLoadedAllowedTools,
-            ...(run.execution.mode === "agent" &&
-            this.images &&
-            active.limits.supportsVision !== false &&
-            this.#toolSelected(active, IMAGE_INSPECT_TOOL_NAME)
-              ? [IMAGE_INSPECT_ALLOWED_TOOL]
-              : []),
-            ...active.data.allowedTools,
-          ])
-        : undefined;
-      const events = active.provider.stream(
-        {
-          ...(allowedTools === undefined ? {} : { allowedTools }),
-          input: modelInput,
-          instructions,
-          ...(active.limits.maxOutputTokens === undefined
-            ? {}
-            : { maxOutputTokens: active.limits.maxOutputTokens }),
-          modelId: run.provider.modelId,
-          nativeWebSearch: active.data.nativeWebSearchEnabled !== false,
-          toolNamespaces,
-        },
-        active.abort.signal,
+      let inputRevision: number;
+      let modelInput: JsonValue[];
+      for (;;) {
+        active.abort.signal.throwIfAborted();
+        this.#mergeSteering(active);
+        inputRevision = active.inputRevision;
+        this.#removeStaleCognitionContext(active, inputRevision);
+        // Remove stale optional state before finding space in the actual
+        // request. Selected-action evidence and Tool results remain intact.
+        await this.#compact(active, false);
+        if (inputRevision !== active.inputRevision) continue;
+        await this.#refreshCognitionContext(active, inputRevision);
+        if (inputRevision !== active.inputRevision) continue;
+        modelInput = (await materializeModelInput(
+          active.data.input as JsonValue,
+          this.images,
+          active.imageCache,
+          active.abort.signal,
+        )) as JsonValue[];
+        // Input received during any preparation await must share the latest
+        // context in this request, without sending a redundant stale request.
+        if (inputRevision === active.inputRevision) break;
+      }
+      active.abort.signal.throwIfAborted();
+      const memoryReferences = suppliedMemoryReferences(active.data.input);
+      const request = this.#modelRequest(
+        run,
+        modelInput,
+        active.data,
+        active.limits,
+        active.tools,
       );
+      attemptedRequest = request;
+      attemptedInputRevision = inputRevision;
+      const requestBytes = active.provider.estimateInput(request).wireBytes;
+      const events = active.provider.stream(request, active.abort.signal);
       const turn = await collectModelTurn(events, (delta) => {
         visibleText += delta;
         pendingDelta += delta;
@@ -1841,25 +2805,55 @@ export class AgentRuntime {
       });
       deltaBatcher.flush();
       const interrupted = turn.status === "cancelled";
-      if (message) {
-        message = this.chats.updateMessage({
-          ...message,
-          content: turn.text,
+      const displayText = turn.displayText ?? turn.text;
+      const now = this.clock.now();
+      const completedMessage: Message | undefined =
+        message || displayText
+          ? {
+              ...(message ?? {
+                chatId: run.chatId,
+                createdAt: now,
+                id: this.ids.generate(),
+                role: "assistant" as const,
+                runId: run.id,
+              }),
+              content: displayText,
+              status: interrupted ? "interrupted" : "completed",
+              updatedAt: now,
+            }
+          : undefined;
+      this.writer.completeItem(
+        item.id,
+        {
+          ...(displayText ? { displayOutput: displayText } : {}),
+          output: asJsonValue({
+            messageId: completedMessage?.id ?? null,
+            ...(turn.assistantMessages === undefined
+              ? {}
+              : {
+                  assistantMessages: turn.assistantMessages,
+                }),
+            responseId: turn.responseId,
+            usage: turn.usage,
+            memoryReferences,
+            functionCallIds: turn.functionCalls.map(({ callId }) => callId),
+          }),
           status: interrupted ? "interrupted" : "completed",
-          updatedAt: this.clock.now(),
-        });
-      }
-      this.writer.completeItem(item.id, {
-        ...(turn.text ? { displayOutput: turn.text } : {}),
-        output: asJsonValue({
-          messageId: message?.id ?? null,
-          responseId: turn.responseId,
-          usage: turn.usage,
-        }),
-        status: interrupted ? "interrupted" : "completed",
-      });
-      return turn;
+        },
+        completedMessage
+          ? () => {
+              // Same SQLite transaction as the completed Item, before its event is published.
+              if (message) this.chats.updateMessage(completedMessage);
+              else this.chats.insertMessage(completedMessage);
+            }
+          : undefined,
+      );
+      message = completedMessage;
+      return { ...turn, requestBytes, inputRevision };
     } catch (error) {
+      // Publication may fail after the transaction committed. Do not rewrite a
+      // durable completed Item/Message as a failed partial stream.
+      if (this.runs.getRunItem(item.id)?.status !== "running") throw error;
       deltaBatcher.flush();
       const cancelled = active.abort.signal.aborted;
       const reportedError = active.data.input.some(containsImageInput)
@@ -1917,8 +2911,11 @@ export class AgentRuntime {
           active.data.boundaries.length === 0
             ? await this.#compactChatContextForFirstRequest(active)
             : false;
-        if (!durableCompactionApplied) this.#compact(active, true);
-        return this.#modelTurn(active);
+        const changed =
+          durableCompactionApplied ||
+          (await this.#compact(active, true, attemptedRequest));
+        if (changed || active.inputRevision !== attemptedInputRevision)
+          return this.#modelTurn(active);
       }
       throw reportedError;
     }
@@ -1952,12 +2949,7 @@ export class AgentRuntime {
       return;
     }
     const run = this.#requireRun(active.runId);
-    const internalPersistence =
-      resolvedName === MEMORY_FORMATION_TOOL_NAME ||
-      resolvedName === COMPANIONSHIP_UPDATE_TOOL_NAME ||
-      resolvedName === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME ||
-      resolvedName === TERRITORY_MOMENT_SURPRISES_TOOL_NAME ||
-      resolvedName === TERRITORY_PROPOSE_MOMENT_TOOL_NAME;
+    const internalPersistence = CHAT_INTERNAL_TOOL_NAMES.has(resolvedName);
     if (!toolAllowedInExecution(run.execution, definition.descriptor)) {
       this.#recordToolResult(active, pending, undefined, chatModeToolResult());
       return;
@@ -2033,11 +3025,6 @@ export class AgentRuntime {
       name: IMAGE_INSPECT_TOOL_NAME,
       rawItem: call.rawItem,
     };
-    const run = this.#requireRun(active.runId);
-    if (run.execution.mode === "chat") {
-      this.#recordToolResult(active, pending, undefined, chatModeToolResult());
-      return;
-    }
     if (!this.#toolSelected(active, IMAGE_INSPECT_TOOL_NAME)) {
       this.#recordToolResult(active, pending, undefined, toolScopeResult());
       return;
@@ -2063,12 +3050,66 @@ export class AgentRuntime {
       callId: call.callId,
       toolName: IMAGE_INSPECT_TOOL_NAME,
     });
-    let source: string;
-    let prepared: PreparedImageInput;
+    const executing = { ...pending, toolItemId: item.id };
+    active.data = { ...active.data, pendingTool: executing };
+    this.#saveCheckpoint(active, "tool");
     try {
-      source = imagePath(call.arguments);
-      prepared = await this.images.prepare(source);
+      const target = parseSchema(ImageInspectArgumentsSchema, call.arguments);
+      let source: ImageInputSource;
+      if (target.path !== undefined) {
+        source = parseImageInputSource(target.path);
+      } else if (target.activity && "reference" in target.activity) {
+        source = { activity: target.activity.reference };
+      } else {
+        const activity = this.images.activity;
+        if (!activity) throw new ImageInputError("当前环境无法定位活动画面。");
+        if (target.activity && "search" in target.activity) {
+          const lookup = await activity.lookup(
+            target.activity.search,
+            { maxReadBytes: LOCAL_COGNITION_READ_BUDGET_BYTES },
+            active.abort.signal,
+          );
+          this.#assertToolResultOwner(active, executing);
+          const result = await this.#fitVisualLookup(active, executing, lookup);
+          this.#assertToolResultOwner(active, executing);
+          this.writer.completeItem(item.id, {
+            displayOutput: result.summary,
+            output: asJsonValue(result),
+            status: "completed",
+          });
+          this.#assertToolResultOwner(active, executing);
+          this.#recordToolResult(active, executing, undefined, result);
+          return;
+        }
+        const observation = await activity.current(active.abort.signal);
+        this.#assertToolResultOwner(active, executing);
+        if (!observation) throw new ImageInputError("当前没有可用的采集画面。");
+        source = { activity: observation.reference };
+      }
+      const prepared = await this.images.prepare(source, active.abort.signal);
+      this.#assertToolResultOwner(active, executing);
+      active.imageCache.set(imageInputKey(source), prepared);
+      const result = imageInspectionResult(
+        prepared,
+        source,
+        prepared.observation,
+      );
+      this.writer.completeItem(item.id, {
+        displayOutput: `${prepared.width} × ${prepared.height} · ${prepared.mediaType}`,
+        output: asJsonValue(result),
+        status: "completed",
+      });
+      this.#recordInspectedImage(active, executing, result);
     } catch (error) {
+      if (active.abort.signal.aborted) {
+        const current = this.runs.getRunItem(item.id);
+        if (current?.status === "running")
+          this.writer.completeItem(item.id, {
+            status: active.interruptRequested ? "interrupted" : "cancelled",
+          });
+        throw error;
+      }
+      this.#assertToolResultOwner(active, executing);
       const result = imageInspectionError(error);
       this.writer.completeItem(item.id, {
         displayOutput: toolDisplayOutput(result),
@@ -2076,47 +3117,86 @@ export class AgentRuntime {
         output: asJsonValue(result),
         status: "failed",
       });
-      this.#recordToolResult(
+      this.#assertToolResultOwner(active, executing);
+      this.#recordToolResult(active, executing, undefined, result);
+    }
+  }
+
+  async #fitVisualLookup(
+    active: ActiveRun,
+    pending: PendingToolCall,
+    lookup: ActivityVisualLookupResult,
+  ): Promise<ToolResult> {
+    const fits = async (count: number) => {
+      const result = visualLookupToolResult(visualLookupPrefix(lookup, count));
+      const measured = await this.#measureToolResult(
         active,
-        { ...pending, toolItemId: item.id },
+        pending,
         undefined,
         result,
       );
+      return fitsInputBudget(measured.measurement, measured.inputBudgetTokens);
+    };
+    // A material read bound protects local memory. Only the complete request
+    // decides how many observations can be supplied; continuation retains all
+    // unreturned rows, without a fixed topK or a new per-tool token ceiling.
+    for (;;) {
+      const revision = active.inputRevision;
+      if (await fits(lookup.observations.length))
+        return visualLookupToolResult(lookup);
+      if (!(await fits(0)))
+        throw new RangeError("当前上下文无法容纳画面查询及未返回范围说明。");
+      let low = 0;
+      let high = lookup.observations.length;
+      while (high - low > 1) {
+        const middle = Math.floor((low + high) / 2);
+        if (await fits(middle)) low = middle;
+        else high = middle;
+      }
+      // A user correction during allocation changes the actual request. Do
+      // not publish a prefix fitted against the previous user input.
+      if (revision !== active.inputRevision) continue;
+      return visualLookupToolResult(visualLookupPrefix(lookup, low));
+    }
+  }
+
+  #recordInspectedImage(
+    active: ActiveRun,
+    pending: PendingToolCall,
+    result: ToolResult,
+  ): void {
+    this.#assertToolResultOwner(active, pending);
+    const content = result.modelContent;
+    if (
+      result.status !== "success" ||
+      typeof content !== "object" ||
+      content === null ||
+      Array.isArray(content) ||
+      content["loaded"] !== true
+    ) {
+      this.#recordToolResult(active, pending, undefined, result);
       return;
     }
-
-    const result = imageInspectionResult(prepared);
+    const source = parseImageInputSource(content["source"]);
     const inspectedImageInput = imageMessageReference(
-      `Inspect the image loaded from ${source}. Base conclusions on its pixels, not its filename.`,
+      typeof source === "string"
+        ? `Inspect the image loaded from ${source}. Base conclusions on its pixels, not its filename.`
+        : `Inspect the retained Activity image captured at ${source.activity.capturedAt}. Its source and coverage are in the preceding Tool result. This is an observation at that time, not proof of the current screen or of what the user read or intended.`,
       [source],
     );
-    active.imageCache.set(source, prepared);
-    this.writer.completeItem(item.id, {
-      displayOutput: `${prepared.width} × ${prepared.height} · ${prepared.mediaType}`,
-      output: asJsonValue(result),
-      status: "completed",
-    });
-    const withoutAllowedTools = { ...active.data };
-    delete withoutAllowedTools.allowedTools;
+    const next = completedToolState(active.data, pending, undefined, result);
     active.data = {
-      ...withoutAllowedTools,
-      boundaries: [],
-      handoff: {
-        ...active.data.handoff,
-        currentProgress: [
-          ...active.data.handoff.currentProgress,
-          `${IMAGE_INSPECT_TOOL_NAME}: ${result.summary}`,
-        ],
-        nextSteps: [],
-      },
+      ...next,
+      // Keep one materialized image at this call's boundary. A later inspect of
+      // the same source must survive compaction with its own call and output.
       input: [
-        ...active.data.input,
-        toolOutput(call.callId, result),
+        ...next.input.filter(
+          (value) => !isDeepStrictEqual(value, inspectedImageInput),
+        ),
         inspectedImageInput,
       ],
-      latestUserInput: inspectedImageInput,
-      recoveryAttemptedKeys: [],
     };
+    this.#mergeSteering(active);
     this.#saveCheckpoint(active, "model");
   }
 
@@ -2156,13 +3236,56 @@ export class AgentRuntime {
   #continueAfterUserInput(
     active: ActiveRun,
     pending: PendingInputRequest,
-    resolution: UserInputResolution,
+    resolution: InputRequestResolution,
   ): void {
+    active.abort.signal.throwIfAborted();
+    active.inputRevision += 1;
+    if (resolution.status === "context_available") {
+      const receipt = inputRequestOutput(pending.callId, resolution);
+      const hasContext = active.data.input.some(
+        (value) =>
+          isCognitionContextInput(value) &&
+          value !== null &&
+          typeof value === "object" &&
+          !Array.isArray(value) &&
+          value["decisionAttemptId"] === resolution.attemptId &&
+          isDeepStrictEqual(value["evidenceIds"], resolution.evidenceIds),
+      );
+      if (
+        !hasContext ||
+        !active.data.input.some((value) => isDeepStrictEqual(value, receipt))
+      ) {
+        throw new TypeError(
+          "Accepted environment context is missing from the input checkpoint",
+        );
+      }
+      const next = { ...active.data };
+      delete next.pendingInput;
+      delete next.lastUsage;
+      delete next.lastRequestBytes;
+      delete next.quietCompletionAllowed;
+      active.data = {
+        ...next,
+        boundaries: [],
+        handoff: {
+          ...next.handoff,
+          currentProgress: [
+            ...next.handoff.currentProgress,
+            "新的相关内容已到达",
+          ],
+          nextSteps: [],
+        },
+        recoveryAttemptedKeys: [],
+      };
+      this.#saveCheckpoint(active, "model");
+      return;
+    }
     const checkpointBoundary = { ...active.data };
     delete checkpointBoundary.pendingInput;
+    delete checkpointBoundary.quietCompletionAllowed;
     const input = hasToolOutput(active.data.input, pending.callId)
       ? active.data.input
-      : [...active.data.input, userInputOutput(pending.callId, resolution)];
+      : [...active.data.input, inputRequestOutput(pending.callId, resolution)];
     const latestUser = userInputSummary(resolution);
     active.data = {
       ...checkpointBoundary,
@@ -2188,12 +3311,12 @@ export class AgentRuntime {
   #awaitUserInput(
     active: ActiveRun,
     itemId: string,
-  ): Promise<UserInputResolution> {
+  ): Promise<InputRequestResolution> {
     active.abort.signal.throwIfAborted();
     const current = this.runs.getRunItem(itemId);
     if (current?.status === "completed" && current.output !== undefined) {
       return Promise.resolve(
-        parseSchema(UserInputResolutionSchema, current.output),
+        parseSchema(InputRequestResolutionSchema, current.output),
       );
     }
     return new Promise((resolve, reject) => {
@@ -2213,6 +3336,71 @@ export class AgentRuntime {
     });
   }
 
+  #supersedePendingInput(active: ActiveRun, resolvedAt: string): void {
+    const pending = active.data.pendingInput;
+    if (!pending) return;
+    const item = this.runs.getRunItem(pending.itemId);
+    if (item?.status !== "waiting_input") return;
+    // The free-text message remains a user message; it is not an invented
+    // answer to one of the old question's options.
+    const resolution: UserInputResolution = { status: "cancelled", resolvedAt };
+    this.writer.resolveInput(item.id, resolution);
+    active.inputWaiters.get(item.id)?.(resolution);
+    active.inputWaiters.delete(item.id);
+  }
+
+  #supersedePendingApproval(active: ActiveRun, decidedAt: string): void {
+    const approvalId = active.data.pendingTool?.approvalId;
+    if (!approvalId) return;
+    const approval = this.runs.getApproval(approvalId);
+    if (approval?.status !== "pending") return;
+    this.writer.resolveApproval({
+      ...approval,
+      decidedAt,
+      decisionReason: "收到新消息，原动作未执行，需要重新决定。",
+      status: "cancelled",
+    });
+    active.waiters.get(approvalId)?.("rejected");
+    active.waiters.delete(approvalId);
+  }
+
+  #skipSupersededCall(active: ActiveRun, call: ModelFunctionCall): void {
+    const name = this.#resolveToolName(active, call);
+    const modelContent = {
+      code: "TOOL.INPUT_CHANGED",
+      message:
+        "Not executed: input changed after this call was proposed. Reconsider the next action using the latest actual input and context; do not assume this call succeeded.",
+    };
+    const result: ToolResult = {
+      artifacts: [],
+      evidenceHash: toolEvidenceHash(modelContent),
+      modelContent,
+      retryable: false,
+      status: "rejected",
+      summary: "输入已更新，原调用未执行",
+    };
+    const item = this.writer.startItem(active.runId, "tool_call", {
+      arguments: call.arguments,
+      toolName: name,
+    });
+    this.writer.completeItem(item.id, {
+      displayOutput: result.summary,
+      output: asJsonValue(result),
+      status: "cancelled",
+    });
+    this.#recordToolResult(
+      active,
+      {
+        arguments: call.arguments,
+        callId: call.callId,
+        name,
+        rawItem: call.rawItem,
+      },
+      active.tools.get(name)?.descriptor,
+      result,
+    );
+  }
+
   async #continueAfterApproval(
     active: ActiveRun,
     pending: PendingToolCall,
@@ -2221,15 +3409,16 @@ export class AgentRuntime {
     const approval = pending.approvalId
       ? this.runs.getApproval(pending.approvalId)
       : undefined;
+    const superseded = approval?.status === "cancelled";
     if (pending.approvalItemId) {
       const item = this.runs.getRunItem(pending.approvalItemId);
       if (item?.status === "waiting_approval" || item?.status === "running") {
         this.writer.completeItem(item.id, {
           output: {
-            decision,
+            decision: superseded ? "cancelled" : decision,
             reason: approval?.decisionReason ?? null,
           },
-          status: "completed",
+          status: superseded ? "cancelled" : "completed",
         });
       }
     }
@@ -2242,11 +3431,20 @@ export class AgentRuntime {
         ...active.data.handoff,
         decisions: [
           ...active.data.handoff.decisions,
-          `${pending.name}: ${decision}`,
+          `${pending.name}: ${superseded ? "cancelled" : decision}`,
         ],
         nextSteps: [],
       },
     };
+    if (superseded || active.steering.length > 0) {
+      this.#skipSupersededCall(active, {
+        arguments: pending.arguments,
+        callId: pending.callId,
+        name: pending.name,
+        rawItem: pending.rawItem,
+      });
+      return;
+    }
     if (decision === "rejected") {
       this.#recordToolResult(
         active,
@@ -2313,6 +3511,13 @@ export class AgentRuntime {
           ({ descriptor }) => descriptor.name,
         ),
         itemId: item.id,
+        measureResult: (result) =>
+          this.#measureToolResult(
+            active,
+            executing,
+            definition.descriptor,
+            result,
+          ),
         onDelta: (delta) => {
           pendingDelta += delta;
           deltaBatcher.schedule();
@@ -2357,20 +3562,12 @@ export class AgentRuntime {
     descriptor: ToolDescriptor | undefined,
     result: ToolResult,
   ): void {
-    const checkpointWithoutPending = { ...active.data };
-    delete checkpointWithoutPending.pendingTool;
-    const nextInput = hasToolOutput(active.data.input, pending.callId)
-      ? active.data.input
-      : [...active.data.input, toolOutput(pending.callId, result)];
-    let boundaries = active.data.boundaries;
-    let allowedTools = active.data.allowedTools;
-    let recoveryAttemptedKeys = active.data.recoveryAttemptedKeys;
-    let input = nextInput;
-    if (result.status === "success" || result.status === "rejected") {
-      boundaries = [];
-      allowedTools = undefined;
-      recoveryAttemptedKeys = [];
-    } else {
+    let next = completedToolState(active.data, pending, descriptor, result);
+    if (result.status !== "success" && result.status !== "rejected") {
+      let boundaries = active.data.boundaries;
+      let allowedTools = active.data.allowedTools;
+      let recoveryAttemptedKeys = active.data.recoveryAttemptedKeys;
+      let input = next.input;
       boundaries = [
         ...boundaries,
         {
@@ -2446,36 +3643,15 @@ export class AgentRuntime {
           });
         }
       }
+      next = {
+        ...next,
+        input,
+        boundaries,
+        recoveryAttemptedKeys,
+        ...(allowedTools === undefined ? {} : { allowedTools }),
+      };
     }
-    const planUpdated =
-      descriptor?.itemKind === "plan" && result.status === "success";
-    if (planUpdated) {
-      input = input.filter((item) => !isCurrentPlanContextInput(item));
-    }
-    const handoff = planUpdated
-      ? {
-          ...checkpointWithoutPending.handoff,
-          nextSteps: [],
-        }
-      : {
-          ...checkpointWithoutPending.handoff,
-          currentProgress: [
-            ...checkpointWithoutPending.handoff.currentProgress,
-            `${pending.name}: ${result.summary}`,
-          ],
-          nextSteps: [],
-        };
-    active.data = {
-      ...checkpointWithoutPending,
-      ...(planUpdated
-        ? { currentPlan: parseCurrentPlan(pending.arguments) }
-        : {}),
-      ...(allowedTools === undefined ? {} : { allowedTools }),
-      boundaries,
-      handoff,
-      input,
-      recoveryAttemptedKeys,
-    };
+    active.data = next;
     this.#mergeSteering(active);
     this.#saveCheckpoint(active, "model");
   }
@@ -2487,6 +3663,9 @@ export class AgentRuntime {
     const pending = active.data.pendingTool;
     if (!pending) return true;
     if (phase === "approval" && pending.approvalId) {
+      if (active.steering.length > 0) {
+        this.#supersedePendingApproval(active, this.clock.now());
+      }
       const approval = this.runs.getApproval(pending.approvalId);
       if (!approval) {
         throw new GuardTerminalError({
@@ -2512,12 +3691,27 @@ export class AgentRuntime {
         item.output
       ) {
         const result = parseSchema(ToolResultSchema, item.output);
+        if (pending.name === IMAGE_INSPECT_TOOL_NAME) {
+          this.#recordInspectedImage(active, pending, result);
+          return true;
+        }
         this.#recordToolResult(
           active,
           pending,
           active.tools.get(pending.name)?.descriptor,
           result,
         );
+        return true;
+      }
+      if (pending.name === IMAGE_INSPECT_TOOL_NAME) {
+        if (item?.status === "running")
+          this.writer.completeItem(item.id, { status: "interrupted" });
+        await this.#handleImageInspectCall(active, {
+          name: IMAGE_INSPECT_TOOL_NAME,
+          callId: pending.callId,
+          arguments: pending.arguments,
+          rawItem: pending.rawItem,
+        });
         return true;
       }
       const definition = active.tools.get(pending.name);
@@ -2563,6 +3757,9 @@ export class AgentRuntime {
       });
     }
     if (item.status === "running") this.writer.requestInput(item.id);
+    if (active.steering.length > 0) {
+      this.#supersedePendingInput(active, this.clock.now());
+    }
     if (
       item.status !== "running" &&
       item.status !== "waiting_input" &&
@@ -2591,7 +3788,7 @@ export class AgentRuntime {
       const abort = () => {
         active.waiters.delete(approvalId);
         const approval = this.runs.getApproval(approvalId);
-        if (approval?.status === "pending") {
+        if (approval?.status === "pending" && !active.interruptRequested) {
           this.writer.resolveApproval({
             ...approval,
             decidedAt: this.clock.now(),
@@ -2613,31 +3810,147 @@ export class AgentRuntime {
     });
   }
 
-  #compactIfNeeded(active: ActiveRun): void {
-    const compiled = this.contextCompiler.compile(
-      {
-        ...(active.data.currentPlan === undefined
-          ? {}
-          : { currentPlan: active.data.currentPlan }),
-        ...(active.data.currentUserInput === undefined
-          ? {}
-          : { currentUserInput: active.data.currentUserInput }),
-        items: active.data.input,
-        ...(active.data.latestUserInput === undefined
-          ? {}
-          : { latestUserInput: active.data.latestUserInput }),
-        ...(active.data.lastRequestBytes === undefined
-          ? {}
-          : { lastRequestBytes: active.data.lastRequestBytes }),
-        ...(active.data.lastUsage === undefined
-          ? {}
-          : { lastUsage: active.data.lastUsage }),
-        recentUsers: active.data.recentUsers,
-      },
-      active.limits,
-      active.data.handoff,
+  #removeStaleCognitionContext(active: ActiveRun, inputRevision: number): void {
+    if (!this.cognition || active.cognitionInputRevision === inputRevision)
+      return;
+    const next = { ...active.data };
+    delete next.lastUsage;
+    delete next.lastRequestBytes;
+    active.data = {
+      ...next,
+      input: next.input.filter(
+        (value) => !isOrdinaryCognitionContextInput(value),
+      ),
+    };
+  }
+
+  #assertToolResultOwner(active: ActiveRun, executing: PendingToolCall): void {
+    active.abort.signal.throwIfAborted();
+    const pending = active.data.pendingTool;
+    if (
+      this.#active.get(active.runId) !== active ||
+      TERMINAL_STATUSES.has(this.#requireRun(active.runId).status) ||
+      pending?.callId !== executing.callId ||
+      pending.toolItemId !== executing.toolItemId
+    ) {
+      throw new DOMException(
+        "Tool result owner is no longer active",
+        "AbortError",
+      );
+    }
+  }
+
+  async #measureToolResult(
+    active: ActiveRun,
+    executing: PendingToolCall,
+    descriptor: ToolDescriptor | undefined,
+    result: ToolResult,
+  ): Promise<ToolResultContextMeasurement> {
+    if (result.status !== "success")
+      throw new TypeError("Only successful Tool candidates can be allocated");
+    for (;;) {
+      this.#assertToolResultOwner(active, executing);
+      this.#mergeSteering(active);
+      const revision = active.inputRevision;
+      this.#removeStaleCognitionContext(active, revision);
+      const projected = completedToolState(
+        active.data,
+        executing,
+        descriptor,
+        result,
+      );
+      // Keep every real call, including later calls with unknown results. This
+      // measures known work only; the next actual request is still fully guarded.
+      const input = (await materializeModelInput(
+        projected.input as JsonValue,
+        this.images,
+        active.imageCache,
+        active.abort.signal,
+      )) as JsonValue[];
+      this.#assertToolResultOwner(active, executing);
+      if (revision !== active.inputRevision) continue;
+      const request = this.#modelRequest(
+        this.#requireRun(active.runId),
+        input,
+        projected,
+        active.limits,
+        active.tools,
+      );
+      const measurement = await active.provider.measureInput(
+        request,
+        active.abort.signal,
+      );
+      this.#assertToolResultOwner(active, executing);
+      if (revision !== active.inputRevision) continue;
+      return {
+        kind: "responses_request",
+        measurement,
+        inputBudgetTokens: modelInputBudget(
+          active.limits,
+          request.maxOutputTokens,
+        ),
+      };
+    }
+  }
+
+  async #refreshCognitionContext(
+    active: ActiveRun,
+    inputRevision: number,
+  ): Promise<void> {
+    if (active.cognitionInputRevision === inputRevision) return;
+    if (!this.cognition) {
+      active.cognitionInputRevision = inputRevision;
+      return;
+    }
+    const signal = active.abort.signal;
+    const run = this.#requireRun(active.runId);
+    const materialized = (await materializeModelInput(
+      active.data.input as JsonValue,
+      this.images,
+      active.imageCache,
+      active.abort.signal,
+    )) as JsonValue[];
+    signal.throwIfAborted();
+    if (inputRevision !== active.inputRevision) return;
+    const shell = await active.provider.measureInput(
+      this.#modelRequest(
+        run,
+        materialized,
+        active.data,
+        active.limits,
+        active.tools,
+      ),
+      signal,
     );
-    if (compiled.compacted) this.#applyCompaction(active, compiled.input);
+    signal.throwIfAborted();
+    if (inputRevision !== active.inputRevision) return;
+    const maxTokens = cognitionContextTokenHeadroom(shell, active.limits);
+    const minimumFrame = estimatedCognitionContextTokens({
+      text: "",
+      situationIds: [],
+      intentIds: [],
+      evidenceIds: [],
+    });
+    const context =
+      maxTokens >= minimumFrame
+        ? await this.cognition.prepareTurn({
+            personaId: run.persona.personaId,
+            chatId: run.chatId,
+            currentInput: active.data.recentUsers.at(-1) ?? "",
+            contextBudget: { maxTokens },
+            resourceBudget: { maxReadBytes: LOCAL_COGNITION_READ_BUDGET_BYTES },
+            signal,
+          })
+        : undefined;
+    signal.throwIfAborted();
+    if (inputRevision !== active.inputRevision) return;
+    if (context && (context.text || context.evidencePack)) {
+      active.data = {
+        ...active.data,
+        input: [createCognitionContextInput(context), ...active.data.input],
+      };
+    }
+    active.cognitionInputRevision = inputRevision;
   }
 
   async #compactChatContextForFirstRequest(
@@ -2646,23 +3959,55 @@ export class AgentRuntime {
     const run = this.#requireRun(active.runId);
     const currentInput = active.data.currentUserInput;
     if (!currentInput) return false;
-    const memoryContext = active.data.input.find(isMemoryContextInput);
+    const latestInput = active.data.latestUserInput;
+    const preservedUserInput = [
+      currentInput,
+      ...(latestInput &&
+      JSON.stringify(latestInput) !== JSON.stringify(currentInput)
+        ? [latestInput]
+        : []),
+    ];
+    const memoryContexts = retainedCognitionContextInputs(active.data.input);
+    const toolContexts = retainedToolContextInputs(active.data.input);
     const beforeBytes = Buffer.byteLength(
       JSON.stringify(active.data.input),
       "utf8",
     );
     const projection = await this.#chatContext.prepare({
       additionalInput: [
-        ...(memoryContext ? [memoryContext] : []),
-        currentInput,
+        ...memoryContexts,
+        ...toolContexts,
+        ...preservedUserInput,
       ],
       chatId: run.chatId,
       force: true,
       limits: active.limits,
       modelId: run.provider.modelId,
       provider: active.provider,
+      measureInput: async (input, options) => {
+        active.abort.signal.throwIfAborted();
+        const materialized = await materializeModelInput(
+          input as JsonValue,
+          this.images,
+          active.imageCache,
+          active.abort.signal,
+        );
+        active.abort.signal.throwIfAborted();
+        return active.provider.measureInput(
+          this.#modelRequest(
+            run,
+            materialized as JsonValue[],
+            active.data,
+            active.limits,
+            active.tools,
+          ),
+          active.abort.signal,
+          options,
+        );
+      },
       signal: active.abort.signal,
     });
+    active.abort.signal.throwIfAborted();
     if (!projection.compacted) return false;
 
     const withoutUsage = { ...active.data };
@@ -2672,8 +4017,9 @@ export class AgentRuntime {
       ...withoutUsage,
       input: [
         ...projection.input,
-        ...(memoryContext ? [memoryContext] : []),
-        currentInput,
+        ...memoryContexts,
+        ...toolContexts,
+        ...preservedUserInput,
       ],
       recentUsers: active.data.recentUsers.slice(-1),
     };
@@ -2698,8 +4044,13 @@ export class AgentRuntime {
     return true;
   }
 
-  #compact(active: ActiveRun, force: boolean): void {
-    const compiled = this.contextCompiler.compile(
+  async #compact(
+    active: ActiveRun,
+    force: boolean,
+    previousRequest?: ModelRequest,
+  ): Promise<boolean> {
+    let compiledModelInput: JsonValue | undefined;
+    const compiled = await this.contextCompiler.compile(
       {
         ...(active.data.currentPlan === undefined
           ? {}
@@ -2722,19 +4073,54 @@ export class AgentRuntime {
       active.limits,
       active.data.handoff,
       force,
+      async (input, options) => {
+        active.abort.signal.throwIfAborted();
+        const materialized = await materializeModelInput(
+          input as JsonValue,
+          this.images,
+          active.imageCache,
+          active.abort.signal,
+        );
+        active.abort.signal.throwIfAborted();
+        compiledModelInput = materialized;
+        return active.provider.measureInput(
+          this.#modelRequest(
+            this.#requireRun(active.runId),
+            materialized as JsonValue[],
+            active.data,
+            active.limits,
+            active.tools,
+          ),
+          active.abort.signal,
+          options,
+        );
+      },
     );
-    if (compiled.compacted) this.#applyCompaction(active, compiled.input);
+    active.abort.signal.throwIfAborted();
+    const changed =
+      compiled.compacted && this.#applyCompaction(active, compiled.input);
+    // Persist changed Plan/input state even without byte reduction, but do not
+    // resend a rejected request when only checkpoint metadata changed.
+    return (
+      changed &&
+      (!previousRequest ||
+        !isDeepStrictEqual(previousRequest.input, compiledModelInput))
+    );
   }
 
-  #applyCompaction(active: ActiveRun, input: readonly JsonValue[]): void {
+  #applyCompaction(active: ActiveRun, input: readonly JsonValue[]): boolean {
+    if (isDeepStrictEqual(active.data.input, input)) return false;
     const beforeBytes = Buffer.byteLength(
       JSON.stringify(active.data.input),
       "utf8",
     );
     const afterBytes = Buffer.byteLength(JSON.stringify(input), "utf8");
-    const item = this.writer.startItem(active.runId, "context_compaction", {
-      beforeBytes,
-    });
+    const item =
+      afterBytes < beforeBytes
+        ? this.writer.startItem(active.runId, "context_compaction", {
+            beforeBytes,
+          })
+        : undefined;
     const withoutUsage = { ...active.data };
     delete withoutUsage.lastUsage;
     active.data = {
@@ -2743,21 +4129,27 @@ export class AgentRuntime {
       lastRequestBytes: afterBytes,
       recentUsers: active.data.recentUsers.slice(-1),
     };
-    this.writer.completeItem(item.id, {
-      displayOutput:
-        "已整理较早上下文，并保留当前计划、进度、决定、约束与下一步。",
-      output: { afterBytes, beforeBytes },
-      status: "completed",
-    });
+    if (item)
+      this.writer.completeItem(item.id, {
+        displayOutput:
+          "已整理较早上下文，并保留当前计划、进度、决定、约束与下一步。",
+        output: { afterBytes, beforeBytes },
+        status: "completed",
+      });
     this.#saveCheckpoint(active, "model");
+    return true;
   }
 
   #mergeSteering(active: ActiveRun): void {
     if (active.steering.length === 0) return;
     const steering = active.steering.splice(0);
     const contents = steering.map(({ content }) => content);
+    // Taking over a Run also removes its original quiet-life permission,
+    // including when these user messages were restored after a crash.
+    const next = { ...active.data };
+    delete next.quietCompletionAllowed;
     active.data = {
-      ...active.data,
+      ...next,
       handoff: {
         ...active.data.handoff,
         constraints: [
@@ -2795,6 +4187,7 @@ export class AgentRuntime {
       status: "completed",
     });
     active.steering.push({ content: request.content });
+    active.inputRevision += 1;
     for (const resolve of active.steeringWaiters) resolve();
     active.steeringWaiters.clear();
   }
@@ -2846,6 +4239,13 @@ export class AgentRuntime {
     const run = this.runs.getRun(active.runId);
     if (!run || TERMINAL_STATUSES.has(run.status)) return;
     if (active.abort.signal.aborted) {
+      // Quit releases the in-memory waiter; a durable question or approval is
+      // still pending and will be restored by the next Runtime instance.
+      if (
+        active.interruptRequested &&
+        (run.status === "needs_input" || run.status === "waiting_approval")
+      )
+        return;
       const pendingInput = active.data.pendingInput;
       if (pendingInput) {
         const inputItem = this.runs.getRunItem(pendingInput.itemId);

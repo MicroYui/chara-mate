@@ -77,6 +77,7 @@ describe("ActivityPage", () => {
       cleanup: vi.fn(),
       deleteEpisode: vi.fn(),
       getEpisode: vi.fn(),
+      resolveEventReference: vi.fn(),
       getSnapshot: vi.fn().mockResolvedValue({ ok: true, value: snapshot }),
       setPaused: vi.fn(),
       updateEpisode: vi.fn(),
@@ -125,6 +126,7 @@ describe("ActivityPage", () => {
     const api: ActivityApi = {
       cleanup: cleanupActivity,
       deleteEpisode: vi.fn().mockResolvedValue({ ok: true, value: snapshot }),
+      resolveEventReference: vi.fn(),
       getEpisode: vi.fn().mockResolvedValue({
         ok: true,
         value: snapshot.episodes[0]!,
@@ -182,6 +184,7 @@ describe("ActivityPage", () => {
       cleanup: vi.fn(),
       deleteEpisode: vi.fn(),
       getEpisode,
+      resolveEventReference: vi.fn(),
       getSnapshot: vi.fn().mockResolvedValue({ ok: true, value: snapshot }),
       setPaused: vi.fn(),
       updateEpisode: vi.fn(),
@@ -196,4 +199,72 @@ describe("ActivityPage", () => {
       "Visual Studio Code",
     );
   });
+});
+
+it("shows real semantic content and a partial-read boundary in the Episode", async () => {
+  const summary =
+    "Visual Studio Code：draft.md；末次可读内容：讨论记忆的使用；按键 24 次；当前对象内容局部不可读";
+  const episode = { ...snapshot.episodes[0]!, summary };
+  const api: ActivityApi = {
+    cleanup: vi.fn(),
+    deleteEpisode: vi.fn(),
+    setPaused: vi.fn(),
+    updateEpisode: vi.fn(),
+    resolveEventReference: vi.fn(),
+    getEpisode: vi.fn().mockResolvedValue({ ok: true, value: episode }),
+    getSnapshot: vi.fn().mockResolvedValue({
+      ok: true,
+      value: { ...snapshot, episodes: [episode] },
+    }),
+  };
+  render(<ActivityPage api={api} />);
+  const row = await screen.findByRole("button", {
+    name: /末次可读内容：讨论记忆的使用/,
+  });
+  expect(row).toBeVisible();
+  fireEvent.click(row);
+  expect(await screen.findByLabelText("摘要")).toHaveValue(summary);
+});
+
+it("opens the exact raw observation before it belongs to a distilled Episode", async () => {
+  const eventId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const resolveEventReference = vi
+    .fn<ActivityApi["resolveEventReference"]>()
+    .mockResolvedValue({
+      ok: true,
+      value: {
+        date: snapshot.date,
+        event: {
+          id: eventId,
+          actor: "user",
+          startedAt: NOW,
+          details: {
+            source: "active_app",
+            appName: "Editor",
+            windowTitle: "draft.md",
+            content: {
+              source: "accessibility",
+              scope: "focused_element",
+              text: "这是当时看到的原文。",
+            },
+          },
+        },
+      },
+    });
+  const getEpisode = vi.fn();
+  const api: ActivityApi = {
+    cleanup: vi.fn(),
+    deleteEpisode: vi.fn(),
+    getEpisode,
+    resolveEventReference,
+    getSnapshot: vi.fn().mockResolvedValue({ ok: true, value: snapshot }),
+    setPaused: vi.fn(),
+    updateEpisode: vi.fn(),
+  };
+  render(<ActivityPage api={api} focusEventId={eventId} />);
+  expect(await screen.findByLabelText("记忆的原始观察")).toHaveTextContent(
+    "这是当时看到的原文。",
+  );
+  expect(getEpisode).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Activity 日期")).toHaveValue(snapshot.date);
 });

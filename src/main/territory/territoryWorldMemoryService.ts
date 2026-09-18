@@ -4,6 +4,7 @@ import type { MemoryService } from "../memory/memoryService";
 import { MemoryError } from "../memory/memoryError";
 import type { ActivityDigest } from "../../shared/contracts/activity";
 import type { MemoryDetail, MemoryType } from "../../shared/contracts/memory";
+import type { MemoryEvidenceReference } from "../../shared/contracts/memoryRecall";
 import type {
   TerritoryCandidateMutationResult,
   TerritoryCreateChangeCandidateRequest,
@@ -55,12 +56,62 @@ function compactVisualContext(value: string): string {
     : parts;
 }
 
+/** Memory owns current revision, persona scope and derived-source validity. */
+export function assertTerritoryMemorySources(
+  memory: Pick<MemoryService, "validateEvidenceReferences">,
+  personaId: string,
+  sources: readonly TerritorySourceSnapshot[],
+): void {
+  const byPersona = new Map<string, MemoryEvidenceReference[]>();
+  for (const source of sources) {
+    const owner =
+      source.kind === "chat_moment" ? source.personaRef.personaId : personaId;
+    const references = byPersona.get(owner) ?? [];
+    if (source.kind === "memory") {
+      if (!source.revisionId) {
+        throw new TerritoryError(
+          "TERRITORY.SOURCE_NOT_FOUND",
+          "这次创作缺少有效的记忆版本。",
+          false,
+        );
+      }
+      references.push({
+        memoryId: source.id,
+        revisionId: source.revisionId,
+        use: "current",
+      });
+    } else if (source.kind === "chat_moment") {
+      references.push(...source.memoryRevisions);
+    }
+    if (references.length) byPersona.set(owner, references);
+  }
+  for (const [owner, references] of byPersona) {
+    if (
+      memory.validateEvidenceReferences({
+        personaId: owner,
+        references,
+        usage: "grounding",
+      }).length
+    ) {
+      throw new TerritoryError(
+        "TERRITORY.SOURCE_NOT_FOUND",
+        "这次创作引用的记忆或其依据已变化，未应用旧故事。",
+        false,
+      );
+    }
+  }
+}
+
 export class TerritoryWorldMemoryService {
   constructor(
     private readonly repository: TerritoryWorldRepository,
-    private readonly memory: Pick<MemoryService, "get">,
+    private readonly memory: Pick<
+      MemoryService,
+      "get" | "validateEvidenceReferences"
+    >,
     private readonly activity: Pick<ActivityService, "getDigest">,
     private readonly clock: Clock,
+    private readonly activePersonaId: () => string,
     private readonly candidates?: TerritoryWorldCandidateService,
   ) {}
 
@@ -81,7 +132,14 @@ export class TerritoryWorldMemoryService {
       source.snapshot.kind,
       source.snapshot.id,
     );
-    if (open) {
+    const sameRevision = open?.sources.some(
+      (entry) =>
+        entry.kind === source.snapshot.kind &&
+        entry.id === source.snapshot.id &&
+        "revisionId" in entry &&
+        entry.revisionId === source.snapshot.revisionId,
+    );
+    if (open && sameRevision) {
       const initial = {
         candidateId: open.id,
         snapshot: this.repository.getSnapshot(),
@@ -113,11 +171,27 @@ export class TerritoryWorldMemoryService {
         : { kind: "zone", zoneId: snapshot.world.activeZoneId },
       sources: [source.snapshot],
     };
-    if (this.candidates) return this.candidates.beginCreate(candidateRequest);
+    if (this.candidates) {
+      const job = this.candidates.beginCreate(candidateRequest);
+      // Only retire an obsolete preview after the new request was accepted.
+      const retiring = open
+        ? this.candidates.cancelCandidate(open.id)
+        : Promise.resolve();
+      return {
+        initial: { ...job.initial, snapshot: this.repository.getSnapshot() },
+        completion: Promise.all([retiring, job.completion]).then(
+          ([, result]) => result,
+        ),
+      };
+    }
     const initial = this.repository.createCandidate(
       candidateRequest,
       this.clock.now(),
     );
+    if (open) {
+      this.repository.cancelCandidate(open.id, this.clock.now());
+      initial.snapshot = this.repository.getSnapshot();
+    }
     return { completion: Promise.resolve(initial), initial };
   }
 
@@ -125,7 +199,7 @@ export class TerritoryWorldMemoryService {
     description: string;
     itemContent: TerritoryItemContent;
     name: string;
-    snapshot: TerritorySourceSnapshot;
+    snapshot: Extract<TerritorySourceSnapshot, { kind: "memory" }>;
   } {
     let detail: MemoryDetail;
     try {
@@ -160,6 +234,15 @@ export class TerritoryWorldMemoryService {
         false,
       );
     }
+    assertTerritoryMemorySources(this.memory, this.activePersonaId(), [
+      {
+        id: detail.memory.id,
+        kind: "memory",
+        label: compactSourceLabel(revision.content),
+        occurredAt: revision.createdAt,
+        revisionId: revision.id,
+      },
+    ]);
     const itemContent = territorySourceItemContent({
       kind: "memory",
       name: memoryObjectNames[detail.memory.type],
@@ -183,7 +266,7 @@ export class TerritoryWorldMemoryService {
     description: string;
     itemContent: TerritoryItemContent;
     name: string;
-    snapshot: TerritorySourceSnapshot;
+    snapshot: Extract<TerritorySourceSnapshot, { kind: "activity_digest" }>;
   } {
     let digest: ActivityDigest;
     try {

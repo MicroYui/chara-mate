@@ -9,6 +9,7 @@ import type {
   TerritoryGridPoint,
   TerritoryInstance,
   TerritoryStyleProfile,
+  TerritorySourceSnapshot,
   TerritoryWorldChangeSet,
   TerritoryWorldMutation,
   TerritoryWorldSnapshot,
@@ -843,6 +844,10 @@ function expansionGeometry(
 
 export class TerritoryWorldCandidateService {
   readonly #controllers = new Map<string, AbortController>();
+  readonly #completions = new Map<
+    string,
+    Promise<TerritoryCandidateMutationResult>
+  >();
 
   constructor(
     private readonly repository: TerritoryWorldRepository,
@@ -850,6 +855,9 @@ export class TerritoryWorldCandidateService {
     private readonly runtimes: TerritoryWorldImageRuntimeFactory,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    readonly assertSourcesValid: (
+      sources: readonly TerritorySourceSnapshot[],
+    ) => void,
     private readonly onSnapshotChanged: (
       snapshot: TerritoryWorldSnapshot,
     ) => void = () => undefined,
@@ -882,36 +890,91 @@ export class TerritoryWorldCandidateService {
     request: TerritoryCreateChangeCandidateRequest,
     signal?: AbortSignal,
   ): TerritoryWorldCandidateJob {
+    this.assertSourcesValid(request.sources);
     const created = this.repository.createCandidate(request, this.clock.now());
     return this.beginExecution(created.candidateId, signal);
+  }
+
+  async createAutonomousItem(
+    request: TerritoryCreateChangeCandidateRequest,
+    assertSourceValid: () => void,
+    signal?: AbortSignal,
+  ): Promise<TerritoryCandidateMutationResult> {
+    signal?.throwIfAborted();
+    this.assertSourcesValid(request.sources);
+    assertSourceValid();
+    if (
+      request.intent !== "item" ||
+      request.scope.kind !== "zone" ||
+      request.sources.length !== 1 ||
+      request.sources[0]?.kind !== "character_creation"
+    ) {
+      throw new TerritoryError(
+        "TERRITORY.CHANGESET_INVALID",
+        "角色创作必须绑定真实来源且只新增一个物件。",
+        false,
+      );
+    }
+    const source = request.sources[0];
+    const existing = this.repository
+      .getSnapshot()
+      .candidates.find((candidate) =>
+        candidate.sources.some(
+          (entry) => entry.kind === source.kind && entry.id === source.id,
+        ),
+      );
+    if (existing) return this.existingJob(existing.id).completion;
+    const created = this.repository.createCandidate(request, this.clock.now());
+    return this.beginExecution(
+      created.candidateId,
+      signal,
+      null,
+      undefined,
+      assertSourceValid,
+    ).completion;
   }
 
   async createMoment(
     momentKey: string,
     request: TerritoryCreateChangeCandidateRequest,
+    assertSourceValid: () => void,
     signal?: AbortSignal,
   ): Promise<TerritoryCandidateMutationResult> {
-    return this.beginCreateMoment(momentKey, request, signal).completion;
+    return this.beginCreateMoment(momentKey, request, assertSourceValid, signal)
+      .completion;
   }
 
   beginCreateMoment(
     momentKey: string,
     request: TerritoryCreateChangeCandidateRequest,
+    assertSourceValid: () => void,
     signal?: AbortSignal,
   ): TerritoryWorldCandidateJob {
+    signal?.throwIfAborted();
+    this.assertSourcesValid(request.sources);
+    assertSourceValid();
     const created = this.repository.createMomentCandidate(
       momentKey,
       request,
       this.clock.now(),
     );
-    if (!created.created) {
-      const initial = {
-        candidateId: created.candidateId,
-        snapshot: created.snapshot,
-      };
-      return { completion: Promise.resolve(initial), initial };
-    }
-    return this.beginExecution(created.candidateId, signal);
+    if (!created.created) return this.existingJob(created.candidateId);
+    return this.beginExecution(
+      created.candidateId,
+      signal,
+      null,
+      undefined,
+      assertSourceValid,
+    );
+  }
+
+  private existingJob(candidateId: string): TerritoryWorldCandidateJob {
+    const initial = { candidateId, snapshot: this.repository.getSnapshot() };
+    return {
+      completion:
+        this.#completions.get(candidateId) ?? Promise.resolve(initial),
+      initial,
+    };
   }
 
   private beginExecution(
@@ -919,6 +982,7 @@ export class TerritoryWorldCandidateService {
     externalSignal?: AbortSignal,
     previousChangeSet: TerritoryWorldChangeSet | null = null,
     afterCompletion: () => Promise<void> = () => Promise.resolve(),
+    assertSourceValid?: () => void,
   ): TerritoryWorldCandidateJob {
     this.repository.markCandidateGenerating(candidateId, this.clock.now());
     const controller = new AbortController();
@@ -934,17 +998,21 @@ export class TerritoryWorldCandidateService {
     const completion = new Promise<TerritoryCandidateMutationResult>(
       (resolve, reject) => {
         setImmediate(() => {
-          void this.execute(candidateId, controller, previousChangeSet).then(
-            resolve,
-            reject,
-          );
+          void this.execute(
+            candidateId,
+            controller,
+            previousChangeSet,
+            assertSourceValid,
+          ).then(resolve, reject);
         });
       },
     ).finally(async () => {
       externalSignal?.removeEventListener("abort", abort);
       this.#controllers.delete(candidateId);
+      this.#completions.delete(candidateId);
       await afterCompletion();
     });
+    this.#completions.set(candidateId, completion);
     return { completion, initial };
   }
 
@@ -952,16 +1020,25 @@ export class TerritoryWorldCandidateService {
     candidateId: string,
     controller: AbortController,
     previousChangeSet: TerritoryWorldChangeSet | null,
+    assertSourceValid?: () => void,
   ): Promise<TerritoryCandidateMutationResult> {
     const active = this.repository
       .getSnapshot()
       .candidates.find(({ id }) => id === candidateId);
     if (active?.status !== "generating" || controller.signal.aborted) {
-      return { candidateId, snapshot: this.repository.getSnapshot() };
+      const snapshot =
+        active?.status === "generating" && controller.signal.aborted
+          ? this.repository.cancelCandidate(candidateId, this.clock.now())
+          : this.repository.getSnapshot();
+      this.publish(snapshot);
+      return { candidateId, snapshot };
     }
     const work = this.repository.getCandidateWork(candidateId);
     const installed: PreparedTerritoryWorldAsset[] = [];
     try {
+      controller.signal.throwIfAborted();
+      this.assertSourcesValid(work.request.sources);
+      assertSourceValid?.();
       const snapshot = this.repository.getSnapshot();
       const zone = zoneForRequest(work.request, snapshot);
       const view = this.repository.getZoneView({
@@ -1004,11 +1081,16 @@ export class TerritoryWorldCandidateService {
         previousChangeSet,
         work.edit?.excludedChangeIds ?? [],
       );
+      // No await between the final source/cancellation check and the atomic commit.
+      controller.signal.throwIfAborted();
+      this.assertSourcesValid(work.request.sources);
+      assertSourceValid?.();
       const completed = this.repository.completeCandidate(
         candidateId,
         plan.changeSet,
         plan.previewGroups,
         this.clock.now(),
+        assertSourceValid !== undefined,
       );
       this.publish(completed);
       return { candidateId, snapshot: completed };
@@ -1018,11 +1100,13 @@ export class TerritoryWorldCandidateService {
         .getSnapshot()
         .candidates.find(({ id }) => id === candidateId);
       if (candidate?.status === "generating") {
-        const snapshot = this.repository.failCandidate(
-          candidateId,
-          failure(error),
-          this.clock.now(),
-        );
+        const snapshot = controller.signal.aborted
+          ? this.repository.cancelCandidate(candidateId, this.clock.now())
+          : this.repository.failCandidate(
+              candidateId,
+              failure(error),
+              this.clock.now(),
+            );
         this.publish(snapshot);
         return {
           candidateId,
@@ -1045,6 +1129,7 @@ export class TerritoryWorldCandidateService {
     const previousCandidate = this.repository
       .getSnapshot()
       .candidates.find(({ id }) => id === request.candidateId);
+    if (previousCandidate) this.assertSourcesValid(previousCandidate.sources);
     const previous = this.candidateAssetIds(request.candidateId);
     const edited = this.repository.editCandidate(request, this.clock.now());
     return this.beginExecution(
@@ -1156,6 +1241,7 @@ export class TerritoryWorldCandidateService {
           input.signal,
         )
       : await input.provider.generate(prompt, input.options, input.signal);
+    input.signal.throwIfAborted();
     const prepared = await this.assets.prepareInstall({
       assetId: input.assetId,
       createdAt: this.clock.now(),
@@ -1165,6 +1251,7 @@ export class TerritoryWorldCandidateService {
       source: generated,
     });
     try {
+      input.signal.throwIfAborted();
       this.repository.installAsset(prepared);
     } catch (error) {
       await this.assets.rollback(prepared);
@@ -1236,7 +1323,9 @@ export class TerritoryWorldCandidateService {
           };
     const definition: TerritoryDefinition = {
       anchors: [],
-      capabilities: context.request.sources.length
+      capabilities: context.request.sources.some(
+        (source) => source.kind !== "character_creation",
+      )
         ? ["inspectable", "memory-reveal"]
         : ["inspectable"],
       createdAt: now,

@@ -1,8 +1,11 @@
+import type { ModelRequest } from "../agent/modelProvider";
+import { estimateInputBudget } from "./inputBudget";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProviderProfileDraft } from "../../shared/contracts/provider";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
+import type { ModelProvider } from "../agent/modelProvider";
 import type { ProviderHttpAdapter } from "./openaiProviderAdapter";
 import type { TerritoryImageProvider } from "./azureImageProvider";
 import { INITIAL_PROVIDER_PROFILES } from "./initialProviderProfiles";
@@ -14,6 +17,7 @@ import type {
 import { ProviderService } from "./providerService";
 import type {
   ImageProviderFactory,
+  ModelProviderFactory,
   ProviderAdapterFactory,
 } from "./providerService";
 import type { ProviderSecretStore } from "./secretStore";
@@ -130,6 +134,7 @@ function createService(
     edit: vi.fn(),
     generate: vi.fn(),
   },
+  modelProviderFactory?: ModelProviderFactory,
 ) {
   const repository = new MemoryProviderRepository();
   const secrets = new MemorySecretStore();
@@ -150,13 +155,69 @@ function createService(
       new FixedClock(),
       logger,
       adapterFactory,
-      undefined,
+      modelProviderFactory,
       imageProviderFactory,
     ),
   };
 }
 
 describe("Provider Service", () => {
+  it.each(["changed", "deleted"])(
+    "keeps the runtime snapshot with its original adapter when the Profile is %s during secret loading",
+    async (change) => {
+      const model: ModelProvider = {
+        stream: vi.fn(),
+        measureInput(request: ModelRequest, signal: AbortSignal) {
+          signal.throwIfAborted();
+          return Promise.resolve(this.estimateInput(request));
+        },
+        estimateInput: (request: ModelRequest) =>
+          estimateInputBudget(request, request.modelId),
+        resolveContextLimits: vi.fn(),
+      };
+      const factory = vi.fn<ModelProviderFactory>(() => model);
+      const { repository, secrets, service } = createService(
+        undefined,
+        undefined,
+        factory,
+      );
+      await service.saveProfile({
+        credential: { mode: "replace", value: "offline-runtime-fixture" },
+        profile: baseDraft,
+      });
+      let release = () => undefined as void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.spyOn(secrets, "get").mockImplementationOnce(async () => {
+        await gate;
+        return "offline-runtime-fixture";
+      });
+      const pending = service.createChatModelRuntime(PROFILE_ID);
+      if (change === "changed") {
+        repository.save({
+          ...repository.get(PROFILE_ID)!,
+          name: "Replacement",
+          chatModel: "different-model",
+          baseUrl: "https://replacement.example.invalid/v1",
+        });
+      } else repository.delete(PROFILE_ID);
+      release();
+      const runtime = await pending;
+      expect(runtime.snapshot).toEqual({
+        apiStyle: baseDraft.apiStyle,
+        modelId: baseDraft.chatModel,
+        profileId: PROFILE_ID,
+        profileName: baseDraft.name,
+      });
+      expect(runtime.provider).toBe(model);
+      expect(factory).toHaveBeenCalledWith(
+        expect.objectContaining(baseDraft),
+        "offline-runtime-fixture",
+      );
+    },
+  );
+
   it("seeds the two first-run metadata profiles without credentials", async () => {
     const { repository, service } = createService();
 

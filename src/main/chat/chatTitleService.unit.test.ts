@@ -1,3 +1,4 @@
+import { estimateInputBudget } from "../providers/inputBudget";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -10,6 +11,14 @@ import { ChatTitleService } from "./chatTitleService";
 
 class TitleProvider implements ModelProvider {
   request: ModelRequest | undefined;
+
+  measureInput(request: ModelRequest, signal: AbortSignal) {
+    signal.throwIfAborted();
+    return Promise.resolve(this.estimateInput(request));
+  }
+  estimateInput(request: ModelRequest) {
+    return estimateInputBudget(request, request.modelId);
+  }
 
   resolveContextLimits() {
     return Promise.resolve({});
@@ -81,6 +90,12 @@ describe("Chat title generation", () => {
     const warn = vi.fn();
     const service = new ChatTitleService({ replaceGeneratedTitle }, { warn });
     const provider: ModelProvider = {
+      measureInput(request: ModelRequest, signal: AbortSignal) {
+        signal.throwIfAborted();
+        return Promise.resolve(this.estimateInput(request));
+      },
+      estimateInput: (request: ModelRequest) =>
+        estimateInputBudget(request, request.modelId),
       resolveContextLimits: () => Promise.resolve({}),
       stream: () => {
         throw new Error("title endpoint unavailable");

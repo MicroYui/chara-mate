@@ -5,12 +5,28 @@ import type {
   ActivityEvent,
   ActivityEventDetails,
   ActivitySnapshot,
+  ActivityVisualReference,
+  ActivityVisual,
+  ActivityEventReference,
+  ActivityVisualLookupRequest,
+  ActivityVisualLookupResult,
 } from "../../shared/contracts/activity";
 import type { Timestamp } from "../../shared/contracts/primitives";
+import {
+  ActivityEventDetailsSchema,
+  ActivityVisualLookupRequestSchema,
+} from "../../shared/schemas/activity";
+import { parseSchema } from "../../shared/schemas/validation";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
 import { redactText } from "../../shared/pure/redaction";
-import type { ScreenCapture } from "../computer/macosComputer";
+import {
+  ActivityVisualEvidence,
+  type ActivityVisualFrame,
+  type ActivityVisualContext,
+  type ActivityVisualResolution,
+  type ActivityVisualObservation,
+} from "./activityVisualEvidence";
 import type { MemoryService } from "../memory/memoryService";
 import type { ActivityAssetStore } from "./activityAssetStore";
 import {
@@ -20,13 +36,23 @@ import {
   EPISODE_MERGE_MS,
 } from "./activityDistillation";
 import {
-  buildStableActivityPatterns,
   searchActivityEpisodes,
   type ActivitySearchRequest,
   type ActivitySearchResult,
 } from "./activityRecall";
+import { normalizeActivityPerception } from "./activeApplicationSource";
 import { ActivityError } from "./activityError";
-import type { ActivityRepository } from "./activityRepository";
+import type {
+  ActivityRepository,
+  ActivitySourceRetentionGuard,
+} from "./activityRepository";
+
+import type { ActivityVisualChange } from "./activityVisualSource";
+import {
+  ActivityObserveInputSchema,
+  type ActivityObserveInput,
+  type ActivityTextObservation,
+} from "./activityObservation";
 
 const DAY_MS = 86_400_000;
 const RETAINED_EPISODE_DAYS = 90;
@@ -95,6 +121,8 @@ function redactEventDetails(
 ): ActivityEventDetails {
   if (details.source === "active_app") {
     return {
+      ...normalizeActivityPerception(details),
+      ...(details.lifecycle ? { lifecycle: details.lifecycle } : {}),
       ...(details.appId ? { appId: redactText(details.appId) } : {}),
       appName: redactText(details.appName),
       source: details.source,
@@ -105,6 +133,7 @@ function redactEventDetails(
   }
   if (details.source === "managed_browser") {
     return {
+      ...normalizeActivityPerception(details),
       ...(details.action ? { action: redactText(details.action) } : {}),
       domain: redactText(details.domain),
       source: details.source,
@@ -129,22 +158,49 @@ function redactEventDetails(
 }
 
 export class ActivityService {
+  #sourceRetentionGuard: ActivitySourceRetentionGuard | undefined;
+  readonly #visual: ActivityVisualEvidence;
+  #visualChangeListener: ((change: ActivityVisualChange) => void) | undefined;
+  #visualSupplier:
+    | ((signal?: AbortSignal) => Promise<ActivityVisualFrame | undefined>)
+    | undefined;
   #lastMaintenanceDate: string | undefined;
   #maintenanceInterval: ReturnType<typeof setInterval> | undefined;
   #maintenanceTask: Promise<void> | undefined;
+  #maintenanceAbort: AbortController | undefined;
   #pauseListeners = new Set<(paused: boolean) => void>();
+  #eventListener: ((event: ActivityEvent) => void) | undefined;
+
+  setEventListener(
+    listener: ((event: ActivityEvent) => void) | undefined,
+  ): void {
+    this.#eventListener = listener;
+  }
   readonly timeZone: string;
+
+  setSourceRetentionGuard(
+    guard: ActivitySourceRetentionGuard | undefined,
+  ): void {
+    this.#sourceRetentionGuard = guard;
+  }
 
   constructor(
     private readonly repository: ActivityRepository,
     private readonly memory: MemoryService,
     private readonly assets: ActivityAssetStore,
-    private readonly capture: ScreenCapture,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   ) {
     this.timeZone = timeZone;
+    this.#visual = new ActivityVisualEvidence(
+      repository,
+      assets,
+      ids,
+      clock,
+      () => this.isPaused(),
+      (event) => this.#eventListener?.(event),
+    );
   }
 
   async initialize(): Promise<void> {
@@ -158,11 +214,19 @@ export class ActivityService {
     if (this.#maintenanceInterval) return;
     this.#maintenanceInterval = setInterval(() => {
       if (this.#maintenanceTask) return;
-      const task = this.#maintain();
+      const controller = new AbortController();
+      this.#maintenanceAbort = controller;
+      const task = this.#maintain(controller.signal);
       this.#maintenanceTask = task;
-      void task.catch(onError).finally(() => {
-        if (this.#maintenanceTask === task) this.#maintenanceTask = undefined;
-      });
+      void task
+        .catch((error) => {
+          if (error !== controller.signal.reason) onError(error);
+        })
+        .finally(() => {
+          if (this.#maintenanceTask === task) this.#maintenanceTask = undefined;
+          if (this.#maintenanceAbort === controller)
+            this.#maintenanceAbort = undefined;
+        });
     }, EPISODE_MERGE_MS);
     this.#maintenanceInterval.unref?.();
   }
@@ -170,7 +234,11 @@ export class ActivityService {
   async stopMaintenance(): Promise<void> {
     if (this.#maintenanceInterval) clearInterval(this.#maintenanceInterval);
     this.#maintenanceInterval = undefined;
-    await this.#maintenanceTask;
+    const controller = this.#maintenanceAbort;
+    controller?.abort();
+    await this.#maintenanceTask?.catch((error) => {
+      if (error !== controller?.signal.reason) throw error;
+    });
   }
 
   isPaused(): boolean {
@@ -239,9 +307,208 @@ export class ActivityService {
     };
   }
 
+  async observe(
+    request: ActivityObserveInput,
+    fitsResult: (result: ActivityTextObservation) => Promise<boolean>,
+    signal: AbortSignal,
+  ): Promise<ActivityTextObservation> {
+    signal.throwIfAborted();
+    const parsed = parseSchema(
+      ActivityObserveInputSchema,
+      structuredClone(request),
+    );
+    if (parsed.latest) {
+      const latest = parsed.latest;
+      latest.periodEnd = new Date(
+        latest.periodEnd ?? this.clock.now(),
+      ).toISOString();
+      if (latest.periodStart)
+        latest.periodStart = new Date(latest.periodStart).toISOString();
+      if (latest.before)
+        latest.before.startedAt = new Date(
+          latest.before.startedAt,
+        ).toISOString();
+      const query = latest.query?.trim();
+      if (query) latest.query = query;
+      else delete latest.query;
+      if (latest.periodStart && latest.periodStart > latest.periodEnd)
+        throw new TypeError(
+          "Activity observation start must not follow its end",
+        );
+    }
+    const source = this.repository.readTextObservation(
+      parsed,
+      16 * 1024 * 1024,
+    );
+    const offset = parsed.reference?.offset ?? 0;
+    const eventId = source?.id ?? parsed.reference?.eventId;
+    const base = (
+      status: ActivityTextObservation["status"],
+    ): ActivityTextObservation => ({
+      retainedOnly: true,
+      liveScreen: false,
+      paused: this.isPaused(),
+      status,
+      ...(eventId ? { reference: { eventId, offset } } : {}),
+    });
+    let changed: "missing" | "source_changed" | undefined;
+    const changedError = new Error(
+      "Retained Activity observation changed during result measurement",
+    );
+    const assertCurrent = () => {
+      signal.throwIfAborted();
+      if (!source) return;
+      const state = this.repository.textObservationState(source);
+      if (state !== "same") {
+        changed = state === "missing" ? "missing" : "source_changed";
+        throw changedError;
+      }
+    };
+    const fits = async (
+      result: ActivityTextObservation,
+      checkSource = true,
+    ) => {
+      for (;;) {
+        signal.throwIfAborted();
+        result.paused = this.isPaused();
+        let accepted: boolean;
+        try {
+          accepted = await fitsResult(result);
+        } finally {
+          signal.throwIfAborted();
+        }
+        if (checkSource) assertCurrent();
+        // Pausing capture does not forbid retained reads. Measure the actual
+        // returned pause state if it changed while the Provider was counting.
+        if (result.paused === this.isPaused()) return accepted;
+      }
+    };
+    const finish = async (
+      result: ActivityTextObservation,
+      checkSource = true,
+    ) => {
+      if (!(await fits(result, checkSource)))
+        throw new RangeError("当前工作集无法容纳活动观察及其覆盖说明");
+      return result;
+    };
+    try {
+      if (!source) return await finish(base("missing"));
+      const observation: NonNullable<ActivityTextObservation["observation"]> = {
+        eventId: source.id,
+        source: source.source,
+        actor: source.actor,
+        observedAt: source.startedAt,
+        receivedAt: source.receivedAt,
+        position: { startedAt: source.startedAt, eventId: source.id },
+      };
+      if (source.detailsJson === null)
+        return await finish({ ...base("resource_limit"), observation });
+      const details = parseSchema(
+        ActivityEventDetailsSchema,
+        JSON.parse(source.detailsJson),
+      );
+      if (
+        details.source !== "active_app" &&
+        details.source !== "managed_browser"
+      )
+        return await finish({ ...base("unavailable"), observation });
+      observation.location = {
+        ...(details.source === "active_app"
+          ? {
+              appName: details.appName,
+              ...(details.appId ? { appId: details.appId } : {}),
+              ...(details.windowTitle
+                ? { windowTitle: details.windowTitle }
+                : {}),
+            }
+          : {
+              url: details.url,
+              domain: details.domain,
+              ...(details.title ? { windowTitle: details.title } : {}),
+            }),
+        ...(details.surface
+          ? {
+              surface: { id: details.surface.id, epoch: details.surface.epoch },
+            }
+          : {}),
+      };
+      const content = details.content;
+      if (
+        details.contentStatus === "protected" ||
+        details.contentStatus === "unavailable" ||
+        !content
+      )
+        return await finish({
+          ...base(
+            details.contentStatus === "protected" ? "protected" : "unavailable",
+          ),
+          observation,
+        });
+      const text = content.text;
+      const segments = new Intl.Segmenter(undefined, {
+        granularity: "grapheme",
+      }).segment(text);
+      const boundary = (position: number) =>
+        position === text.length ||
+        segments.containing(position)?.index === position;
+      if (offset > text.length || !boundary(offset))
+        throw new RangeError(
+          "Activity reference offset must be a retained UTF-16 character boundary",
+        );
+      const page = (end: number): ActivityTextObservation => ({
+        ...base("available"),
+        observation,
+        content: {
+          source: content.source,
+          scope: content.scope,
+          captureTruncated: content.truncated ? "reported" : "unknown",
+          text: text.slice(offset, end),
+          coverage: {
+            offsetUnit: "utf16_code_unit",
+            start: offset,
+            end,
+            total: text.length,
+            storedTextComplete: offset === 0 && end === text.length,
+          },
+        },
+        ...(end < text.length
+          ? { next: { eventId: source.id, offset: end } }
+          : {}),
+      });
+      const full = page(text.length);
+      if (await fits(full)) return full;
+      const unavailable = { ...base("input_limit"), observation };
+      await finish(unavailable);
+      let low = offset;
+      let high = text.length - 1;
+      let best: ActivityTextObservation | undefined;
+      while (low < high) {
+        let end = Math.ceil((low + high) / 2);
+        if (!boundary(end)) end = segments.containing(end)!.index;
+        if (end <= low) {
+          const next = segments.containing(low)!;
+          end = next.index + next.segment.length;
+          if (end > high) break;
+        }
+        const candidate = page(end);
+        if (await fits(candidate)) {
+          best = candidate;
+          low = end;
+        } else high = end - 1;
+      }
+      // The final accepted object is measured again because intervening counts
+      // can change the live request capacity and the paused projection.
+      return await finish(best ?? unavailable);
+    } catch (error) {
+      if (error !== changedError || !changed) throw error;
+      return finish(base(changed), false);
+    }
+  }
+
   setPaused(paused: boolean): ActivitySnapshot {
     const now = this.clock.now();
     this.repository.setPaused(paused, now);
+    if (paused) this.#visual.setContext(undefined);
     for (const listener of this.#pauseListeners) listener(paused);
     return this.getSnapshot(zonedDate(now, this.timeZone));
   }
@@ -273,33 +540,40 @@ export class ActivityService {
   }
 
   async deleteEpisode(episodeId: string): Promise<ActivitySnapshot> {
-    const deleted = this.repository.deleteEpisode(episodeId);
-    if (!deleted) {
-      throw new ActivityError(
-        "ACTIVITY.EPISODE_NOT_FOUND",
-        "找不到这段活动。",
-        false,
-      );
-    }
-    await this.assets.remove(deleted.storageKeys);
-    for (const candidateId of deleted.candidateIds) {
-      this.memory.discardPendingCandidate(candidateId);
-    }
-    this.distill();
-    return this.getSnapshot(zonedDate(deleted.startedAt, this.timeZone));
+    return this.#visual.serializeAssets(async () => {
+      const deleted = this.repository.deleteEpisode(episodeId);
+      if (!deleted) {
+        throw new ActivityError(
+          "ACTIVITY.EPISODE_NOT_FOUND",
+          "找不到这段活动。",
+          false,
+        );
+      }
+      await this.assets.remove(deleted.storageKeys);
+      for (const candidateId of deleted.candidateIds) {
+        this.memory.discardPendingCandidate(candidateId);
+      }
+      this.distill();
+      return this.getSnapshot(zonedDate(deleted.startedAt, this.timeZone));
+    });
   }
 
   startEvent(
     details: ActivityEventDetails,
     actor: ActivityEvent["actor"],
+    startedAt = this.clock.now(),
   ): string | undefined {
     if (this.isPaused()) return undefined;
     const now = this.clock.now();
     const id = this.ids.generate();
-    this.repository.insertEvent(
-      { actor, details: redactEventDetails(details), id, startedAt: now },
-      now,
-    );
+    const event: ActivityEvent = {
+      actor,
+      details: redactEventDetails(details),
+      id,
+      startedAt,
+    };
+    this.repository.insertEvent(event, now);
+    this.#eventListener?.(event);
     return id;
   }
 
@@ -312,52 +586,137 @@ export class ActivityService {
     actor: ActivityEvent["actor"],
     startedAt = this.clock.now(),
     endedAt = startedAt,
-  ): void {
+  ): string | undefined {
     if (this.isPaused()) return;
-    this.repository.insertEvent(
-      {
-        actor,
-        details: redactEventDetails(details),
-        endedAt,
-        id: this.ids.generate(),
-        startedAt,
-      },
-      this.clock.now(),
-    );
+    const id = this.ids.generate();
+    const event: ActivityEvent = {
+      actor,
+      details: redactEventDetails(details),
+      endedAt,
+      id,
+      startedAt,
+    };
+    this.repository.insertEvent(event, this.clock.now());
+    this.#eventListener?.(event);
+    return id;
   }
 
-  async captureScreenshot(actor: ActivityEvent["actor"]): Promise<void> {
-    if (this.isPaused()) return;
-    const now = this.clock.now();
-    const assetId = this.ids.generate();
-    const asset = await this.assets.save(
-      assetId,
-      await this.capture.capturePrimaryDisplay({ resolution: "logical" }),
-      now,
-    );
-    try {
-      this.repository.insertScreenshot(
-        asset,
-        {
-          actor,
-          details: {
-            artifactId: asset.id,
-            height: asset.height,
-            mediaType: asset.mediaType,
-            source: "screenshot",
-            storageKey: asset.storageKey,
-            width: asset.width,
-          },
-          endedAt: now,
-          id: this.ids.generate(),
-          startedAt: now,
-        },
-        now,
+  getEvent(eventId: string): ActivityEvent | undefined {
+    return this.repository.getEvent(eventId);
+  }
+
+  getEventSourceReference(
+    eventId: string,
+  ): Pick<ActivityEvent, "id" | "actor" | "startedAt"> | undefined {
+    return this.repository.getEventSourceReference(eventId);
+  }
+
+  resolveEventReference(eventId: string): ActivityEventReference {
+    const reference = this.repository.resolveEventReference(eventId);
+    const event = this.repository.getEvent(eventId);
+    if (!reference || !event)
+      throw new ActivityError(
+        "ACTIVITY.EVENT_NOT_FOUND",
+        "这条原始活动已清理或不存在。",
+        false,
       );
-    } catch (error) {
-      await this.assets.remove([asset.storageKey]);
-      throw error;
-    }
+    return {
+      event,
+      date: zonedDate(reference.startedAt, this.timeZone),
+      ...(reference.episodeId ? { episodeId: reference.episodeId } : {}),
+    };
+  }
+
+  setVisualContext(context: ActivityVisualContext | undefined): void {
+    this.#visual.setContext(context);
+  }
+
+  isCurrentVisualSource(
+    source: Pick<ActivityVisualContext, "surface" | "actor">,
+  ): boolean {
+    return this.#visual.matchesSource(source.surface, source.actor);
+  }
+
+  stageVisualFrame(frame: ActivityVisualFrame): boolean {
+    return this.#visual.stage(frame);
+  }
+
+  setVisualChangeListener(
+    listener: ((change: ActivityVisualChange) => void) | undefined,
+  ): void {
+    this.#visualChangeListener = listener;
+  }
+
+  notifyVisualChanged(change: ActivityVisualChange): void {
+    if (this.#visual.matchesSource(change.surface, change.actor))
+      this.#visualChangeListener?.(change);
+  }
+
+  setVisualFrameSupplier(
+    supplier:
+      | ((signal?: AbortSignal) => Promise<ActivityVisualFrame | undefined>)
+      | undefined,
+  ): void {
+    this.#visualSupplier = supplier;
+  }
+
+  async consumeLatestVisualEvidence(
+    signal?: AbortSignal,
+  ): Promise<ActivityVisualObservation | undefined> {
+    if (this.isPaused()) return undefined;
+    const frame = await this.#visualSupplier?.(signal);
+    if (frame) this.#visual.stage(frame);
+    return this.#visual.consume("frame", signal);
+  }
+
+  recordVisualFrame(
+    frame: ActivityVisualFrame,
+    trigger: ActivityVisual["trigger"],
+    signal?: AbortSignal,
+  ): Promise<ActivityVisualObservation | undefined> {
+    if (!this.#visual.stage(frame)) return Promise.resolve(undefined);
+    return this.#visual.consume(trigger, signal, true);
+  }
+
+  resolveVisualEvidence(
+    reference: ActivityVisualReference,
+    signal?: AbortSignal,
+  ): Promise<ActivityVisualResolution> {
+    return this.#visual.resolve(reference, signal);
+  }
+
+  async lookupVisualEvidence(
+    request: ActivityVisualLookupRequest,
+    resourceBudget: { readonly maxReadBytes: number },
+    signal?: AbortSignal,
+  ): Promise<ActivityVisualLookupResult> {
+    signal?.throwIfAborted();
+    const parsed = parseSchema(ActivityVisualLookupRequestSchema, request);
+    const query = parsed.query?.trim();
+    const effective = {
+      ...structuredClone(parsed),
+      periodEnd: new Date(parsed.periodEnd ?? this.clock.now()).toISOString(),
+    };
+    if (parsed.periodStart)
+      effective.periodStart = new Date(parsed.periodStart).toISOString();
+    if (query) effective.query = query;
+    else delete effective.query;
+    if (
+      effective.periodStart &&
+      Date.parse(effective.periodStart) > Date.parse(effective.periodEnd)
+    )
+      throw new TypeError("Visual lookup start must not follow its end");
+    const result = await this.repository.lookupVisualEvidence(
+      effective,
+      resourceBudget,
+      signal,
+    );
+    signal?.throwIfAborted();
+    return result;
+  }
+
+  stopVisualCapture(): Promise<void> {
+    return this.#visual.clear();
   }
 
   distill(): void {
@@ -422,7 +781,6 @@ export class ActivityService {
           new Map(episodes.map((episode) => [episode.id, episode.summary])),
         );
       }
-      this.#reconcileStablePatterns(now);
       this.repository.finishDistillation(runId, this.clock.now());
     } catch (error) {
       this.repository.finishDistillation(
@@ -446,67 +804,72 @@ export class ActivityService {
     }
   }
 
-  #reconcileStablePatterns(now: Timestamp): void {
-    const periodStart = new Date(
-      Date.parse(now) - RETAINED_EPISODE_DAYS * DAY_MS,
-    ).toISOString();
-    const episodes = this.repository.listEpisodes(periodStart, now);
-    const weeklyDigests = this.repository
-      .listDigests(periodStart, now)
-      .filter(({ kind }) => kind === "weekly");
-    const patterns = buildStableActivityPatterns(
-      weeklyDigests,
-      episodes,
-      this.timeZone,
-    );
-    const reconciliation = this.memory.reconcileActivityPatterns(patterns);
-    this.repository.reconcileDigestCandidateLinks(
-      reconciliation.links,
-      reconciliation.removedCandidateIds,
-    );
-  }
-
-  async #maintain(): Promise<void> {
+  async #maintain(signal?: AbortSignal): Promise<void> {
     const now = this.clock.now();
     this.#flushEpisodes(now);
     const date = zonedDate(now, this.timeZone);
     if (date === this.#lastMaintenanceDate) return;
     this.distill();
-    await this.cleanup(false);
+    await this.cleanup(false, signal);
     this.#lastMaintenanceDate = date;
   }
 
-  async cleanup(immediate = true): Promise<ActivityCleanupResult> {
-    const now = this.clock.now();
-    const runId = this.ids.generate();
-    this.repository.beginRetention(runId, now);
-    try {
-      const result = this.repository.cleanup(now, immediate);
-      await this.assets.remove(result.storageKeys);
-      await this.assets.sweep(this.repository.assetStorageKeys());
-      const finishedAt = this.clock.now();
-      this.repository.finishRetention(
-        runId,
-        finishedAt,
-        result.deletedAssets,
-        result.deletedEvents,
-      );
-      return {
-        deletedAssets: result.deletedAssets,
-        deletedEvents: result.deletedEvents,
-        finishedAt,
-      };
-    } catch (error) {
-      this.repository.finishRetention(
-        runId,
-        this.clock.now(),
-        0,
-        0,
-        redactText(
-          error instanceof Error ? error.message : "Activity cleanup failed",
-        ),
-      );
-      throw error;
-    }
+  async cleanup(
+    immediate = true,
+    signal?: AbortSignal,
+  ): Promise<ActivityCleanupResult> {
+    return this.#visual.serializeAssets(async () => {
+      const now = this.clock.now();
+      const runId = this.ids.generate();
+      this.repository.beginRetention(runId, now);
+      try {
+        const result = await this.repository.cleanup(
+          now,
+          immediate,
+          this.#sourceRetentionGuard
+            ? (ids) => this.#sourceRetentionGuard?.(ids) ?? new Set(ids)
+            : undefined,
+          runId,
+          signal,
+        );
+        await this.assets.remove(result.storageKeys);
+        await this.assets.sweep(this.repository.assetStorageKeys());
+        const finishedAt = this.clock.now();
+        this.repository.finishRetention(
+          runId,
+          finishedAt,
+          result.deletedAssets,
+          result.deletedEvents,
+        );
+        return {
+          deletedAssets: result.deletedAssets,
+          deletedEvents: result.deletedEvents,
+          finishedAt,
+        };
+      } catch (error) {
+        const progress = this.repository.retentionProgress(runId);
+        let failure = error;
+        try {
+          await this.assets.sweep(this.repository.assetStorageKeys());
+        } catch (assetError) {
+          failure = new AggregateError(
+            [error, assetError],
+            `${error instanceof Error ? error.message : "Activity cleanup failed"}; ${assetError instanceof Error ? assetError.message : "Activity asset cleanup failed"}`,
+          );
+        }
+        this.repository.finishRetention(
+          runId,
+          this.clock.now(),
+          progress.deletedAssets,
+          progress.deletedEvents,
+          redactText(
+            failure instanceof Error
+              ? failure.message
+              : "Activity cleanup failed",
+          ),
+        );
+        throw failure;
+      }
+    });
   }
 }

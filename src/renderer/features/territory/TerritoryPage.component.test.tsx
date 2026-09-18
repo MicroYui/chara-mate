@@ -525,7 +525,7 @@ describe("TerritoryPage World workspace", () => {
     );
     expect(await screen.findByText("AI 创作台")).toBeInTheDocument();
     expect(screen.getByText("正在预览 AI 变更")).toBeInTheDocument();
-    expect(onFocusConsumed).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onFocusConsumed).toHaveBeenCalledTimes(1));
   });
 
   it("presents a Chat moment as an editable experience instead of a fixed template", async () => {
@@ -651,9 +651,97 @@ describe("TerritoryPage World workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "恢复" }));
     await waitFor(() =>
       expect(restoreRevision).toHaveBeenCalledWith({
+        expectedCurrentRevisionId: snapshot.world.currentRevision.id,
         revisionId: territoryWorldFixtureIds.revision,
       }),
     );
+  });
+
+  function appliedCreationSnapshot(): TerritoryWorldSnapshot {
+    const snapshot: TerritoryWorldSnapshot = structuredClone(
+      starterTerritorySnapshot,
+    );
+    const revision = {
+      ...snapshot.world.currentRevision,
+      id: "10000000-0000-4000-8000-000000000002",
+      parentRevisionId: snapshot.world.currentRevision.id,
+      sequence: 2,
+    };
+    snapshot.world.currentRevision = revision;
+    snapshot.revisions.push(revision);
+    snapshot.candidates[0] = {
+      ...snapshot.candidates[0]!,
+      appliedRevisionId: revision.id,
+      intent: "item",
+      status: "applied",
+      sources: [
+        {
+          id: "70000000-0000-4000-8000-000000000001",
+          kind: "character_creation",
+          label: "月光石",
+          occurredAt: "2026-09-15T09:00:00.000Z",
+          personaRef: {
+            personaId: "70000000-0000-4000-8000-000000000002",
+            revision: 1,
+          },
+          runId: "70000000-0000-4000-8000-000000000003",
+        },
+      ],
+    };
+    return snapshot;
+  }
+
+  it("offers persisted creation undo after reopening with an exact current revision", async () => {
+    const { api, getSnapshot, restoreRevision } = createApi();
+    const snapshot = appliedCreationSnapshot();
+    getSnapshot.mockResolvedValue({ ok: true, value: snapshot });
+    render(
+      <TerritoryPage
+        activePet={undefined}
+        animationSpeed={0.75}
+        api={api}
+        providerApi={providerApi}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "撤销这次布置" }),
+    );
+    await waitFor(() =>
+      expect(restoreRevision).toHaveBeenCalledWith({
+        expectedCurrentRevisionId: snapshot.world.currentRevision.id,
+        revisionId: territoryWorldFixtureIds.revision,
+      }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "撤销这次布置" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("removes creation undo when a later change would be overwritten", async () => {
+    const { api, getSnapshot, publishChanged, restoreRevision } = createApi();
+    const snapshot = appliedCreationSnapshot();
+    getSnapshot.mockResolvedValue({ ok: true, value: snapshot });
+    render(
+      <TerritoryPage
+        activePet={undefined}
+        animationSpeed={0.75}
+        api={api}
+        providerApi={providerApi}
+      />,
+    );
+    await screen.findByRole("button", { name: "撤销这次布置" });
+    const next = structuredClone(snapshot);
+    next.world.currentRevision = {
+      ...next.world.currentRevision,
+      id: "10000000-0000-4000-8000-000000000003",
+      parentRevisionId: snapshot.world.currentRevision.id,
+      sequence: 3,
+    };
+    act(() => publishChanged(next));
+    expect(
+      screen.queryByRole("button", { name: "撤销这次布置" }),
+    ).not.toBeInTheDocument();
+    expect(restoreRevision).not.toHaveBeenCalled();
   });
 
   it("selects an entity without moving the pet or invoking pathfinding", async () => {

@@ -93,3 +93,51 @@ describe("activity distillation", () => {
     });
   });
 });
+
+it("summarizes content evidence and operation totals without growing one paragraph per input batch", () => {
+  const events: ActivityEvent[] = Array.from({ length: 100 }, (_, index) => ({
+    actor: "user",
+    details: {
+      appName: "Editor",
+      source: "active_app",
+      windowTitle: "draft.md",
+      boundary: "interaction",
+      content: {
+        source: "accessibility",
+        scope: "focused_element",
+        text: `Section ${String(index)}`,
+      },
+      interaction: { clicks: 1, keystrokes: 100, scrolls: 2 },
+    },
+    id: `event-${String(index).padStart(3, "0")}`,
+    startedAt: new Date(
+      Date.parse("2026-08-09T09:00:00.000Z") + index * 1000,
+    ).toISOString(),
+    endedAt: new Date(
+      Date.parse("2026-08-09T09:00:00.000Z") + (index + 1) * 1000,
+    ).toISOString(),
+  }));
+  const [result] = distillEpisodes(events, ids, NOW);
+  expect(result?.episode.eventCount).toBe(100);
+  expect(result?.episode.summary).toContain("Section 99");
+  expect(result?.episode.summary).toContain("按键 10000 次");
+  expect(result?.episode.summary.length).toBeLessThan(200);
+});
+
+it("names unavailable local content and lifecycle facts without inventing OCR", () => {
+  const event: ActivityEvent = {
+    actor: "system",
+    id: "event-unreadable",
+    startedAt: NOW,
+    endedAt: NOW,
+    details: {
+      appName: "Editor",
+      source: "active_app",
+      lifecycle: "launched",
+      contentStatus: "unavailable",
+    },
+  };
+  const [result] = distillEpisodes([event], ids, NOW);
+  expect(result?.episode.summary).toContain("应用启动");
+  expect(result?.episode.summary).toContain("局部不可读");
+});

@@ -1,0 +1,87 @@
+{
+  "source": {
+    "recordedAt": "2026-09-15",
+    "sseSha256": "ce77c0ea1f518584c3039fc4f0ad028a63e49aed44639909820322dee3d7a931",
+    "description": "Source-derived regression: exact text, delta boundaries, URL annotations and usage from a saved Responses SSE. Opaque IDs normalized; unrelated reasoning/search items omitted."
+  },
+  "deltas": [
+    "你加了 `processed_events` 的唯一索引检查，但目前还不能确认它挡住了**重复建单**——我还没看到完整代码或验证结果。\n\n关键是分开两件事：\n\n- **回调又来了**：不一定是修复失败。以 Stripe 为例，平台可能重试、重复投递；",
+    "去",
+    "重要",
+    "保证重复",
+    "通知不重复",
+    "执行业务，而不是",
+    "让通知",
+    "不再到达。",
+    "你的",
+    "平台",
+    "规则还",
+    "需要",
+    "对应确认。cite",
+    "turn0search0",
+    "\n- **订单又建了一",
+    "笔**：那就要查去",
+    "重有没有覆盖建单。唯一约",
+    "束只保护它",
+    "所在",
+    "表的键",
+    "，不",
+    "会自动保护另一张订单表。",
+    "假如",
+    "代码是“先建单，再写",
+    "去重记录”，",
+    "且",
+    "没有",
+    "一起回滚，就可能",
+    "拦住",
+    "记录却",
+    "没拦住订单。这是",
+    "待核对的可能机制，不是",
+    "已经",
+    "确定的原因。cite",
+    "turn0search1",
+    ""
+  ],
+  "item": {
+    "content": [
+      {
+        "annotations": [
+          {
+            "end_index": 187,
+            "start_index": 168,
+            "title": "Receive Stripe events in your webhook endpoint | Stripe Documentation",
+            "type": "url_citation",
+            "url": "https://docs.stripe.com/webhooks?lang=node&locale=en-GB&utm_source=openai"
+          },
+          {
+            "end_index": 323,
+            "start_index": 304,
+            "title": "PostgreSQL: Documentation: 18: 5.5. Constraints",
+            "type": "url_citation",
+            "url": "https://www.postgresql.org/docs/18/ddl-constraints.html?utm_source=openai"
+          }
+        ],
+        "logprobs": [],
+        "text": "你加了 `processed_events` 的唯一索引检查，但目前还不能确认它挡住了**重复建单**——我还没看到完整代码或验证结果。\n\n关键是分开两件事：\n\n- **回调又来了**：不一定是修复失败。以 Stripe 为例，平台可能重试、重复投递；去重要保证重复通知不重复执行业务，而不是让通知不再到达。你的平台规则还需要对应确认。citeturn0search0\n- **订单又建了一笔**：那就要查去重有没有覆盖建单。唯一约束只保护它所在表的键，不会自动保护另一张订单表。假如代码是“先建单，再写去重记录”，且没有一起回滚，就可能拦住记录却没拦住订单。这是待核对的可能机制，不是已经确定的原因。citeturn0search1",
+        "type": "output_text"
+      }
+    ],
+    "id": "message-citations",
+    "phase": "commentary",
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  "usage": {
+    "input_tokens": 16225,
+    "input_tokens_details": {
+      "cache_write_tokens": 11764,
+      "cached_tokens": 0
+    },
+    "output_tokens": 572,
+    "output_tokens_details": {
+      "reasoning_tokens": 232
+    },
+    "total_tokens": 16797
+  }
+}

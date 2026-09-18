@@ -1,6 +1,12 @@
 import type { Static } from "@sinclair/typebox";
 
 import type {
+  VoiceCancelStartRequestSchema,
+  VoiceCancelStartResultSchema,
+  VoiceCancelStartResponseSchema,
+  VoiceStartSubmissionSchema,
+  VoiceQuickStartSubmissionSchema,
+  VoicePreviewSubmissionSchema,
   VoiceClientCommandSchema,
   VoiceConnectionSchema,
   VoiceDriverEventRequestSchema,
@@ -15,6 +21,7 @@ import type {
   VoiceNameSchema,
   VoicePhaseSchema,
   VoicePausedRequestSchema,
+  VoicePausedSubmissionSchema,
   VoicePauseResponseSchema,
   VoicePauseResultSchema,
   VoicePreviewConnectionSchema,
@@ -34,6 +41,7 @@ import type {
 } from "../schemas/voice";
 
 export const VOICE_CHANNELS = {
+  cancelStart: "voice.cancelStart",
   changed: "voice.changed",
   command: "voice.command",
   end: "voice.end",
@@ -88,15 +96,146 @@ export type VoicePauseResult = Static<typeof VoicePauseResultSchema>;
 export type VoicePauseResponse = Static<typeof VoicePauseResponseSchema>;
 export type VoiceSnapshotResponse = Static<typeof VoiceSnapshotResponseSchema>;
 
+export type VoicePausedSubmission = Static<typeof VoicePausedSubmissionSchema>;
+export type VoiceStartSubmission = Static<typeof VoiceStartSubmissionSchema>;
+export type VoiceQuickStartSubmission = Static<
+  typeof VoiceQuickStartSubmissionSchema
+>;
+export type VoicePreviewSubmission = Static<
+  typeof VoicePreviewSubmissionSchema
+>;
+export type VoiceCancelStartRequest = Static<
+  typeof VoiceCancelStartRequestSchema
+>;
+export type VoiceCancelStartResult = Static<
+  typeof VoiceCancelStartResultSchema
+>;
+export type VoiceCancelStartResponse = Static<
+  typeof VoiceCancelStartResponseSchema
+>;
+
+export const VOICE_PREVIEW_PHRASE = "你好，我是 CharaMate，很高兴陪你聊聊。";
+
+export function voiceHistoryItemEvent(message: VoiceHistoryMessage) {
+  return {
+    item: {
+      content: [
+        {
+          text: message.content,
+          type: message.role === "user" ? "input_text" : "output_text",
+        },
+      ],
+      role: message.role,
+      type: "message",
+    },
+    type: "conversation.item.create",
+  } as const;
+}
+
+export function voicePreviewEvents(phrase: string = VOICE_PREVIEW_PHRASE) {
+  return [
+    voiceHistoryItemEvent({ content: phrase, role: "user" }),
+    { type: "response.create" },
+  ] as const;
+}
+
+export function voiceWakeGreetingEvent(
+  command: Pick<
+    Extract<VoiceClientCommand, { type: "wake.greeting.create" }>,
+    "instructions" | "prompt" | "requestId"
+  >,
+) {
+  return {
+    event_id: command.requestId,
+    response: {
+      conversation: "none",
+      input: [
+        {
+          content: [{ text: command.prompt, type: "input_text" }],
+          role: "user",
+          type: "message",
+        },
+      ],
+      instructions: command.instructions,
+      metadata: {
+        charamate_purpose: "wake_greeting",
+        charamate_request_id: command.requestId,
+      },
+      output_modalities: ["audio"],
+      tools: [],
+    },
+    type: "response.create",
+  } as const;
+}
+
+export function voiceSessionRefreshEvent(
+  command: Extract<VoiceClientCommand, { type: "session.refresh" }>,
+) {
+  return {
+    event_id: command.requestId,
+    session: {
+      instructions: command.instructions,
+      parallel_tool_calls: false,
+      tool_choice: "auto",
+      tools: command.tools,
+      type: "realtime",
+    },
+    type: "session.update",
+  } as const;
+}
+
+export function voiceResponseCreateEvent(
+  command: Pick<
+    Extract<VoiceClientCommand, { type: "response.create" }>,
+    "generation" | "instructions" | "requestId"
+  >,
+) {
+  return {
+    event_id: command.requestId,
+    response: {
+      instructions: command.instructions,
+      metadata: {
+        charamate_generation: String(command.generation),
+        charamate_request_id: command.requestId,
+      },
+      output_modalities: ["audio"],
+    },
+    type: "response.create",
+  } as const;
+}
+
+/** The same local submission is measured in Main and sent by the driver. */
+export function voiceToolResultEvents(
+  command: Extract<VoiceClientCommand, { type: "tool.result" }>,
+) {
+  return [
+    {
+      event_id: `${command.requestId}.output`,
+      item: {
+        call_id: command.callId,
+        output: command.output,
+        type: "function_call_output",
+      },
+      type: "conversation.item.create",
+    },
+    voiceResponseCreateEvent(command),
+  ] as const;
+}
+
 export interface VoiceApi {
+  cancelStart(
+    request: VoiceCancelStartRequest,
+  ): Promise<VoiceCancelStartResponse>;
   end(request: VoiceSessionRequest): Promise<VoiceMutationResponse>;
   getActive(): Promise<VoiceSnapshotResponse>;
-  preview(request: VoicePreviewRequest): Promise<VoicePreviewResponse>;
-  quickStart(request: VoiceQuickStartRequest): Promise<VoiceQuickStartResponse>;
+  preview(request: VoicePreviewSubmission): Promise<VoicePreviewResponse>;
+  quickStart(
+    request: VoiceQuickStartSubmission,
+  ): Promise<VoiceQuickStartResponse>;
   report(request: VoiceDriverEventRequest): Promise<VoiceMutationResponse>;
   setMuted(request: VoiceMutedRequest): Promise<VoiceMutationResponse>;
-  setPaused(request: VoicePausedRequest): Promise<VoicePauseResponse>;
-  start(request: VoiceStartRequest): Promise<VoiceStartResponse>;
+  setPaused(request: VoicePausedSubmission): Promise<VoicePauseResponse>;
+  start(request: VoiceStartSubmission): Promise<VoiceStartResponse>;
   subscribeChanged(
     listener: (snapshot: VoiceSessionSnapshot | null) => void,
   ): () => void;

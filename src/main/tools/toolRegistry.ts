@@ -14,11 +14,30 @@ import {
   UTC_TIMESTAMP_FORMAT,
 } from "../../shared/schemas/primitives";
 import { parseSchema } from "../../shared/schemas/validation";
+import type { InputBudgetEstimate } from "../providers/inputBudget";
 import { Bm25SearchIndex } from "./bm25";
+
+export type ToolResultContextMeasurement =
+  | {
+      readonly kind: "responses_request";
+      readonly inputBudgetTokens: number;
+      readonly measurement: InputBudgetEstimate;
+    }
+  | {
+      readonly kind: "realtime_submission";
+      readonly inputBudgetTokens: number;
+      readonly measurement: InputBudgetEstimate;
+      readonly conversationOccupancy: "unknown";
+      readonly capacityBasis: "configured_name_rule" | "user_limit_only";
+    };
 
 export interface ToolExecutionContext {
   readonly availableToolNames?: readonly string[];
   readonly itemId: string;
+  /** Measures a successful candidate result without executing or committing it. */
+  readonly measureResult?: (
+    result: ToolResult,
+  ) => Promise<ToolResultContextMeasurement>;
   readonly onDelta: (delta: string) => void;
   readonly providerProfileId?: string;
   readonly runId: string;
@@ -58,6 +77,15 @@ function metadataSearchText(descriptor: ToolDescriptor): string {
 
 export function toolEvidenceHash(value: JsonValue): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function normalizeToolResult(value: ToolResult): ToolResult {
+  const result = parseSchema(ToolResultSchema, value);
+  const redacted = parseSchema(ToolResultSchema, redactBoundaryValue(result));
+  return {
+    ...redacted,
+    evidenceHash: toolEvidenceHash(redacted.modelContent),
+  };
 }
 
 export class ToolRegistry {
@@ -111,8 +139,32 @@ export class ToolRegistry {
       );
   }
 
-  search(query: string, limit = 8): ToolDefinition[] {
-    return this.#searchIndex.search(query, limit);
+  search(
+    query: string,
+    limit = 8,
+    availableNames?: ReadonlySet<string>,
+  ): ToolDefinition[] {
+    // A named capability is an identity lookup; a description mentioning that
+    // name must not displace it. Unnamed queries retain the metadata ranking.
+    const named: ToolDefinition[] = [];
+    const names = new Set<string>();
+    for (const token of query
+      .normalize("NFKC")
+      .toLowerCase()
+      .match(/[a-z0-9._-]+/gu) ?? []) {
+      const name = token.replace(/^\.+|\.+$/gu, "");
+      const tool = this.get(name);
+      if (tool && !names.has(name) && (availableNames?.has(name) ?? true)) {
+        names.add(name);
+        named.push(tool);
+      }
+    }
+    return [
+      ...named,
+      ...this.#searchIndex
+        .search(query, limit, availableNames)
+        .filter(({ descriptor }) => !names.has(descriptor.name)),
+    ].slice(0, Math.max(0, Math.min(8, limit)));
   }
 
   recoveryCandidates(toolName: string): ToolDefinition[] {
@@ -148,15 +200,17 @@ export class ToolRegistry {
     const registered = this.#tools.get(name);
     if (!registered) throw new Error(`Unknown Tool: ${name}`);
     this.validateInput(name, input);
-    const result = parseSchema(
-      ToolResultSchema,
-      await registered.definition.execute(input, context),
+    const measureResult = context.measureResult;
+    const definitionContext = measureResult
+      ? {
+          ...context,
+          measureResult: (result: ToolResult) =>
+            measureResult(normalizeToolResult(result)),
+        }
+      : context;
+    return normalizeToolResult(
+      await registered.definition.execute(input, definitionContext),
     );
-    const redacted = parseSchema(ToolResultSchema, redactBoundaryValue(result));
-    return {
-      ...redacted,
-      evidenceHash: toolEvidenceHash(redacted.modelContent),
-    };
   }
 
   #rebuildSearchIndex(): void {

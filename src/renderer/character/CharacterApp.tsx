@@ -294,7 +294,7 @@ export function CharacterApp({
       : voiceFailed
         ? "结束异常语音聊天"
         : voiceTransitioning
-          ? "语音连接处理中"
+          ? "结束语音准备"
           : "暂停语音聊天";
 
   const stopPetInteraction = (event: ReactPointerEvent<HTMLElement>) => {
@@ -674,9 +674,9 @@ export function CharacterApp({
           aria-pressed={voiceActive}
           className={styles["voiceButton"]}
           data-active={voiceActive || undefined}
-          disabled={voiceTransitioning}
           onClick={() => {
-            if (!voice.snapshot) void voiceStore.startQuick();
+            if (voiceTransitioning) void voiceStore.end();
+            else if (!voice.snapshot) void voiceStore.startQuick();
             else if (voicePaused) void voiceStore.setPaused(false);
             else if (voiceFailed) void voiceStore.end();
             else void voiceStore.setPaused(true);

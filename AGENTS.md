@@ -22,6 +22,7 @@ npm run test:focused      # affected unit and component tests
 npm run test:integration  # domain and boundary integration tests
 npm run verify:offline    # complete deterministic offline verification
 npm run build             # Main/Preload/Renderer production build
+npm run embedding:prepare # prepare the pinned local encoder resources for development/package
 npm run package           # Electron Forge package
 npm run make              # Electron Forge macOS DMG installer
 npm run test:e2e          # Playwright Electron E2E

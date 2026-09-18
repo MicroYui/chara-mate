@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,11 +67,13 @@ test("launches through the typed preload boundary", async () => {
     chats.insertAttachment(attachmentFixture);
     seedDatabase.close();
 
+    const environment = { ...process.env };
+    delete environment["CHARAMATE_WORKSPACE_DIR"];
     application = await electron.launch({
       args: [projectRoot],
       cwd: projectRoot,
       env: {
-        ...process.env,
+        ...environment,
         CHARAMATE_USER_DATA_DIR: userDataDirectory,
       },
     });
@@ -98,6 +100,15 @@ test("launches through the typed preload boundary", async () => {
         .getByRole("region", { name: "会话列表" })
         .getByRole("button", { name: chatFixture.title }),
     ).toBeVisible();
+    const workspaceDirectory = path.join(userDataDirectory, "workspace");
+    const initialSettings = await page.evaluate(() =>
+      window.charaMate.settings.getSnapshot(),
+    );
+    expect(initialSettings).toMatchObject({
+      ok: true,
+      value: { agent: { workingDirectory: workspaceDirectory } },
+    });
+    expect((await stat(workspaceDirectory)).isDirectory()).toBe(true);
     const chatNavigation = page.getByRole("region", { name: "会话列表" });
     const settingsButton = page.getByRole("button", { name: "Settings" });
     await expect(settingsButton).toBeInViewport();
@@ -161,11 +172,13 @@ test("launches through the typed preload boundary", async () => {
         "deleteEpisode",
         "getEpisode",
         "getSnapshot",
+        "resolveEventReference",
         "setPaused",
         "updateEpisode",
       ],
       agentKeys: [
         "cancel",
+        "cancelStart",
         "getPendingApproval",
         "resolveApproval",
         "resolveUserInput",
@@ -243,7 +256,6 @@ test("launches through the typed preload boundary", async () => {
         "list",
         "purge",
         "rejectCandidate",
-        "resolveClaim",
         "restore",
         "revise",
         "setPinned",
@@ -325,6 +337,7 @@ test("launches through the typed preload boundary", async () => {
         "subscribePetAction",
       ],
       voiceKeys: [
+        "cancelStart",
         "end",
         "getActive",
         "preview",
@@ -419,6 +432,7 @@ test("launches through the typed preload boundary", async () => {
         Object.keys(window.charaMateCharacter.voice).sort(),
       ),
     ).resolves.toEqual([
+      "cancelStart",
       "end",
       "getActive",
       "preview",

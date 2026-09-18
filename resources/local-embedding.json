@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin",
+  "architecture": "arm64",
+  "engine": {
+    "version": "b10964",
+    "commit": "b29c606e28a01b1bc8c1351026a0fa6e616bf6c4",
+    "archiveSha256": "033c845c1df9bf945ff37bb193238b40910b2244be3e1e637b2ceb5878f1a6f5"
+  },
+  "model": {
+    "file": "Qwen3-Embedding-4B-Q4_K_M.gguf",
+    "sha256": "2b0cf8f17b4c723c27303015383c27ec4bf2d8314bb677d05e920dd70bb0f16b",
+    "sizeBytes": 2496703776,
+    "repository": "Qwen/Qwen3-Embedding-4B-GGUF",
+    "revision": "f4602530db1d980e16da9d7d3a70294cf5c190be",
+    "license": "Apache-2.0",
+    "nativeDimensions": 2560
+  },
+  "encoding": {
+    "dimensions": 512,
+    "contextTokens": 2048,
+    "batchTokens": 512,
+    "threads": 4,
+    "queryInstruction": "Given a personal memory question, retrieve passages that provide the evidence needed to answer it.",
+    "pooling": "last",
+    "normalization": "l2",
+    "parseSpecial": false
+  }
+}

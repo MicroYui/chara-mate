@@ -1,5 +1,13 @@
 # CONTEXT-RECIPE：长期记忆与当前 Run 的唯一装配方式
 
+## 2026-09-16 当前实现与历史适用范围
+
+以下 2026-08 的 C2 PRE8、R0 top8、18 个稳定字段全量预注入及至多一次再搜索，记录当时的比较与修复，**不是当前 Main v21 的上下文配方**。历史分母、成本、失败和取舍原样保留；不能用它们解释此次行动材料额度或声称当前冷检索已经验收。
+
+当前普通 Run 由 `CognitionService.prepareTurn()` 投影已存在的情境、意图、有效主张与未解决问题，不因开启对话再做一次分类或全量画像检索。Agent 根据当前选择的信息依赖直接调用 `memory.search`，由唯一 Recall Pipeline 执行问题、实体及时间约束下的召回与证据选择；有实质新问题或范围才能继续检索，没有固定一次限制。依据见 [冷消费信息依赖](MEMORY-COLD-INFORMATION-DEPENDENCY.md)、[当前召回组合](MEMORY-RANK-FUSION.md)和[结构化搜索范围](MEMORY-RECALL-STRUCTURED-SCOPE.md)。Memory 页面的稳定画像展示不等于模型自动预注入。
+
+自主行动的必要材料由实际完整请求剩余空间分配，先保留当前输入、指令、工具和已选择的行动依据，再由同一个持久 Chat Snapshot 路径压缩旧历史；不使用固定 8k/32k 行动材料上限。完整请求仍受用户 258000 与较低 Provider 限制约束。见[动态行动材料](COGNITION-DYNAMIC-ACTION-BUDGET.md)。下文的 Plan、当前/最新输入与持久会话覆盖水位等正确性要求仍然适用，具体顺序与材料以当前编译器为准。Main v21 已通过全离线检查，最终同版连续语义、总成本和实际包验收仍待完成。
+
 ## 问题与边界
 
 本 Decision 在 `MEMORY-RETRIEVAL` finalist 冻结后，选择近期原文、结构化 handoff、长期 Memory 与按需 `memory.search` 的唯一组合。当前用户目标、附件、最新 steering、审批结果、必要 Tool Result/Schema 是既有正确性约束，不作为某个 Arm 的隐藏得分；本实验只比较可裁剪的历史和长期信息。

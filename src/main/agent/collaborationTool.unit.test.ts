@@ -1,3 +1,4 @@
+import { estimateInputBudget } from "../providers/inputBudget";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../../shared/contracts/primitives";
@@ -50,6 +51,14 @@ class ConcurrentProvider implements ModelProvider {
     });
   }
 
+  measureInput(request: ModelRequest, signal: AbortSignal) {
+    signal.throwIfAborted();
+    return Promise.resolve(this.estimateInput(request));
+  }
+  estimateInput(request: ModelRequest) {
+    return estimateInputBudget(request, request.modelId);
+  }
+
   resolveContextLimits(): Promise<ModelContextLimits> {
     return Promise.resolve({});
   }
@@ -95,6 +104,14 @@ class BlockingProvider implements ModelProvider {
     });
   }
 
+  measureInput(request: ModelRequest, signal: AbortSignal) {
+    signal.throwIfAborted();
+    return Promise.resolve(this.estimateInput(request));
+  }
+  estimateInput(request: ModelRequest) {
+    return estimateInputBudget(request, request.modelId);
+  }
+
   resolveContextLimits(): Promise<ModelContextLimits> {
     return Promise.resolve({});
   }
@@ -127,6 +144,14 @@ class BlockingProvider implements ModelProvider {
 }
 
 class PartialProvider implements ModelProvider {
+  measureInput(request: ModelRequest, signal: AbortSignal) {
+    signal.throwIfAborted();
+    return Promise.resolve(this.estimateInput(request));
+  }
+  estimateInput(request: ModelRequest) {
+    return estimateInputBudget(request, request.modelId);
+  }
+
   resolveContextLimits(): Promise<ModelContextLimits> {
     return Promise.resolve({});
   }

@@ -27,10 +27,13 @@ export interface ChatDomainState {
   readonly chats: readonly Chat[];
   readonly error: string | undefined;
   readonly models: readonly ChatModelOption[];
+  readonly modelsStatus: "loading" | "ready" | "failed";
   readonly status: "loading" | "ready";
+  readonly pendingChatIds: readonly string[];
 }
 
 export interface SubmitChatRunInput {
+  readonly requestId: string;
   readonly attachments: readonly ArtifactReference[];
   readonly chatId: string;
   readonly content: string;
@@ -47,9 +50,11 @@ const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
 
 const initialState: ChatDomainState = {
   activeSnapshot: null,
+  pendingChatIds: [],
   chats: [],
   error: undefined,
   models: [],
+  modelsStatus: "loading",
   status: "loading",
 };
 
@@ -74,7 +79,20 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "会话操作失败，请重试。";
 }
 
+type PendingChatPreparation =
+  | {
+      readonly kind: "start";
+      readonly requestId: string;
+      cancelling?: Promise<void>;
+    }
+  | {
+      readonly kind: "resume";
+      readonly runId: string;
+      cancelling?: Promise<void>;
+    };
+
 export class ChatDomainStore {
+  readonly #pending = new Map<string, PendingChatPreparation>();
   readonly #listeners = new Set<() => void>();
   #activeChatId: string | null = null;
   #eventSync: Promise<void> = Promise.resolve();
@@ -82,6 +100,7 @@ export class ChatDomainStore {
   #listQuery = "";
   #listStatus: ChatStatus = "active";
   #snapshotGeneration = 0;
+  #modelsGeneration = 0;
   #state: ChatDomainState = initialState;
   #unsubscribeChatChanges: (() => void) | undefined;
   #unsubscribeEvents: (() => void) | undefined;
@@ -118,6 +137,7 @@ export class ChatDomainStore {
   }
 
   stop(): void {
+    this.#modelsGeneration += 1;
     this.#unsubscribeChatChanges?.();
     this.#unsubscribeChatChanges = undefined;
     this.#unsubscribeEvents?.();
@@ -204,16 +224,21 @@ export class ChatDomainStore {
   }
 
   async refreshModels(): Promise<void> {
+    const generation = ++this.#modelsGeneration;
+    this.#setState({ modelsStatus: "loading" });
     try {
       const result = await this.providerApi.listProfiles();
+      if (generation !== this.#modelsGeneration) return;
       if (!result.ok) throw new Error(result.error.message);
       const models = result.value.flatMap((profile) => {
         const model = profileToModel(profile);
         return model ? [model] : [];
       });
-      this.#setState({ models, error: undefined });
+      this.#setState({ models, modelsStatus: "ready", error: undefined });
     } catch (error) {
-      this.#setState({ error: errorMessage(error) });
+      if (generation === this.#modelsGeneration) {
+        this.#setState({ modelsStatus: "failed", error: errorMessage(error) });
+      }
     }
   }
 
@@ -232,6 +257,9 @@ export class ChatDomainStore {
   }
 
   async submit(input: SubmitChatRunInput): Promise<void> {
+    if (this.#pending.has(input.chatId))
+      throw new Error("这个会话仍在准备本次请求。");
+    let pending: PendingChatPreparation | undefined;
     try {
       const activeRun = this.#activeRun(input.chatId);
       if (activeRun) {
@@ -245,7 +273,11 @@ export class ChatDomainStore {
         });
         if (!result.ok) throw new Error(result.error.message);
       } else {
+        pending = { kind: "start", requestId: input.requestId };
+        this.#pending.set(input.chatId, pending);
+        this.#publishPending();
         const result = await this.agentApi.start({
+          requestId: input.requestId,
           attachments: [...input.attachments],
           chatId: input.chatId,
           content: input.content,
@@ -259,23 +291,49 @@ export class ChatDomainStore {
     } catch (error) {
       this.#setState({ error: errorMessage(error) });
       throw error;
+    } finally {
+      if (pending) {
+        await pending.cancelling?.catch(() => undefined);
+        if (this.#pending.get(input.chatId) === pending) {
+          this.#pending.delete(input.chatId);
+          this.#publishPending();
+        }
+      }
     }
   }
 
   async cancelActive(chatId: string): Promise<void> {
-    try {
-      const run = this.#activeRun(chatId);
-      if (!run) return;
-      const result = await this.agentApi.cancel({
-        requestedAt: new Date().toISOString(),
-        runId: run.id,
+    const pending = this.#pending.get(chatId);
+    if (pending?.cancelling) return pending.cancelling;
+    const cancellation = (async () => {
+      try {
+        const requestedAt = new Date().toISOString();
+        if (pending?.kind === "start") {
+          const result = await this.agentApi.cancelStart({
+            requestId: pending.requestId,
+            requestedAt,
+          });
+          if (!result.ok) throw new Error(result.error.message);
+        } else {
+          const runId = pending?.runId ?? this.#activeRun(chatId)?.id;
+          if (!runId) return;
+          const result = await this.agentApi.cancel({ requestedAt, runId });
+          if (!result.ok) throw new Error(result.error.message);
+        }
+        await this.loadSnapshot(chatId);
+      } catch (error) {
+        this.#setState({ error: errorMessage(error) });
+        throw error;
+      }
+    })();
+    if (pending) {
+      const tracked = cancellation.finally(() => {
+        if (pending.cancelling === tracked) delete pending.cancelling;
       });
-      if (!result.ok) throw new Error(result.error.message);
-      await this.loadSnapshot(chatId);
-    } catch (error) {
-      this.#setState({ error: errorMessage(error) });
-      throw error;
+      pending.cancelling = tracked;
+      return tracked;
     }
+    return cancellation;
   }
 
   async resolveApproval(
@@ -319,11 +377,19 @@ export class ChatDomainStore {
   }
 
   async resume(runId: string): Promise<void> {
+    let chatId: string | undefined;
+    let pending: PendingChatPreparation | undefined;
     try {
       const run = this.#state.activeSnapshot?.runs.find(
         (candidate) => candidate.id === runId,
       );
       if (!run) throw new Error("找不到要继续的 Run。");
+      chatId = run.chatId;
+      if (this.#pending.has(chatId))
+        throw new Error("这个会话仍在准备本次请求。");
+      pending = { kind: "resume", runId };
+      this.#pending.set(chatId, pending);
+      this.#publishPending();
       const result = await this.agentApi.resume({
         requestedAt: new Date().toISOString(),
         runId,
@@ -333,7 +399,19 @@ export class ChatDomainStore {
     } catch (error) {
       this.#setState({ error: errorMessage(error) });
       throw error;
+    } finally {
+      if (chatId && pending) {
+        await pending.cancelling?.catch(() => undefined);
+        if (this.#pending.get(chatId) === pending) {
+          this.#pending.delete(chatId);
+          this.#publishPending();
+        }
+      }
     }
+  }
+
+  #publishPending(): void {
+    this.#setState({ pendingChatIds: [...this.#pending.keys()] });
   }
 
   async #afterMutation(chatId: string): Promise<void> {

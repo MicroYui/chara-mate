@@ -27,6 +27,28 @@ export const StartRunRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const StartRunSubmissionRequestSchema = Type.Object(
+  { ...StartRunRequestSchema.properties, requestId: EntityIdSchema },
+  { additionalProperties: false },
+);
+
+export const CancelStartRequestSchema = Type.Object(
+  { requestId: EntityIdSchema, requestedAt: TimestampSchema },
+  { additionalProperties: false },
+);
+
+export const CancelStartResultSchema = Type.Object(
+  {
+    requestId: EntityIdSchema,
+    outcome: Type.Union([
+      Type.Literal("accepted"),
+      Type.Literal("not_pending"),
+    ]),
+    runId: Type.Optional(EntityIdSchema),
+  },
+  { additionalProperties: false },
+);
+
 export const SteerRunRequestSchema = Type.Object(
   {
     content: NonBlankStringSchema,
@@ -107,6 +129,9 @@ function operationResponse<TValue extends TSchema>(value: TValue) {
 }
 
 export const StartRunResponseSchema = operationResponse(RunSchema);
+export const CancelStartResponseSchema = operationResponse(
+  CancelStartResultSchema,
+);
 export const RunMutationResponseSchema = operationResponse(
   RunMutationResultSchema,
 );

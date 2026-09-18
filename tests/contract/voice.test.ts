@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import { VOICE_CHANNELS } from "../../src/shared/contracts/voice";
 import { IpcChannelSchema } from "../../src/shared/schemas/ipc";
 import {
+  VoiceCancelStartRequestSchema,
+  VoiceStartSubmissionSchema,
+  VoicePausedSubmissionSchema,
   VoiceClientCommandSchema,
   VoiceDriverEventRequestSchema,
   VoicePausedRequestSchema,
@@ -285,3 +288,47 @@ describe("Phase 4 Voice boundary contracts", () => {
     },
   );
 });
+
+it.each(parsers)(
+  "requires a submission identity for startup and resume but not ordinary pause",
+  (parse) => {
+    const request = {
+      chatId: FIXTURE_IDS.chat,
+      chatProviderProfileId: FIXTURE_IDS.provider,
+      execution: { mode: "chat" },
+      requestedAt: FIXTURE_TIMESTAMPS.created,
+    };
+    expect(() => parse(VoiceStartSubmissionSchema, { request })).toThrow();
+    expect(
+      parse(VoiceStartSubmissionSchema, { requestId: turnId, request }),
+    ).toMatchObject({ requestId: turnId, request });
+    const pause = {
+      sessionId,
+      paused: true,
+      requestedAt: FIXTURE_TIMESTAMPS.created,
+    };
+    expect(parse(VoicePausedSubmissionSchema, { request: pause })).toEqual({
+      request: pause,
+    });
+    expect(() =>
+      parse(VoicePausedSubmissionSchema, {
+        request: { ...pause, paused: false },
+      }),
+    ).toThrow();
+    expect(
+      parse(VoicePausedSubmissionSchema, {
+        requestId: turnId,
+        request: { ...pause, paused: false },
+      }),
+    ).toMatchObject({ requestId: turnId });
+    expect(parse(VoiceCancelStartRequestSchema, { requestId: turnId })).toEqual(
+      { requestId: turnId },
+    );
+    expect(
+      parse(VoiceClientCommandSchema, {
+        type: "preparation.cancel",
+        requestId: turnId,
+      }),
+    ).toEqual({ type: "preparation.cancel", requestId: turnId });
+  },
+);

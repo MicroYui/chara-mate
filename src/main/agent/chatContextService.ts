@@ -2,30 +2,38 @@ import type { Message } from "../../shared/contracts/chat";
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { Clock } from "../../shared/pure/clock";
 import {
-  CONTEXT_COMPACTION_RATIO,
-  estimatedInputTokens,
   resolvedInputBudget,
+  shouldCompactContextInput,
+  type ContextInputMeasurement,
 } from "./contextCompiler";
 import {
   collectModelTurn,
   type ModelContextLimits,
   type ModelProvider,
+  type ModelRequest,
 } from "./modelProvider";
+import { materializeCognitionContextInput } from "./cognitionContext";
 import { ProviderError } from "../providers/providerError";
+import { fitsInputBudget } from "../providers/inputBudget";
 import {
   CHAT_CONTEXT_SUMMARY_PREFIX,
   type ChatContextSnapshot,
 } from "../chat/chatContext";
 import type { ChatRepository } from "../chat/chatRepository";
+import type { RunRepository } from "./runRepository";
+
+interface ContextMessage extends Message {
+  readonly assistantMessages?: readonly JsonValue[];
+}
 
 interface MessageSegment {
-  readonly messages: readonly Message[];
+  readonly messages: readonly ContextMessage[];
 }
 
 export interface ChatContextProjection {
   readonly compacted: boolean;
   readonly input: readonly JsonValue[];
-  readonly messages: readonly Message[];
+  readonly messages: readonly ContextMessage[];
   readonly snapshot?: ChatContextSnapshot;
 }
 
@@ -35,16 +43,21 @@ export interface PrepareChatContextRequest {
   readonly force?: boolean;
   readonly limits: ModelContextLimits;
   readonly modelId: string;
+  readonly measureInput?: ContextInputMeasurement;
   readonly provider: ModelProvider;
   readonly signal: AbortSignal;
 }
 
-function messageInput(message: Message): JsonValue {
-  return {
-    content: message.content,
-    role: message.role,
-    type: "message",
-  };
+function messageInput(message: ContextMessage): readonly JsonValue[] {
+  return (
+    message.assistantMessages ?? [
+      {
+        content: message.content,
+        role: message.role,
+        type: "message",
+      },
+    ]
+  );
 }
 
 function summaryInput(snapshot: ChatContextSnapshot): JsonValue | undefined {
@@ -67,10 +80,10 @@ function summaryInput(snapshot: ChatContextSnapshot): JsonValue | undefined {
   };
 }
 
-function segments(messages: readonly Message[]): MessageSegment[] {
+function segments(messages: readonly ContextMessage[]): MessageSegment[] {
   const values: MessageSegment[] = [];
   let currentKey: string | undefined;
-  let current: Message[] = [];
+  let current: ContextMessage[] = [];
   for (const message of messages) {
     const key = message.runId ?? `message:${message.id}`;
     if (current.length > 0 && key !== currentKey) {
@@ -84,18 +97,22 @@ function segments(messages: readonly Message[]): MessageSegment[] {
   return values;
 }
 
-function transcript(messages: readonly Message[]): string {
+function transcript(messages: readonly ContextMessage[]): string {
   return messages
     .map(
       (message) =>
-        `[${message.createdAt} ${message.role} messageId=${message.id}]\n${message.content}`,
+        `[${message.createdAt} ${message.role} messageId=${message.id}]\n${
+          message.assistantMessages === undefined
+            ? message.content
+            : JSON.stringify({ assistantMessages: message.assistantMessages })
+        }`,
     )
     .join("\n\n");
 }
 
 function summaryRequestInput(
   previousSummary: string,
-  messages: readonly Message[],
+  messages: readonly ContextMessage[],
 ): JsonValue[] {
   return [
     {
@@ -111,6 +128,35 @@ function summaryRequestInput(
   ];
 }
 
+function summaryRequest(
+  modelId: string,
+  previousSummary: string,
+  messages: readonly ContextMessage[],
+): ModelRequest {
+  return {
+    input: summaryRequestInput(previousSummary, messages),
+    instructions: [
+      "You maintain CharaMate conversation working memory.",
+      "Return only a concise factual summary of the supplied completed messages.",
+      "Preserve user goals, constraints, durable conversational context, completed actions, important decisions, corrections, and unresolved questions.",
+      "Original assistant messages retain their Provider phase: commentary is progress, not proof of completion; final_answer is an answer label, not proof of a Tool effect. Missing or null phase is unknown. Preserve unresolved work without promoting progress into a completed action.",
+      "Do not invent facts, do not include credentials, and do not mention that summarization occurred.",
+      "Use the language of the conversation. Organize the result under: Goals and context; Constraints and preferences; Completed actions and decisions; Unresolved items.",
+    ].join("\n"),
+    modelId,
+    nativeWebSearch: false,
+    toolNamespaces: [],
+  };
+}
+
+function oversizedContext(): ProviderError {
+  return new ProviderError(
+    "PROVIDER.CONTEXT_LIMIT_EXCEEDED",
+    "单段会话、当前输入或摘要超过可整理的输入预算，请缩短内容或分段提供。",
+    false,
+  );
+}
+
 function boundaryOf(segment: MessageSegment) {
   const message = segment.messages.at(-1);
   if (!message) throw new Error("Chat context segment is empty");
@@ -121,23 +167,35 @@ export class ChatContextService {
   constructor(
     private readonly chats: ChatRepository,
     private readonly clock: Clock,
+    private readonly runs: RunRepository,
   ) {}
 
   project(chatId: string): ChatContextProjection {
     const snapshot = this.chats.getContextSnapshot(chatId);
-    const messages = this.chats.listContextMessages(
-      chatId,
-      snapshot?.coveredThroughMessageId && snapshot.coveredThroughCreatedAt
-        ? {
-            createdAt: snapshot.coveredThroughCreatedAt,
-            messageId: snapshot.coveredThroughMessageId,
-          }
-        : undefined,
-    );
+    const messages = this.chats
+      .listContextMessages(
+        chatId,
+        snapshot?.coveredThroughMessageId && snapshot.coveredThroughCreatedAt
+          ? {
+              createdAt: snapshot.coveredThroughCreatedAt,
+              messageId: snapshot.coveredThroughMessageId,
+            }
+          : undefined,
+      )
+      .map((message): ContextMessage => {
+        const assistantMessages =
+          message.role === "assistant" && message.runId
+            ? this.runs.getAssistantMessages(message.runId, message.id)
+            : undefined;
+        return {
+          ...message,
+          ...(assistantMessages === undefined ? {} : { assistantMessages }),
+        };
+      });
     const summary = snapshot ? summaryInput(snapshot) : undefined;
     return {
       compacted: false,
-      input: [...(summary ? [summary] : []), ...messages.map(messageInput)],
+      input: [...(summary ? [summary] : []), ...messages.flatMap(messageInput)],
       messages,
       ...(snapshot ? { snapshot } : {}),
     };
@@ -159,16 +217,38 @@ export class ChatContextService {
   async prepare(
     request: PrepareChatContextRequest,
   ): Promise<ChatContextProjection> {
+    request.signal.throwIfAborted();
     let projection = this.project(request.chatId);
     const additionalInput = request.additionalInput ?? [];
+    const measurement: ContextInputMeasurement =
+      request.measureInput ??
+      ((input, options) =>
+        request.provider.measureInput(
+          {
+            input: input.map(materializeCognitionContextInput),
+            instructions: "",
+            modelId: request.modelId,
+            nativeWebSearch: false,
+            toolNamespaces: [],
+          },
+          request.signal,
+          options,
+        ));
+    const measure: ContextInputMeasurement = async (input, options) => {
+      request.signal.throwIfAborted();
+      const result = await measurement(input, options);
+      request.signal.throwIfAborted();
+      return result;
+    };
     if (
       !request.force &&
-      !this.#shouldCompact(
+      !(await this.#shouldCompact(
         projection,
         additionalInput,
         request.limits,
         request.modelId,
-      )
+        measure,
+      ))
     ) {
       return projection;
     }
@@ -179,23 +259,26 @@ export class ChatContextService {
       const grouped = segments(projection.messages);
       const targetCount = force
         ? grouped.length
-        : this.#segmentsToCover(
+        : await this.#segmentsToCover(
             projection,
             grouped,
             additionalInput,
             request.limits,
             request.modelId,
+            measure,
           );
       if (targetCount <= 0) break;
 
       let remaining = targetCount;
       while (remaining > 0) {
         const current = projection.snapshot;
-        const batchCount = this.#summaryBatchCount(
+        const batchCount = await this.#summaryBatchCount(
           current,
           grouped.slice(targetCount - remaining, targetCount),
           request.limits,
           request.modelId,
+          request.provider,
+          request.signal,
         );
         const batch = grouped.slice(
           targetCount - remaining,
@@ -207,8 +290,10 @@ export class ChatContextService {
           request.modelId,
           current?.summary ?? "",
           batchMessages,
+          request.limits,
           request.signal,
         );
+        request.signal.throwIfAborted();
         const advanced = this.chats.advanceContextSnapshot({
           boundary: boundaryOf(batch.at(-1)!),
           chatId: request.chatId,
@@ -230,53 +315,61 @@ export class ChatContextService {
 
       force = false;
       if (
-        !this.#shouldCompact(
+        !(await this.#shouldCompact(
           projection,
           additionalInput,
           request.limits,
           request.modelId,
-        )
+          measure,
+        ))
       ) {
         break;
       }
     }
 
+    if (
+      !fitsInputBudget(
+        await measure([...projection.input, ...additionalInput]),
+        resolvedInputBudget(request.limits),
+      )
+    ) {
+      throw oversizedContext();
+    }
     return { ...projection, compacted };
   }
 
-  #shouldCompact(
+  async #shouldCompact(
     projection: ChatContextProjection,
     additionalInput: readonly JsonValue[],
     limits: ModelContextLimits,
     modelId: string,
-  ): boolean {
+    measure: ContextInputMeasurement,
+  ): Promise<boolean> {
     const snapshot = projection.snapshot;
     const budget = resolvedInputBudget(limits);
-    if (
-      !snapshot ||
-      !budget ||
-      snapshot.lastModelId !== modelId ||
-      snapshot.lastRequestBytes === undefined ||
-      snapshot.lastInputTokens === undefined
-    ) {
-      return false;
-    }
-    return (
-      estimatedInputTokens([...projection.input, ...additionalInput], {
-        inputTokens: snapshot.lastInputTokens,
-        requestBytes: snapshot.lastRequestBytes,
-      }) >=
-      budget * CONTEXT_COMPACTION_RATIO
+    return shouldCompactContextInput(
+      [...projection.input, ...additionalInput],
+      budget,
+      measure,
+      snapshot?.lastModelId === modelId &&
+        snapshot.lastRequestBytes !== undefined &&
+        snapshot.lastInputTokens !== undefined
+        ? {
+            inputTokens: snapshot.lastInputTokens,
+            requestBytes: snapshot.lastRequestBytes,
+          }
+        : undefined,
     );
   }
 
-  #segmentsToCover(
+  async #segmentsToCover(
     projection: ChatContextProjection,
     grouped: readonly MessageSegment[],
     additionalInput: readonly JsonValue[],
     limits: ModelContextLimits,
     modelId: string,
-  ): number {
+    measure: ContextInputMeasurement,
+  ): Promise<number> {
     for (let count = 1; count <= grouped.length; count += 1) {
       const remainingMessages = grouped
         .slice(count)
@@ -287,73 +380,67 @@ export class ChatContextService {
           ...(projection.snapshot && summaryInput(projection.snapshot)
             ? [summaryInput(projection.snapshot)!]
             : []),
-          ...remainingMessages.map(messageInput),
+          ...remainingMessages.flatMap(messageInput),
         ],
         messages: remainingMessages,
       };
-      if (!this.#shouldCompact(candidate, additionalInput, limits, modelId)) {
+      if (
+        !(await this.#shouldCompact(
+          candidate,
+          additionalInput,
+          limits,
+          modelId,
+          measure,
+        ))
+      ) {
         return count;
       }
     }
     return grouped.length;
   }
 
-  #summaryBatchCount(
+  async #summaryBatchCount(
     snapshot: ChatContextSnapshot | undefined,
     candidates: readonly MessageSegment[],
     limits: ModelContextLimits,
     modelId: string,
-  ): number {
-    if (candidates.length <= 1) return candidates.length;
-    if (
-      !snapshot ||
-      snapshot.lastModelId !== modelId ||
-      snapshot.lastRequestBytes === undefined ||
-      snapshot.lastInputTokens === undefined
-    ) {
-      return 1;
-    }
+    provider: ModelProvider,
+    signal: AbortSignal,
+  ): Promise<number> {
     const budget = resolvedInputBudget(limits);
-    if (!budget) return 1;
     for (let count = candidates.length; count >= 1; count -= 1) {
-      const input = summaryRequestInput(
-        snapshot.summary,
+      signal.throwIfAborted();
+      const request = summaryRequest(
+        modelId,
+        snapshot?.summary ?? "",
         candidates.slice(0, count).flatMap((segment) => segment.messages),
       );
-      const estimated = estimatedInputTokens(input, {
-        inputTokens: snapshot.lastInputTokens,
-        requestBytes: snapshot.lastRequestBytes,
-      });
-      if (estimated < budget * CONTEXT_COMPACTION_RATIO) return count;
+      const measurement = await provider.measureInput(request, signal);
+      signal.throwIfAborted();
+      if (fitsInputBudget(measurement, budget)) {
+        return count;
+      }
     }
-    return 1;
+    throw oversizedContext();
   }
 
   async #summarize(
     provider: ModelProvider,
     modelId: string,
     previousSummary: string,
-    messages: readonly Message[],
+    messages: readonly ContextMessage[],
+    limits: ModelContextLimits,
     signal: AbortSignal,
   ): Promise<string> {
-    const turn = await collectModelTurn(
-      provider.stream(
-        {
-          input: summaryRequestInput(previousSummary, messages),
-          instructions: [
-            "You maintain CharaMate conversation working memory.",
-            "Return only a concise factual summary of the supplied completed messages.",
-            "Preserve user goals, constraints, durable conversational context, completed actions, important decisions, corrections, and unresolved questions.",
-            "Do not invent facts, do not include credentials, and do not mention that summarization occurred.",
-            "Use the language of the conversation. Organize the result under: Goals and context; Constraints and preferences; Completed actions and decisions; Unresolved items.",
-          ].join("\n"),
-          modelId,
-          nativeWebSearch: false,
-          toolNamespaces: [],
-        },
-        signal,
-      ),
-    );
+    signal.throwIfAborted();
+    const request = summaryRequest(modelId, previousSummary, messages);
+    const measuredRequest = await provider.measureInput(request, signal);
+    signal.throwIfAborted();
+    if (!fitsInputBudget(measuredRequest, resolvedInputBudget(limits))) {
+      throw oversizedContext();
+    }
+    const turn = await collectModelTurn(provider.stream(request, signal));
+    signal.throwIfAborted();
     const summary = turn.text.trim();
     if (turn.status !== "completed" || !summary) {
       throw new ProviderError(
@@ -361,6 +448,14 @@ export class ChatContextService {
         "模型没有完成会话上下文整理，请重试。",
         true,
       );
+    }
+    const measuredSummary = await provider.measureInput(
+      summaryRequest(modelId, summary, []),
+      signal,
+    );
+    signal.throwIfAborted();
+    if (!fitsInputBudget(measuredSummary, resolvedInputBudget(limits))) {
+      throw oversizedContext();
     }
     return summary;
   }

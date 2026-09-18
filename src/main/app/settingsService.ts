@@ -37,7 +37,7 @@ const DATA_CATEGORIES = [
 
 function categoryForEntry(name: string): DataUsageCategoryId {
   if (/^charamate\.sqlite(?:-(?:shm|wal))?$/u.test(name)) return "database";
-  if (name === "artifacts") return "artifacts";
+  if (name === "artifacts" || name === "workspace") return "artifacts";
   if (name === "browser") return "browser";
   if (name === "activity") return "activity";
   if (name === "territory") return "territory";

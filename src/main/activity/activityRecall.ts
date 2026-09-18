@@ -1,7 +1,4 @@
-import type {
-  ActivityDigest,
-  ActivityEpisode,
-} from "../../shared/contracts/activity";
+import type { ActivityEpisode } from "../../shared/contracts/activity";
 import type { Timestamp } from "../../shared/contracts/primitives";
 import { memorySearchTokens } from "../memory/memorySearchText";
 
@@ -22,6 +19,7 @@ export interface ActivitySearchResult {
 }
 
 export interface ActivitySearchPattern {
+  readonly actor: "user" | "unknown";
   readonly activeDays: number;
   readonly episodeCount: number;
   readonly firstSeenAt: Timestamp;
@@ -31,17 +29,8 @@ export interface ActivitySearchPattern {
   readonly totalMinutes: number;
 }
 
-export interface StableActivityPattern {
-  readonly content: string;
-  readonly label: string;
-  readonly legacyReason: string;
-  readonly reason: string;
-  readonly sourceIds: readonly string[];
-  readonly sourceLabels: readonly string[];
-  readonly validFrom: Timestamp;
-}
-
 interface ActivityAggregate {
+  actor: "user" | "unknown";
   activeDates: Set<string>;
   episodeCount: number;
   firstSeenAt: Timestamp;
@@ -50,14 +39,6 @@ interface ActivityAggregate {
   lastSeenAt: Timestamp;
   searchTokens: Set<string>;
   totalMilliseconds: number;
-}
-
-interface WeeklyObservation {
-  readonly activeDays: number;
-  readonly digest: ActivityDigest;
-  readonly firstSeenAt: Timestamp;
-  readonly label: string;
-  readonly totalMinutes: number;
 }
 
 function dateKey(timestamp: Timestamp, timeZone: string): string {
@@ -77,12 +58,16 @@ function normalizedLabel(label: string): string {
   return label.normalize("NFKC").replaceAll(/\s+/gu, " ").trim().toLowerCase();
 }
 
-function episodeIdentity(
-  episode: ActivityEpisode,
-): { kind: ActivitySearchPattern["kind"]; label: string } | undefined {
-  if (episode.actor !== "user") return undefined;
+function episodeIdentity(episode: ActivityEpisode):
+  | {
+      actor: "user" | "unknown";
+      kind: ActivitySearchPattern["kind"];
+      label: string;
+    }
+  | undefined {
+  if (episode.actor !== "user" && episode.actor !== "unknown") return undefined;
   if (episode.domains[0]) {
-    return { kind: "domain", label: episode.domains[0] };
+    return { actor: episode.actor, kind: "domain", label: episode.domains[0] };
   }
   if (
     episode.appNames[0] &&
@@ -90,7 +75,7 @@ function episodeIdentity(
       (source) => source === "active_app" || source === "managed_browser",
     )
   ) {
-    return { kind: "app", label: episode.appNames[0] };
+    return { actor: episode.actor, kind: "app", label: episode.appNames[0] };
   }
   return undefined;
 }
@@ -124,10 +109,11 @@ export function searchActivityEpisodes(
   for (const episode of episodes) {
     const identity = episodeIdentity(episode);
     if (!identity) continue;
-    const key = `${identity.kind}:${normalizedLabel(identity.label)}`;
+    const key = `${episode.actor}:${identity.kind}:${normalizedLabel(identity.label)}`;
     let aggregate = aggregates.get(key);
     if (!aggregate) {
       aggregate = {
+        actor: identity.actor,
         activeDates: new Set(),
         episodeCount: 0,
         firstSeenAt: episode.startedAt,
@@ -157,6 +143,7 @@ export function searchActivityEpisodes(
   const queryTokens = memorySearchTokens(query?.trim() ?? "");
   return [...aggregates.values()]
     .map((aggregate) => ({
+      actor: aggregate.actor,
       aggregate,
       score: queryTokens.reduce(
         (score, token) => score + (aggregate.searchTokens.has(token) ? 1 : 0),
@@ -173,6 +160,7 @@ export function searchActivityEpisodes(
     )
     .slice(0, limit)
     .map(({ aggregate }) => ({
+      actor: aggregate.actor,
       activeDays: aggregate.activeDates.size,
       episodeCount: aggregate.episodeCount,
       firstSeenAt: aggregate.firstSeenAt,
@@ -181,94 +169,4 @@ export function searchActivityEpisodes(
       lastSeenAt: aggregate.lastSeenAt,
       totalMinutes: roundedMinutes(aggregate.totalMilliseconds),
     }));
-}
-
-export function stableActivityPatternReason(label: string): string {
-  return `Activity 跨周稳定行为候选：${label}`;
-}
-
-export function legacyActivityPatternReason(label: string): string {
-  return `Activity 跨日证据归纳：${label}`;
-}
-
-export function buildStableActivityPatterns(
-  weeklyDigests: readonly ActivityDigest[],
-  episodes: readonly ActivityEpisode[],
-  timeZone: string,
-): StableActivityPattern[] {
-  const episodesById = new Map(
-    episodes.map((episode) => [episode.id, episode]),
-  );
-  const observations = new Map<string, WeeklyObservation[]>();
-
-  for (const digest of weeklyDigests
-    .filter(({ kind }) => kind === "weekly")
-    .sort(
-      (left, right) =>
-        left.periodStart.localeCompare(right.periodStart) ||
-        left.id.localeCompare(right.id),
-    )) {
-    const grouped = new Map<
-      string,
-      {
-        dates: Set<string>;
-        firstSeenAt: Timestamp;
-        label: string;
-        totalMilliseconds: number;
-      }
-    >();
-    for (const episodeId of digest.episodeIds) {
-      const episode = episodesById.get(episodeId);
-      if (!episode) continue;
-      const identity = episodeIdentity(episode);
-      if (!identity) continue;
-      const key = `${identity.kind}:${normalizedLabel(identity.label)}`;
-      let group = grouped.get(key);
-      if (!group) {
-        group = {
-          dates: new Set(),
-          firstSeenAt: episode.startedAt,
-          label: identity.label,
-          totalMilliseconds: 0,
-        };
-        grouped.set(key, group);
-      }
-      group.dates.add(dateKey(episode.startedAt, timeZone));
-      group.totalMilliseconds += episodeMilliseconds(episode);
-      if (episode.startedAt < group.firstSeenAt) {
-        group.firstSeenAt = episode.startedAt;
-      }
-    }
-    for (const [key, group] of grouped) {
-      const values = observations.get(key) ?? [];
-      values.push({
-        activeDays: group.dates.size,
-        digest,
-        firstSeenAt: group.firstSeenAt,
-        label: group.label,
-        totalMinutes: roundedMinutes(group.totalMilliseconds),
-      });
-      observations.set(key, values);
-    }
-  }
-
-  return [...observations.values()]
-    .filter((values) => values.length >= 2)
-    .map((values): StableActivityPattern => {
-      const selected = values.slice(-2);
-      const label = selected.at(-1)!.label;
-      return {
-        content: `用户在多个自然周持续使用 ${label}。这是观察到的使用习惯，不等同于用户明确表达的偏好。`,
-        label,
-        legacyReason: legacyActivityPatternReason(label),
-        reason: stableActivityPatternReason(label),
-        sourceIds: selected.map(({ digest }) => digest.id),
-        sourceLabels: selected.map(
-          ({ activeDays, digest, totalMinutes }) =>
-            `${digest.title}：${String(activeDays)} 天，${String(totalMinutes)} 分钟`,
-        ),
-        validFrom: selected[0]!.firstSeenAt,
-      };
-    })
-    .sort((left, right) => left.label.localeCompare(right.label));
 }

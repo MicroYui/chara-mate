@@ -18,8 +18,10 @@ import type {
   MemoryProposalInputSchema,
   MemoryPurgeResponseSchema,
   MemoryRecordSchema,
-  MemoryResolveClaimRequestSchema,
   MemoryRevisionSchema,
+  MemoryHistoricalDispositionSchema,
+  MemoryPriorDispositionSchema,
+  MemoryHistoryStatusSchema,
   MemoryReviseRequestSchema,
   MemorySetPinnedRequestSchema,
   MemorySnapshotSchema,
@@ -40,12 +42,18 @@ export const MEMORY_CHANNELS = {
   list: "memory.list",
   purge: "memory.purge",
   rejectCandidate: "memory.candidate.reject",
-  resolveClaim: "memory.claim.resolve",
   restore: "memory.restore",
   revise: "memory.revise",
   setPinned: "memory.setPinned",
 } as const;
 
+export type MemoryHistoricalDisposition = Static<
+  typeof MemoryHistoricalDispositionSchema
+>;
+export type MemoryPriorDisposition = Static<
+  typeof MemoryPriorDispositionSchema
+>;
+export type MemoryHistoryStatus = Static<typeof MemoryHistoryStatusSchema>;
 export type MemoryType = Static<typeof MemoryTypeSchema>;
 export type MemoryStatus = Static<typeof MemoryStatusSchema>;
 export type MemorySourceType = Static<typeof MemorySourceTypeSchema>;
@@ -85,9 +93,6 @@ export type MemorySnapshot = Omit<
 export type MemoryListRequest = Static<typeof MemoryListRequestSchema>;
 export type MemoryIdRequest = Static<typeof MemoryIdRequestSchema>;
 export type MemoryCreateRequest = Static<typeof MemoryCreateRequestSchema>;
-export type MemoryResolveClaimRequest = Static<
-  typeof MemoryResolveClaimRequestSchema
->;
 export type MemoryReviseRequest = Static<typeof MemoryReviseRequestSchema>;
 export type MemorySetPinnedRequest = Static<
   typeof MemorySetPinnedRequestSchema
@@ -119,9 +124,6 @@ export interface MemoryApi {
   rejectCandidate(
     request: MemoryCandidateIdRequest,
   ): Promise<MemoryCandidateMutationResponse>;
-  resolveClaim(
-    request: MemoryResolveClaimRequest,
-  ): Promise<MemoryMutationResponse>;
   restore(request: MemoryIdRequest): Promise<MemoryMutationResponse>;
   revise(request: MemoryReviseRequest): Promise<MemoryMutationResponse>;
   setPinned(request: MemorySetPinnedRequest): Promise<MemoryMutationResponse>;

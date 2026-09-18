@@ -32,6 +32,10 @@ import type {
   PersonaLibrarySnapshot,
 } from "../../shared/contracts/persona";
 import type {
+  ProviderApi,
+  ProviderProfile,
+} from "../../shared/contracts/provider";
+import type {
   VoiceApi,
   VoiceSessionSnapshot,
 } from "../../shared/contracts/voice";
@@ -78,6 +82,7 @@ const PETS = [
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   document.documentElement.removeAttribute("data-foundation-ready");
   document.documentElement.removeAttribute("data-background-scheme");
   document.documentElement.removeAttribute("data-theme");
@@ -97,11 +102,15 @@ function renderApp({
   initialChats,
   initialJourneySnapshot = { journeys: [], sessions: [] },
   modelAvailable = false,
+  profiles,
+  providerList,
   seeded = false,
 }: {
   readonly initialChats?: readonly Chat[];
   readonly initialJourneySnapshot?: JourneySnapshot;
   readonly modelAvailable?: boolean;
+  readonly profiles?: readonly ProviderProfile[];
+  readonly providerList?: ProviderApi["listProfiles"];
   readonly seeded?: boolean;
 } = {}) {
   let chats: Chat[] = [...(initialChats ?? (seeded ? [chatFixture] : []))];
@@ -152,23 +161,29 @@ function renderApp({
   }
   const markRendererReady = vi.fn();
   const setTerritoryActive = vi.fn();
-  const listProfiles = vi.fn().mockResolvedValue({
-    ok: true,
-    value: modelAvailable
-      ? [
-          {
-            apiStyle: "openai-compatible" as const,
-            baseUrl: "https://example.test/v1",
-            chatModel: "gpt-chat",
-            createdAt: FIXTURE_TIMESTAMPS.created,
-            hasApiKey: true,
-            id: FIXTURE_IDS.provider,
-            name: "Test Provider",
-            updatedAt: FIXTURE_TIMESTAMPS.updated,
-          },
-        ]
-      : [],
-  });
+  const listProfiles = vi.fn<ProviderApi["listProfiles"]>(
+    providerList ??
+      (() =>
+        Promise.resolve({
+          ok: true,
+          value: profiles
+            ? [...profiles]
+            : modelAvailable
+              ? [
+                  {
+                    apiStyle: "openai-compatible" as const,
+                    baseUrl: "https://example.test/v1",
+                    chatModel: "gpt-chat",
+                    createdAt: FIXTURE_TIMESTAMPS.created,
+                    hasApiKey: true,
+                    id: FIXTURE_IDS.provider,
+                    name: "Test Provider",
+                    updatedAt: FIXTURE_TIMESTAMPS.updated,
+                  },
+                ]
+              : [],
+        })),
+  );
   const create = vi.fn<ChatApi["create"]>((request) => {
     const chat: Chat = {
       createdAt: FIXTURE_TIMESTAMPS.created,
@@ -207,6 +222,13 @@ function renderApp({
       value: { ...runFixture, chatId: CREATED_CHAT_ID },
     }),
   );
+  const cancelStart = vi.fn<AgentApi["cancelStart"]>(({ requestId }) =>
+    Promise.resolve({
+      ok: true,
+      value: { requestId, outcome: "accepted" },
+    }),
+  );
+  const cancel = vi.fn<AgentApi["cancel"]>();
   const voiceStart = vi.fn<VoiceApi["start"]>().mockResolvedValue({
     error: {
       code: "PROVIDER.UNREACHABLE",
@@ -228,6 +250,7 @@ function renderApp({
       cleanup: vi.fn(),
       deleteEpisode: vi.fn(),
       getEpisode: vi.fn(),
+      resolveEventReference: vi.fn(),
       getSnapshot: vi.fn(),
       setPaused: vi.fn(),
       updateEpisode: vi.fn(),
@@ -242,7 +265,8 @@ function renderApp({
       update: vi.fn(),
     },
     agent: {
-      cancel: vi.fn<AgentApi["cancel"]>(),
+      cancelStart,
+      cancel,
       getPendingApproval: vi.fn<AgentApi["getPendingApproval"]>(),
       resolveApproval: vi.fn<AgentApi["resolveApproval"]>(),
       resolveUserInput: vi.fn<AgentApi["resolveUserInput"]>(),
@@ -397,7 +421,6 @@ function renderApp({
       list: vi.fn(),
       purge: vi.fn(),
       rejectCandidate: vi.fn(),
-      resolveClaim: vi.fn(),
       restore: vi.fn(),
       revise: vi.fn(),
       setPinned: vi.fn(),
@@ -567,6 +590,9 @@ function renderApp({
       saveVoice: vi.fn(),
     },
     voice: {
+      cancelStart: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: { outcome: "accepted" } }),
       end: voiceEnd,
       getActive: vi.fn().mockResolvedValue({ ok: true, value: null }),
       preview: vi.fn(),
@@ -603,9 +629,11 @@ function renderApp({
     value: desktopApi,
   });
 
-  render(<App />);
+  const view = render(<App />);
   return {
     automationList,
+    cancel,
+    cancelStart,
     create,
     emitChatChanged: (chat: Chat) => {
       update(chat);
@@ -632,8 +660,27 @@ function renderApp({
     setTerritoryActive,
     voiceEnd,
     voiceStart,
+    unmount: view.unmount,
   };
 }
+
+const modelPreferenceKey = "chara-mate.chat-model";
+const firstModelProfile: ProviderProfile = {
+  apiStyle: "openai-compatible",
+  baseUrl: "https://example.test/v1",
+  chatModel: "gpt-chat",
+  createdAt: FIXTURE_TIMESTAMPS.created,
+  hasApiKey: true,
+  id: FIXTURE_IDS.provider,
+  name: "First Provider",
+  updatedAt: FIXTURE_TIMESTAMPS.updated,
+};
+const secondModelProfile: ProviderProfile = {
+  ...firstModelProfile,
+  id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  name: "Second Provider",
+  chatModel: "gpt-6-astra",
+};
 
 describe("application shell", () => {
   it("projects the active Persona into the sidebar", async () => {
@@ -1246,6 +1293,181 @@ describe("application shell", () => {
     expect(screen.getByText("正在预览 AI 变更")).toBeVisible();
   });
 
+  it("keeps the saved preference while the first list is pending, then restores it", async () => {
+    const selected = `${secondModelProfile.id}::gpt-6-astra`;
+    window.localStorage.setItem(modelPreferenceKey, selected);
+    let resolve!: (
+      value: Awaited<ReturnType<ProviderApi["listProfiles"]>>,
+    ) => void;
+    renderApp({
+      providerList: () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    });
+    await screen.findByRole("region", { name: "Chats" });
+    expect(window.localStorage.getItem(modelPreferenceKey)).toBe(selected);
+    await act(() => {
+      resolve({ ok: true, value: [firstModelProfile, secondModelProfile] });
+      return Promise.resolve();
+    });
+    expect(
+      await screen.findByRole("button", { name: "gpt-6-astra" }),
+    ).toBeVisible();
+    expect(window.localStorage.getItem(modelPreferenceKey)).toBe(selected);
+  });
+
+  it("persists an explicit choice and restores it on a new App mount without another selection", async () => {
+    const profiles = [firstModelProfile, secondModelProfile];
+    const first = renderApp({ profiles });
+    const menu = await screen.findByRole("button", { name: "Model" });
+    expect(window.localStorage.getItem(modelPreferenceKey)).toBeNull();
+    fireEvent.pointerDown(menu, { button: 0, ctrlKey: false });
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "gpt-6-astraSecond Provider",
+      }),
+    );
+    expect(window.localStorage.getItem(modelPreferenceKey)).toBe(
+      `${secondModelProfile.id}::gpt-6-astra`,
+    );
+    first.unmount();
+    const second = renderApp({ profiles });
+    expect(
+      await screen.findByRole("button", { name: "gpt-6-astra" }),
+    ).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "消息" }), {
+      target: { value: "重开后继续聊" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() =>
+      expect(second.start).toHaveBeenCalledWith(
+        expect.objectContaining({ providerProfileId: secondModelProfile.id }),
+      ),
+    );
+  });
+
+  it("does not erase the preference when model loading fails even though Chats opens", async () => {
+    const selected = `${secondModelProfile.id}::gpt-6-astra`;
+    window.localStorage.setItem(modelPreferenceKey, selected);
+    const first = renderApp({
+      providerList: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "PROVIDER.UNREACHABLE",
+            message: "模型列表暂时不可用",
+            retryable: true,
+          },
+        }),
+    });
+    await screen.findByRole("region", { name: "Chats" });
+    await act(() => Promise.resolve());
+    expect(window.localStorage.getItem(modelPreferenceKey)).toBe(selected);
+    first.unmount();
+    renderApp({ profiles: [firstModelProfile, secondModelProfile] });
+    expect(
+      await screen.findByRole("button", { name: "gpt-6-astra" }),
+    ).toBeVisible();
+  });
+
+  it("clears a removed choice after success without guessing among remaining models", async () => {
+    window.localStorage.setItem(
+      modelPreferenceKey,
+      "removed-provider::old-model",
+    );
+    renderApp({ profiles: [firstModelProfile, secondModelProfile] });
+    expect(await screen.findByRole("button", { name: "Model" })).toBeVisible();
+    await waitFor(() =>
+      expect(window.localStorage.getItem(modelPreferenceKey)).toBeNull(),
+    );
+  });
+
+  it("uses the existing single-model rule when the configured model has changed", async () => {
+    window.localStorage.setItem(
+      modelPreferenceKey,
+      `${secondModelProfile.id}::old-model`,
+    );
+    renderApp({ profiles: [secondModelProfile] });
+    expect(
+      await screen.findByRole("button", { name: "gpt-6-astra" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(window.localStorage.getItem(modelPreferenceKey)).toBe(
+        `${secondModelProfile.id}::gpt-6-astra`,
+      ),
+    );
+  });
+
+  it("clears an unavailable saved choice only when an empty list actually succeeds", async () => {
+    window.localStorage.setItem(
+      modelPreferenceKey,
+      `${secondModelProfile.id}::gpt-6-astra`,
+    );
+    renderApp({ profiles: [] });
+    await screen.findByRole("region", { name: "Chats" });
+    await waitFor(() =>
+      expect(window.localStorage.getItem(modelPreferenceKey)).toBeNull(),
+    );
+  });
+
+  it("keeps a newly selected model usable when persisting the preference fails", async () => {
+    const setItem = Storage.prototype.setItem.bind(window.localStorage);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((key, value) => {
+      if (key === modelPreferenceKey) throw new Error("storage full");
+      setItem(key, value);
+    });
+    const { start } = renderApp({
+      profiles: [firstModelProfile, secondModelProfile],
+    });
+    fireEvent.pointerDown(
+      await screen.findByRole("button", { name: "Model" }),
+      { button: 0, ctrlKey: false },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "gpt-6-astraSecond Provider",
+      }),
+    );
+    expect(screen.getByRole("button", { name: "gpt-6-astra" })).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "消息" }), {
+      target: { value: "仍用这次选择" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(
+        expect.objectContaining({ providerProfileId: secondModelProfile.id }),
+      ),
+    );
+  });
+
+  it("restores Provider identity for equal model names without changing a historical Run", async () => {
+    const duplicateName = { ...secondModelProfile, chatModel: "gpt-chat" };
+    window.localStorage.setItem(
+      modelPreferenceKey,
+      `${duplicateName.id}::gpt-chat`,
+    );
+    const { start } = renderApp({
+      profiles: [firstModelProfile, duplicateName],
+      seeded: true,
+    });
+    await screen.findByRole("button", { name: "gpt-chat" });
+    fireEvent.click(screen.getByRole("button", { name: "新建对话" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "消息" }), {
+      target: { value: "新对话保留这个Provider" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(
+        expect.objectContaining({ providerProfileId: duplicateName.id }),
+      ),
+    );
+    const historical = await window.charaMate.chat.getSnapshot({
+      chatId: chatFixture.id,
+    });
+    expect(historical).toEqual({ ok: true, value: chatDataSnapshotFixture });
+  });
+
   it("opens the integrated Provider settings from Models", async () => {
     const { listProfiles } = renderApp();
     await screen.findByRole("region", { name: "Chats" });
@@ -1304,10 +1526,147 @@ describe("application shell", () => {
     expect(resume.mock.invocationCallOrder[0]).toBeLessThan(
       create.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(voiceStart.mock.calls[0]?.[0]).not.toHaveProperty("inputMode");
+    expect(voiceStart.mock.calls[0]?.[0].request).not.toHaveProperty(
+      "inputMode",
+    );
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => expect(voiceStart).toHaveBeenCalledTimes(2));
     expect(resume).toHaveBeenCalledTimes(2);
-    expect(voiceStart.mock.calls[1]?.[0]).not.toHaveProperty("inputMode");
+    expect(voiceStart.mock.calls[1]?.[0].request).not.toHaveProperty(
+      "inputMode",
+    );
   });
+});
+
+describe("unallocated submission controls", () => {
+  it("keeps Stop available until the unallocated ordinary submission settles", async () => {
+    const { start } = renderApp({
+      initialChats: [chatFixture],
+      modelAvailable: true,
+    });
+    await screen.findByRole("button", { name: "gpt-chat" });
+    let release!: (value: Awaited<ReturnType<AgentApi["start"]>>) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    start.mockImplementation(() => {
+      entered();
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "消息" }), {
+      target: { value: "先准备这条消息。" },
+    });
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "发送" }));
+        await started;
+      });
+      expect(screen.getByRole("button", { name: "停止" })).toBeVisible();
+      expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(
+        "先准备这条消息。",
+      );
+    } finally {
+      await act(() => {
+        release({
+          ok: false,
+          error: {
+            code: "AGENT.RUNTIME_FAILED",
+            message: "离线 fixture 收口",
+            retryable: false,
+          },
+        });
+        return Promise.resolve();
+      });
+    }
+    expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(
+      "先准备这条消息。",
+    );
+  });
+});
+
+it("stops an unallocated submission using the actual Renderer request identity", async () => {
+  const { cancel, cancelStart, start } = renderApp({
+    initialChats: [chatFixture],
+    modelAvailable: true,
+  });
+  await screen.findByRole("button", { name: "gpt-chat" });
+  let release!: (value: Awaited<ReturnType<AgentApi["start"]>>) => void;
+  start.mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  cancelStart.mockImplementation(({ requestId }) => {
+    release({
+      ok: false,
+      error: {
+        code: "AGENT.PREPARATION_CANCELLED",
+        message: "已停止准备",
+        retryable: false,
+      },
+    });
+    return Promise.resolve({
+      ok: true,
+      value: { requestId, outcome: "accepted" },
+    });
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "消息" }), {
+    target: { value: "等待中的内容" },
+  });
+  await act(() => {
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    return Promise.resolve();
+  });
+  await act(() => {
+    fireEvent.click(screen.getByRole("button", { name: "停止" }));
+    return Promise.resolve();
+  });
+  expect(cancelStart).toHaveBeenCalledWith({
+    requestId: start.mock.calls[0]![0].requestId,
+    requestedAt: expect.any(String) as string,
+  });
+  expect(cancel).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(
+    "等待中的内容",
+  );
+  expect(screen.getByRole("button", { name: "发送" })).toBeVisible();
+});
+
+it("waits for first Chat creation after Stop and never submits a new Run", async () => {
+  const { cancelStart, create, start } = renderApp({ modelAvailable: true });
+  await screen.findByRole("button", { name: "gpt-chat" });
+  const original = create.getMockImplementation()!;
+  let release!: () => void;
+  create.mockImplementation(async (input) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return original(input);
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "消息" }), {
+    target: { value: "建 Chat 期间停止" },
+  });
+  await act(() => {
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    return Promise.resolve();
+  });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "停止" }));
+    expect(start).not.toHaveBeenCalled();
+    expect(cancelStart).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "正在停止" })).toBeVisible();
+  } finally {
+    await act(() => {
+      release();
+      return Promise.resolve();
+    });
+  }
+  expect(start).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(
+    "建 Chat 期间停止",
+  );
+  expect(screen.getByRole("button", { name: "发送" })).toBeVisible();
 });

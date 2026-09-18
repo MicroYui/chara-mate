@@ -1,4 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
+import type { JsonValue } from "../../shared/contracts/primitives";
+
+import type { MemoryEvidenceReference } from "../../shared/contracts/memoryRecall";
+import { MemoryEvidenceReferenceSchema } from "../../shared/schemas/memoryRecall";
 
 import type Database from "better-sqlite3";
 
@@ -59,6 +63,46 @@ interface RunItemRow {
   sequence: number;
   started_at: string | null;
   status: string;
+}
+
+export interface RunItemSourceReference extends Pick<
+  RunItem,
+  "id" | "runId" | "sequence" | "kind" | "status" | "startedAt" | "endedAt"
+> {
+  messageId?: string;
+  toolName?: string;
+  hasToolOutput: boolean;
+}
+
+const runItemSourceProjection = `id, run_id AS runId, sequence, kind, status,
+  started_at AS startedAt, ended_at AS endedAt,
+  CASE WHEN json_type(output_json,'$.messageId') IS NULL OR json_type(output_json,'$.messageId') = 'null'
+    THEN CASE WHEN json_type(input_json,'$.messageId') = 'text' THEN json_extract(input_json,'$.messageId') END
+    ELSE CASE WHEN json_type(output_json,'$.messageId') = 'text' THEN json_extract(output_json,'$.messageId') END END AS messageId,
+  CASE WHEN json_type(input_json,'$.toolName') IS NULL OR json_type(input_json,'$.toolName') = 'null'
+    THEN CASE WHEN json_type(input_json,'$.name') = 'text' THEN json_extract(input_json,'$.name') END
+    ELSE CASE WHEN json_type(input_json,'$.toolName') = 'text' THEN json_extract(input_json,'$.toolName') END END AS toolName,
+  (json_type(output_json,'$.status') = 'text' AND json_type(output_json,'$.summary') = 'text') AS hasToolOutput`;
+
+function readRunItemSource(
+  row: Record<string, unknown>,
+): RunItemSourceReference {
+  return {
+    id: row["id"] as string,
+    runId: row["runId"] as string,
+    sequence: row["sequence"] as number,
+    kind: row["kind"] as RunItem["kind"],
+    status: row["status"] as RunItem["status"],
+    ...(row["startedAt"] != null
+      ? { startedAt: row["startedAt"] as string }
+      : {}),
+    ...(row["endedAt"] != null ? { endedAt: row["endedAt"] as string } : {}),
+    ...(row["messageId"] != null
+      ? { messageId: row["messageId"] as string }
+      : {}),
+    ...(row["toolName"] != null ? { toolName: row["toolName"] as string } : {}),
+    hasToolOutput: Boolean(row["hasToolOutput"]),
+  };
 }
 
 interface ArtifactRow {
@@ -237,11 +281,40 @@ function assertApprovalIdentity(current: Approval, next: Approval): void {
   }
 }
 
+/** Only an input.resolved boundary may commit its checkpoint and intake receipt. */
+export interface InputResolutionProjection {
+  commit(item: RunItem, run: Run): void;
+  /** Runs after SQLite commit, before synchronous event observers. */
+  afterCommit(): void;
+}
+
 export class RunRepository {
   constructor(private readonly database: Database.Database) {}
 
-  appendEvent(input: RunEventEnvelope): AppendRunEventResult {
+  appendEvent(
+    input: RunEventEnvelope,
+    bindAllocation?: (runId: string) => void,
+    projectAssistantMessage?: (item: RunItem) => void,
+    inputResolution?: InputResolutionProjection,
+  ): AppendRunEventResult {
     const envelope = sanitizeForPersistence(RunEventEnvelopeSchema, input);
+    if (bindAllocation && envelope.event.type !== "run.started") {
+      throw new Error("An allocation may only be bound to run.started");
+    }
+    if (
+      projectAssistantMessage &&
+      (envelope.event.type !== "item.completed" ||
+        envelope.event.item.kind !== "assistant_message")
+    ) {
+      throw new Error(
+        "A Chat completion may only be projected by an assistant_message Item",
+      );
+    }
+    if (inputResolution && envelope.event.type !== "input.resolved") {
+      throw new Error(
+        "An input checkpoint may only be projected by input.resolved",
+      );
+    }
     const append = this.database.transaction((): AppendRunEventResult => {
       const duplicateRow = this.database
         .prepare(
@@ -257,6 +330,7 @@ export class RunRepository {
             `Run ${envelope.streamId} sequence ${envelope.sequence} already contains a different event`,
           );
         }
+        bindAllocation?.(envelope.streamId);
         return { envelope: existing, inserted: false };
       }
 
@@ -291,6 +365,9 @@ export class RunRepository {
             `Expected run ${envelope.streamId} sequence ${runRow.latest_sequence + 1}, received ${envelope.sequence}`,
           );
         }
+        if (envelope.event.type === "input.resolved") {
+          inputResolution?.commit(envelope.event.item, envelope.event.run);
+        }
         this.applyProjection(currentRun, envelope);
       }
 
@@ -307,6 +384,10 @@ export class RunRepository {
           envelope.occurredAt,
           serializeForPersistence(envelope),
         );
+      bindAllocation?.(envelope.streamId);
+      if (envelope.event.type === "item.completed") {
+        projectAssistantMessage?.(envelope.event.item);
+      }
       return { envelope, inserted: true };
     });
 
@@ -434,6 +515,197 @@ export class RunRepository {
     return row ? this.readRunItem(row) : undefined;
   }
 
+  isFirstCompletedModelResponse(runId: string, itemId: string): boolean {
+    const row = this.database
+      .prepare(
+        `SELECT id FROM run_items
+         WHERE run_id=? AND kind='assistant_message' AND status='completed'
+           AND json_type(output_json,'$.responseId')='text'
+           AND length(json_extract(output_json,'$.responseId'))>0
+         ORDER BY sequence LIMIT 1`,
+      )
+      .get(runId) as { id: string } | undefined;
+    return row?.id === itemId;
+  }
+
+  /** References actually supplied to the request that produced this exact Tool.
+   * A valid empty array differs from missing host provenance. */
+  toolSuppliedMemoryReferences(
+    runId: string,
+    itemId: string,
+  ): MemoryEvidenceReference[] | undefined {
+    const tool = this.getRunItem(itemId);
+    const run = this.getRun(runId);
+    if (!run || tool?.runId !== runId || tool.kind !== "tool_call")
+      return undefined;
+    const input = tool.input;
+    if (!input || typeof input !== "object" || Array.isArray(input))
+      return undefined;
+    let references: unknown;
+    if (run.source === "voice") references = input["suppliedMemoryReferences"];
+    else {
+      const row = this.database
+        .prepare(
+          `SELECT status, output_json FROM run_items
+        WHERE run_id=? AND sequence<? AND kind='assistant_message'
+        ORDER BY sequence DESC LIMIT 1`,
+        )
+        .get(runId, tool.sequence) as
+        { status: string; output_json: string | null } | undefined;
+      if (row?.status !== "completed" || !row.output_json) return undefined;
+      const output = JSON.parse(row.output_json) as Record<string, unknown>;
+      if (
+        !Array.isArray(output["functionCallIds"]) ||
+        !output["functionCallIds"].includes(input["callId"])
+      )
+        return undefined;
+      references = output["memoryReferences"];
+    }
+    if (!Array.isArray(references)) return undefined;
+    return references.map((reference: unknown) =>
+      parseSchema(MemoryEvidenceReferenceSchema, reference),
+    );
+  }
+
+  /** Event order, rather than caller timestamps, identifies the latest user turn. */
+  latestUserMessageId(
+    runId: string,
+    beforeSequence?: number,
+  ): string | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT COALESCE(json_extract(output_json,'$.messageId'),
+      json_extract(input_json,'$.messageId')) AS messageId FROM run_items
+      WHERE run_id=@runId AND kind='user_message' AND status='completed'
+        AND (@before IS NULL OR sequence<@before)
+      ORDER BY sequence DESC LIMIT 1`,
+      )
+      .get({ runId, before: beforeSequence ?? null }) as
+      { messageId: unknown } | undefined;
+    return typeof row?.messageId === "string" ? row.messageId : undefined;
+  }
+
+  getRunSourceReference(
+    runId: string,
+  ): Pick<Run, "id" | "chatId" | "source" | "createdAt"> | undefined {
+    return this.database
+      .prepare(
+        `SELECT id, chat_id AS chatId, source, created_at AS createdAt FROM runs WHERE id = ?`,
+      )
+      .get(runId) as
+      Pick<Run, "id" | "chatId" | "source" | "createdAt"> | undefined;
+  }
+
+  getRunItemSourceReference(
+    itemId: string,
+  ): RunItemSourceReference | undefined {
+    const row = this.database
+      .prepare(`SELECT ${runItemSourceProjection} FROM run_items WHERE id = ?`)
+      .get(itemId) as Record<string, unknown> | undefined;
+    return row ? readRunItemSource(row) : undefined;
+  }
+
+  /** Indexed message-to-Item identity lookup; never materializes Item bodies. */
+  getMessageItemSourceReferences(
+    runId: string,
+    messageId: string,
+  ): RunItemSourceReference[] {
+    const rows = this.database
+      .prepare(
+        `SELECT ${runItemSourceProjection} FROM run_items
+      WHERE run_id=? AND COALESCE(json_extract(output_json,'$.messageId'),
+        json_extract(input_json,'$.messageId'))=? ORDER BY sequence`,
+      )
+      .all(runId, messageId) as Record<string, unknown>[];
+    return rows
+      .map(readRunItemSource)
+      .filter((item) => item.messageId === messageId);
+  }
+
+  /** Read only the original message projection, using the existing message identity index.
+   * Missing metadata belongs to older/Voice messages and must not imply a phase.
+   */
+  getAssistantMessages(
+    runId: string,
+    messageId: string,
+  ): readonly JsonValue[] | undefined {
+    const rows = this.database
+      .prepare(
+        `
+      SELECT json_extract(output_json, '$.assistantMessages') AS messages
+      FROM run_items
+      WHERE run_id=? AND COALESCE(json_extract(output_json,'$.messageId'),
+        json_extract(input_json,'$.messageId'))=?
+        AND kind='assistant_message' AND status='completed'
+        AND json_type(output_json,'$.assistantMessages')='array'
+      ORDER BY sequence
+    `,
+      )
+      .all(runId, messageId) as { messages: string }[];
+    if (!rows.length) return undefined;
+    return rows.flatMap((row) => JSON.parse(row.messages) as JsonValue[]);
+  }
+
+  /** Host-stamped references from completed model requests, not a guessed
+   * latest search or the set of currently stored Memory records. */
+  suppliedMemoryReferences(
+    runId: string,
+    beforeSequence?: number,
+  ): MemoryEvidenceReference[] {
+    const rows = this.database
+      .prepare(
+        `WITH voice_boundary AS (
+          SELECT item.id FROM run_items item JOIN runs run ON run.id=item.run_id
+          WHERE item.run_id=@runId AND run.source='voice' AND item.sequence=@boundary
+            AND item.kind='tool_call' AND json_type(item.input_json,'$.suppliedMemoryReferences')='array'
+        ), supplied AS (
+          SELECT ref.value AS reference,item.sequence AS sequence,ref.key AS ordinal
+          FROM run_items item,json_each(item.output_json,'$.memoryReferences') ref
+          WHERE item.run_id=@runId AND item.kind='assistant_message' AND item.status='completed'
+            AND (@boundary IS NULL OR item.sequence<@boundary)
+            AND NOT EXISTS (SELECT 1 FROM voice_boundary)
+          UNION ALL
+          SELECT ref.value,item.sequence,ref.key
+          FROM run_items item JOIN runs run ON run.id=item.run_id,
+            json_each(item.input_json,'$.suppliedMemoryReferences') ref
+          WHERE item.run_id=@runId AND run.source='voice' AND item.kind='tool_call'
+            AND ((EXISTS (SELECT 1 FROM voice_boundary) AND item.id IN (SELECT id FROM voice_boundary))
+              OR (NOT EXISTS (SELECT 1 FROM voice_boundary) AND (@boundary IS NULL OR item.sequence<=@boundary)))
+        ) SELECT reference FROM supplied GROUP BY reference ORDER BY MIN(sequence),MIN(ordinal)`,
+      )
+      .all({ runId, boundary: beforeSequence ?? null }) as {
+      reference: string;
+    }[];
+    return [
+      ...new Map(
+        rows.map(({ reference }) => {
+          const ref = parseSchema(
+            MemoryEvidenceReferenceSchema,
+            JSON.parse(reference) as unknown,
+          );
+          return [`${ref.memoryId}:${ref.revisionId}:${ref.use}`, ref] as const;
+        }),
+      ).values(),
+    ];
+  }
+
+  *memoryFormationItemReferences(
+    runId: string,
+  ): Iterable<RunItemSourceReference> {
+    const query = this.database
+      .prepare(`SELECT ${runItemSourceProjection} FROM run_items
+      WHERE run_id = ? AND sequence > ? ORDER BY sequence LIMIT 1`);
+    let sequence = -1;
+    for (;;) {
+      const row = query.get(runId, sequence) as
+        Record<string, unknown> | undefined;
+      if (!row) return;
+      const value = readRunItemSource(row);
+      sequence = value.sequence;
+      yield value;
+    }
+  }
+
   getApproval(approvalId: string): Approval | undefined {
     const row = this.selectApproval(approvalId);
     return row ? readApproval(row) : undefined;
@@ -481,6 +753,22 @@ export class RunRepository {
     return rows.map((row) => this.readRunItem(row));
   }
 
+  *steeringMessagesAfter(runId: string, sequence: number): Iterable<string> {
+    const rows = this.database
+      .prepare(
+        `
+      SELECT json_extract(input_json, '$.content') AS content
+      FROM run_items
+      WHERE run_id = ? AND sequence > ? AND kind = 'user_message'
+        AND status = 'completed' AND json_extract(input_json, '$.steering') = 1
+        AND json_type(input_json, '$.content') = 'text'
+      ORDER BY sequence
+    `,
+      )
+      .iterate(runId, sequence);
+    for (const row of rows) yield (row as { content: string }).content;
+  }
+
   private applyProjection(currentRun: Run, envelope: RunEventEnvelope): void {
     const { event } = envelope;
     switch (event.type) {
@@ -516,7 +804,15 @@ export class RunRepository {
           );
         }
         this.insertRunItem(event.item);
-        this.updateRunSequence(envelope.streamId, envelope.sequence, "running");
+        this.updateRunSequence(
+          envelope.streamId,
+          envelope.sequence,
+          event.item.kind === "user_message" &&
+            (currentRun.status === "needs_input" ||
+              currentRun.status === "waiting_approval")
+            ? undefined
+            : "running",
+        );
         return;
       }
       case "item.delta": {

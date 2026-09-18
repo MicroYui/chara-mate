@@ -1,102 +1,134 @@
 import { describe, expect, it } from "vitest";
+import { suppliedMemoryReferences } from "./memorySuppliedReferences";
 
-import type { MemoryHit } from "../../shared/contracts/memory";
+import type { EvidencePack } from "../../shared/contracts/memoryRecall";
 import {
   createMemoryContextInput,
   materializeMemoryContextInput,
   memoryContextRevisionReferences,
-  memoryContextQueryTargetIds,
-  memoryContextTargetIds,
 } from "./memoryContext";
+import {
+  createCognitionContextInput,
+  materializeCognitionContextInput,
+} from "./cognitionContext";
 
-const NOW = "2026-08-27T12:00:00.000Z";
-
-function hit(input: {
-  readonly claimSlot?: MemoryHit["memory"]["claimSlot"];
-  readonly content: string;
-  readonly memoryId: string;
-  readonly revisionId: string;
-  readonly type: MemoryHit["memory"]["type"];
-}): MemoryHit {
-  return {
-    memory: {
-      ...(input.claimSlot ? { claimSlot: input.claimSlot } : {}),
-      confidence: 1,
-      createdAt: NOW,
-      currentRevisionId: input.revisionId,
-      id: input.memoryId,
-      importance: 0.8,
-      status: "active",
-      type: input.type,
-      updatedAt: NOW,
-    },
-    rank: 1,
-    revision: {
-      content: input.content,
-      createdAt: NOW,
-      id: input.revisionId,
-      memoryId: input.memoryId,
-      reason: "用户明确说明",
-      sourceIds: [],
-      sourceType: "user_edit",
-    },
-    sources: [
-      {
-        createdAt: NOW,
-        id: input.memoryId.replace(/^1/u, "3"),
-        label: "用户消息中的完整来源标签不应进入模型上下文",
-        referenceId: input.memoryId.replace(/^1/u, "4"),
-        type: "chat",
-      },
-    ],
-  };
-}
-
-describe("Memory context", () => {
-  it("separates stable claims from query matches and preserves one allowlist", () => {
-    const profile = hit({
-      claimSlot: "preference.hobbies",
-      content: "用户喜欢玩 CS2。",
+const pack: EvidencePack = {
+  items: [
+    {
       memoryId: "10000000-0000-4000-8000-000000000001",
       revisionId: "20000000-0000-4000-8000-000000000001",
       type: "preference",
-    });
-    const project = hit({
-      content: "Lantern 项目使用 Electron。",
-      memoryId: "10000000-0000-4000-8000-000000000002",
-      revisionId: "20000000-0000-4000-8000-000000000002",
-      type: "project",
-    });
-    const context = createMemoryContextInput({
-      legacyUnkeyedCount: 2,
-      queryMatches: [project],
-      queryRelevantMemoryIds: [project.memory.id],
-      stableProfile: [profile],
-    });
-    const materialized = materializeMemoryContextInput(context);
-    const visible = JSON.stringify(materialized);
+      content: "阿澄喜欢摄影；不是用户本人的爱好。",
+      basis: "explicit_user_statement",
+      entityIds: [],
+      sourceRefs: [
+        {
+          sourceId: "30000000-0000-4000-8000-000000000001",
+          referenceId: "40000000-0000-4000-8000-000000000001",
+          type: "chat",
+        },
+      ],
+      recordedAt: "2026-09-15T00:00:00.000Z",
+      current: false,
+      historyStatus: "retained_history",
+      questionIds: ["q1"],
+    },
+  ],
+  coverage: [
+    {
+      questionId: "q1",
+      status: "partial",
+      revisionIds: ["20000000-0000-4000-8000-000000000001"],
+    },
+  ],
+  gaps: [{ questionId: "q1", reason: "当前用户偏好尚未确认" }],
+  estimatedTokens: 180,
+  truncated: false,
+  incompleteReasons: [],
+};
 
-    expect(materialized).toMatchObject({ role: "developer", type: "message" });
-    expect(visible).toContain("Stable active profile and preference claims");
-    expect(visible).toContain("R0 query-matched memories");
-    expect(visible).toContain("2 active legacy profile/preference record(s)");
-    expect(visible).toContain("stableClaimSlot: preference.hobbies");
-    expect(visible).toContain("evidence: 1 source record(s); types: chat");
-    expect(visible).toContain("用户喜欢玩 CS2。");
-    expect(visible).not.toContain(profile.memory.id);
-    expect(visible).not.toContain(profile.revision.id);
-    expect(visible).not.toContain(profile.sources[0]?.id);
-    expect(visible).not.toContain(profile.sources[0]?.referenceId);
-    expect(visible).not.toContain("完整来源标签");
-    expect(JSON.stringify(context)).toContain(profile.memory.id);
-    expect(memoryContextTargetIds(context)).toEqual([
-      profile.memory.id,
-      project.memory.id,
+describe("selected companion evidence context", () => {
+  it.each(["user", "character"] as const)(
+    "does not turn %s visibility scope into the subject of a third-person fact",
+    (owner) => {
+      const scoped = {
+        ...pack,
+        items: pack.items.map((item) => ({ ...item, owner })),
+      };
+      const visible = JSON.stringify(
+        materializeMemoryContextInput(createMemoryContextInput(scoped)),
+      );
+      expect(visible).toContain(`visibility scope: ${owner}`);
+      expect(visible).not.toContain(`subject: ${owner}`);
+      expect(visible).toContain("not its speaker or grammatical subject");
+      expect(visible).toContain("阿澄喜欢摄影；不是用户本人的爱好。");
+    },
+  );
+
+  it("distinguishes historical use from the Memory revision status at retrieval", () => {
+    const currentPack = {
+      ...pack,
+      items: pack.items.map((item) => ({ ...item, current: true })),
+    };
+    const context = createCognitionContextInput({
+      situationIds: [],
+      intentIds: [],
+      evidenceIds: [],
+      text: "Discuss the earlier preference.",
+      evidencePack: currentPack,
+      historicalMemoryRevisionIds: [currentPack.items[0]!.revisionId],
+    });
+    const visible = JSON.stringify(materializeCognitionContextInput(context));
+    expect(visible).toContain("preference; current");
+    expect(visible).toContain("Selected use: historical reference only");
+    expect(visible).not.toContain(currentPack.items[0]!.revisionId);
+    expect(currentPack.items[0]!.current).toBe(true);
+    expect(suppliedMemoryReferences([context])).toEqual([
+      {
+        memoryId: pack.items[0]!.memoryId,
+        revisionId: pack.items[0]!.revisionId,
+        use: "history",
+      },
     ]);
-    expect(memoryContextQueryTargetIds(context)).toEqual([project.memory.id]);
+  });
+
+  it("keeps provenance private while retaining historical scope and missing evidence", () => {
+    const context = createMemoryContextInput(pack, {
+      purpose: "conversation",
+      query: "谁喜欢摄影",
+      questions: [{ id: "q1", text: "用户本人现在的爱好" }],
+      contextBudget: { maxTokens: 1000 },
+    });
+    const visible = JSON.stringify(materializeMemoryContextInput(context));
+    expect(visible).toContain("historical or superseded");
+    expect(visible).toContain("阿澄喜欢摄影；不是用户本人的爱好。");
+    expect(visible).toContain("用户本人现在的爱好: partial");
+    expect(visible).toContain("当前用户偏好尚未确认");
+    for (const id of [
+      pack.items[0]!.memoryId,
+      pack.items[0]!.revisionId,
+      pack.items[0]!.sourceRefs[0]!.sourceId,
+    ])
+      expect(visible).not.toContain(id);
     expect(memoryContextRevisionReferences(context)).toEqual([
-      { memoryId: profile.memory.id, revisionId: profile.revision.id },
-      { memoryId: project.memory.id, revisionId: project.revision.id },
+      {
+        memoryId: pack.items[0]!.memoryId,
+        revisionId: pack.items[0]!.revisionId,
+      },
     ]);
+  });
+
+  it("can prepare the current situation without retrieving a profile", () => {
+    const context = createCognitionContextInput({
+      situationIds: ["private-situation"],
+      intentIds: [],
+      evidenceIds: [],
+      text: "The current question is a greeting; no historical evidence was requested.",
+    });
+    const visible = JSON.stringify(materializeCognitionContextInput(context));
+    expect(visible).toContain("greeting");
+    expect(visible).not.toContain("private-situation");
+    expect(visible).not.toContain("Selected memory evidence");
+    expect(visible).not.toContain("阿澄");
   });
 });

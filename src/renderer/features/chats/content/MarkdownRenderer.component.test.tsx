@@ -8,6 +8,9 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import citationFixture from "../../../../../tests/fixtures/openai-citations.json";
+import { openAIResponseDisplayText } from "../../../../main/providers/openaiCitationDisplay";
+import type { ResponseOutputMessage } from "openai/resources/responses/responses";
 
 const clipboardWrite = vi.fn<(value: string) => Promise<void>>();
 
@@ -45,6 +48,30 @@ afterEach(() => {
 });
 
 describe("MarkdownRenderer", () => {
+  it("updates the same streamed body to clickable source links at completion", () => {
+    const raw = citationFixture.deltas.join("");
+    const { container, rerender } = render(<MarkdownRenderer source={raw} />);
+    expect(screen.queryAllByRole("link")).toHaveLength(0);
+    expect(container.textContent).toContain(
+      "\uE200cite\uE202turn0search0\uE201",
+    );
+    const display = openAIResponseDisplayText([
+      citationFixture.item as ResponseOutputMessage,
+    ])!;
+    rerender(<MarkdownRenderer source={display} />);
+    expect(screen.getAllByRole("link")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "1" })).toHaveAttribute(
+      "href",
+      citationFixture.item.content[0]!.annotations[0]!.url,
+    );
+    expect(screen.getByRole("link", { name: "2" })).toHaveAttribute(
+      "href",
+      citationFixture.item.content[0]!.annotations[1]!.url,
+    );
+    expect(container.textContent).not.toContain("\uE200cite\uE202");
+    expect(container.textContent?.split("你加了")).toHaveLength(2);
+  });
+
   it("renders CJK emphasis beside CJK text without rewriting literal code", () => {
     render(
       <MarkdownRenderer

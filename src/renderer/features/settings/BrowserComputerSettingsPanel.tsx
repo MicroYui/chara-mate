@@ -164,7 +164,7 @@ export function BrowserComputerSettingsPanel({
             </span>
             <div>
               <strong>屏幕录制</strong>
-              <small>读取屏幕内容以完成 Computer 操作</small>
+              <small>感知当前屏幕内容与完成 Computer 操作</small>
             </div>
             <span
               className={styles["status"]}

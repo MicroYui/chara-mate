@@ -1,3 +1,4 @@
+import { companionModelReply } from "../fixtures/companionModel";
 import {
   access,
   mkdtemp,
@@ -120,7 +121,7 @@ function objectValue(
     : undefined;
 }
 
-function toolModelContent(
+function toolResult(
   body: string,
   callId: string,
 ): Readonly<Record<string, unknown>> | undefined {
@@ -129,7 +130,7 @@ function toolModelContent(
   if (!Array.isArray(input)) return undefined;
   const item = input
     .map((value) => objectValue(value))
-    .find(
+    .findLast(
       (value) =>
         value?.["type"] === "function_call_output" &&
         value["call_id"] === callId,
@@ -137,7 +138,32 @@ function toolModelContent(
   const output = item?.["output"];
   if (typeof output !== "string") return undefined;
   const result: unknown = JSON.parse(output);
-  return objectValue(objectValue(result)?.["modelContent"]);
+  return objectValue(result);
+}
+
+function successfulToolResult(body: string, callId: string): boolean {
+  return toolResult(body, callId)?.["status"] === "success";
+}
+
+function toolModelContent(
+  body: string,
+  callId: string,
+): Readonly<Record<string, unknown>> | undefined {
+  const result = toolResult(body, callId);
+  return result?.["status"] === "success"
+    ? objectValue(result["modelContent"])
+    : undefined;
+}
+
+function latestToolResult(body: string) {
+  const input = objectValue(JSON.parse(body))?.["input"];
+  if (!Array.isArray(input)) return undefined;
+  const callId = input
+    .map((value) => objectValue(value))
+    .findLast((value) => value?.["type"] === "function_call_output")?.[
+    "call_id"
+  ];
+  return typeof callId === "string" ? toolResult(body, callId) : undefined;
 }
 
 const evolutionReviewMarker =
@@ -147,8 +173,13 @@ function isEvolutionReviewBody(body: string): boolean {
   return body.includes(evolutionReviewMarker);
 }
 
-async function startFakeProvider(browserUrl?: string) {
+async function startFakeProvider(
+  browserUrl?: string,
+  characterLife = false,
+  planFailureStatus: 400 | 503 = 400,
+) {
   const bodies: string[] = [];
+  const agentBodies: string[] = [];
   let responseSequence = 0;
   let releasePlanFailure: () => void = () => undefined;
   let releasePlanProgress: () => void = () => undefined;
@@ -163,6 +194,17 @@ async function startFakeProvider(browserUrl?: string) {
     releasePlanFinal = resolve;
   });
   const server = createServer((request, response) => {
+    if (request.url?.endsWith("/responses/input_tokens")) {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: "Input token count is not supported by this fixture",
+          },
+        }),
+      );
+      return;
+    }
     if (request.method === "GET") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
@@ -180,6 +222,12 @@ async function startFakeProvider(browserUrl?: string) {
       bodies.push(body);
       responseSequence += 1;
       const responseId = `response-${String(responseSequence)}`;
+      const companionReply = companionModelReply(body, characterLife);
+      if (companionReply !== undefined) {
+        writeSse(response, finalAnswer(responseId, companionReply));
+        return;
+      }
+      agentBodies.push(body);
       const evolutionReviewTask = isEvolutionReviewBody(body);
       const evolutionTeachingTask = body.includes("自进化端到端测试");
       const titleTask = body.includes("Generate one concise chat title");
@@ -190,14 +238,57 @@ async function startFakeProvider(browserUrl?: string) {
       const collaborationTask = body.includes("并行协作测试");
       const imageInputTask = body.includes("图片输入测试");
       const imageToolTask = body.includes("图片工具测试");
-      const memoryFormationTask = body.includes("记忆形成测试");
-      const memoryRecallTask = body.includes("记忆复用测试");
-      const memoryUpdateTask = body.includes("记忆更新测试");
+      const currentUserInput = (
+        JSON.parse(body) as {
+          input?: Array<{ role?: string; content?: unknown }>;
+        }
+      ).input?.findLast(({ role }) => role === "user")?.content;
+      const currentUserText =
+        typeof currentUserInput === "string"
+          ? currentUserInput
+          : JSON.stringify(currentUserInput ?? "");
+      const memoryFormationTask = currentUserText.includes("记忆形成测试");
+      const memoryRecallTask = currentUserText.includes("记忆复用测试");
+      const memoryUpdateTask = currentUserText.includes("记忆更新测试");
       const planFailureTask = body.includes("计划失败测试");
       const planTask = body.includes("计划测试");
       const structuredInputTask = body.includes("结构化输入测试");
-      const territoryActionTask = body.includes("领地行动端到端验收");
+      const lifeTask = body.includes(
+        "Continue your own small virtual activity",
+      );
+      const territoryActionTask =
+        body.includes("领地行动端到端验收") || lifeTask;
       const territoryTask = body.includes("Agent 端到端验收");
+      const lastToolResult = latestToolResult(body);
+      const inputResolution = structuredInputTask
+        ? toolResult(body, "input-request")
+        : undefined;
+      const inputResolved =
+        inputResolution?.["status"] === "answered" ||
+        inputResolution?.["status"] === "cancelled";
+      const replanAfterSteering =
+        planTask &&
+        lastToolResult?.["status"] === "rejected" &&
+        objectValue(lastToolResult["modelContent"])?.["code"] ===
+          "TOOL.INPUT_CHANGED";
+      if (
+        lastToolResult &&
+        lastToolResult["status"] !== "success" &&
+        !replanAfterSteering &&
+        !inputResolved &&
+        !titleTask &&
+        !evolutionReviewTask &&
+        currentUserText !== "先别写文件了，我们聊聊今天。"
+      ) {
+        writeSse(
+          response,
+          finalAnswer(
+            responseId,
+            `上一步操作未完成：${typeof lastToolResult["summary"] === "string" ? lastToolResult["summary"] : "缺少成功回执"}`,
+          ),
+        );
+        return;
+      }
       if (evolutionReviewTask) {
         const requestPayload = JSON.parse(body) as {
           input?: Array<{ content?: string; role?: string }>;
@@ -245,6 +336,11 @@ async function startFakeProvider(browserUrl?: string) {
         );
       } else if (titleTask) {
         writeSse(response, finalAnswer(responseId, "E2E 对话标题"));
+      } else if (currentUserText === "先别写文件了，我们聊聊今天。") {
+        writeSse(
+          response,
+          finalAnswer(responseId, "好，先聊聊今天。文件没有写入。"),
+        );
       } else if (body.includes("气泡第三轮")) {
         writeSse(response, finalAnswer(responseId, "第三轮仍然留在原气泡。"));
       } else if (body.includes("气泡第二轮")) {
@@ -264,10 +360,7 @@ async function startFakeProvider(browserUrl?: string) {
           ),
         );
       } else if (collaborationTask) {
-        if (
-          body.includes('"call_id":"collaboration-e2e"') &&
-          body.includes("function_call_output")
-        ) {
+        if (successfulToolResult(body, "collaboration-e2e")) {
           writeSse(
             response,
             finalAnswer(responseId, "父 Agent 已合并两个子任务"),
@@ -321,10 +414,7 @@ async function startFakeProvider(browserUrl?: string) {
       } else if (imageInputTask) {
         writeSse(response, finalAnswer(responseId, "已读取本地图片像素"));
       } else if (imageToolTask) {
-        if (
-          body.includes('"call_id":"image-inspect"') &&
-          body.includes("function_call_output")
-        ) {
+        if (successfulToolResult(body, "image-inspect")) {
           writeSse(response, finalAnswer(responseId, "图片工具读取完成"));
         } else {
           writeSse(response, [
@@ -335,47 +425,46 @@ async function startFakeProvider(browserUrl?: string) {
           ]);
         }
       } else if (memoryUpdateTask) {
-        if (
-          body.includes('"call_id":"memory-replace"') &&
-          body.includes("function_call_output")
-        ) {
+        if (successfulToolResult(body, "memory-replace")) {
           writeSse(response, finalAnswer(responseId, "已把爱好更新为游泳。"));
         } else {
           writeSse(response, [
-            functionCall("memory-replace", "record", "memory", {
-              basis: "explicit_user_statement",
-              claimSlot: "preference.hobbies",
-              content: "用户现在的爱好是游泳。",
-              operation: "replace",
-            }),
+            functionCall("memory-replace", "record", "memory", {}),
             completed(responseId),
           ]);
         }
       } else if (memoryFormationTask) {
-        if (
-          body.includes('"call_id":"memory-record"') &&
-          body.includes("function_call_output")
-        ) {
+        if (successfulToolResult(body, "memory-record")) {
           writeSse(response, finalAnswer(responseId, "我会记住你喜欢徒步。"));
         } else {
           writeSse(response, [
-            functionCall("memory-record", "record", "memory", {
-              basis: "explicit_user_statement",
-              claimSlot: "preference.hobbies",
-              content: "用户的爱好是徒步。",
-              operation: "create",
-            }),
+            functionCall("memory-record", "record", "memory", {}),
             completed(responseId),
           ]);
         }
       } else if (memoryRecallTask) {
-        writeSse(response, finalAnswer(responseId, "你现在的爱好是游泳。"));
+        if (toolModelContent(body, "memory-recall")) {
+          writeSse(response, finalAnswer(responseId, "你现在的爱好是游泳。"));
+        } else {
+          writeSse(response, [
+            functionCall("memory-recall", "search", "memory", {
+              query: "用户现在的爱好",
+              questions: [{ id: "hobby", text: "用户目前的爱好是什么？" }],
+            }),
+            completed(responseId),
+          ]);
+        }
       } else if (structuredInputTask) {
-        if (
-          body.includes('"call_id":"input-request"') &&
-          body.includes("function_call_output")
-        ) {
-          writeSse(response, finalAnswer(responseId, "已按安静路线继续"));
+        if (inputResolved) {
+          writeSse(
+            response,
+            finalAnswer(
+              responseId,
+              body.includes("先不选路线，我们聊个小故事吧。")
+                ? "好，先聊个小故事。"
+                : "已按安静路线继续",
+            ),
+          );
         } else {
           writeSse(response, [
             functionCall("input-request", "request_user_input", "interaction", {
@@ -401,25 +490,45 @@ async function startFakeProvider(browserUrl?: string) {
           ]);
         }
       } else if (territoryActionTask) {
-        if (
-          body.includes('"call_id":"territory-act"') &&
-          body.includes("function_call_output")
-        ) {
+        if (lifeTask && toolModelContent(body, "life-plan")) {
           writeSse(response, finalAnswer(responseId, "已经在小窝里睡下了"));
-        } else if (
-          body.includes('"call_id":"territory-observe"') &&
-          body.includes("function_call_output")
-        ) {
+        } else if (lifeTask && toolModelContent(body, "territory-act")) {
+          writeSse(response, [
+            functionCall("life-plan", "life", "companion", {
+              intent: "在小窝休息，等自己想起来再看看房间。",
+              paused: true,
+              nextWakeAt: "2099-01-01T00:00:00.000Z",
+            }),
+            completed(responseId),
+          ]);
+        } else if (successfulToolResult(body, "territory-act")) {
+          writeSse(response, finalAnswer(responseId, "已经在小窝里睡下了"));
+        } else if (successfulToolResult(body, "territory-observe")) {
           const observation = toolModelContent(body, "territory-observe");
           const revisionId = observation?.["revisionId"];
           const targets = observation?.["targets"];
+          const nodeGroups = observation?.["nodeGroups"];
+          const bedIds = new Set(
+            (Array.isArray(nodeGroups) ? nodeGroups : []).flatMap((value) => {
+              const group = objectValue(value);
+              const shared = objectValue(group?.["shared"]);
+              const content = objectValue(shared?.["content"]);
+              const nodes = group?.["nodes"];
+              return typeof content?.["name"] === "string" &&
+                content["name"].includes("桌宠小窝") &&
+                Array.isArray(nodes)
+                ? nodes.map((node) => objectValue(node)?.["instanceId"])
+                : [];
+            }),
+          );
           const bed = Array.isArray(targets)
             ? targets
                 .map((value) => objectValue(value))
                 .find(
                   (value) =>
-                    typeof value?.["name"] === "string" &&
-                    value["name"].includes("桌宠小窝") &&
+                    bedIds.has(value?.["instanceId"]) &&
+                    Array.isArray(value?.["actions"]) &&
+                    value["actions"].includes("sleep") &&
                     value["reachable"] === true,
                 )
             : undefined;
@@ -457,11 +566,8 @@ async function startFakeProvider(browserUrl?: string) {
           ]);
         }
       } else if (territoryTask) {
-        if (
-          body.includes('"call_id":"territory-generate"') &&
-          body.includes("function_call_output")
-        ) {
-          writeSse(response, finalAnswer(responseId, "领地候选已生成"));
+        if (successfulToolResult(body, "territory-generate")) {
+          writeSse(response, finalAnswer(responseId, "领地物件已完成"));
         } else if (body.includes("tool_search_output")) {
           writeSse(response, [
             functionCall("territory-generate", "generate_item", "territory", {
@@ -481,12 +587,11 @@ async function startFakeProvider(browserUrl?: string) {
           ]);
         }
       } else if (planFailureTask) {
-        if (
-          body.includes('"call_id":"plan-before-failure"') &&
-          body.includes("function_call_output")
-        ) {
+        if (successfulToolResult(body, "plan-before-failure")) {
           await planFailureGate;
-          response.writeHead(500, { "content-type": "application/json" });
+          response.writeHead(planFailureStatus, {
+            "content-type": "application/json",
+          });
           response.end(
             JSON.stringify({ error: { message: "fixture provider failure" } }),
           );
@@ -504,14 +609,23 @@ async function startFakeProvider(browserUrl?: string) {
           ]);
         }
       } else if (planTask) {
-        if (
-          body.includes('"call_id":"plan-final"') &&
-          body.includes("function_call_output")
-        ) {
+        if (replanAfterSteering) {
+          writeSse(response, [
+            functionCall("plan-progress-replanned", "plan.update", "plan", {
+              explanation: `需求已确认，正在验证界面。已纳入新要求：${currentUserText}`,
+              plan: [
+                { status: "completed", step: "检查需求" },
+                { status: "completed", step: "实现计划能力" },
+                { status: "in_progress", step: "验证界面更新" },
+              ],
+            }),
+            completed(responseId),
+          ]);
+        } else if (successfulToolResult(body, "plan-final")) {
           writeSse(response, finalAnswer(responseId, "计划测试完成"));
         } else if (
-          body.includes('"call_id":"plan-progress"') &&
-          body.includes("function_call_output")
+          successfulToolResult(body, "plan-progress-replanned") ||
+          successfulToolResult(body, "plan-progress")
         ) {
           await planFinalGate;
           writeSse(response, [
@@ -525,10 +639,7 @@ async function startFakeProvider(browserUrl?: string) {
             }),
             completed(responseId),
           ]);
-        } else if (
-          body.includes('"call_id":"plan-first"') &&
-          body.includes("function_call_output")
-        ) {
+        } else if (successfulToolResult(body, "plan-first")) {
           await planProgressGate;
           writeSse(response, [
             functionCall("plan-progress", "plan.update", "plan", {
@@ -555,15 +666,9 @@ async function startFakeProvider(browserUrl?: string) {
           ]);
         }
       } else if (browserTask) {
-        if (
-          body.includes('"call_id":"browser-snapshot"') &&
-          body.includes("function_call_output")
-        ) {
+        if (successfulToolResult(body, "browser-snapshot")) {
           writeSse(response, finalAnswer(responseId, "浏览器检查完成"));
-        } else if (
-          body.includes('"call_id":"browser-nav"') &&
-          body.includes("function_call_output")
-        ) {
+        } else if (successfulToolResult(body, "browser-nav")) {
           writeSse(response, [
             functionCall("browser-snapshot", "browser.snapshot", "browser", {}),
             completed(responseId),
@@ -581,10 +686,7 @@ async function startFakeProvider(browserUrl?: string) {
             completed(responseId),
           ]);
         }
-      } else if (
-        body.includes('"call_id":"file-write"') &&
-        body.includes("function_call_output")
-      ) {
+      } else if (successfulToolResult(body, "file-write")) {
         writeSse(response, finalAnswer(responseId, "文件任务完成"));
       } else if (body.includes("tool_search_output")) {
         writeSse(response, [
@@ -610,6 +712,7 @@ async function startFakeProvider(browserUrl?: string) {
   return {
     baseUrl: `http://127.0.0.1:${String(address.port)}/v1`,
     bodies,
+    agentBodies,
     close: () => {
       releasePlanFailure();
       releasePlanProgress();
@@ -843,9 +946,9 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
 
     const approval = first.main.getByLabel("需要你的确认");
     await expect(approval).toBeVisible();
-    expect(provider.bodies[0]).toContain('"name":"charamate_territory"');
-    expect(provider.bodies[0]).toContain('"name":"generate_item"');
-    expect(provider.bodies[0]).toContain('"defer_loading":true');
+    expect(provider.agentBodies[0]).toContain('"name":"charamate_territory"');
+    expect(provider.agentBodies[0]).toContain('"name":"generate_item"');
+    expect(provider.agentBodies[0]).toContain('"defer_loading":true');
     await expect(approval).toContainText("写入文件 e2e-note.txt");
     await expect(first.character.getByLabel("桌宠审批提醒")).toContainText(
       "写入文件 e2e-note.txt",
@@ -877,7 +980,22 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
     expect(
       state.value.runItems.filter(({ kind }) => kind === "file_change"),
     ).toHaveLength(1);
-    const requestCount = provider.bodies.length;
+    const fileRunRequests = () =>
+      provider.agentBodies.filter((body) => {
+        const input = objectValue(JSON.parse(body) as unknown)?.["input"];
+        return (
+          Array.isArray(input) &&
+          input.some((value) => {
+            const message = objectValue(value);
+            return (
+              message?.["role"] === "user" &&
+              message["content"] === "创建测试文件"
+            );
+          })
+        );
+      });
+    const requestCount = fileRunRequests().length;
+    expect(requestCount).toBeGreaterThan(0);
 
     await application.close();
     application = undefined;
@@ -885,10 +1003,22 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
     const second = await launchApplication(userData, workspace);
     application = second.application;
     await expect(second.main.getByText("文件任务完成")).toBeVisible();
-    expect(provider.bodies).toHaveLength(requestCount);
+    expect(fileRunRequests()).toHaveLength(requestCount);
     expect(await readFile(path.join(workspace, "e2e-note.txt"), "utf8")).toBe(
       "created once\n",
     );
+    const restored = await second.main.evaluate(
+      async (chatId) => window.charaMate.chat.getSnapshot({ chatId }),
+      state.value.chat.id,
+    );
+    if (!restored.ok || !restored.value)
+      throw new Error("Missing restored Agent E2E state");
+    expect(
+      restored.value.runs.map(({ id, status }) => ({ id, status })),
+    ).toEqual(state.value.runs.map(({ id, status }) => ({ id, status })));
+    expect(
+      restored.value.runItems.filter(({ kind }) => kind === "file_change"),
+    ).toHaveLength(1);
     await application.close();
     application = undefined;
     expectCleanApplicationShutdown(second.stderr);
@@ -901,6 +1031,72 @@ test("runs one persisted Agent path with shared approval and no side-effect repl
       .get() as { count: number };
     database.close();
     expect(checkpointCount.count).toBe(0);
+  } finally {
+    await application?.close();
+    await provider.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("lets a Composer message replace an unexecuted approval and clears both surfaces", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "chara-mate-steer-approval-"),
+  );
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const provider = await startFakeProvider();
+  let application: ElectronApplication | undefined;
+  try {
+    const first = await launchApplication(userData, workspace);
+    application = first.application;
+    await saveProvider(first.main, provider.baseUrl);
+    await selectAgent(first.main);
+    const composer = first.main.getByRole("textbox", { name: "消息" });
+    await composer.fill("创建测试文件");
+    await first.main.getByRole("button", { name: "发送" }).click();
+    await expect(first.main.getByLabel("需要你的确认")).toBeVisible();
+    await expect(first.character.getByLabel("桌宠审批提醒")).toBeVisible();
+    await composer.fill("先别写文件了，我们聊聊今天。");
+    await first.main.getByRole("button", { name: "发送" }).click();
+    await expect(
+      first.main.getByText("好，先聊聊今天。文件没有写入。"),
+    ).toBeVisible();
+    await expect(first.main.getByLabel("需要你的确认")).toHaveCount(0);
+    await expect(first.character.getByLabel("桌宠审批提醒")).toHaveCount(0);
+    await expect(
+      access(path.join(workspace, "e2e-note.txt")),
+    ).rejects.toThrow();
+    const state = await first.main.evaluate(async () => {
+      const chats = await window.charaMate.chat.list({ status: "active" });
+      if (!chats.ok || !chats.value[0]) return null;
+      return window.charaMate.chat.getSnapshot({ chatId: chats.value[0].id });
+    });
+    if (!state?.ok || !state.value)
+      throw new Error("Missing steered approval state");
+    expect(state.value.runs).toHaveLength(1);
+    expect(state.value.runs[0]?.status).toBe("completed");
+    expect(state.value.approvals).toEqual([
+      expect.objectContaining({ status: "cancelled" }),
+    ]);
+    expect(
+      state.value.runItems.filter(({ kind }) => kind === "file_change"),
+    ).toHaveLength(0);
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(first.stderr);
+    const second = await launchApplication(userData, workspace);
+    application = second.application;
+    await expect(
+      second.main.getByText("好，先聊聊今天。文件没有写入。"),
+    ).toBeVisible();
+    await expect(second.character.getByLabel("桌宠审批提醒")).toHaveCount(0);
+    await expect(
+      access(path.join(workspace, "e2e-note.txt")),
+    ).rejects.toThrow();
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(second.stderr);
   } finally {
     await application?.close();
     await provider.close();
@@ -1141,14 +1337,16 @@ test("lets the Agent choose collaboration and renders one joined Subtask Item", 
       state.value.runItems.filter(({ kind }) => kind === "subtask"),
     ).toEqual([expect.objectContaining({ status: "completed" })]);
     expect(
-      provider.bodies.filter((body) =>
+      provider.agentBodies.filter((body) =>
         body.includes("read-only child of CharaMate's current Agent Run"),
       ),
     ).toHaveLength(2);
-    expect(provider.bodies[0]).toContain('"name":"charamate_collaboration"');
-    expect(provider.bodies[0]).toContain('"name":"dispatch"');
-    expect(provider.bodies[0]).toContain('"defer_loading":false');
-    const collaborationContinuation = provider.bodies.find((body) =>
+    expect(provider.agentBodies[0]).toContain(
+      '"name":"charamate_collaboration"',
+    );
+    expect(provider.agentBodies[0]).toContain('"name":"dispatch"');
+    expect(provider.agentBodies[0]).toContain('"defer_loading":false');
+    const collaborationContinuation = provider.agentBodies.find((body) =>
       body.includes('"call_id":"collaboration-search"'),
     );
     expect(collaborationContinuation).toContain('"type":"tool_search_output"');
@@ -1167,7 +1365,7 @@ test("lets the Agent choose collaboration and renders one joined Subtask Item", 
   }
 });
 
-test("generates a structured Territory candidate through the Agent Tool", async () => {
+test("creates and applies a Territory object through the same Agent Run", async () => {
   const root = await mkdtemp(
     path.join(os.tmpdir(), "chara-mate-agent-territory-e2e-"),
   );
@@ -1231,16 +1429,18 @@ test("generates a structured Territory candidate through the Agent Tool", async 
       .fill("生成一个领地物件来纪念这次 Agent 端到端验收");
     await launched.main.getByRole("button", { name: "发送" }).click();
 
-    await expect(launched.main.getByText("领地候选已生成")).toBeVisible();
+    await expect(launched.main.getByText("领地物件已完成")).toBeVisible();
     const snapshot = await launched.main.evaluate(async () => {
       const response = await window.charaMate.territory.getSnapshot();
       return response.ok ? response.value : null;
     });
     expect(snapshot?.candidates[0]).toMatchObject({
       intent: "item",
-      status: "ready",
+      status: "applied",
     });
-    expect(snapshot?.collection).toHaveLength(1);
+    expect(snapshot?.candidates[0]?.sources[0]?.kind).toBe(
+      "character_creation",
+    );
     expect(
       snapshot?.candidates[0]?.changeSet?.mutations.some(
         (mutation) =>
@@ -1251,7 +1451,9 @@ test("generates a structured Territory candidate through the Agent Tool", async 
     ).toBe(true);
     expect(imageRequests).toBe(1);
     expect(
-      provider.bodies.some((body) => body.includes("awaiting_confirmation")),
+      provider.agentBodies
+        .map((body) => toolModelContent(body, "territory-generate"))
+        .some((result) => result?.["status"] === "applied"),
     ).toBe(true);
 
     await launched.main.getByRole("button", { name: "Territory" }).click();
@@ -1274,6 +1476,110 @@ test("generates a structured Territory candidate through the Agent Tool", async 
       imageServer.closeAllConnections();
       imageServer.close(() => resolve());
     });
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("lives autonomously in the same Runtime and preserves a real activity across restart", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "chara-mate-life-e2e-"));
+  const userData = path.join(root, "user-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const provider = await startFakeProvider(undefined, true);
+  let application: ElectronApplication | undefined;
+  const databasePath = path.join(userData, "charamate.sqlite");
+  const readLife = () => {
+    const database = new Database(databasePath, { readonly: true });
+    try {
+      const intent = database
+        .prepare(
+          "SELECT payload_json FROM cognition_intents WHERE json_extract(payload_json, '$.owner') = 'character' LIMIT 1",
+        )
+        .get() as { payload_json: string } | undefined;
+      const attempt = database
+        .prepare(
+          "SELECT run_id FROM cognition_decision_attempts WHERE run_id IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+        )
+        .get() as { run_id: string } | undefined;
+      const run = attempt
+        ? (database
+            .prepare("SELECT chat_id, status FROM runs WHERE id = ?")
+            .get(attempt.run_id) as
+            { chat_id: string; status: string } | undefined)
+        : undefined;
+      const receipts = database
+        .prepare(
+          "SELECT payload_json FROM cognition_evidence WHERE json_extract(payload_json, '$.effect.worldChange') = 'modified'",
+        )
+        .all() as Array<{ payload_json: string }>;
+      return {
+        paused: intent
+          ? (
+              JSON.parse(intent.payload_json) as { blockers: string[] }
+            ).blockers.includes("autonomous_life_paused")
+          : false,
+        chat_id: run?.chat_id ?? null,
+        run_status: run?.status ?? null,
+        effects: receipts.map(
+          ({ payload_json }) => JSON.parse(payload_json) as unknown,
+        ),
+      };
+    } finally {
+      database.close();
+    }
+  };
+  try {
+    const active = await launchApplication(userData, workspace);
+    application = active.application;
+    await saveProvider(active.main, provider.baseUrl);
+    await expect.poll(readLife).toMatchObject({
+      paused: true,
+      run_status: "completed",
+      effects: expect.arrayContaining([
+        expect.objectContaining({
+          effect: expect.objectContaining({
+            worldChange: "modified",
+            outcome: "performed",
+          }),
+        }),
+      ]),
+    });
+    await active.main.getByText(/的日常$/u, { exact: true }).click();
+    await expect(active.main.getByText("已经在小窝里睡下了")).toBeVisible();
+    const snapshot = await active.main.evaluate(() =>
+      window.charaMate.territory.getSnapshot(),
+    );
+    expect(snapshot.ok && snapshot.value.pet.behavior).toBe("sleeping");
+    await active.main.screenshot({
+      path: test.info().outputPath("companion-life.png"),
+    });
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(active.stderr);
+    const life = readLife();
+    const check = new Database(databasePath, { readonly: true });
+    try {
+      expect(
+        check
+          .prepare(
+            "SELECT COUNT(*) AS count FROM messages WHERE chat_id = ? AND role = 'user'",
+          )
+          .get(life.chat_id),
+      ).toEqual({ count: 0 });
+    } finally {
+      check.close();
+    }
+    const reopened = await launchApplication(userData, workspace);
+    application = reopened.application;
+    expect(readLife()).toEqual(life);
+    await reopened.main.getByText(/的日常$/u, { exact: true }).click();
+    await expect(reopened.main.getByText("已经在小窝里睡下了")).toBeVisible();
+    await application.close();
+    application = undefined;
+    expectCleanApplicationShutdown(reopened.stderr);
+  } finally {
+    await application?.close();
+    await provider.close();
     await rm(root, { force: true, recursive: true });
   }
 });
@@ -1305,16 +1611,16 @@ test("observes and performs one explicit Territory pet action through the Agent"
     });
     expect(snapshot?.pet.behavior).toBe("sleeping");
     expect(
-      provider.bodies.some((body) =>
+      provider.agentBodies.some((body) =>
         body.includes('"call_id":"territory-action-search"'),
       ),
     ).toBe(true);
     expect(
-      provider.bodies.some((body) =>
+      provider.agentBodies.some((body) =>
         body.includes('"call_id":"territory-observe"'),
       ),
     ).toBe(true);
-    const actionOutput = provider.bodies
+    const actionOutput = provider.agentBodies
       .map((body) => toolModelContent(body, "territory-act"))
       .find((value) => value !== undefined);
     expect(actionOutput?.["petBehavior"]).toBe("sleeping");
@@ -1347,79 +1653,106 @@ test("observes and performs one explicit Territory pet action through the Agent"
   }
 });
 
-test("answers a direct structured question and continues the same Chat Run", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "chara-mate-input-e2e-"));
-  const userData = path.join(root, "user-data");
-  const workspace = path.join(root, "workspace");
-  await mkdir(workspace, { recursive: true });
-  const provider = await startFakeProvider();
-  let application: ElectronApplication | undefined;
+for (const inputMode of ["card", "composer"] as const) {
+  test(`continues a pending question in the same Chat Run from ${inputMode}`, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "chara-mate-input-e2e-"));
+    const userData = path.join(root, "user-data");
+    const workspace = path.join(root, "workspace");
+    await mkdir(workspace, { recursive: true });
+    const provider = await startFakeProvider();
+    let application: ElectronApplication | undefined;
 
-  try {
-    const launched = await launchApplication(userData, workspace);
-    application = launched.application;
-    await saveProvider(launched.main, provider.baseUrl);
-    await launched.main
-      .getByRole("textbox", { name: "消息" })
-      .fill("结构化输入测试：先问我路线偏好再继续");
-    await launched.main.getByRole("button", { name: "发送" }).click();
+    try {
+      const launched = await launchApplication(userData, workspace);
+      application = launched.application;
+      await saveProvider(launched.main, provider.baseUrl);
+      await launched.main
+        .getByRole("textbox", { name: "消息" })
+        .fill("结构化输入测试：先问我路线偏好再继续");
+      await launched.main.getByRole("button", { name: "发送" }).click();
 
-    const request = launched.main.getByLabel("需要补充信息");
-    await expect(request).toBeVisible();
-    await expect(request).toContainText("请选择路线偏好");
-    expect(provider.bodies).toHaveLength(1);
-    expect(provider.bodies[0]).toContain('"name":"charamate_interaction"');
-    expect(provider.bodies[0]).toContain('"name":"request_user_input"');
-    expect(provider.bodies[0]).toContain('"defer_loading":false');
-    expect(provider.bodies[0]).not.toContain("tool_search_output");
+      const request = launched.main.getByLabel("需要补充信息");
+      await expect(request).toBeVisible();
+      await expect(request).toContainText("请选择路线偏好");
+      expect(provider.agentBodies).toHaveLength(1);
+      expect(provider.agentBodies[0]).toContain(
+        '"name":"charamate_interaction"',
+      );
+      expect(provider.agentBodies[0]).toContain('"name":"request_user_input"');
+      expect(provider.agentBodies[0]).toContain('"defer_loading":false');
+      expect(provider.agentBodies[0]).not.toContain("tool_search_output");
 
-    await request.getByRole("radio", { name: /安静路线/u }).click();
-    await request.getByRole("button", { name: "提交并继续" }).click();
-    await expect(launched.main.getByText("已按安静路线继续")).toBeVisible();
+      if (inputMode === "card") {
+        await request.getByRole("radio", { name: /安静路线/u }).click();
+        await request.getByRole("button", { name: "提交并继续" }).click();
+      } else {
+        await launched.main
+          .getByRole("textbox", { name: "消息" })
+          .fill("先不选路线，我们聊个小故事吧。");
+        await launched.main.getByRole("button", { name: "发送" }).click();
+      }
+      await expect(
+        launched.main.getByText(
+          inputMode === "card" ? "已按安静路线继续" : "好，先聊个小故事。",
+        ),
+      ).toBeVisible();
+      await expect(request).not.toBeVisible();
 
-    const state = await launched.main.evaluate(async () => {
-      const chats = await window.charaMate.chat.list({ status: "active" });
-      if (!chats.ok || !chats.value[0]) return null;
-      return window.charaMate.chat.getSnapshot({ chatId: chats.value[0].id });
-    });
-    if (!state?.ok || !state.value) {
-      throw new Error("Missing structured input E2E state");
+      const state = await launched.main.evaluate(async () => {
+        const chats = await window.charaMate.chat.list({ status: "active" });
+        if (!chats.ok || !chats.value[0]) return null;
+        return window.charaMate.chat.getSnapshot({ chatId: chats.value[0].id });
+      });
+      if (!state?.ok || !state.value) {
+        throw new Error("Missing structured input E2E state");
+      }
+      expect(state.value.runs).toHaveLength(1);
+      expect(state.value.runs[0]?.status).toBe("completed");
+      const inputItems = state.value.runItems.filter(
+        ({ kind }) => kind === "input_request",
+      );
+      expect(inputItems).toHaveLength(1);
+      expect(inputItems[0]).toMatchObject({
+        output:
+          inputMode === "card"
+            ? {
+                answers: [
+                  {
+                    questionId: "route",
+                    value: { kind: "option", label: "安静路线" },
+                  },
+                ],
+                status: "answered",
+              }
+            : { status: "cancelled" },
+        status: "completed",
+      });
+      const taskBodies = provider.agentBodies.filter(
+        (body) =>
+          !body.includes("Generate one concise chat title") &&
+          !isEvolutionReviewBody(body),
+      );
+      expect(taskBodies).toHaveLength(2);
+      expect(taskBodies[1]?.match(/input-request/gu)).toHaveLength(2);
+      if (inputMode === "composer") {
+        expect(taskBodies[1]).toContain("先不选路线，我们聊个小故事吧。");
+        expect(
+          state.value.messages.filter(
+            ({ content }) => content === "先不选路线，我们聊个小故事吧。",
+          ),
+        ).toHaveLength(1);
+      }
+
+      await application.close();
+      application = undefined;
+      expectCleanApplicationShutdown(launched.stderr);
+    } finally {
+      await application?.close();
+      await provider.close();
+      await rm(root, { force: true, recursive: true });
     }
-    expect(state.value.runs).toHaveLength(1);
-    expect(state.value.runs[0]?.status).toBe("completed");
-    const inputItems = state.value.runItems.filter(
-      ({ kind }) => kind === "input_request",
-    );
-    expect(inputItems).toHaveLength(1);
-    expect(inputItems[0]).toMatchObject({
-      output: {
-        answers: [
-          {
-            questionId: "route",
-            value: { kind: "option", label: "安静路线" },
-          },
-        ],
-        status: "answered",
-      },
-      status: "completed",
-    });
-    const taskBodies = provider.bodies.filter(
-      (body) =>
-        !body.includes("Generate one concise chat title") &&
-        !isEvolutionReviewBody(body),
-    );
-    expect(taskBodies).toHaveLength(2);
-    expect(taskBodies[1]?.match(/input-request/gu)).toHaveLength(2);
-
-    await application.close();
-    application = undefined;
-    expectCleanApplicationShutdown(launched.stderr);
-  } finally {
-    await application?.close();
-    await provider.close();
-    await rm(root, { force: true, recursive: true });
-  }
-});
+  });
+}
 
 test("reviews explicit teaching and applies it only after confirmation", async () => {
   const root = await mkdtemp(
@@ -1481,7 +1814,7 @@ test("reviews explicit teaching and applies it only after confirmation", async (
       revision: { content: "回答时先给结论，再补充必要细节。" },
     });
 
-    const reviewBodies = provider.bodies.filter(isEvolutionReviewBody);
+    const reviewBodies = provider.agentBodies.filter(isEvolutionReviewBody);
     expect(reviewBodies).toHaveLength(1);
     const reviewRequest = JSON.parse(reviewBodies[0]!) as { tools?: unknown[] };
     expect(reviewRequest.tools ?? []).toEqual([]);
@@ -1522,22 +1855,24 @@ test("updates one stable Memory across Chats without leaving conflicting active 
     await sendMessage("记忆复用测试：我的爱好是什么？");
     await expect(launched.main.getByText("你现在的爱好是游泳。")).toBeVisible();
 
-    const taskBodies = provider.bodies.filter(
+    const taskBodies = provider.agentBodies.filter(
       (body) =>
+        !companionModelReply(body) &&
         !body.includes("Generate one concise chat title") &&
         !isEvolutionReviewBody(body),
     );
-    expect(taskBodies).toHaveLength(5);
-    expect(taskBodies[0]).toContain('"name":"charamate_memory"');
-    expect(taskBodies[0]).toContain('"name":"record"');
-    expect(taskBodies[0]).toContain('"defer_loading":false');
-    expect(taskBodies[0]).toContain('"type":"tool_search"');
-    expect(taskBodies[0]).toContain('"type":"web_search"');
-    expect(taskBodies[2]).toContain("Long-term memory evidence");
-    expect(taskBodies[2]).toContain("stableClaimSlot: preference.hobbies");
-    expect(taskBodies[2]).toContain("用户的爱好是徒步。");
-    expect(taskBodies[4]).toContain("用户现在的爱好是游泳。");
-    expect(taskBodies[4]).not.toContain("用户的爱好是徒步。");
+    expect(
+      taskBodies.some(
+        (body) =>
+          body.includes('"name":"record"') &&
+          body.includes('"defer_loading":false'),
+      ),
+    ).toBe(true);
+    const recallBody = taskBodies.find((body) =>
+      toolModelContent(body, "memory-recall"),
+    );
+    expect(recallBody).toContain("用户现在的爱好是游泳。");
+    expect(recallBody).not.toContain("用户的爱好是徒步。");
 
     const snapshot = await launched.main.evaluate(async () =>
       window.charaMate.memory.list({ query: "爱好" }),
@@ -1547,19 +1882,10 @@ test("updates one stable Memory across Chats without leaving conflicting active 
     expect(snapshot.value.memories[0]?.revision.content).toBe(
       "用户现在的爱好是游泳。",
     );
-    expect(snapshot.value.memories[0]?.memory.claimSlot).toBe(
-      "preference.hobbies",
+    expect(snapshot.value.memories[0]?.memory.claimSlot).toBeUndefined();
+    expect(snapshot.value.memories[0]?.sources).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "chat" })]),
     );
-    const stableMemory = snapshot.value.memories[0]!;
-    expect(taskBodies.join("\n")).not.toContain(stableMemory.memory.id);
-    expect(taskBodies.join("\n")).not.toContain(
-      stableMemory.memory.currentRevisionId,
-    );
-    expect(taskBodies.join("\n")).not.toContain('"memoryId"');
-    expect(taskBodies.join("\n")).not.toContain("[memory:");
-    expect(snapshot.value.memories[0]?.sources).toEqual([
-      expect.objectContaining({ type: "chat" }),
-    ]);
 
     await launched.main.getByRole("button", { name: "Memory" }).click();
     const memoryRow = launched.main.getByRole("button", {
@@ -1571,7 +1897,7 @@ test("updates one stable Memory across Chats without leaving conflicting active 
       launched.main.getByRole("heading", { name: "当前 Revision 来源" }),
     ).toBeVisible();
     await expect(
-      launched.main.getByRole("button", { name: /^Chat 用户消息/u }),
+      launched.main.getByRole("button", { name: /^Chat \d{4}年/u }),
     ).toBeVisible();
 
     await application.close();
@@ -1600,10 +1926,10 @@ test("updates one stable Memory across Chats without leaving conflicting active 
     database.close();
     expect(counts).toEqual({
       candidates: 0,
-      claims: 1,
+      claims: 0,
       memories: 1,
       revisions: 2,
-      toolCalls: 2,
+      toolCalls: 3,
     });
   } finally {
     await application?.close();
@@ -1644,7 +1970,7 @@ test("sends a local image as Provider image content from the Chat composer", asy
     await launched.main.getByRole("button", { name: "发送" }).click();
 
     await expect(launched.main.getByText("已读取本地图片像素")).toBeVisible();
-    const taskBodies = provider.bodies.filter(
+    const taskBodies = provider.agentBodies.filter(
       (body) => !body.includes("Generate one concise chat title"),
     );
     expect(taskBodies).toHaveLength(1);
@@ -1705,7 +2031,7 @@ test("loads a known local image through image.inspect in Agent mode", async () =
     await launched.main.getByRole("button", { name: "发送" }).click();
 
     await expect(launched.main.getByText("图片工具读取完成")).toBeVisible();
-    const taskBodies = provider.bodies.filter(
+    const taskBodies = provider.agentBodies.filter(
       (body) => !body.includes("Generate one concise chat title"),
     );
     expect(taskBodies).toHaveLength(2);
@@ -1781,9 +2107,9 @@ test("steers an active Run while plan.update snapshots render live", async () =>
     await planTrigger.hover();
     await expect(plan).toBeVisible();
     await expect(plan).toContainText("先检查需求，再实现并验证。");
-    expect(provider.bodies[0]).toContain('"name":"charamate_plan"');
-    expect(provider.bodies[0]).toContain('"defer_loading":false');
-    expect(provider.bodies[0]).toContain(
+    expect(provider.agentBodies[0]).toContain('"name":"charamate_plan"');
+    expect(provider.agentBodies[0]).toContain('"defer_loading":false');
+    expect(provider.agentBodies[0]).toContain(
       "call the always-loaded plan.update tool directly before other work",
     );
     await expect(plan.locator("li", { hasText: "检查需求" })).toHaveAttribute(
@@ -1812,7 +2138,7 @@ test("steers an active Run while plan.update snapshots render live", async () =>
     ).toHaveAttribute("data-status", "in_progress");
     await expect
       .poll(() =>
-        provider.bodies.some((body) =>
+        provider.agentBodies.some((body) =>
           body.includes("追加要求：验证时保留当前界面状态"),
         ),
       )
@@ -1843,7 +2169,9 @@ test("steers an active Run while plan.update snapshots render live", async () =>
       state.value.runItems.filter(({ kind }) => kind === "user_message"),
     ).toHaveLength(2);
     expect(
-      provider.bodies.every((body) => !body.includes("tool_search_output")),
+      provider.agentBodies.every(
+        (body) => !body.includes("tool_search_output"),
+      ),
     ).toBe(true);
 
     await application.close();
@@ -1856,54 +2184,68 @@ test("steers an active Run while plan.update snapshots render live", async () =>
   }
 });
 
-test("turns a live Plan into non-spinning history when the Provider fails", async () => {
-  const root = await mkdtemp(
-    path.join(os.tmpdir(), "chara-mate-plan-failure-e2e-"),
-  );
-  const userData = path.join(root, "user-data");
-  const workspace = path.join(root, "workspace");
-  await mkdir(workspace, { recursive: true });
-  const provider = await startFakeProvider();
-  let application: ElectronApplication | undefined;
+for (const failureStatus of [400, 503] as const) {
+  test(`archives a live Plan without spinning after Provider HTTP ${String(failureStatus)}`, async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "chara-mate-plan-failure-e2e-"),
+    );
+    const userData = path.join(root, "user-data");
+    const workspace = path.join(root, "workspace");
+    await mkdir(workspace, { recursive: true });
+    const provider = await startFakeProvider(undefined, false, failureStatus);
+    let application: ElectronApplication | undefined;
 
-  try {
-    const launched = await launchApplication(userData, workspace);
-    application = launched.application;
-    await saveProvider(launched.main, provider.baseUrl);
-    await selectAgent(launched.main, "完全访问");
-    await launched.main
-      .getByRole("textbox", { name: "消息" })
-      .fill("计划失败测试：先建立计划，再复现 Provider 失败");
-    await launched.main.getByRole("button", { name: "发送" }).click();
+    try {
+      const launched = await launchApplication(userData, workspace);
+      application = launched.application;
+      await saveProvider(launched.main, provider.baseUrl);
+      await selectAgent(launched.main, "完全访问");
+      await launched.main
+        .getByRole("textbox", { name: "消息" })
+        .fill("计划失败测试：先建立计划，再复现 Provider 失败");
+      await launched.main.getByRole("button", { name: "发送" }).click();
 
-    const activePlan = launched.main.getByLabel("活跃计划");
-    await expect(activePlan).toBeVisible();
-    await activePlan.getByRole("button").hover();
-    const currentPlan = launched.main.getByLabel("当前计划");
-    await expect(currentPlan).toContainText("建立执行计划");
-    await expect(currentPlan.getByText("进行中")).toBeVisible();
+      const activePlan = launched.main.getByLabel("活跃计划");
+      await expect(activePlan).toBeVisible();
+      await activePlan.getByRole("button").hover();
+      const currentPlan = launched.main.getByLabel("当前计划");
+      await expect(currentPlan).toContainText("建立执行计划");
+      await expect(currentPlan.getByText("进行中")).toBeVisible();
 
-    provider.releasePlanFailure();
-    await expect(
-      launched.main.getByRole("button", { name: /处理失败/u }),
-    ).toBeVisible();
-    await expect(activePlan).toHaveCount(0);
-    const archivedPlan = launched.main.getByLabel("计划记录");
-    await expect(archivedPlan).toContainText("执行计划 · 已失败");
-    await expect(
-      archivedPlan.locator('li[data-status="unfinished"]'),
-    ).toHaveCount(3);
-    await expect(archivedPlan.getByText("进行中")).toHaveCount(0);
+      provider.releasePlanFailure();
+      await expect(
+        launched.main.getByRole("button", {
+          name: failureStatus === 503 ? /已中断/u : /处理失败/u,
+        }),
+      ).toBeVisible();
+      await expect(activePlan).toHaveCount(0);
+      const archivedPlan = launched.main.getByLabel("计划记录");
+      await expect(archivedPlan).toContainText(
+        failureStatus === 503 ? "执行计划 · 已中断" : "执行计划 · 已失败",
+      );
+      if (failureStatus === 503) {
+        await expect(
+          launched.main.getByRole("button", { name: "继续运行" }),
+        ).toBeVisible();
+        await expect(launched.main.getByRole("alert")).toContainText(
+          "HTTP 503",
+        );
+      }
+      await expect(
+        archivedPlan.locator('li[data-status="unfinished"]'),
+      ).toHaveCount(3);
+      await expect(archivedPlan.getByText("进行中")).toHaveCount(0);
 
-    await application.close();
-    application = undefined;
-    expectCleanApplicationShutdown(launched.stderr);
-  } finally {
-    await application?.close();
-    await provider.close();
-    await rm(root, { force: true, recursive: true });
-  }
-});
+      await application.close();
+      application = undefined;
+      expectCleanApplicationShutdown(launched.stderr);
+    } finally {
+      await application?.close();
+      await provider.close();
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+}
 
 test("operates the product-managed Chromium through the same Agent Runtime", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "chara-mate-browser-e2e-"));
@@ -1939,9 +2281,9 @@ test("operates the product-managed Chromium through the same Agent Runtime", asy
 
     await expect(launched.main.getByText("浏览器检查完成")).toBeVisible();
     expect(visited).toBe(true);
-    expect(provider.bodies.some((body) => body.includes("Browser E2E"))).toBe(
-      true,
-    );
+    expect(
+      provider.agentBodies.some((body) => body.includes("Browser E2E")),
+    ).toBe(true);
     const completedRun = launched.main.getByRole("button", { name: /已处理/u });
     await completedRun.click();
     await expect(launched.main.getByText("已调用工具")).toHaveCount(2);

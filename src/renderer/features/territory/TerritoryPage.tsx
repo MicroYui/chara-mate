@@ -433,6 +433,16 @@ export function TerritoryPage({
   useEffect(
     () =>
       api.subscribeChanged((nextSnapshot) => {
+        if (
+          !busyRef.current &&
+          snapshotRef.current &&
+          snapshotRef.current.world.currentRevision.id !==
+            nextSnapshot.world.currentRevision.id
+        ) {
+          setUndoStack([]);
+          setRedoStack([]);
+        }
+        snapshotRef.current = nextSnapshot;
         setSnapshot(nextSnapshot);
         void loadView(nextSnapshot);
       }),
@@ -545,6 +555,21 @@ export function TerritoryPage({
         ({ id: candidateId }) => candidateId === selectedCandidateId,
       ),
     [selectedCandidateId, snapshot?.candidates],
+  );
+  const latestCreation = useMemo(
+    () =>
+      snapshot?.candidates.find(
+        (candidate) =>
+          candidate.status === "applied" &&
+          candidate.intent === "item" &&
+          candidate.appliedRevisionId === snapshot.world.currentRevision.id &&
+          candidate.sources.some(
+            (source) =>
+              source.kind === "character_creation" ||
+              source.kind === "chat_moment",
+          ),
+      ),
+    [snapshot],
   );
   const selectedMomentSource = useMemo(
     () =>
@@ -1090,7 +1115,10 @@ export function TerritoryPage({
       busyRef.current = true;
       setBusy(true);
       try {
-        const response = await api.restoreRevision({ revisionId: target });
+        const response = await api.restoreRevision({
+          revisionId: target,
+          expectedCurrentRevisionId: snapshot.world.currentRevision.id,
+        });
         if (!response.ok) {
           setError(response.error.message);
           return;
@@ -1121,7 +1149,10 @@ export function TerritoryPage({
       setBusy(true);
       const currentRevision = snapshot.world.currentRevision.id;
       try {
-        const response = await api.restoreRevision({ revisionId });
+        const response = await api.restoreRevision({
+          revisionId,
+          expectedCurrentRevisionId: currentRevision,
+        });
         if (!response.ok) {
           setError(response.error.message);
           return;
@@ -1496,6 +1527,24 @@ export function TerritoryPage({
           </button>
         </nav>
 
+        {latestCreation ? (
+          <div className={styles["previewBanner"]}>
+            <WandSparkles aria-hidden="true" size={15} />
+            <span>
+              <strong>一件新创作已留下</strong>
+              <small>{latestCreation.sources[0]?.label}</small>
+            </span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void restoreRevision(latestCreation.baseRevisionId)
+              }
+            >
+              撤销这次布置
+            </button>
+          </div>
+        ) : null}
         {selectedCandidate?.status === "ready" ? (
           <div className={styles["previewBanner"]}>
             <WandSparkles aria-hidden="true" size={15} />
@@ -1868,7 +1917,11 @@ export function TerritoryPage({
                                 <small>
                                   {source.kind === "memory"
                                     ? "打开记忆"
-                                    : "活动摘要"}{" "}
+                                    : source.kind === "character_creation"
+                                      ? "角色创作"
+                                      : source.kind === "chat_moment"
+                                        ? "共同经历"
+                                        : "活动摘要"}{" "}
                                   · {dateLabel(source.occurredAt)}
                                 </small>
                               </button>
@@ -2202,7 +2255,11 @@ export function TerritoryPage({
                                 <small>
                                   {source.kind === "memory"
                                     ? "打开记忆"
-                                    : "活动摘要"}{" "}
+                                    : source.kind === "character_creation"
+                                      ? "角色创作"
+                                      : source.kind === "chat_moment"
+                                        ? "共同经历"
+                                        : "活动摘要"}{" "}
                                   · {dateLabel(source.occurredAt)}
                                 </small>
                               </button>

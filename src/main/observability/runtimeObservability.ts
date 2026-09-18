@@ -47,6 +47,13 @@ export interface RuntimeObservabilitySnapshot {
   readonly contextCompactions: number;
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** Coverage of recorded usage objects in this trace window, not HTTP calls. */
+  readonly usageCoverage: {
+    readonly reports: number;
+    readonly cachedInputTokens: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
   readonly runs: number;
   readonly tools: readonly ToolMetric[];
   readonly traces: readonly RuntimeTrace[];
@@ -205,6 +212,18 @@ export class RuntimeObservability {
       ).length,
       inputTokens: token("inputTokens"),
       outputTokens: token("outputTokens"),
+      usageCoverage: {
+        reports: usage.length,
+        cachedInputTokens: usage.filter(
+          (value) => typeof value["cachedInputTokens"] === "number",
+        ).length,
+        inputTokens: usage.filter(
+          (value) => typeof value["inputTokens"] === "number",
+        ).length,
+        outputTokens: usage.filter(
+          (value) => typeof value["outputTokens"] === "number",
+        ).length,
+      },
       runs: completedRuns.length,
       tools: toolNames
         .map((name) => {

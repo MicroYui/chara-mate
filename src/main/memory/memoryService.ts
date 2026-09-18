@@ -1,19 +1,43 @@
 import type {
   MemoryCandidate,
-  MemoryClaimOperation,
   MemoryClaimSlot,
   MemoryCreateRequest,
   MemoryDetail,
-  MemoryHit,
   MemoryListRequest,
   MemoryProposalInput,
-  MemoryResolveClaimRequest,
   MemoryReviseRequest,
   MemorySnapshot,
   MemorySource,
-  MemorySourceType,
   MemoryType,
 } from "../../shared/contracts/memory";
+import type {
+  EvidencePack,
+  MemoryCanonicalSourceCandidate,
+  MemoryCanonicalStorageStats,
+  MemoryEvidenceReadRequest,
+  MemoryEvidenceReference,
+  MemoryEvidenceReferenceRequest,
+  MemoryEvidenceResolution,
+  MemoryFormationIntake,
+  MemoryFormationWorkRef,
+  MemoryFormationSource,
+  RecallPlan,
+} from "../../shared/contracts/memoryRecall";
+import {
+  MemoryFormationService,
+  type MemoryEpisodeFormationResult,
+} from "./memoryFormationService";
+import {
+  MemoryConsolidationService,
+  type MemoryConsolidationRuntime,
+} from "./memoryConsolidation";
+import type { MemoryFormationRuntime } from "./memoryModels";
+import {
+  resolveMemoryEvidence,
+  MemoryRecallPipeline,
+  type MemoryRecallDependencies,
+  type MemoryRecallOutputAllocation,
+} from "./memoryRecallPipeline";
 import type { Clock } from "../../shared/pure/clock";
 import type { IdGenerator } from "../../shared/pure/id";
 import { redactText } from "../../shared/pure/redaction";
@@ -22,95 +46,12 @@ import { memoryClaimDefinition } from "./memoryClaim";
 import { MemoryError } from "./memoryError";
 import type { MemoryRepository } from "./memoryRepository";
 import type { RetrievalPipeline } from "./retrievalPipeline";
+import type { ProviderRequestIdentity } from "../providers/providerError";
 
-export type MemoryFormationBasis =
-  "explicit_user_statement" | "inference" | "run_observation";
-
-interface MemoryFormationBase {
-  readonly allowedMemoryIds: readonly string[];
-  readonly ambiguityMemoryIds?: readonly string[];
-  readonly basis: MemoryFormationBasis;
-  readonly content: string;
-  readonly memoryId?: string;
-  readonly source: {
-    readonly id: string;
-    readonly label: string;
-    readonly referenceId: string;
-    readonly type: Extract<MemorySourceType, "chat" | "tool" | "voice">;
-  };
-  readonly validFrom?: string;
-  readonly validTo?: string;
-}
-
-export type MemoryFormationInput = MemoryFormationBase &
-  (
-    | {
-        readonly claimSlot: MemoryClaimSlot;
-        readonly operation: MemoryClaimOperation;
-        readonly type?: never;
-      }
-    | {
-        readonly claimSlot?: never;
-        readonly operation: MemoryClaimOperation;
-        readonly type: Extract<MemoryType, "procedure" | "project">;
-      }
-    | {
-        readonly claimSlot?: never;
-        readonly importantMoment: boolean;
-        readonly occursAt?: string | null;
-        readonly operation: "create";
-        readonly targetHint?: never;
-        readonly timeZone?: string | null;
-        readonly type: Extract<MemoryType, "commitment" | "event">;
-      }
-    | {
-        readonly claimSlot?: never;
-        readonly importantMoment: boolean;
-        readonly occursAt?: string | null;
-        readonly operation: Exclude<MemoryClaimOperation, "create">;
-        readonly targetHint: string;
-        readonly timeZone?: string | null;
-        readonly type: Extract<MemoryType, "commitment" | "event">;
-      }
-  );
-
-export type MemoryFormationResult =
-  | {
-      readonly memoryId: string;
-      readonly outcome: "created" | "duplicate" | "revised";
-      readonly revisionId: string;
-    }
-  | {
-      readonly candidateId: string;
-      readonly outcome: "candidate_created" | "candidate_duplicate";
-    };
-
-export interface MemoryContextSelection {
-  readonly legacyUnkeyedCount: number;
-  readonly queryMatches: readonly MemoryHit[];
-  readonly queryRelevantMemoryIds: readonly string[];
-  readonly stableProfile: readonly MemoryHit[];
-}
-
-export interface ActivityMemoryPatternInput {
-  readonly content: string;
-  readonly legacyReason: string;
-  readonly reason: string;
-  readonly sourceIds: readonly string[];
-  readonly sourceLabels: readonly string[];
-  readonly validFrom: string;
-}
-
-export interface ActivityMemoryPatternReconciliation {
-  readonly links: readonly {
-    readonly candidateId: string;
-    readonly digestIds: readonly string[];
-  }[];
-  readonly removedCandidateIds: readonly string[];
-}
-
-function normalizeFormedContent(content: string): string {
-  return redactText(content).normalize("NFKC").replaceAll(/\s+/gu, " ").trim();
+export interface MemoryProviderRecovery {
+  readonly formationProcessorVersion: string;
+  readonly consolidationProcessorVersion: string;
+  readonly requestIdentity: ProviderRequestIdentity;
 }
 
 interface RevisionMetadataInput {
@@ -211,77 +152,6 @@ function resolveRevisionMetadata(
   };
 }
 
-function sameRevisionMetadata(
-  left: ResolvedRevisionMetadata,
-  right: ResolvedRevisionMetadata,
-): boolean {
-  return (
-    left.importantMoment === right.importantMoment &&
-    left.occursAt === right.occursAt &&
-    left.timeZone === right.timeZone
-  );
-}
-
-function sameStrings(
-  left: readonly string[],
-  right: readonly string[],
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((value, index) => value === right[index])
-  );
-}
-
-function activityPatternReasonKey(reason: string): string {
-  return reason.normalize("NFKC").replaceAll(/\s+/gu, " ").trim().toLowerCase();
-}
-
-function managedActivityPatternReason(reason: string): boolean {
-  const key = activityPatternReasonKey(reason);
-  return (
-    key.startsWith("activity 跨周稳定行为候选：") ||
-    key.startsWith("activity 跨日证据归纳：")
-  );
-}
-
-function formationReason(basis: MemoryFormationBasis): string {
-  switch (basis) {
-    case "explicit_user_statement":
-      return "用户在当前对话中明确说明";
-    case "inference":
-      return "当前对话中的推断，等待用户确认";
-    case "run_observation":
-      return "当前 Agent Run 的执行观察，等待用户确认";
-  }
-}
-
-type FormationCandidateCause =
-  | "ambiguous_identity"
-  | "basis"
-  | "collision"
-  | "legacy_binding"
-  | "missing_target"
-  | "single_value_operation";
-
-function formationCandidateReason(
-  basis: MemoryFormationBasis,
-  cause: FormationCandidateCause,
-): string {
-  if (cause === "basis") return formationReason(basis);
-  switch (cause) {
-    case "ambiguous_identity":
-      return "本轮已加载其他同类稳定字段，等待确认这是新增字段而不是改口";
-    case "collision":
-      return "同一稳定字段已有不同内容，等待用户确认更新";
-    case "legacy_binding":
-      return "旧记忆尚未绑定稳定字段，等待用户确认后更新";
-    case "missing_target":
-      return "跨 Chat 更新未取得本轮合法目标，等待用户确认";
-    case "single_value_operation":
-      return "单值字段不能追加或移除，等待用户确认替换语义";
-  }
-}
-
 function redactSources(sources: readonly MemorySource[]): MemorySource[] {
   return sources.map((source) => ({
     ...source,
@@ -289,7 +159,17 @@ function redactSources(sources: readonly MemorySource[]): MemorySource[] {
   }));
 }
 
+export interface MemoryCognitionDependencies extends MemoryRecallDependencies {
+  readonly formation: MemoryFormationRuntime;
+  readonly consolidation?: MemoryConsolidationRuntime;
+  readonly formationContextBudget: () => { maxTokens: number };
+  readonly formationResourceBudget: { maxReadBytes: number };
+}
+
 export class MemoryService {
+  readonly #recall: MemoryRecallPipeline | undefined;
+  readonly #formation: MemoryFormationService | undefined;
+  readonly #consolidation: MemoryConsolidationService | undefined;
   #changed: (memoryId: string) => void = () => undefined;
 
   constructor(
@@ -297,7 +177,212 @@ export class MemoryService {
     private readonly retrieval: RetrievalPipeline,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
-  ) {}
+    private readonly cognition?: MemoryCognitionDependencies,
+  ) {
+    if (cognition) {
+      this.#recall = new MemoryRecallPipeline(
+        repository.recall,
+        cognition,
+        clock,
+      );
+      if (cognition.consolidation)
+        this.#consolidation = new MemoryConsolidationService(
+          repository,
+          this.#recall,
+          cognition.consolidation,
+          ids,
+          clock,
+          cognition.formationContextBudget,
+        );
+      this.#formation = new MemoryFormationService(
+        repository,
+        this.#recall,
+        cognition.formation,
+        ids,
+        clock,
+        cognition.formationContextBudget,
+        cognition.formationResourceBudget,
+      );
+    }
+  }
+
+  #publishChange(memoryId: string): void {
+    this.repository.learning.enqueue(memoryId, this.clock.now());
+    this.#changed(memoryId);
+  }
+
+  async consolidatePending(
+    signal?: AbortSignal,
+    onError?: (error: unknown) => void,
+    onDeferred?: () => void,
+  ): Promise<number> {
+    if (!this.#consolidation) return 0;
+    const results = await this.#consolidation.drain(
+      signal,
+      (memoryId) => this.#publishChange(memoryId),
+      onError,
+      onDeferred,
+    );
+    return results.filter(({ disposition }) => disposition === "consolidated")
+      .length;
+  }
+
+  retryFailedConsolidationWork(): void {
+    this.repository.learning.retry(this.clock.now());
+  }
+
+  async recall(
+    plan: RecallPlan,
+    signal?: AbortSignal,
+    consumer: "context" | "tool" = "context",
+    allocation?: MemoryRecallOutputAllocation,
+  ): Promise<EvidencePack> {
+    if (!this.#recall)
+      throw new Error("Memory recall dependencies are not configured");
+    const evidence = await this.#recall.recall(
+      plan,
+      signal,
+      undefined,
+      allocation,
+    );
+    signal?.throwIfAborted();
+    this.repository.recordUsages(
+      evidence.items.map((item) => ({
+        consumer,
+        id: this.ids.generate(),
+        memoryId: item.memoryId,
+        revisionId: item.revisionId,
+        usedAt: this.clock.now(),
+      })),
+    );
+    signal?.throwIfAborted();
+    return evidence;
+  }
+
+  validateEvidenceReferences(
+    request: MemoryEvidenceReferenceRequest,
+  ): MemoryEvidenceReference[] {
+    return this.repository.recall.validateEvidenceReferences(
+      request,
+      this.clock.now(),
+    );
+  }
+
+  resolveEvidence(
+    request: MemoryEvidenceReadRequest,
+  ): MemoryEvidenceResolution {
+    return resolveMemoryEvidence(
+      this.repository.recall,
+      request,
+      this.clock.now(),
+    );
+  }
+
+  enqueueEpisode(episode: MemoryFormationIntake): MemoryFormationWorkRef {
+    if (!this.#formation)
+      throw new Error("Memory formation dependencies are not configured");
+    return this.#formation.enqueue(episode);
+  }
+
+  pendingFormationWork(): Iterable<MemoryFormationWorkRef> {
+    return this.repository.formation.pendingWork();
+  }
+
+  nextReclaimableSource(
+    afterSourceId?: string,
+  ): MemoryCanonicalSourceCandidate | undefined {
+    return this.repository.formation.nextReclaimableSource(afterSourceId);
+  }
+
+  releaseCanonicalSource(sourceId: string): boolean {
+    return this.repository.formation.releaseCanonicalSource(sourceId);
+  }
+
+  canonicalStorageStats(): MemoryCanonicalStorageStats {
+    return this.repository.formation.canonicalStorageStats();
+  }
+
+  protectedActivitySourceIds(eventIds: readonly string[]): ReadonlySet<string> {
+    return this.repository.formation.protectedActivitySourceIds(eventIds);
+  }
+
+  getFormationSourceMetadata(
+    sourceId: string,
+  ): Omit<MemoryFormationSource, "content"> | undefined {
+    return this.repository.formation.getSourceMetadata(sourceId);
+  }
+
+  formationReceipt(workId: string): MemoryEpisodeFormationResult | undefined {
+    if (!this.#formation)
+      throw new Error("Memory formation dependencies are not configured");
+    return this.#formation.receipt(workId);
+  }
+
+  getFormationSource(
+    type: MemoryFormationSource["type"],
+    referenceId: string,
+  ): MemoryFormationSource | undefined {
+    return this.repository.formation.getFormationSource(type, referenceId);
+  }
+
+  snapshottedActivitySourceIds(
+    eventIds: readonly string[],
+  ): ReadonlySet<string> {
+    return this.repository.formation.snapshottedActivitySourceIds(eventIds);
+  }
+
+  async formEpisode(
+    workId: string,
+    signal?: AbortSignal,
+  ): Promise<MemoryEpisodeFormationResult> {
+    if (!this.#formation)
+      throw new Error("Memory formation dependencies are not configured");
+    const result = await this.#formation.form(workId, signal);
+    for (const memoryId of new Set(
+      result.changes.map((change) => change.memoryId),
+    ))
+      this.#publishChange(memoryId);
+    return result;
+  }
+
+  indexPending(signal?: AbortSignal): Promise<number> {
+    if (!this.#recall)
+      throw new Error("Memory recall dependencies are not configured");
+    return this.#recall.indexPending(signal);
+  }
+
+  recoverInterruptedWork(): void {
+    this.repository.recall.recoverWork(this.clock.now());
+    this.repository.formation.recover(this.clock.now());
+    this.#formation?.recoverForCurrentProcessor();
+    this.repository.learning.recover(this.clock.now());
+    this.#consolidation?.recoverForCurrentProcessor();
+  }
+
+  retryFailedIndex(): void {
+    if (!this.cognition)
+      throw new Error("Memory recall dependencies are not configured");
+    this.repository.recall.retryFailedIndex(
+      this.cognition.embedding.modelKey,
+      this.clock.now(),
+    );
+  }
+
+  retryFailedFormationWork(workId?: string): void {
+    this.repository.formation.retryFailed(this.clock.now(), workId);
+  }
+
+  recoverProviderFailures(recovery: MemoryProviderRecovery): number {
+    return (
+      (this.#formation?.recoverProviderFailures(
+        recovery.formationProcessorVersion,
+      ) ?? 0) +
+      (this.#consolidation?.recoverProviderFailures(
+        recovery.consolidationProcessorVersion,
+        recovery.requestIdentity,
+      ) ?? 0)
+    );
+  }
 
   setChangedListener(listener: (memoryId: string) => void): void {
     this.#changed = listener;
@@ -317,48 +402,6 @@ export class MemoryService {
       candidates: request.asOf ? [] : this.repository.listPendingCandidates(),
       memories,
       profile,
-    };
-  }
-
-  search(
-    request: MemoryListRequest,
-    consumer: "context" | "tool",
-    limit: number,
-  ): MemoryHit[] {
-    const hits = this.retrieval.search(
-      {
-        ...request,
-        includeDeleted: false,
-        includeInactive: false,
-        status: "active",
-      },
-      limit,
-    );
-    this.#recordUsages(hits, consumer);
-    return hits;
-  }
-
-  selectContext(query: string, limit = 8): MemoryContextSelection {
-    const stableProfile = this.repository.stableClaimHits();
-    const stableIds = new Set(stableProfile.map(({ memory }) => memory.id));
-    const rawQueryMatches = this.retrieval.search(
-      {
-        includeDeleted: false,
-        includeInactive: false,
-        ...(query.trim() ? { query } : {}),
-        status: "active",
-      },
-      limit,
-    );
-    const queryMatches = rawQueryMatches
-      .filter(({ memory }) => !stableIds.has(memory.id))
-      .map((hit, index) => ({ ...hit, rank: index + 1 }));
-    this.#recordUsages([...stableProfile, ...queryMatches], "context");
-    return {
-      legacyUnkeyedCount: this.repository.countUnclaimedStableMemories(),
-      queryMatches,
-      queryRelevantMemoryIds: rawQueryMatches.map(({ memory }) => memory.id),
-      stableProfile,
     };
   }
 
@@ -395,41 +438,74 @@ export class MemoryService {
       revisionId: this.ids.generate(),
       sources: redactSources(request.sources),
     });
-    this.#changed(created.memory.id);
+    this.#publishChange(created.memory.id);
     return created;
   }
 
   revise(request: MemoryReviseRequest): MemoryDetail {
-    const current = this.repository.requireDetail(request.memoryId);
-    const currentRevision = current.revisions.find(
-      ({ id }) => id === current.memory.currentRevisionId,
-    );
-    if (!currentRevision) {
-      throw new TypeError("Current memory revision is unavailable");
-    }
-    const revisionMetadata = resolveRevisionMetadata(
-      current.memory.type,
-      revisionMetadataInput(request),
-      resolvedRevisionMetadata(currentRevision),
-    );
-    const revised = this.repository.revise({
-      ...(request.confidence === undefined
-        ? {}
-        : { confidence: request.confidence }),
-      content: redactText(request.content),
-      ...revisionMetadata,
-      ...(request.importance === undefined
-        ? {}
-        : { importance: request.importance }),
-      memoryId: request.memoryId,
-      now: this.clock.now(),
-      reason: redactText(request.reason),
-      revisionId: this.ids.generate(),
-      sources: redactSources(request.sources),
-      ...(request.validFrom ? { validFrom: request.validFrom } : {}),
-      ...(request.validTo ? { validTo: request.validTo } : {}),
+    const revised = this.repository.recall.transaction(() => {
+      const current = this.repository.requireDetail(request.memoryId);
+      const currentRevision = current.revisions.find(
+        ({ id }) => id === current.memory.currentRevisionId,
+      );
+      if (!currentRevision) {
+        throw new TypeError("Current memory revision is unavailable");
+      }
+      const now = this.clock.now();
+      const previous = this.repository.recall.revisionScope(
+        current.memory.currentRevisionId,
+      );
+      const revisionMetadata = resolveRevisionMetadata(
+        current.memory.type,
+        revisionMetadataInput(request),
+        resolvedRevisionMetadata(currentRevision),
+      );
+      const detail = this.repository.revise({
+        predecessorRevisionId: currentRevision.id,
+        priorDispositions: [
+          { revisionId: currentRevision.id, disposition: "unresolved" },
+        ],
+        ...(request.confidence === undefined
+          ? {}
+          : { confidence: request.confidence }),
+        content: redactText(request.content),
+        ...revisionMetadata,
+        ...(request.importance === undefined
+          ? {}
+          : { importance: request.importance }),
+        memoryId: request.memoryId,
+        now,
+        reason: redactText(request.reason),
+        revisionId: this.ids.generate(),
+        sources: redactSources(request.sources),
+        ...(request.validFrom ? { validFrom: request.validFrom } : {}),
+        ...(request.validTo ? { validTo: request.validTo } : {}),
+      });
+      if (previous) {
+        // Manual editing changes the record; its prior truth remains unresolved.
+        // Keep the known owner,
+        // never the old inference, Tool success, entities or commitment state.
+        // Explicit calendar fields remain owned by revisionMetadata above;
+        // semantic validity changes only when this request supplies it.
+        this.repository.recall.putSemantics(
+          detail.memory.currentRevisionId,
+          {
+            kind: "claim",
+            owner: previous.owner,
+            ...(previous.owner === "character" && previous.personaId
+              ? { personaId: previous.personaId }
+              : {}),
+            basis: "explicit_user_statement",
+            qualifiers: { authoring: "user_edit" },
+            ...(request.validFrom ? { validFrom: request.validFrom } : {}),
+            ...(request.validTo ? { validTo: request.validTo } : {}),
+          },
+          [],
+        );
+      }
+      return detail;
     });
-    this.#changed(revised.memory.id);
+    this.#publishChange(revised.memory.id);
     return revised;
   }
 
@@ -439,25 +515,25 @@ export class MemoryService {
 
   archive(memoryId: string): MemoryDetail {
     const archived = this.repository.archive(memoryId, this.clock.now());
-    this.#changed(memoryId);
+    this.#publishChange(memoryId);
     return archived;
   }
 
   delete(memoryId: string): MemoryDetail {
     const deleted = this.repository.softDelete(memoryId, this.clock.now());
-    this.#changed(memoryId);
+    this.#publishChange(memoryId);
     return deleted;
   }
 
   restore(memoryId: string): MemoryDetail {
     const restored = this.repository.restore(memoryId, this.clock.now());
-    this.#changed(memoryId);
+    this.#publishChange(memoryId);
     return restored;
   }
 
   purge(memoryId: string): void {
     this.repository.purge(memoryId);
-    this.#changed(memoryId);
+    this.#publishChange(memoryId);
   }
 
   propose(input: MemoryProposalInput): MemoryCandidate {
@@ -486,146 +562,6 @@ export class MemoryService {
     });
   }
 
-  reconcileActivityPatterns(
-    patterns: readonly ActivityMemoryPatternInput[],
-  ): ActivityMemoryPatternReconciliation {
-    const decisions = this.repository.listCandidateDecisions({
-      sourceType: "activity",
-      type: "activity_digest",
-    });
-    const latestByReason = new Map<string, (typeof decisions)[number]>();
-    for (const decision of decisions) {
-      const reasonKey = activityPatternReasonKey(decision.candidate.reason);
-      if (!latestByReason.has(reasonKey)) {
-        latestByReason.set(reasonKey, decision);
-      }
-    }
-
-    const retainedCandidateIds = new Set<string>();
-    const removedCandidateIds = new Set<string>();
-    const links: Array<{
-      candidateId: string;
-      digestIds: readonly string[];
-    }> = [];
-
-    for (const pattern of patterns) {
-      if (pattern.sourceIds.length !== 2) {
-        throw new TypeError(
-          "Stable Activity patterns require exactly two Weekly Digest sources",
-        );
-      }
-      if (pattern.sourceIds.length !== pattern.sourceLabels.length) {
-        throw new TypeError("Activity pattern sources and labels must align");
-      }
-      const current = latestByReason.get(
-        activityPatternReasonKey(pattern.reason),
-      );
-      const legacy = latestByReason.get(
-        activityPatternReasonKey(pattern.legacyReason),
-      );
-      if (
-        current?.candidate.status === "accepted" ||
-        current?.candidate.status === "rejected"
-      ) {
-        continue;
-      }
-      if (
-        !current &&
-        (legacy?.candidate.status === "rejected" ||
-          (legacy?.candidate.status === "accepted" && !legacy.acceptedMemoryId))
-      ) {
-        continue;
-      }
-
-      const targetMemoryId =
-        legacy?.candidate.status === "accepted"
-          ? legacy.acceptedMemoryId
-          : undefined;
-      if (targetMemoryId) {
-        const target = this.repository.getDetail(targetMemoryId);
-        if (
-          !target ||
-          target.memory.deletedAt ||
-          target.memory.status !== "active"
-        ) {
-          continue;
-        }
-        const revision = target.revisions.find(
-          ({ id }) => id === target.memory.currentRevisionId,
-        );
-        if (
-          revision &&
-          normalizeFormedContent(revision.content) ===
-            normalizeFormedContent(pattern.content)
-        ) {
-          continue;
-        }
-      }
-
-      const pending =
-        current?.candidate.status === "pending" ? current.candidate : undefined;
-      const pendingMatches =
-        pending?.content === pattern.content &&
-        sameStrings(pending.sourceIds, pattern.sourceIds) &&
-        sameStrings(pending.sourceLabels, pattern.sourceLabels) &&
-        pending.validFrom === pattern.validFrom &&
-        pending.supersedesMemoryId === targetMemoryId &&
-        (targetMemoryId
-          ? pending.claimOperation === "replace"
-          : !pending.claimOperation);
-      if (pending && !pendingMatches) {
-        if (this.repository.discardPendingCandidate(pending.id)) {
-          removedCandidateIds.add(pending.id);
-        }
-      }
-      if (!current && legacy?.candidate.status === "pending") {
-        if (this.repository.discardPendingCandidate(legacy.candidate.id)) {
-          removedCandidateIds.add(legacy.candidate.id);
-        }
-      }
-
-      const candidate = pendingMatches
-        ? pending
-        : this.repository.propose({
-            candidateId: this.ids.generate(),
-            confidence: 0.6,
-            content: pattern.content,
-            ...(targetMemoryId
-              ? { formation: { operation: "replace" as const } }
-              : {}),
-            importance: 0.5,
-            novelty: 1,
-            now: this.clock.now(),
-            reason: pattern.reason,
-            sourceIds: [...pattern.sourceIds],
-            sourceLabels: pattern.sourceLabels.map(redactText),
-            sourceType: "activity",
-            ...(targetMemoryId ? { supersedesMemoryId: targetMemoryId } : {}),
-            type: "activity_digest",
-            validFrom: pattern.validFrom,
-          });
-      retainedCandidateIds.add(candidate.id);
-      links.push({ candidateId: candidate.id, digestIds: pattern.sourceIds });
-    }
-
-    for (const decision of decisions) {
-      const candidate = decision.candidate;
-      if (
-        candidate.status === "pending" &&
-        managedActivityPatternReason(candidate.reason) &&
-        !retainedCandidateIds.has(candidate.id) &&
-        this.repository.discardPendingCandidate(candidate.id)
-      ) {
-        removedCandidateIds.add(candidate.id);
-      }
-    }
-
-    return {
-      links,
-      removedCandidateIds: [...removedCandidateIds],
-    };
-  }
-
   acceptCandidate(candidateId: string): MemoryDetail {
     const candidate = this.repository.requireCandidate(candidateId);
     const candidateMetadata = resolvedRevisionMetadata(
@@ -640,9 +576,16 @@ export class MemoryService {
       type: candidate.sourceType,
     }));
     if (candidate.claimOperation && candidate.supersedesMemoryId) {
+      const predecessorRevisionId = this.repository.requireDetail(
+        candidate.supersedesMemoryId,
+      ).memory.currentRevisionId;
       const accepted = this.repository.acceptCandidateAsRevision(
         candidateId,
         {
+          predecessorRevisionId,
+          priorDispositions: [
+            { revisionId: predecessorRevisionId, disposition: "unresolved" },
+          ],
           confidence: candidate.confidence,
           content: candidate.content,
           importance: candidate.importance,
@@ -663,7 +606,7 @@ export class MemoryService {
         },
         candidate.claimSlot,
       );
-      this.#changed(accepted.memory.id);
+      this.#publishChange(accepted.memory.id);
       return accepted;
     }
     if (
@@ -700,58 +643,12 @@ export class MemoryService {
       ...(candidate.validFrom ? { validFrom: candidate.validFrom } : {}),
       ...(candidate.validTo ? { validTo: candidate.validTo } : {}),
     });
-    this.#changed(accepted.memory.id);
+    this.#publishChange(accepted.memory.id);
     return accepted;
   }
 
   rejectCandidate(candidateId: string): MemoryCandidate {
     return this.repository.rejectCandidate(candidateId, this.clock.now());
-  }
-
-  resolveClaim(request: MemoryResolveClaimRequest): MemoryDetail {
-    const legacy = this.repository.requireDetail(request.memoryId);
-    const definition = memoryClaimDefinition(request.claimSlot);
-    if (definition.type !== legacy.memory.type) {
-      throw new MemoryError(
-        "MEMORY.CONFLICT",
-        "所选稳定字段与旧记忆类型不一致。",
-        false,
-      );
-    }
-    const owner = this.repository.findDetailByClaimSlot(request.claimSlot);
-    if (owner && owner.memory.type !== definition.type) {
-      throw new MemoryError(
-        "MEMORY.CONFLICT",
-        "稳定字段当前绑定了不兼容的记忆类型。",
-        false,
-      );
-    }
-    const now = this.clock.now();
-    const references = owner
-      ? [
-          { id: owner.memory.id, label: "用户确认合并：现有稳定字段" },
-          { id: legacy.memory.id, label: "用户确认合并：旧版未绑定记忆" },
-        ]
-      : [{ id: legacy.memory.id, label: "用户确认绑定：旧版未绑定记忆" }];
-    const resolved = this.repository.resolveClaim({
-      claimSlot: request.claimSlot,
-      content: redactText(request.content),
-      memoryId: request.memoryId,
-      now,
-      reason: owner
-        ? "用户在 Memory 页面确认合并旧记忆"
-        : "用户在 Memory 页面确认旧记忆字段",
-      revisionId: this.ids.generate(),
-      sources: references.map(({ id, label }) => ({
-        createdAt: now,
-        id: this.ids.generate(),
-        label,
-        referenceId: id,
-        type: "user_edit" as const,
-      })),
-    });
-    this.#changed(resolved.memory.id);
-    return resolved;
   }
 
   confirmPreference(input: {
@@ -797,473 +694,6 @@ export class MemoryService {
       sources: [...input.sources],
       type: "preference",
     });
-  }
-
-  form(input: MemoryFormationInput): MemoryFormationResult {
-    const content = normalizeFormedContent(input.content);
-    if (!content) {
-      throw new TypeError("Formed memory content must not be blank");
-    }
-    const direct = input.basis === "explicit_user_statement";
-    const definition = input.claimSlot
-      ? memoryClaimDefinition(input.claimSlot)
-      : undefined;
-    const type = definition?.type ?? input.type;
-    if (!type) throw new TypeError("Memory formation type is unavailable");
-    const eventLike = type === "event" || type === "commitment";
-    if (
-      eventLike &&
-      (!("importantMoment" in input) ||
-        typeof input.importantMoment !== "boolean")
-    ) {
-      throw new TypeError(
-        "Event and commitment formation requires importantMoment",
-      );
-    }
-    if (input.operation === "create" && "targetHint" in input) {
-      throw new MemoryError(
-        "MEMORY.CONFLICT",
-        "新建事件或承诺时不能指定更新目标提示。",
-        false,
-      );
-    }
-    if (input.operation === "create" && input.memoryId) {
-      throw new MemoryError(
-        "MEMORY.CONFLICT",
-        "新建稳定事实时不能指定旧记忆 ID。",
-        false,
-      );
-    }
-
-    const allowedSet = new Set(input.allowedMemoryIds);
-    let providedTarget: MemoryDetail | undefined;
-    if (input.memoryId) {
-      if (!allowedSet.has(input.memoryId)) {
-        throw new MemoryError(
-          "MEMORY.CONFLICT",
-          "模型提交的记忆不在当前 Run 的合法候选中。",
-          false,
-        );
-      }
-      providedTarget = this.repository.requireDetail(input.memoryId);
-      if (
-        providedTarget.memory.deletedAt ||
-        providedTarget.memory.status !== "active"
-      ) {
-        throw new MemoryError(
-          "MEMORY.INVALID_STATE",
-          "只有当前有效的记忆可以自动更新。",
-          false,
-        );
-      }
-      if (providedTarget.memory.type !== type) {
-        throw new MemoryError(
-          "MEMORY.CONFLICT",
-          "更新目标的类型与当前事实不一致。",
-          false,
-        );
-      }
-    }
-
-    let hintedTarget: MemoryDetail | undefined;
-    if ("targetHint" in input) {
-      const targetHint = normalizeFormedContent(input.targetHint);
-      if (!targetHint) {
-        throw new TypeError("Memory targetHint must not be blank");
-      }
-      const matches = [...allowedSet]
-        .map((memoryId) => this.repository.getDetail(memoryId, false))
-        .filter((detail): detail is MemoryDetail => {
-          if (
-            !detail ||
-            detail.memory.status !== "active" ||
-            detail.memory.type !== type
-          ) {
-            return false;
-          }
-          const revision = detail.revisions.find(
-            ({ id }) => id === detail.memory.currentRevisionId,
-          );
-          return (
-            revision !== undefined &&
-            normalizeFormedContent(revision.content) === targetHint
-          );
-        });
-      if (matches.length === 1) hintedTarget = matches[0];
-    }
-
-    const slotTarget = input.claimSlot
-      ? this.repository.findDetailByClaimSlot(input.claimSlot)
-      : undefined;
-    if (
-      slotTarget &&
-      (slotTarget.memory.deletedAt || slotTarget.memory.status !== "active")
-    ) {
-      throw new MemoryError(
-        "MEMORY.INVALID_STATE",
-        "这个稳定字段对应的记忆已归档，请先在 Memory 中处理。",
-        false,
-      );
-    }
-    if (
-      providedTarget &&
-      hintedTarget &&
-      providedTarget.memory.id !== hintedTarget.memory.id
-    ) {
-      throw new MemoryError(
-        "MEMORY.CONFLICT",
-        "内部更新目标与当前内容提示不一致。",
-        false,
-      );
-    }
-    if (
-      providedTarget &&
-      slotTarget &&
-      providedTarget.memory.id !== slotTarget.memory.id
-    ) {
-      throw new MemoryError(
-        "MEMORY.CONFLICT",
-        "模型提交的记忆 ID 与稳定字段对应的记忆不一致。",
-        false,
-      );
-    }
-    if (
-      input.claimSlot &&
-      providedTarget?.memory.claimSlot &&
-      providedTarget.memory.claimSlot !== input.claimSlot
-    ) {
-      throw new MemoryError(
-        "MEMORY.CONFLICT",
-        "模型提交的稳定字段与目标记忆不一致。",
-        false,
-      );
-    }
-
-    const resolvedTarget =
-      providedTarget ??
-      hintedTarget ??
-      (slotTarget && allowedSet.has(slotTarget.memory.id)
-        ? slotTarget
-        : undefined);
-    const comparisonTarget = providedTarget ?? hintedTarget ?? slotTarget;
-    const currentRevision = comparisonTarget?.revisions.find(
-      ({ id }) => id === comparisonTarget.memory.currentRevisionId,
-    );
-    if (comparisonTarget && !currentRevision) {
-      throw new TypeError("Current memory revision is unavailable");
-    }
-    const revisionMetadata = resolveRevisionMetadata(
-      type,
-      revisionMetadataInput(input),
-      currentRevision ? resolvedRevisionMetadata(currentRevision) : undefined,
-    );
-    if (
-      comparisonTarget &&
-      currentRevision &&
-      normalizeFormedContent(currentRevision.content) === content &&
-      sameRevisionMetadata(
-        resolvedRevisionMetadata(currentRevision),
-        revisionMetadata,
-      )
-    ) {
-      const pending = this.repository.findPendingCandidateByContent(content, {
-        importantMoment: revisionMetadata.importantMoment,
-        operation: input.operation,
-        ...(revisionMetadata.occursAt && revisionMetadata.timeZone
-          ? {
-              occursAt: revisionMetadata.occursAt,
-              timeZone: revisionMetadata.timeZone,
-            }
-          : {}),
-        ...(input.claimSlot ? { slot: input.claimSlot } : {}),
-        supersedesMemoryId: comparisonTarget.memory.id,
-      });
-      if (direct && pending) {
-        this.repository.discardPendingCandidate(pending.id);
-      }
-      return {
-        memoryId: comparisonTarget.memory.id,
-        outcome: "duplicate",
-        revisionId: currentRevision.id,
-      };
-    }
-
-    if (input.operation === "create") {
-      if (slotTarget) {
-        return this.#proposeFormation(
-          input,
-          content,
-          type,
-          direct ? "collision" : "basis",
-          slotTarget.memory.id,
-        );
-      }
-      const duplicate = this.repository.findActiveDetailByContent(content);
-      if (duplicate) {
-        const duplicateRevision = duplicate.revisions.find(
-          ({ id }) => id === duplicate.memory.currentRevisionId,
-        );
-        if (!duplicateRevision) {
-          throw new TypeError("Current memory revision is unavailable");
-        }
-        if (
-          input.claimSlot &&
-          !duplicate.memory.claimSlot &&
-          allowedSet.has(duplicate.memory.id)
-        ) {
-          return this.#proposeFormation(
-            input,
-            content,
-            type,
-            "legacy_binding",
-            duplicate.memory.id,
-          );
-        }
-        if (
-          input.claimSlot &&
-          duplicate.memory.claimSlot &&
-          duplicate.memory.claimSlot !== input.claimSlot
-        ) {
-          return this.#proposeFormation(
-            input,
-            content,
-            type,
-            "ambiguous_identity",
-          );
-        }
-        if (!input.claimSlot && duplicate.memory.type !== type) {
-          return this.#proposeFormation(
-            input,
-            content,
-            type,
-            "ambiguous_identity",
-          );
-        }
-        if (
-          sameRevisionMetadata(
-            resolvedRevisionMetadata(duplicateRevision),
-            revisionMetadata,
-          )
-        ) {
-          return {
-            memoryId: duplicate.memory.id,
-            outcome: "duplicate",
-            revisionId: duplicate.memory.currentRevisionId,
-          };
-        }
-      }
-      if (
-        input.claimSlot &&
-        (input.ambiguityMemoryIds ?? input.allowedMemoryIds).some(
-          (memoryId) => {
-            const allowed = this.repository.getDetail(memoryId, false);
-            return (
-              allowed?.memory.status === "active" &&
-              allowed.memory.type === type &&
-              allowed.memory.claimSlot !== undefined &&
-              allowed.memory.claimSlot !== input.claimSlot
-            );
-          },
-        )
-      ) {
-        return this.#proposeFormation(
-          input,
-          content,
-          type,
-          "ambiguous_identity",
-        );
-      }
-      if (!direct) {
-        return this.#proposeFormation(input, content, type, "basis");
-      }
-      const created = this.create({
-        confidence: 1,
-        content,
-        importance: 0.5,
-        reason: formationReason(input.basis),
-        ...revisionMetadata,
-        sources: [
-          {
-            ...input.source,
-            createdAt: this.clock.now(),
-          },
-        ],
-        type,
-        ...(input.claimSlot ? { claimSlot: input.claimSlot } : {}),
-        ...(input.validFrom ? { validFrom: input.validFrom } : {}),
-        ...(input.validTo ? { validTo: input.validTo } : {}),
-      });
-      const pending = this.repository.findPendingCandidateByContent(content, {
-        importantMoment: revisionMetadata.importantMoment,
-        operation: input.operation,
-        ...(revisionMetadata.occursAt && revisionMetadata.timeZone
-          ? {
-              occursAt: revisionMetadata.occursAt,
-              timeZone: revisionMetadata.timeZone,
-            }
-          : {}),
-        ...(input.claimSlot ? { slot: input.claimSlot } : {}),
-      });
-      if (pending) this.repository.discardPendingCandidate(pending.id);
-      return {
-        memoryId: created.memory.id,
-        outcome: "created",
-        revisionId: created.memory.currentRevisionId,
-      };
-    }
-
-    if (!resolvedTarget) {
-      return this.#proposeFormation(
-        input,
-        content,
-        type,
-        direct ? "missing_target" : "basis",
-        slotTarget?.memory.id,
-      );
-    }
-    if (input.claimSlot && !resolvedTarget.memory.claimSlot) {
-      return this.#proposeFormation(
-        input,
-        content,
-        type,
-        "legacy_binding",
-        resolvedTarget.memory.id,
-      );
-    }
-    if (
-      definition?.cardinality === "single" &&
-      (input.operation === "append" || input.operation === "remove")
-    ) {
-      return this.#proposeFormation(
-        input,
-        content,
-        type,
-        "single_value_operation",
-        resolvedTarget.memory.id,
-      );
-    }
-    if (!direct) {
-      return this.#proposeFormation(
-        input,
-        content,
-        type,
-        "basis",
-        resolvedTarget.memory.id,
-      );
-    }
-
-    const revised = this.revise({
-      confidence: 1,
-      content,
-      memoryId: resolvedTarget.memory.id,
-      reason: formationReason(input.basis),
-      ...revisionMetadata,
-      ...("occursAt" in input && input.occursAt === null
-        ? { occursAt: null, timeZone: null }
-        : {}),
-      sources: [
-        {
-          ...input.source,
-          createdAt: this.clock.now(),
-        },
-      ],
-      ...(input.validFrom ? { validFrom: input.validFrom } : {}),
-      ...(input.validTo ? { validTo: input.validTo } : {}),
-    });
-    const pending = this.repository.findPendingCandidateByContent(content, {
-      importantMoment: revisionMetadata.importantMoment,
-      operation: input.operation,
-      ...(revisionMetadata.occursAt && revisionMetadata.timeZone
-        ? {
-            occursAt: revisionMetadata.occursAt,
-            timeZone: revisionMetadata.timeZone,
-          }
-        : {}),
-      ...(input.claimSlot ? { slot: input.claimSlot } : {}),
-      supersedesMemoryId: resolvedTarget.memory.id,
-    });
-    if (pending) this.repository.discardPendingCandidate(pending.id);
-    return {
-      memoryId: revised.memory.id,
-      outcome: "revised",
-      revisionId: revised.memory.currentRevisionId,
-    };
-  }
-
-  #recordUsages(
-    hits: readonly MemoryHit[],
-    consumer: "context" | "tool",
-  ): void {
-    const usedAt = this.clock.now();
-    this.repository.recordUsages(
-      hits.map((hit) => ({
-        consumer,
-        id: this.ids.generate(),
-        memoryId: hit.memory.id,
-        revisionId: hit.revision.id,
-        usedAt,
-      })),
-    );
-  }
-
-  #proposeFormation(
-    input: MemoryFormationInput,
-    content: string,
-    type: Exclude<MemoryType, "activity_digest" | "agent_learning">,
-    cause: FormationCandidateCause,
-    supersedesMemoryId?: string,
-  ): MemoryFormationResult {
-    const superseded = supersedesMemoryId
-      ? this.repository.getDetail(supersedesMemoryId, false)
-      : undefined;
-    const currentRevision = superseded?.revisions.find(
-      ({ id }) => id === superseded.memory.currentRevisionId,
-    );
-    const revisionMetadata = resolveRevisionMetadata(
-      type,
-      revisionMetadataInput(input),
-      currentRevision ? resolvedRevisionMetadata(currentRevision) : undefined,
-    );
-    const existing = this.repository.findPendingCandidateByContent(content, {
-      importantMoment: revisionMetadata.importantMoment,
-      operation: input.operation,
-      ...(revisionMetadata.occursAt && revisionMetadata.timeZone
-        ? {
-            occursAt: revisionMetadata.occursAt,
-            timeZone: revisionMetadata.timeZone,
-          }
-        : {}),
-      ...(input.claimSlot ? { slot: input.claimSlot } : {}),
-      ...(supersedesMemoryId ? { supersedesMemoryId } : {}),
-    });
-    if (existing) {
-      return {
-        candidateId: existing.id,
-        outcome: "candidate_duplicate",
-      };
-    }
-    const candidate = this.repository.propose({
-      candidateId: this.ids.generate(),
-      confidence: 0.5,
-      content,
-      formation: {
-        operation: input.operation,
-        ...(input.claimSlot ? { slot: input.claimSlot } : {}),
-      },
-      importance: 0.5,
-      ...revisionMetadata,
-      novelty: 1,
-      now: this.clock.now(),
-      reason: formationCandidateReason(input.basis, cause),
-      sourceIds: [input.source.referenceId],
-      sourceLabels: [redactText(input.source.label)],
-      sourceType: input.source.type,
-      ...(supersedesMemoryId ? { supersedesMemoryId } : {}),
-      type,
-      ...(input.validFrom ? { validFrom: input.validFrom } : {}),
-      ...(input.validTo ? { validTo: input.validTo } : {}),
-    });
-    return { candidateId: candidate.id, outcome: "candidate_created" };
   }
 
   discardPendingCandidate(candidateId: string): boolean {

@@ -40,6 +40,7 @@ describe("ActivitySettingsPanel", () => {
     const api: ActivityApi = {
       cleanup: cleanupActivity,
       deleteEpisode: vi.fn(),
+      resolveEventReference: vi.fn(),
       getEpisode: vi.fn(),
       getSnapshot: vi.fn().mockResolvedValue({ ok: true, value: snapshot }),
       setPaused,

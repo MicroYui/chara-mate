@@ -414,6 +414,7 @@ describe.skipIf(!configured)("Azure Voice live contract", () => {
         instructions: "Reply naturally and briefly in the user's language.",
         voice: "verse",
       },
+      new AbortController().signal,
     );
     const result = await negotiate(connection, "answer");
     expect(result).toMatchObject({
@@ -447,6 +448,7 @@ describe.skipIf(!configured)("Azure Voice live contract", () => {
         ],
         voice: "verse",
       },
+      new AbortController().signal,
     );
     const result = await negotiate(connection, "tool");
     expect(result).toMatchObject({
@@ -470,6 +472,7 @@ describe.skipIf(!configured)("Azure Voice live contract", () => {
             instructions: "Follow the user's current language.",
             voice: "verse",
           },
+          new AbortController().signal,
         );
         const result = await transcribeFakeMicrophone(
           connection,

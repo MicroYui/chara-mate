@@ -65,11 +65,15 @@ describe("Phase 2 Agent Settings", () => {
     await Promise.all([
       mkdir(firstWorkspace, { recursive: true }),
       mkdir(secondWorkspace, { recursive: true }),
+      mkdir(path.join(dataDirectory, "artifacts"), { recursive: true }),
+      mkdir(path.join(dataDirectory, "workspace"), { recursive: true }),
       mkdir(path.join(dataDirectory, "activity"), { recursive: true }),
       mkdir(path.join(dataDirectory, "territory"), { recursive: true }),
     ]);
     await Promise.all([
       writeFile(path.join(dataDirectory, "charamate.sqlite"), "db!"),
+      writeFile(path.join(dataDirectory, "artifacts", "result.txt"), "result"),
+      writeFile(path.join(dataDirectory, "workspace", "notes.txt"), "draft"),
       writeFile(path.join(dataDirectory, "activity", "capture.png"), "shot"),
       writeFile(path.join(dataDirectory, "territory", "room.png"), "scene"),
       writeFile(path.join(dataDirectory, "settings.json"), "{}"),
@@ -171,7 +175,7 @@ describe("Phase 2 Agent Settings", () => {
     await expect(service.getDataSnapshot()).resolves.toMatchObject({
       categories: [
         { byteLength: 3, id: "database" },
-        { byteLength: 0, id: "artifacts" },
+        { byteLength: 11, id: "artifacts" },
         { byteLength: 0, id: "browser" },
         { byteLength: 4, id: "activity" },
         { byteLength: 5, id: "territory" },
@@ -180,7 +184,7 @@ describe("Phase 2 Agent Settings", () => {
         { byteLength: 2, id: "application" },
       ],
       dataDirectory,
-      totalByteLength: 14,
+      totalByteLength: 25,
     });
     await expect(
       service.importBrowserCookies(path.join(root, "cookies.json")),
@@ -269,7 +273,10 @@ describe("Phase 2 Agent Settings", () => {
 
     database.close();
     const reopened = openApplicationDatabase(path.join(root, "app.sqlite"));
-    const reopenedSettings = new SettingsRepository(reopened, firstWorkspace);
+    const reopenedSettings = new SettingsRepository(
+      reopened,
+      path.join(dataDirectory, "workspace"),
+    );
     expect(reopenedSettings.getAgent()).toEqual({
       defaultApprovalMode: "auto_approve",
       defaultMode: "agent",

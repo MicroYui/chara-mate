@@ -2,19 +2,21 @@ import { ipcMain, type BrowserWindow } from "electron";
 
 import { VOICE_CHANNELS } from "../../shared/contracts/voice";
 import {
+  VoiceCancelStartRequestSchema,
+  VoiceCancelStartResponseSchema,
   VoiceDriverEventRequestSchema,
   VoiceEmptyRequestSchema,
   VoiceMutedRequestSchema,
   VoiceMutationResponseSchema,
-  VoicePausedRequestSchema,
+  VoicePausedSubmissionSchema,
   VoicePauseResponseSchema,
-  VoicePreviewRequestSchema,
+  VoicePreviewSubmissionSchema,
   VoicePreviewResponseSchema,
-  VoiceQuickStartRequestSchema,
+  VoiceQuickStartSubmissionSchema,
   VoiceQuickStartResponseSchema,
   VoiceSessionRequestSchema,
   VoiceSnapshotResponseSchema,
-  VoiceStartRequestSchema,
+  VoiceStartSubmissionSchema,
   VoiceStartResponseSchema,
 } from "../../shared/schemas/voice";
 import { parseSchema } from "../../shared/schemas/validation";
@@ -70,13 +72,31 @@ export function registerVoiceIpc(
     }
   });
 
+  ipcMain.handle(VOICE_CHANNELS.cancelStart, async (event, input) => {
+    try {
+      requireVoiceWindow(event.sender);
+      const request = parseSchema(VoiceCancelStartRequestSchema, input);
+      return parseSchema(VoiceCancelStartResponseSchema, {
+        ok: true,
+        value: await service.cancelStart(request),
+      });
+    } catch (error) {
+      return parseSchema(VoiceCancelStartResponseSchema, {
+        error: toVoiceAppError(error),
+        ok: false,
+      });
+    }
+  });
+
   ipcMain.handle(VOICE_CHANNELS.start, async (event, input) => {
     try {
       requireMain(event.sender);
-      const request = parseSchema(VoiceStartRequestSchema, input);
+      const request = parseSchema(VoiceStartSubmissionSchema, input);
       return parseSchema(VoiceStartResponseSchema, {
         ok: true,
-        value: await service.start(request),
+        value: await service.start(request.request, {
+          requestId: request.requestId,
+        }),
       });
     } catch (error) {
       return parseSchema(VoiceStartResponseSchema, {
@@ -89,10 +109,12 @@ export function registerVoiceIpc(
   ipcMain.handle(VOICE_CHANNELS.preview, async (event, input) => {
     try {
       requireMain(event.sender);
-      const request = parseSchema(VoicePreviewRequestSchema, input);
+      const request = parseSchema(VoicePreviewSubmissionSchema, input);
       return parseSchema(VoicePreviewResponseSchema, {
         ok: true,
-        value: await service.preview(request),
+        value: await service.preview(request.request, {
+          requestId: request.requestId,
+        }),
       });
     } catch (error) {
       return parseSchema(VoicePreviewResponseSchema, {
@@ -105,10 +127,12 @@ export function registerVoiceIpc(
   ipcMain.handle(VOICE_CHANNELS.quickStart, async (event, input) => {
     try {
       requireCharacter(event.sender);
-      const request = parseSchema(VoiceQuickStartRequestSchema, input);
+      const request = parseSchema(VoiceQuickStartSubmissionSchema, input);
       return parseSchema(VoiceQuickStartResponseSchema, {
         ok: true,
-        value: await service.quickStart(request),
+        value: await service.quickStart(request.request, {
+          requestId: request.requestId,
+        }),
       });
     } catch (error) {
       return parseSchema(VoiceQuickStartResponseSchema, {
@@ -153,10 +177,13 @@ export function registerVoiceIpc(
   ipcMain.handle(VOICE_CHANNELS.setPaused, async (event, input) => {
     try {
       requireVoiceWindow(event.sender);
-      const request = parseSchema(VoicePausedRequestSchema, input);
+      const request = parseSchema(VoicePausedSubmissionSchema, input);
       return parseSchema(VoicePauseResponseSchema, {
         ok: true,
-        value: await service.setPaused(request),
+        value: await service.setPaused(
+          request.request,
+          "requestId" in request ? { requestId: request.requestId } : {},
+        ),
       });
     } catch (error) {
       return parseSchema(VoicePauseResponseSchema, {
@@ -166,13 +193,13 @@ export function registerVoiceIpc(
     }
   });
 
-  ipcMain.handle(VOICE_CHANNELS.end, (event, input) => {
+  ipcMain.handle(VOICE_CHANNELS.end, async (event, input) => {
     try {
       requireVoiceWindow(event.sender);
       const request = parseSchema(VoiceSessionRequestSchema, input);
       return parseSchema(VoiceMutationResponseSchema, {
         ok: true,
-        value: service.end(request),
+        value: await service.end(request),
       });
     } catch (error) {
       return parseSchema(VoiceMutationResponseSchema, {
@@ -184,6 +211,7 @@ export function registerVoiceIpc(
 
   return () => {
     for (const channel of [
+      VOICE_CHANNELS.cancelStart,
       VOICE_CHANNELS.end,
       VOICE_CHANNELS.event,
       VOICE_CHANNELS.getActive,

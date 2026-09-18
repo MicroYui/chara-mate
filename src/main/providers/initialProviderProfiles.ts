@@ -5,7 +5,7 @@ export const INITIAL_PROVIDER_PROFILES = [
   {
     apiStyle: "openai-compatible",
     baseUrl: "http://localhost:4141/v1",
-    chatModel: "gpt-5.6-sol",
+    chatModel: "gpt-6-astra",
     id: "a71b58c9-baba-42d3-b5d2-b9c6597bc186",
     name: "copilot_api",
   },

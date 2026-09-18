@@ -4,6 +4,9 @@ import type {
   ApprovalDecisionSchema,
   ApprovalNavigationRequestSchema,
   ApprovalNavigationTargetSchema,
+  CancelStartRequestSchema,
+  CancelStartResultSchema,
+  CancelStartResponseSchema,
   PendingApprovalRequestSchema,
   PendingApprovalResponseSchema,
   ResolveApprovalRequestSchema,
@@ -14,6 +17,7 @@ import type {
   RunCancelResponseSchema,
   RunMutationResponseSchema,
   StartRunRequestSchema,
+  StartRunSubmissionRequestSchema,
   StartRunResponseSchema,
   SteerRunRequestSchema,
 } from "../schemas/agent";
@@ -21,6 +25,7 @@ import type { RunCancelRequest } from "./run";
 
 export const AGENT_CHANNELS = {
   cancel: "run.cancel",
+  cancelStart: "run.cancelStart",
   pendingApproval: "approval.pending",
   openApproval: "approval.open",
   resolveApproval: "approval.resolve",
@@ -31,6 +36,12 @@ export const AGENT_CHANNELS = {
 } as const;
 
 export type StartRunRequest = Static<typeof StartRunRequestSchema>;
+export type StartRunSubmissionRequest = Static<
+  typeof StartRunSubmissionRequestSchema
+>;
+export type CancelStartRequest = Static<typeof CancelStartRequestSchema>;
+export type CancelStartResult = Static<typeof CancelStartResultSchema>;
+export type CancelStartResponse = Static<typeof CancelStartResponseSchema>;
 export type StartRunResponse = Static<typeof StartRunResponseSchema>;
 export type SteerRunRequest = Static<typeof SteerRunRequestSchema>;
 export type ResumeRunRequest = Static<typeof ResumeRunRequestSchema>;
@@ -64,6 +75,7 @@ export type ResolveUserInputResponse = Static<
 
 export interface AgentApi {
   cancel(request: RunCancelRequest): Promise<RunCancelResponse>;
+  cancelStart(request: CancelStartRequest): Promise<CancelStartResponse>;
   getPendingApproval(
     request: PendingApprovalRequest,
   ): Promise<PendingApprovalResponse>;
@@ -74,7 +86,7 @@ export interface AgentApi {
     request: ResolveUserInputRequest,
   ): Promise<ResolveUserInputResponse>;
   resume(request: ResumeRunRequest): Promise<RunMutationResponse>;
-  start(request: StartRunRequest): Promise<StartRunResponse>;
+  start(request: StartRunSubmissionRequest): Promise<StartRunResponse>;
   steer(request: SteerRunRequest): Promise<RunMutationResponse>;
   subscribeOpenApproval(
     listener: (target: ApprovalNavigationTarget) => void,

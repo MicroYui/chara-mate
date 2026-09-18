@@ -60,6 +60,72 @@ function RunHarness({
 }
 
 describe("RunProcess", () => {
+  it("shows accepted environment material without a user answer or another question", () => {
+    const base = runByChatId(chatsFixtureIds.designChat);
+    render(
+      <RunHarness
+        run={{
+          ...base,
+          record: { ...base.record, status: "running" },
+          items: [
+            {
+              ...base.items[0]!,
+              kind: "input_request",
+              status: "completed",
+              output: {
+                status: "context_available",
+                resolvedAt: base.record.createdAt,
+                attemptId: "00000000-0000-4000-8000-000000000403",
+                evidenceIds: ["00000000-0000-4000-8000-000000000404"],
+              },
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("相关环境信息已补充，继续核对")).toBeVisible();
+    expect(screen.queryByText("已收到补充信息")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("需要补充信息")).not.toBeInTheDocument();
+    expect(screen.queryByText("等待你回答")).not.toBeInTheDocument();
+  });
+
+  it("does not label a replaced question as answered or a cancelled call as executed", () => {
+    const base = runByChatId(chatsFixtureIds.designChat);
+    const item = base.items[0]!;
+    render(
+      <RunHarness
+        run={{
+          ...base,
+          record: { ...base.record, status: "running" },
+          items: [
+            {
+              ...item,
+              id: "00000000-0000-4000-8000-000000000401",
+              kind: "input_request",
+              status: "completed",
+              output: {
+                status: "cancelled",
+                resolvedAt: base.record.createdAt,
+              },
+            },
+            {
+              ...item,
+              id: "00000000-0000-4000-8000-000000000402",
+              kind: "tool_call",
+              status: "cancelled",
+              input: { toolName: "test.write", arguments: {} },
+              displayOutput: "收到新消息，原调用未执行",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("已结束提问")).toBeVisible();
+    expect(screen.getByText("工具调用已取消")).toBeVisible();
+    expect(screen.queryByText("已收到补充信息")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("需要补充信息")).not.toBeInTheDocument();
+  });
+
   it("does not leave a completed process row for messages and internal state updates", () => {
     const base = runByChatId(chatsFixtureIds.designChat);
     const assistantItem = base.items.find(

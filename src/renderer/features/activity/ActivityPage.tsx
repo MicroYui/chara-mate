@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ActivityApi,
   ActivityEpisode,
+  ActivityEvent,
   ActivitySnapshot,
 } from "../../../shared/contracts/activity";
 import type { TerritoryWorldApi } from "../../../shared/contracts/territoryWorld";
@@ -60,6 +61,7 @@ function assetId(storageKey: string): string {
 interface ActivityPageProps {
   readonly api?: ActivityApi;
   readonly focusEpisodeId?: string;
+  readonly focusEventId?: string;
   readonly onFocusConsumed?: () => void;
   readonly onOpenTerritory?: (candidateId: string) => void;
   readonly territoryApi?: Pick<TerritoryWorldApi, "createSourceCandidate">;
@@ -70,12 +72,14 @@ const emptyEpisodes: readonly ActivityEpisode[] = [];
 export function ActivityPage({
   api = window.charaMate.activity,
   focusEpisodeId,
+  focusEventId,
   onFocusConsumed,
   onOpenTerritory,
   territoryApi,
 }: ActivityPageProps) {
   const [date, setDate] = useState(localDate);
   const [snapshot, setSnapshot] = useState<ActivitySnapshot | null>(null);
+  const [sourceEvent, setSourceEvent] = useState<ActivityEvent | null>(null);
   const [selected, setSelected] = useState<ActivityEpisode | null>(null);
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
@@ -138,33 +142,56 @@ export function ActivityPage({
   }, [api, date]);
 
   useEffect(() => {
-    if (!focusEpisodeId) return;
+    if (!focusEpisodeId && !focusEventId) return;
     const sequence = ++focusSequence.current;
-    void api
-      .getEpisode({ episodeId: focusEpisodeId })
-      .then((response) => {
+    void (async () => {
+      let episodeId = focusEpisodeId;
+      if (focusEventId) {
+        const reference = await api.resolveEventReference({
+          eventId: focusEventId,
+        });
         if (sequence !== focusSequence.current) return;
-        if (!response.ok) {
-          setError(response.error.message);
+        if (!reference.ok) throw new Error(reference.error.message);
+        setSourceEvent(reference.value.event);
+        setDate(reference.value.date);
+        setQuery("");
+        episodeId = reference.value.episodeId;
+        if (!episodeId) {
+          setSelected(null);
+          setError(null);
+          setNotice("这条观察尚未归入活动片段，已打开发生当天。");
           return;
         }
-        const episode = response.value;
-        setDate(localDate(new Date(episode.startedAt)));
-        setQuery("");
-        setSelected(episode);
-        setTitle(episode.title);
-        setSummary(episode.summary);
-        setError(null);
-      })
-      .catch(() => {
+      }
+      if (!episodeId) return;
+      const response = await api.getEpisode({ episodeId });
+      if (sequence !== focusSequence.current) return;
+      if (!response.ok) throw new Error(response.error.message);
+      const episode = response.value;
+      setDate(localDate(new Date(episode.startedAt)));
+      setQuery("");
+      setSelected(episode);
+      setTitle(episode.title);
+      setSummary(episode.summary);
+      setNotice(null);
+      setError(null);
+    })()
+      .catch((cause: unknown) => {
         if (sequence === focusSequence.current) {
-          setError("无法打开这段 Activity，请重试。");
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "无法打开这段 Activity，请重试。",
+          );
         }
       })
       .finally(() => {
         if (sequence === focusSequence.current) onFocusConsumed?.();
       });
-  }, [api, focusEpisodeId, onFocusConsumed]);
+    return () => {
+      focusSequence.current += 1;
+    };
+  }, [api, focusEpisodeId, focusEventId, onFocusConsumed]);
 
   const totals = useMemo(() => {
     const values = new Map<string, number>();
@@ -287,6 +314,7 @@ export function ActivityPage({
             onChange={(event) => {
               setDate(event.currentTarget.value);
               setSelected(null);
+              setSourceEvent(null);
               setTitle("");
               setSummary("");
             }}
@@ -348,6 +376,52 @@ export function ActivityPage({
       ) : null}
       <div className={styles["content"]}>
         <main className={styles["timeline"]}>
+          {sourceEvent ? (
+            <article
+              className={styles["sourceEvidence"]}
+              aria-label="记忆的原始观察"
+            >
+              <header>
+                <strong>当时的观察</strong>
+                <time>{timeLabel(sourceEvent.startedAt)}</time>
+              </header>
+              {sourceEvent.details.source === "screenshot" ? (
+                <>
+                  <p>
+                    {sourceEvent.details.visual?.surface.appName}{" "}
+                    {sourceEvent.details.visual?.surface.windowTitle}
+                  </p>
+                  <img
+                    src={activityAssetUrl(sourceEvent.details.artifactId)}
+                    alt="这条记忆所依据的屏幕画面"
+                  />
+                  {sourceEvent.details.ocrText ? (
+                    <pre>{sourceEvent.details.ocrText}</pre>
+                  ) : null}
+                </>
+              ) : sourceEvent.details.source === "active_app" ||
+                sourceEvent.details.source === "managed_browser" ? (
+                <>
+                  <p>
+                    {sourceEvent.details.source === "active_app"
+                      ? `${sourceEvent.details.appName} · ${sourceEvent.details.windowTitle ?? ""}`
+                      : (sourceEvent.details.title ?? sourceEvent.details.url)}
+                  </p>
+                  {sourceEvent.details.content?.text ? (
+                    <pre>{sourceEvent.details.content.text}</pre>
+                  ) : (
+                    <p>这条记录没有可读的页面文字。</p>
+                  )}
+                  <small>只表示当时可观察的内容，不代表已经阅读或认同。</small>
+                </>
+              ) : (
+                <p>这条记录描述一次活动状态变化。</p>
+              )}
+              <button type="button" onClick={() => setSourceEvent(null)}>
+                关闭来源
+              </button>
+            </article>
+          ) : null}
           {snapshot?.paused ? (
             <div className={styles["paused"]}>
               <Pause aria-hidden="true" size={14} />

@@ -1,6 +1,28 @@
 import type { EntityId } from "../../../shared/contracts";
 import type { ChatsUiAction, ChatsUiState } from "./types";
 
+const modelSelectionStorageKey = "chara-mate.chat-model";
+
+export function readModelSelection(): string | undefined {
+  try {
+    return window.localStorage.getItem(modelSelectionStorageKey) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeModelSelection(modelId: string | undefined): void {
+  try {
+    if (modelId === undefined) {
+      window.localStorage.removeItem(modelSelectionStorageKey);
+    } else {
+      window.localStorage.setItem(modelSelectionStorageKey, modelId);
+    }
+  } catch {
+    // The choice remains usable in this Renderer when local storage is unavailable.
+  }
+}
+
 function toggleId(ids: readonly EntityId[], id: EntityId): readonly EntityId[] {
   return ids.includes(id)
     ? ids.filter((candidate) => candidate !== id)

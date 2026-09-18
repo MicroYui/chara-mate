@@ -2,6 +2,8 @@ import { ipcMain } from "electron";
 
 import { ACTIVITY_CHANNELS } from "../../shared/contracts/activity";
 import {
+  ActivityEventReferenceRequestSchema,
+  ActivityEventReferenceResponseSchema,
   ActivityCleanupRequestSchema,
   ActivityCleanupResponseSchema,
   ActivityEpisodeIdRequestSchema,
@@ -27,6 +29,21 @@ export function registerActivityIpc(service: ActivityService): () => void {
       return parseSchema(ActivitySnapshotResponseSchema, {
         error: toActivityAppError(error),
         ok: false,
+      });
+    }
+  });
+
+  ipcMain.handle(ACTIVITY_CHANNELS.resolveEventReference, (_event, input) => {
+    try {
+      const request = parseSchema(ActivityEventReferenceRequestSchema, input);
+      return parseSchema(ActivityEventReferenceResponseSchema, {
+        ok: true,
+        value: service.resolveEventReference(request.eventId),
+      });
+    } catch (error) {
+      return parseSchema(ActivityEventReferenceResponseSchema, {
+        ok: false,
+        error: toActivityAppError(error),
       });
     }
   });

@@ -1,0 +1,11 @@
+# Provider runtime 与配置快照一致性修复
+
+2026-09-15。此项是异步边界的确定性错误修复，不是模型选型或效果实验；没有真实Provider请求，没有新状态或兼容分支。
+
+核对当前ProviderService源码发现：`createChatModelRuntime`先取record，等待SecretStore返回后，用旧record构造adapter，却再次读取当前Profile生成snapshot。若用户在等待期间修改模型，返回的adapter与snapshot可能属于不同配置；若删除Profile，已经选好的runtime会在第二次读取处失败。这样也会误标记Memory形成工作实际使用的模型。
+
+现将snapshot、normalized profile和credential reference一起固定在第一次await之前。随后只完成该次已绑定配置的凭据读取和adapter构造；后续调用才读取新配置。没有冻结用户未来的配置操作。此机制不声明能验证远端服务内部实际权重，只保证CharaMate请求配置和记录一致。
+
+实际一手依据为2026-09-15当前`ProviderService.createChatModelRuntime`、`ProviderRepository.get`和`ProviderSecretStore.get`；SQLite `.get()`同步返回记录对象，异步间隔由SecretStore的Promise产生。本修复没有更改SDK协议、凭据存储或产品审批。
+
+两个新回归通过可控Promise分别在真实Service的等待窗口替换/删除配置，检查返回snapshot与传给实际factory的旧配置一致。Provider Service共13项通过；定向strict TypeScript检查通过。Main的Service/Repository合计15项通过，随后Main生产build通过；该两项新增回归晚于当日1,338项完整离线验证。模型版本变更后未完成Memory任务的恢复与每段模型调用绑定属于独立形成生命周期工作，不能从本修复推断已经解决。

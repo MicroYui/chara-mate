@@ -13,6 +13,7 @@ import type {
   TerritoryChatMomentMemoryRevisionSchema,
   TerritoryChatMomentPersonaRefSchema,
   TerritoryChatMomentSourceSnapshotSchema,
+  TerritoryCharacterCreationSourceSnapshotSchema,
   TerritoryCandidateScopeSchema,
   TerritoryChangeCandidateSchema,
   TerritoryCommitChangeSetRequestSchema,
@@ -28,11 +29,13 @@ import type {
   TerritoryGridSizeSchema,
   TerritoryGroupSchema,
   TerritoryInstancePlacementSchema,
+  TerritoryInstanceLayoutSchema,
   TerritoryInstanceSchema,
   TerritoryLayerSchema,
   TerritoryMovePetRequestSchema,
   TerritoryMovePetResponseSchema,
   TerritoryMovePetResultSchema,
+  TerritoryObservationNodeSchema,
   TerritoryPerformPetActionRequestSchema,
   TerritoryPetActionObservationSchema,
   TerritoryPetActionPerformedSchema,
@@ -111,6 +114,9 @@ export type TerritoryChatMomentMemoryRevision = Static<
 export type TerritoryChatMomentPersonaRef = Static<
   typeof TerritoryChatMomentPersonaRefSchema
 >;
+export type TerritoryCharacterCreationSourceSnapshot = Static<
+  typeof TerritoryCharacterCreationSourceSnapshotSchema
+>;
 export type TerritoryChatMomentSourceSnapshot = Static<
   typeof TerritoryChatMomentSourceSnapshotSchema
 >;
@@ -118,6 +124,12 @@ export type TerritoryInstancePlacement = Static<
   typeof TerritoryInstancePlacementSchema
 >;
 export type TerritoryInstance = Static<typeof TerritoryInstanceSchema>;
+export type TerritoryInstanceLayout = Static<
+  typeof TerritoryInstanceLayoutSchema
+>;
+export type TerritoryObservationNode = Static<
+  typeof TerritoryObservationNodeSchema
+>;
 export type TerritoryGroup = Static<typeof TerritoryGroupSchema>;
 export type TerritoryPetState = Static<typeof TerritoryPetStateSchema>;
 export type TerritoryPetAction = Static<typeof TerritoryPetActionSchema>;

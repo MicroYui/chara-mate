@@ -1,4 +1,4 @@
-import type { Dispatch } from "react";
+import { useSyncExternalStore, type Dispatch } from "react";
 import type { UserInputResolution } from "../../../shared/contracts";
 
 import type { VoiceSessionSnapshot } from "../../../shared/contracts/voice";
@@ -122,6 +122,10 @@ export function ChatsPage({
   voiceSnapshot,
   voiceStore,
 }: ChatsPageProps) {
+  const voicePreparing = useSyncExternalStore(
+    voiceStore.subscribe,
+    voiceStore.getState,
+  ).starting;
   const hasTimeline = Boolean(
     activeChat &&
     (activeChat.messages.length > 0 || activeChat.runs.length > 0),
@@ -153,10 +157,10 @@ export function ChatsPage({
           {activeRun ? (
             <ActivePlan key={activeRun.record.id} run={activeRun} />
           ) : null}
-          {voiceSnapshot ? (
+          {voiceSnapshot || voicePreparing ? (
             <VoiceDock
               belongsToActiveChat={
-                activeChat?.record.id === voiceSnapshot.chatId
+                !voiceSnapshot || activeChat?.record.id === voiceSnapshot.chatId
               }
               onEnd={onVoiceEnd}
               onMutedChange={onVoiceMutedChange}

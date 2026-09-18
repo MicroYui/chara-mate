@@ -7,7 +7,6 @@ import { COMPANION_DESKTOP_CHANNELS } from "../shared/contracts/companion";
 import { EXTENSION_CHANNELS } from "../shared/contracts/extensions";
 import { EVOLUTION_CHANNELS } from "../shared/contracts/evolution";
 import { RUN_EVENT_CHANNELS } from "../shared/contracts/ipc";
-import { MEMORY_CHANNELS } from "../shared/contracts/memory";
 import { PERSONA_CHANNELS } from "../shared/contracts/persona";
 import { PET_CHANNELS } from "../shared/contracts/pet";
 import { SETTINGS_CHANNELS } from "../shared/contracts/settings";
@@ -180,65 +179,6 @@ describe("Phase 1 typed preload data boundary", () => {
     });
     await expect(
       api.evolution.dismissReview({ runId: "not-an-id" }),
-    ).rejects.toThrow();
-    expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
-  });
-
-  it("validates explicit legacy Memory claim resolution on both sides", async () => {
-    const memoryId = "20000000-0000-4000-8000-000000000001";
-    const revisionId = "30000000-0000-4000-8000-000000000001";
-    const detail = {
-      memory: {
-        claimSlot: "preference.hobbies" as const,
-        confidence: 1,
-        createdAt: FIXTURE_TIMESTAMPS.created,
-        currentRevisionId: revisionId,
-        id: memoryId,
-        importance: 0.8,
-        status: "active" as const,
-        type: "preference" as const,
-        updatedAt: FIXTURE_TIMESTAMPS.updated,
-      },
-      revisions: [
-        {
-          content: "用户喜欢玩 CS2。",
-          createdAt: FIXTURE_TIMESTAMPS.updated,
-          id: revisionId,
-          memoryId,
-          reason: "用户确认旧记忆字段",
-          sourceIds: [],
-          sourceType: "user_edit" as const,
-        },
-      ],
-      sources: [],
-      usages: [],
-    };
-    electron.ipcRenderer.invoke.mockImplementation(
-      (channel: string, input: unknown) => {
-        expect(channel).toBe(MEMORY_CHANNELS.resolveClaim);
-        expect(input).toEqual({
-          claimSlot: "preference.hobbies",
-          content: "用户喜欢玩 CS2。",
-          memoryId,
-        });
-        return Promise.resolve({ ok: true, value: detail });
-      },
-    );
-    const api = await loadApi();
-
-    await expect(
-      api.memory.resolveClaim({
-        claimSlot: "preference.hobbies",
-        content: "用户喜欢玩 CS2。",
-        memoryId,
-      }),
-    ).resolves.toEqual({ ok: true, value: detail });
-    await expect(
-      api.memory.resolveClaim({
-        claimSlot: "preference.hobbies",
-        content: "",
-        memoryId,
-      }),
     ).rejects.toThrow();
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
   });
@@ -416,9 +356,11 @@ describe("Phase 1 typed preload data boundary", () => {
       (channel: string, input: unknown) => {
         expect(channel).toBe(VOICE_CHANNELS.setPaused);
         expect(input).toEqual({
-          paused: true,
-          requestedAt: "2026-08-08T12:00:02.000Z",
-          sessionId,
+          request: {
+            paused: true,
+            requestedAt: "2026-08-08T12:00:02.000Z",
+            sessionId,
+          },
         });
         return Promise.resolve({
           ok: true,
@@ -430,19 +372,41 @@ describe("Phase 1 typed preload data boundary", () => {
 
     await expect(
       api.voice.setPaused({
-        paused: true,
-        requestedAt: "2026-08-08T12:00:02.000Z",
-        sessionId,
+        request: {
+          paused: true,
+          requestedAt: "2026-08-08T12:00:02.000Z",
+          sessionId,
+        },
       }),
     ).resolves.toEqual({ ok: true, value: { snapshot } });
     await expect(
       api.voice.setPaused({
-        paused: false,
-        requestedAt: "not-a-timestamp",
-        sessionId,
+        requestId: "20000000-0000-4000-8000-000000000002",
+        request: {
+          paused: false,
+          requestedAt: "not-a-timestamp",
+          sessionId,
+        },
       }),
     ).rejects.toThrow();
     expect(electron.ipcRenderer.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("forwards the exact Voice preparation cancellation identity", async () => {
+    const request = { requestId: "20000000-0000-4000-8000-000000000002" };
+    electron.ipcRenderer.invoke.mockResolvedValue({
+      ok: true,
+      value: { outcome: "accepted" },
+    });
+    const api = await loadApi();
+    await expect(api.voice.cancelStart(request)).resolves.toEqual({
+      ok: true,
+      value: { outcome: "accepted" },
+    });
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(
+      VOICE_CHANNELS.cancelStart,
+      request,
+    );
   });
 
   it("validates the Main-only Voice Wake setting boundary", async () => {
@@ -938,4 +902,40 @@ describe("Phase 1 typed preload data boundary", () => {
       registeredListener,
     );
   });
+});
+
+it("carries one submission identity through typed start and cancelStart", async () => {
+  const api = await loadApi();
+  const requestId = "20000000-0000-4000-8000-000000000001";
+  const input = {
+    requestId,
+    attachments: [],
+    chatId: FIXTURE_IDS.chat,
+    content: "普通消息",
+    execution: { mode: "chat" as const },
+    providerProfileId: FIXTURE_IDS.provider,
+    requestedAt: FIXTURE_TIMESTAMPS.created,
+  };
+  electron.ipcRenderer.invoke.mockResolvedValueOnce({
+    ok: true,
+    value: chatDataSnapshotFixture.runs[0],
+  });
+  await api.agent.start(input);
+  expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith(
+    "run.start",
+    input,
+  );
+  const cancellation = { requestId, requestedAt: FIXTURE_TIMESTAMPS.updated };
+  electron.ipcRenderer.invoke.mockResolvedValueOnce({
+    ok: true,
+    value: { requestId, outcome: "not_pending" },
+  });
+  expect(await api.agent.cancelStart(cancellation)).toEqual({
+    ok: true,
+    value: { requestId, outcome: "not_pending" },
+  });
+  expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith(
+    "run.cancelStart",
+    cancellation,
+  );
 });

@@ -1,15 +1,32 @@
 import type Database from "better-sqlite3";
+import { setImmediate } from "node:timers/promises";
 
 import type {
   ActivityDigest,
   ActivityEpisode,
   ActivityEvent,
   ActivitySource,
+  ActivityVisualLookupRequest,
+  ActivityVisualLookupResult,
+  ActivityVisualMatch,
 } from "../../shared/contracts/activity";
 import type { Timestamp } from "../../shared/contracts/primitives";
-import { ActivityEventDetailsSchema } from "../../shared/schemas/activity";
+import {
+  ActivityEventDetailsSchema,
+  ActivityVisualReferenceSchema,
+} from "../../shared/schemas/activity";
 import { parseSchema } from "../../shared/schemas/validation";
 import type { DistilledEpisode } from "./activityDistillation";
+import type { ActivityObserveInput } from "./activityObservation";
+
+export interface ActivityTextSource {
+  readonly id: string;
+  readonly actor: ActivityEvent["actor"];
+  readonly source: ActivitySource;
+  readonly startedAt: Timestamp;
+  readonly receivedAt: Timestamp;
+  readonly detailsJson: string | null;
+}
 
 interface StateRow {
   last_cleanup_at: string | null;
@@ -96,6 +113,11 @@ export interface ActivityCleanupPlanResult {
   readonly deletedEvents: number;
   readonly storageKeys: readonly string[];
 }
+
+/** The integration owner protects sources still needed by Cognition or Memory. */
+export type ActivitySourceRetentionGuard = (
+  eventIds: readonly string[],
+) => ReadonlySet<string>;
 
 function mapEvent(row: EventRow): ActivityEvent {
   return {
@@ -316,6 +338,258 @@ export class ActivityRepository {
       : undefined;
   }
 
+  getEvent(id: string): ActivityEvent | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT id, actor, details_json, started_at, ended_at FROM activity_events WHERE id = ?",
+      )
+      .get(id) as EventRow | undefined;
+    return row ? mapEvent(row) : undefined;
+  }
+
+  readTextObservation(
+    request: ActivityObserveInput,
+    maxReadBytes: number,
+  ): ActivityTextSource | undefined {
+    const conditions: string[] = [];
+    const bindings: Record<string, string | number> = { maxReadBytes };
+    if (request.reference) {
+      conditions.push("id = @eventId");
+      bindings["eventId"] = request.reference.eventId;
+    } else {
+      const latest = request.latest!;
+      conditions.push("source IN ('active_app', 'managed_browser')");
+      if (latest.periodStart) {
+        conditions.push("started_at >= @periodStart");
+        bindings["periodStart"] = latest.periodStart;
+      }
+      if (latest.periodEnd) {
+        conditions.push("started_at <= @periodEnd");
+        bindings["periodEnd"] = latest.periodEnd;
+      }
+      if (latest.before) {
+        conditions.push("(started_at, id) < (@beforeTime, @beforeId)");
+        bindings["beforeTime"] = latest.before.startedAt;
+        bindings["beforeId"] = latest.before.eventId;
+      }
+      if (latest.surface) {
+        conditions.push(
+          "json_extract(details_json, '$.surface.id') = @surfaceId",
+          "json_extract(details_json, '$.surface.epoch') = @surfaceEpoch",
+        );
+        bindings["surfaceId"] = latest.surface.id;
+        bindings["surfaceEpoch"] = latest.surface.epoch;
+      }
+      if (latest.query) {
+        const paths = [
+          "appName",
+          "appId",
+          "windowTitle",
+          "title",
+          "url",
+          "domain",
+          "surface.appName",
+          "surface.appId",
+          "surface.windowTitle",
+        ];
+        conditions.push(
+          `(${paths.map((field) => `instr(COALESCE(json_extract(details_json, '$.${field}'), ''), @query) > 0`).join(" OR ")})`,
+        );
+        bindings["query"] = latest.query;
+      }
+    }
+    // Select the newest location match before inspecting availability or size.
+    // The raw body crosses the SQLite boundary only when it fits the local read guard.
+    return this.database
+      .prepare(
+        `
+      WITH candidate AS (
+        SELECT id, actor, source, started_at, created_at, details_json
+        FROM activity_events WHERE ${conditions.join(" AND ")}
+        ORDER BY started_at DESC, id DESC LIMIT 1
+      )
+      SELECT id, actor, source, started_at AS startedAt, created_at AS receivedAt,
+        CASE WHEN length(CAST(details_json AS BLOB)) + length(CAST(id AS BLOB))
+          + length(CAST(actor AS BLOB)) + length(CAST(source AS BLOB))
+          + length(CAST(started_at AS BLOB)) + length(CAST(created_at AS BLOB)) <= @maxReadBytes
+        THEN details_json END AS detailsJson
+      FROM candidate
+    `,
+      )
+      .get(bindings) as ActivityTextSource | undefined;
+  }
+
+  textObservationState(
+    source: ActivityTextSource,
+  ): "same" | "missing" | "changed" {
+    const row = this.database
+      .prepare(
+        `
+      SELECT CASE WHEN actor = @actor AND source = @source
+        AND started_at = @startedAt AND created_at = @receivedAt
+        AND (@detailsJson IS NULL OR details_json = @detailsJson)
+        THEN 1 ELSE 0 END AS same
+      FROM activity_events WHERE id = @id
+    `,
+      )
+      .get({ ...source }) as { same: number } | undefined;
+    return row ? (row.same === 1 ? "same" : "changed") : "missing";
+  }
+
+  async lookupVisualEvidence(
+    request: ActivityVisualLookupRequest & { readonly periodEnd: Timestamp },
+    resourceBudget: { readonly maxReadBytes: number },
+    signal?: AbortSignal,
+  ): Promise<ActivityVisualLookupResult> {
+    signal?.throwIfAborted();
+    const { maxReadBytes } = resourceBudget;
+    if (!Number.isSafeInteger(maxReadBytes) || maxReadBytes < 0)
+      throw new RangeError(
+        "Visual lookup requires a non-negative raw-read budget",
+      );
+    const conditions = [
+      "source = 'screenshot'",
+      "started_at <= @periodEnd",
+      "json_type(details_json, '$.visual') = 'object'",
+    ];
+    const bindings: Record<string, string> = { periodEnd: request.periodEnd };
+    if (request.periodStart) {
+      conditions.push("started_at >= @periodStart");
+      bindings["periodStart"] = request.periodStart;
+    }
+    if (request.surface) {
+      conditions.push(
+        "json_extract(details_json, '$.visual.surface.id') = @surfaceId",
+        "json_extract(details_json, '$.visual.surface.epoch') = @surfaceEpoch",
+      );
+      bindings["surfaceId"] = request.surface.id;
+      bindings["surfaceEpoch"] = request.surface.epoch;
+    }
+    if (request.query) {
+      conditions.push(`(
+        instr(COALESCE(json_extract(details_json, '$.visual.surface.appName'), ''), @query) > 0
+        OR instr(COALESCE(json_extract(details_json, '$.visual.surface.windowTitle'), ''), @query) > 0
+        OR instr(COALESCE(json_extract(details_json, '$.ocrText'), ''), @query) > 0
+        OR EXISTS (
+          SELECT 1 FROM json_each(details_json, '$.visual.ocr.lines') AS line
+          WHERE instr(json_extract(line.value, '$.text'), @query) > 0
+        )
+      )`);
+      bindings["query"] = request.query;
+    }
+    const prepare = (hasBefore: boolean) =>
+      this.database.prepare(`
+        WITH candidate AS (
+          SELECT json_object(
+            'actor', actor,
+            'position', json_object('startedAt', started_at, 'eventId', id),
+            'reference', json_object(
+              'eventId', id,
+              'artifactId', json_extract(details_json, '$.artifactId'),
+              'contentRevision', json_extract(details_json, '$.visual.contentRevision'),
+              'surface', json_extract(details_json, '$.visual.surface'),
+              'capturedAt', json_extract(details_json, '$.visual.capturedAt'),
+              'width', json_extract(details_json, '$.width'),
+              'height', json_extract(details_json, '$.height'),
+              'trigger', json_extract(details_json, '$.visual.trigger')
+            )
+          ) AS match_json
+          FROM activity_events
+          WHERE ${conditions.join(" AND ")}
+            ${hasBefore ? "AND (started_at, id) < (@beforeTime, @beforeId)" : ""}
+          ORDER BY started_at DESC, id DESC LIMIT 1
+        )
+        SELECT length(CAST(match_json AS BLOB)) AS read_bytes,
+          CASE WHEN length(CAST(match_json AS BLOB)) <= @remaining
+            THEN match_json END AS match_json
+        FROM candidate
+      `);
+    const first = request.before ? undefined : prepare(false);
+    const next = prepare(true);
+    const observations: ActivityVisualMatch[] = [];
+    let before = request.before;
+    let readBytes = 0;
+    for (;;) {
+      signal?.throwIfAborted();
+      // Each get completes before yielding. The time/id key moves past returned
+      // rows; no SQLite iterator or transaction is held across the await below.
+      const row = (before ? next : first!).get({
+        ...bindings,
+        remaining: maxReadBytes - readBytes,
+        ...(before
+          ? { beforeTime: before.startedAt, beforeId: before.eventId }
+          : {}),
+      }) as { read_bytes: number; match_json: string | null } | undefined;
+      signal?.throwIfAborted();
+      const base = {
+        request,
+        observations,
+        readBytes,
+        loaded: false as const,
+        retainedOnly: true as const,
+        order: "newest_first" as const,
+      };
+      if (!row) return { ...base, complete: true };
+      if (row.match_json === null)
+        return {
+          ...base,
+          complete: false,
+          omittedReason: "read_budget",
+          // A zero-row page repeats its original cursor. Never skip the first
+          // unreturned match, including when one reference exceeds the budget.
+          continuation: { ...request, ...(before ? { before } : {}) },
+        };
+      const match = JSON.parse(row.match_json) as ActivityVisualMatch;
+      const reference = parseSchema(
+        ActivityVisualReferenceSchema,
+        match.reference,
+      );
+      observations.push({ ...match, reference });
+      readBytes += row.read_bytes;
+      before = match.position;
+      await setImmediate(undefined, signal ? { signal } : undefined);
+      signal?.throwIfAborted();
+    }
+  }
+
+  getEventSourceReference(
+    id: string,
+  ): Pick<ActivityEvent, "id" | "actor" | "startedAt"> | undefined {
+    return this.database
+      .prepare(
+        `SELECT id, actor, started_at AS startedAt FROM activity_events WHERE id = ?`,
+      )
+      .get(id) as Pick<ActivityEvent, "id" | "actor" | "startedAt"> | undefined;
+  }
+
+  resolveEventReference(
+    eventId: string,
+  ): { startedAt: string; episodeId?: string } | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT e.started_at, p.id AS episode_id
+      FROM activity_events e LEFT JOIN activity_episodes p ON p.id = e.episode_id
+      WHERE e.id = ?`,
+      )
+      .get(eventId) as
+      { started_at: string; episode_id: string | null } | undefined;
+    return row
+      ? {
+          startedAt: row.started_at,
+          ...(row.episode_id ? { episodeId: row.episode_id } : {}),
+        }
+      : undefined;
+  }
+
+  findAssetByHash(hash: string): ActivityAssetRecord | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT id FROM activity_assets WHERE sha256 = ? ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(hash) as { id: string } | undefined;
+    return row ? this.getAsset(row.id) : undefined;
+  }
+
   insertEvent(event: ActivityEvent, createdAt: Timestamp): void {
     this.database
       .prepare(
@@ -498,6 +772,7 @@ export class ActivityRepository {
       stringArray(candidate_ids_json),
     );
     const digestIds = digestRows.map(({ id }) => id);
+    const storageKeys: string[] = [];
     this.database.transaction(() => {
       for (const digestId of digestIds) {
         this.database
@@ -510,16 +785,20 @@ export class ActivityRepository {
           .run(digestId);
       }
       this.database
-        .prepare(
-          `DELETE FROM activity_assets
-           WHERE storage_key IN (
-             SELECT value FROM json_each(?)
-           )`,
-        )
-        .run(JSON.stringify(episode.screenshotStorageKeys));
-      this.database
         .prepare("DELETE FROM activity_events WHERE episode_id = ?")
         .run(episodeId);
+      const removed = this.database
+        .prepare(
+          `DELETE FROM activity_assets
+        WHERE storage_key IN (SELECT value FROM json_each(?))
+          AND NOT EXISTS (SELECT 1 FROM activity_events e
+            WHERE CAST(json_extract(e.details_json, '$.artifactId') AS TEXT) = activity_assets.id)
+        RETURNING storage_key`,
+        )
+        .all(JSON.stringify(episode.screenshotStorageKeys)) as Array<{
+        storage_key: string;
+      }>;
+      storageKeys.push(...removed.map((row) => row.storage_key));
       this.database
         .prepare("DELETE FROM activity_episodes WHERE id = ?")
         .run(episodeId);
@@ -527,7 +806,7 @@ export class ActivityRepository {
     return {
       candidateIds,
       startedAt: episode.startedAt,
-      storageKeys: episode.screenshotStorageKeys,
+      storageKeys,
     };
   }
 
@@ -669,61 +948,6 @@ export class ActivityRepository {
     })();
   }
 
-  updateDigestCandidates(
-    digestId: string,
-    candidateIds: readonly string[],
-  ): void {
-    this.database
-      .prepare(
-        `UPDATE activity_digests SET candidate_ids_json = ? WHERE id = ?`,
-      )
-      .run(JSON.stringify(candidateIds), digestId);
-  }
-
-  reconcileDigestCandidateLinks(
-    links: readonly {
-      readonly candidateId: string;
-      readonly digestIds: readonly string[];
-    }[],
-    removedCandidateIds: readonly string[],
-  ): void {
-    const rows = this.database
-      .prepare(
-        `SELECT id, candidate_ids_json
-         FROM activity_digests`,
-      )
-      .all() as Array<{ candidate_ids_json: string; id: string }>;
-    const removed = new Set(removedCandidateIds);
-    const desiredByDigest = new Map<string, Set<string>>();
-    const managed = new Set<string>();
-    for (const link of links) {
-      managed.add(link.candidateId);
-      for (const digestId of link.digestIds) {
-        const ids = desiredByDigest.get(digestId) ?? new Set<string>();
-        ids.add(link.candidateId);
-        desiredByDigest.set(digestId, ids);
-      }
-    }
-    const update = this.database.prepare(
-      `UPDATE activity_digests SET candidate_ids_json = ? WHERE id = ?`,
-    );
-    this.database.transaction(() => {
-      for (const row of rows) {
-        const current = stringArray(row.candidate_ids_json);
-        const next = current.filter(
-          (candidateId) =>
-            !removed.has(candidateId) && !managed.has(candidateId),
-        );
-        for (const candidateId of desiredByDigest.get(row.id) ?? []) {
-          if (!next.includes(candidateId)) next.push(candidateId);
-        }
-        if (JSON.stringify(current) !== JSON.stringify(next)) {
-          update.run(JSON.stringify(next), row.id);
-        }
-      }
-    })();
-  }
-
   getDigest(digestId: string): ActivityDigest | undefined {
     const row = this.database
       .prepare(
@@ -813,119 +1037,320 @@ export class ActivityRepository {
     return row.bytes;
   }
 
-  cleanup(now: Timestamp, immediate: boolean): ActivityCleanupPlanResult {
+  async cleanup(
+    now: Timestamp,
+    immediate: boolean,
+    guard?: ActivitySourceRetentionGuard,
+    runId?: string,
+    signal?: AbortSignal,
+  ): Promise<ActivityCleanupPlanResult> {
+    const rangeSize = 1000;
     const screenshotCutoff = immediate ? now : this.#daysBefore(now, 7);
     const eventCutoff = immediate ? now : this.#daysBefore(now, 30);
     const episodeCutoff = this.#daysBefore(now, 90);
-    const assetRows = this.database
-      .prepare(
-        `SELECT DISTINCT a.id, a.storage_key, a.byte_length, a.created_at
-         FROM activity_assets a
-         JOIN activity_events e
-           ON json_extract(e.details_json, '$.artifactId') = a.id
-         WHERE a.created_at <= ? AND e.distilled_at IS NOT NULL
-         ORDER BY a.created_at, a.id`,
-      )
-      .all(screenshotCutoff) as AssetRow[];
-    const allAssets = this.database
-      .prepare(
-        `SELECT id, storage_key, byte_length, created_at
-         FROM activity_assets ORDER BY created_at, id`,
-      )
-      .all() as AssetRow[];
-    const screenshotEventRows = this.database
-      .prepare(
-        `SELECT id, json_extract(details_json, '$.artifactId') AS asset_id
-         FROM activity_events
-         WHERE source = 'screenshot' AND distilled_at IS NOT NULL`,
-      )
-      .all() as Array<{ asset_id: string; id: string }>;
-    const eventIdsByAsset = new Map<string, string[]>();
-    for (const row of screenshotEventRows) {
-      const ids = eventIdsByAsset.get(row.asset_id) ?? [];
-      ids.push(row.id);
-      eventIdsByAsset.set(row.asset_id, ids);
+    const result = {
+      deletedAssets: 0,
+      deletedEvents: 0,
+      storageKeys: [] as string[],
+    };
+    const empty = (): ActivityCleanupPlanResult => ({
+      deletedAssets: 0,
+      deletedEvents: 0,
+      storageKeys: [],
+    });
+    signal?.throwIfAborted();
+    if (!guard) {
+      this.database.transaction(() =>
+        this.#finishCleanup(now, episodeCutoff),
+      )();
+      return result;
     }
-    const selected = new Map(assetRows.map((row) => [row.id, row]));
-    let remainingBytes = allAssets.reduce(
-      (sum, row) => sum + row.byte_length,
-      0,
-    );
-    for (const row of assetRows) remainingBytes -= row.byte_length;
-    const cap = 512 * 1024 * 1024;
-    if (remainingBytes > cap) {
-      const eligibleById = new Set(
-        (
+    const commit = (operation: () => ActivityCleanupPlanResult) => {
+      signal?.throwIfAborted();
+      const delta = this.database.transaction(() => {
+        const value = operation();
+        if (runId && (value.deletedAssets || value.deletedEvents))
           this.database
             .prepare(
-              `SELECT DISTINCT a.id
-               FROM activity_assets a
-               JOIN activity_events e
-                 ON json_extract(e.details_json, '$.artifactId') = a.id
-               WHERE e.distilled_at IS NOT NULL`,
+              `UPDATE retention_runs
+            SET deleted_assets=deleted_assets+?, deleted_events=deleted_events+?
+            WHERE id=? AND status='running'`,
             )
-            .all() as Array<{ id: string }>
-        ).map(({ id }) => id),
+            .run(value.deletedAssets, value.deletedEvents, runId);
+        return value;
+      })();
+      result.deletedAssets += delta.deletedAssets;
+      result.deletedEvents += delta.deletedEvents;
+      result.storageKeys.push(...delta.storageKeys);
+    };
+    type ReferenceRow = {
+      id: string;
+      asset_id: string | null;
+      distilled_at: string | null;
+    };
+    const deleteEvents = this.database.prepare(
+      `DELETE FROM activity_events WHERE id IN (SELECT value FROM json_each(?))`,
+    );
+    const unreferenced = this.database
+      .prepare(`SELECT a.id,a.storage_key FROM activity_assets a
+      WHERE a.id IN (SELECT value FROM json_each(?)) AND NOT EXISTS (
+        SELECT 1 FROM activity_events e
+        WHERE CAST(json_extract(e.details_json,'$.artifactId') AS TEXT)=a.id)`);
+    const deleteAssets = this.database.prepare(
+      `DELETE FROM activity_assets WHERE id IN (SELECT value FROM json_each(?))`,
+    );
+    const releaseAssets = (
+      ids: readonly string[],
+    ): ActivityCleanupPlanResult => {
+      if (!ids.length) return empty();
+      const rows = unreferenced.all(JSON.stringify(ids)) as Array<{
+        id: string;
+        storage_key: string;
+      }>;
+      if (!rows.length) return empty();
+      const deletedAssets = deleteAssets.run(
+        JSON.stringify(rows.map((row) => row.id)),
+      ).changes;
+      return {
+        deletedAssets,
+        deletedEvents: 0,
+        storageKeys: rows.map((row) => row.storage_key),
+      };
+    };
+    const retire = (
+      rows: readonly ReferenceRow[],
+    ): ActivityCleanupPlanResult => {
+      const retained = guard(rows.map((row) => row.id));
+      signal?.throwIfAborted();
+      const eligible = rows.filter(
+        (row) => row.distilled_at !== null && !retained.has(row.id),
       );
-      for (const row of allAssets) {
-        if (remainingBytes <= cap) break;
-        if (!eligibleById.has(row.id) || selected.has(row.id)) continue;
-        selected.set(row.id, row);
-        remainingBytes -= row.byte_length;
+      if (!eligible.length) return empty();
+      const deletedEvents = deleteEvents.run(
+        JSON.stringify(eligible.map((row) => row.id)),
+      ).changes;
+      const released = releaseAssets([
+        ...new Set(
+          eligible.flatMap((row) => (row.asset_id ? [row.asset_id] : [])),
+        ),
+      ]);
+      return { ...released, deletedEvents };
+    };
+    // Each source owns its retention age. Another reference keeps the file,
+    // but does not extend this source's lifetime after its consumers release it.
+    const highWater = (
+      this.database
+        .prepare(`SELECT id FROM activity_events ORDER BY id DESC LIMIT 1`)
+        .get() as { id: string } | undefined
+    )?.id;
+    let cursor = "";
+    if (highWater)
+      while (true) {
+        let lastId: string | undefined;
+        commit(() => {
+          const rows = this.database
+            .prepare(
+              `SELECT id,source,started_at,ended_at,distilled_at,
+            CAST(json_extract(details_json,'$.artifactId') AS TEXT) AS asset_id
+          FROM activity_events WHERE id>? AND id<=? ORDER BY id LIMIT ?`,
+            )
+            .all(cursor, highWater, rangeSize) as Array<
+            ReferenceRow & {
+              source: string;
+              started_at: string;
+              ended_at: string | null;
+            }
+          >;
+          lastId = rows.at(-1)?.id;
+          const eligible = rows.filter(
+            (row) =>
+              row.distilled_at !== null &&
+              (row.source === "screenshot"
+                ? row.started_at <= screenshotCutoff
+                : row.ended_at !== null && row.ended_at <= eventCutoff),
+          );
+          return eligible.length ? retire(eligible) : empty();
+        });
+        if (!lastId) break;
+        cursor = lastId;
+        await setImmediate();
       }
-    }
-
-    const expiredEventIds = new Set(
-      (
+    // Recover asset rows left without references, including interruption after
+    // earlier retirement. PNG removal remains owned by the serial service queue.
+    const assetHighWater = (
+      this.database
+        .prepare(`SELECT id FROM activity_assets ORDER BY id DESC LIMIT 1`)
+        .get() as { id: string } | undefined
+    )?.id;
+    cursor = "";
+    if (assetHighWater)
+      while (true) {
+        let lastId: string | undefined;
+        commit(() => {
+          const rows = this.database
+            .prepare(
+              `SELECT id FROM activity_assets WHERE id>? AND id<=? ORDER BY id LIMIT ?`,
+            )
+            .all(cursor, assetHighWater, rangeSize) as Array<{ id: string }>;
+          lastId = rows.at(-1)?.id;
+          return releaseAssets(rows.map((row) => row.id));
+        });
+        if (!lastId) break;
+        cursor = lastId;
+        await setImmediate();
+      }
+    // Capacity admission is a bounded conservative preflight. It is never a
+    // permission cache: every retiring page calls the live guard again.
+    type AssetCursor = { created_at: string; id: string };
+    const capacityHighWater = this.database
+      .prepare(
+        `SELECT created_at,id FROM activity_assets ORDER BY created_at DESC,id DESC LIMIT 1`,
+      )
+      .get() as AssetCursor | undefined;
+    const assetPage = this.database
+      .prepare(`SELECT created_at,id FROM activity_assets
+      WHERE (created_at,id)>(?,?) AND (created_at,id)<=(?,?)
+      ORDER BY created_at,id LIMIT ?`);
+    const referencePage = this.database
+      .prepare(`SELECT id,distilled_at,? AS asset_id FROM activity_events
+      WHERE CAST(json_extract(details_json,'$.artifactId') AS TEXT)=? AND id>? AND id<=?
+      ORDER BY id LIMIT ?`);
+    const retireCapacityAsset = async (assetId: string) => {
+      signal?.throwIfAborted();
+      const upper = (
         this.database
           .prepare(
             `SELECT id FROM activity_events
-             WHERE ended_at <= ? AND distilled_at IS NOT NULL`,
+        WHERE CAST(json_extract(details_json,'$.artifactId') AS TEXT)=? ORDER BY id DESC LIMIT 1`,
           )
-          .all(eventCutoff) as Array<{ id: string }>
-      ).map(({ id }) => id),
-    );
-    for (const assetId of selected.keys()) {
-      for (const eventId of eventIdsByAsset.get(assetId) ?? []) {
-        expiredEventIds.add(eventId);
+          .get(assetId) as { id: string } | undefined
+      )?.id;
+      if (!upper) return;
+      let admission = true;
+      cursor = "";
+      while (true) {
+        let lastId: string | undefined;
+        this.database.transaction(() => {
+          signal?.throwIfAborted();
+          const rows = referencePage.all(
+            assetId,
+            assetId,
+            cursor,
+            upper,
+            rangeSize,
+          ) as ReferenceRow[];
+          lastId = rows.at(-1)?.id;
+          const retained = rows.length
+            ? guard(rows.map((row) => row.id))
+            : new Set<string>();
+          signal?.throwIfAborted();
+          if (
+            rows.some(
+              (row) => row.distilled_at === null || retained.has(row.id),
+            )
+          )
+            admission = false;
+        })();
+        if (!admission || !lastId) break;
+        cursor = lastId;
+        await setImmediate();
       }
+      if (!admission) return;
+      cursor = "";
+      while (true) {
+        let lastId: string | undefined;
+        let capacitySatisfied = false;
+        commit(() => {
+          if (this.rawBytes() <= 512 * 1024 * 1024) {
+            capacitySatisfied = true;
+            return empty();
+          }
+          const rows = referencePage.all(
+            assetId,
+            assetId,
+            cursor,
+            upper,
+            rangeSize,
+          ) as ReferenceRow[];
+          lastId = rows.at(-1)?.id;
+          return rows.length ? retire(rows) : empty();
+        });
+        if (capacitySatisfied || !lastId) break;
+        cursor = lastId;
+        await setImmediate();
+      }
+    };
+    let capacityCursor: AssetCursor = { created_at: "", id: "" };
+    while (capacityHighWater) {
+      signal?.throwIfAborted();
+      if (this.rawBytes() <= 512 * 1024 * 1024) break;
+      const rows = assetPage.all(
+        capacityCursor.created_at,
+        capacityCursor.id,
+        capacityHighWater.created_at,
+        capacityHighWater.id,
+        rangeSize,
+      ) as AssetCursor[];
+      const last = rows.at(-1);
+      if (!last) break;
+      let capacitySatisfied = false;
+      for (const row of rows) {
+        signal?.throwIfAborted();
+        if (this.rawBytes() <= 512 * 1024 * 1024) {
+          capacitySatisfied = true;
+          break;
+        }
+        await retireCapacityAsset(row.id);
+        // Even a protected first reference or a disappeared asset must yield.
+        await setImmediate();
+      }
+      if (capacitySatisfied) break;
+      capacityCursor = last;
     }
-    const deleteAsset = this.database.prepare(
-      "DELETE FROM activity_assets WHERE id = ?",
-    );
-    const deleteEvent = this.database.prepare(
-      "DELETE FROM activity_events WHERE id = ?",
-    );
-    this.database.transaction(() => {
-      for (const assetId of selected.keys()) deleteAsset.run(assetId);
-      for (const eventId of expiredEventIds) deleteEvent.run(eventId);
-      this.database
-        .prepare(
-          `UPDATE activity_episodes
+    signal?.throwIfAborted();
+    this.database.transaction(() => this.#finishCleanup(now, episodeCutoff))();
+    return result;
+  }
+
+  retentionProgress(runId: string): {
+    deletedAssets: number;
+    deletedEvents: number;
+  } {
+    const row = this.database
+      .prepare(
+        `SELECT deleted_assets,deleted_events FROM retention_runs WHERE id=?`,
+      )
+      .get(runId) as
+      { deleted_assets: number; deleted_events: number } | undefined;
+    if (!row) throw new Error("Activity retention run is unavailable");
+    return {
+      deletedAssets: row.deleted_assets,
+      deletedEvents: row.deleted_events,
+    };
+  }
+
+  #finishCleanup(now: Timestamp, episodeCutoff: Timestamp): void {
+    this.database
+      .prepare(
+        `UPDATE activity_episodes
            SET raw_cleared_at = COALESCE(raw_cleared_at, ?), updated_at = ?
            WHERE NOT EXISTS (
              SELECT 1 FROM activity_events e WHERE e.episode_id = activity_episodes.id
            )`,
-        )
-        .run(now, now);
-      this.database
-        .prepare(
-          `DELETE FROM activity_episodes
+      )
+      .run(now, now);
+    this.database
+      .prepare(
+        `DELETE FROM activity_episodes
            WHERE ended_at <= ? AND raw_cleared_at IS NOT NULL`,
-        )
-        .run(episodeCutoff);
-      this.database
-        .prepare(
-          `UPDATE activity_state SET last_cleanup_at = ?, updated_at = ?
+      )
+      .run(episodeCutoff);
+    this.database
+      .prepare(
+        `UPDATE activity_state SET last_cleanup_at = ?, updated_at = ?
            WHERE state_id = 'activity'`,
-        )
-        .run(now, now);
-    })();
-    return {
-      deletedAssets: selected.size,
-      deletedEvents: expiredEventIds.size,
-      storageKeys: [...selected.values()].map(({ storage_key }) => storage_key),
-    };
+      )
+      .run(now, now);
   }
 
   assetStorageKeys(): Set<string> {

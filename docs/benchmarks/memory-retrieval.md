@@ -1,5 +1,17 @@
 # MEMORY-RETRIEVAL：个人长期记忆的唯一检索路径
 
+> 2026-09-16 当前状态：以下保留 2026-08-08 的 R0/FTS/topK 历史比较，不再定义当前生产检索默认。Main v21 已采用问题化词法/语义/明确实体时间召回、交替融合、有界关系扩展和 EvidencePack；4B/512 与 Worker 见 LOCAL-MEMORY-ENCODER、MEMORY-VECTOR-EXECUTION，当前资格通道见 MEMORY-RECALL-STRUCTURED-SCOPE。所选实现已集成，最终同版质量仍待独立验收。
+
+## 2026-09-17：选择结果的引用正确性
+
+原48中的f02提供七个真实候选、三个问题。一次Selector输出把候选revision前缀与工作ID后缀拼在一起，同时漏填该项的问题映射及全部coverage；其余两项引用合法。同一Recall失败传播给三个巩固工作，末态计数仍failed=3，后来另一工作生成摘要不能算作恢复。Root已核完整原输出及候选/问题正文；原报告冻结`5f4068b3ed21cf6e5a2ef682fbd39bbfac55d56e657a406b65c3595b11b0d0ee`。这不是检索排序失败，也不该靠猜相似ID或静默丢项掩盖。
+
+本次在隔离v23基线上修复既有Model边界：模型用本次候选/问题的零基索引，主机在范围、重复、非空映射和每题完整coverage校验后还原真ID；领域MemorySelection合同不变。每个coverage只能引用真正选中且映射到该题的候选，主机不代替模型判断相关性或补出“已支持”。合法结果仍一个请求；结构错误在同次调用、相同输入/时间中允许一次完整纠正，前项仅供参考而非强制保留。第二次错误明确失败，网络、计量和取消错误不进入结构纠正。不会重检索、重编码或自动重跑已失败工作。
+
+一次纠正是沿现有同次纠错机制的工程取舍，不是协议限制或SOTA数字。索引边界来自实际输入长度，不增加topK。当前官方[Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas)及项目固定SDK 6.49.0、`structuredOutputWireSchema`已支持整数范围；数组非空及跨字段关系仍由本地校验承担。没有增加依赖、表、设置或旧wire分支。
+
+开发包`memory-selector-reference-correction-v1`仅一个生产文件及两个既有测试文件，已通过627项Memory领域检查，最终两文件102项及静态检查；领域检查后仅增强测试，生产字节未变。精确原七候选/三问题回放保留旧路径RED与受控第二回复GREEN。Root和独立review已接受，冻结`9d658e4ba598f594e807b79cee70767346999648e6f5049d9d2c93b62ac505df`。本修复于2026-09-17 16:29:41 UTC随已审Memory组合合入Main，采用唯一`memory_evidence_selection_v2` wire，领域继续返回真实Memory/Revision/Question ID。组合后946项关联（35文件）与tsc/lint/format通过，不与627或102相加为独立样本。原48已闭合，原输入一次真实Selector复测仍待最终源/API执行；新旧请求分别记录，不称逐字节相同。受控回放只证明合法选择与Pack组装，不宣称原三个work恢复或真实模型收益。无问题/无候选均不调用模型；额外反馈仍计完整请求容量，第二次无效结果明确失败。主仓不保留旧wire适配、Arm开关或复测runner。
+
 ## 问题与决策边界
 
 本 Decision 选择 CharaMate 发布版唯一的 Memory Retrieval Pipeline：召回 lane、融合、最终 `topK`、有效性处理及其资源形态。`ContextCompiler`、`memory.search` 与 Memory 页面必须复用同一实现。候选模型、向量表、worker、fallback、Settings 开关和实验参数不会进入生产树。
@@ -103,7 +115,7 @@ R0 在 252,684 个 evidence 单元上的 FTS 数据库为 `270,929,920 bytes`，
 
 Hybrid 多答对 1 个中文 mixed 样本；两者都未解决同一个 LoCoMo category-2 样本，Hybrid 另有 1 个 LongMemEval abstention 回答被 judge 判为 evidence 不支持。这个小样本点估计真实保留，但不足以把 retrieval 的公开集退化、模型工件和更新生命周期抹掉。
 
-产品静态 tie-break 在 55 个有 evidence 的中文问题中改变 47 个结果顺序，Recall@8/@20 均不变，MRR 从 `0.7965` 到 `0.8056`，nDCG@8 从 `0.7750` 到 `0.7817`，更新子集未退化。冻结集没有真实 usage history，因此实验只测 `pin → importance → confidence → updatedAt`；生产把产品契约要求的 `lastAccessedAt` 放在 confidence 与 updatedAt 之间，仍只在相同 BM25 分数后确定性 tie-break，并用历史时间回归防止未来 usage 泄漏，不宣称它另有本实验未测得的质量增益。
+产品静态 tie-break 在 55 个有 evidence 的中文问题中改变 47 个结果顺序，Recall@8/@20 均不变，MRR 从 `0.7965` 到 `0.8056`，nDCG@8 从 `0.7750` 到 `0.7817`，更新子集未退化。冻结集没有真实 usage history，因此实验只测 `pin → importance → confidence → updatedAt`；当时生产把产品契约要求的 `lastAccessedAt` 放在 confidence 与 updatedAt 之间，仍只在相同 BM25 分数后确定性 tie-break，并用历史时间回归防止未来 usage 泄漏，不宣称它另有本实验未测得的质量增益。
 
 有效原始文件 SHA-256：R0 `73c1c49c9eb5afb436b8ea8a8c90c1aa06f3c7f41d9077eb9ee3b339dd968315`；R1 `acb49ad688a5dc7bb69857f3234059ee4200b307a1fb2a3f175f311e8bc7c1bb`；比较 `0d80e35dd67347df6c84d1e6886f5ae9c12766d52b9fbdda17850a022be3116c`；平衡 reader `edcd80050e457052d10e74d562bf0709bbf7bc6bddc48d746aca7dc65ffad94f`。
 
@@ -129,3 +141,15 @@ Reranker、8B、ANN 和 `MEMORY-STORAGE` vector/compute 阶段均不触发。生
 - 22 题 reader 只使用记录的 `gpt-5.6-sol` profile；它支持产品取舍，不证明所有模型的绝对回答率。
 - LoCoMo/LongMemEval 的 evidence 映射沿用各自公开数据语义；跨数据集的绝对数不能当作同一难度标尺。
 - dense 的分片累计编码时间用于生命周期比较，不是并行优化后的最低可达延迟；相反，post-embedding cosine 时间也不能代表端到端成本。
+
+## 2026-09-15 后继修订
+
+[COMPANION-MEMORY-LIFECYCLE](COMPANION-MEMORY-LIFECYCLE.md) 已修订曝光 tie-break：lastAccessedAt 继续记录 Context/Tool 引用，但不再参与排名，不再把系统曝光当作用户强化。本文历史数据与其局限保持原样；R0、FTS 与其他已选路径不变。
+
+## 2026-09-18 整合源 v3 的既定定向复测
+
+原7候选/3问题全部内容、顺序、references/Persona/time在最终v3一次真实Selector复测中保留；索引wire去掉新增index后与原domain逐字段相等。一次输出合法映射三个真实Revision与三题，每题coverage完整且语义范围正确，没有触发产品内一次纠正。新 `memory_evidence_selection_v2` schema/指令不同于原e05，不称整请求字节一致。原近似UUID、空映射/coverage以及同Recall传播3个work失败仍是历史结果；既有无效输出→一次纠正的机械回放为0真实生成，不计模型质量。本轮仅新Selector一生成，没有运行Recall/SQLite/4B/commit/普通Chat，也没有自动重排原失败work。
+
+证据：`integration/f02-selector-final-v3-execution-v1/{REPORT.md,SEMANTIC-FIRST.md,AGGREGATE.json,live/SELECTION.json,live/HTTP-SUMMARY.json,ROOT-REVIEW.json,FREEZE.json}`；FREEZE `798e3a87c476f7fb80501be622173810a7d64eb4828dfeb5038ed43042c2a006`。沿既有3导出薄API；它没有SQLite native调用，不能把其Main依赖链接当作其它Node SQLite包的ABI依据。
+
+本结果固定于 SOURCE-FREEZE `0cbc46b68b3eb62f10f1e72f8a3acc97b533ee1a171473940955845a5c28f3b0`。后续共享表达改动与最终安装另行绑定；不回写原48成绩，不以内部调用替代最终桌面/冷检索。

@@ -29,6 +29,16 @@ export interface VoiceMetricsSnapshot {
   readonly sessions: number;
   readonly toolContinuation: DurationMetric;
   readonly tokens: ModelUsage;
+  /**
+   * Recorded completion observations, including absent usage.
+   * Not unique responses or HTTP calls.
+   */
+  readonly usageCoverage: {
+    readonly reports: number;
+    readonly cachedInputTokens: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
   readonly truncateAcknowledgement: DurationMetric;
   readonly turns: number;
 }
@@ -69,6 +79,12 @@ export class VoiceMetrics {
   readonly #sessionTiming = new Map<string, SessionTiming>();
   readonly #toolContinuation: number[] = [];
   readonly #tokens = {
+    cachedInputTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+  };
+  readonly #usageCoverage = {
+    reports: 0,
     cachedInputTokens: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -171,10 +187,17 @@ export class VoiceMetrics {
   }
 
   responseUsage(usage: ModelUsage | undefined): void {
-    if (!usage) return;
-    this.#tokens.cachedInputTokens += usage.cachedInputTokens;
-    this.#tokens.inputTokens += usage.inputTokens;
-    this.#tokens.outputTokens += usage.outputTokens;
+    this.#usageCoverage.reports += 1;
+    for (const field of [
+      "cachedInputTokens",
+      "inputTokens",
+      "outputTokens",
+    ] as const) {
+      const value = usage?.[field];
+      if (value === undefined) continue;
+      this.#tokens[field] += value;
+      this.#usageCoverage[field] += 1;
+    }
   }
 
   disconnected(): void {
@@ -203,6 +226,7 @@ export class VoiceMetrics {
       sessions: this.#sessions,
       toolContinuation: duration(this.#toolContinuation),
       tokens: { ...this.#tokens },
+      usageCoverage: { ...this.#usageCoverage },
       truncateAcknowledgement: duration(this.#truncateAcknowledgement),
       turns: this.#turns,
     };

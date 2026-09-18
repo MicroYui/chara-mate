@@ -167,3 +167,24 @@ describe("Voice Dock", () => {
     ).toBeVisible();
   });
 });
+
+it("shows End while preparation has no Session snapshot", () => {
+  const onEnd = vi.fn();
+  render(
+    <VoiceDock
+      belongsToActiveChat
+      onEnd={onEnd}
+      onMutedChange={vi.fn()}
+      onPausedChange={vi.fn()}
+      onRetry={vi.fn()}
+      snapshot={null}
+      store={store().store}
+    />,
+  );
+  expect(screen.getByText("正在准备语音…")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "结束语音" }));
+  expect(onEnd).toHaveBeenCalledOnce();
+  expect(
+    screen.queryByRole("button", { name: "麦克风静音" }),
+  ).not.toBeInTheDocument();
+});

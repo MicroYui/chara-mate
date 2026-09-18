@@ -32,7 +32,7 @@ export function registerTerritoryMomentSurprisesTool(
   registry.register({
     descriptor: {
       description:
-        "Persist the user's explicit category-level choice about whether CharaMate may occasionally prepare one Territory preview inspired by a clearly significant shared moment. Call enabled=true only after the user directly agrees to that specific permission or explicitly asks to turn it on. Call enabled=false when the user declines, revokes, or asks to turn it off. Never infer consent from an attachment, an important event, or permission for proactive messages. This only permits preparing a preview; it never changes the Territory until the user applies it.",
+        "Persist the user's explicit category-level choice about whether CharaMate may occasionally create and place one small reversible Territory object inspired by a clearly significant shared moment. Call enabled=true only after the user directly agrees to that specific permission or explicitly asks to turn it on. Call enabled=false when the user declines, revokes, or asks to turn it off. Never infer consent from an attachment, an important event, or permission for proactive messages. A completed object may be placed autonomously or saved in the collection if no placement is available; describe only the actual tool result. Large layout edits still use the Territory editor preview.",
       effect: "write",
       idempotency: "idempotent",
       inputSchema: TerritoryMomentSurprisesInputSchema,

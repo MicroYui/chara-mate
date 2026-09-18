@@ -7,6 +7,7 @@ import { SETTINGS_CHANNELS } from "../../src/shared/contracts/settings";
 import {
   PendingApprovalResponseSchema,
   ResolveApprovalRequestSchema,
+  ResolveUserInputRequestSchema,
   ResumeRunRequestSchema,
   RunMutationResponseSchema,
   StartRunRequestSchema,
@@ -22,7 +23,10 @@ import {
   SkillSetEnabledRequestSchema,
 } from "../../src/shared/schemas/extensions";
 import { IpcChannelSchema } from "../../src/shared/schemas/ipc";
-import { PlanUpdateSchema } from "../../src/shared/schemas/run";
+import {
+  PlanUpdateSchema,
+  InputRequestResolutionSchema,
+} from "../../src/shared/schemas/run";
 import {
   AgentSettingsSaveRequestSchema,
   BrowserActionResponseSchema,
@@ -298,3 +302,24 @@ describe("Phase 2 boundary contracts", () => {
     },
   );
 });
+
+it.each(parsers)(
+  "keeps a sourced context resolution internal to the Run instead of accepting it as a user answer (%s)",
+  (parse) => {
+    const id = "8205a996-8580-4e75-bc88-d6c51d4b916e";
+    const resolution = {
+      status: "context_available",
+      resolvedAt: "2026-09-17T11:00:00.000Z",
+      attemptId: id,
+      evidenceIds: [id],
+    };
+    expect(parse(InputRequestResolutionSchema, resolution)).toEqual(resolution);
+    expect(() =>
+      parse(ResolveUserInputRequestSchema, {
+        runId: id,
+        itemId: id,
+        resolution,
+      }),
+    ).toThrow();
+  },
+);

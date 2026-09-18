@@ -1,5 +1,7 @@
 # ACTIVITY-DISTILLATION：Episode、Digest 与候选层级
 
+> 2026-09-17 当前行为边界：以下是原实验及 2026-08-28 产品修订的历史记录。当前 Product §6.9 已选择 Activity 原始观察→Cognition→Memory 的有来源形成，保留 Episode/Daily/Weekly Digest 和 `activity.search`，移除独立跨周待确认候选链。实际检查发现旧生成/替换路径尚未删净，当前正在独立包中修正，验证进度见 [STATUS](../progress/STATUS.md)。已有已接受记忆继续可读，不静默改写；此产品收口不改写旧实验数据，也不是新的算法胜负结论。
+
 ## 问题与边界
 
 本 Decision 选择 Activity 从原始事件到 Episode、周期 Digest 和 Memory 候选的唯一生产层级。目标是保留可理解的多日行为，同时避免把一次切换、Agent 自己的动作或低信息事件固化为用户偏好。它不扩展成行为监控、安全审计或对抗评测，也不自动修改 Persona；所有长期写入先成为用户可见候选。

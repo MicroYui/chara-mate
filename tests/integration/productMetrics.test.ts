@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { MemoryFormationRepository } from "../../src/main/memory/memoryFormationRepository";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -79,13 +81,38 @@ describe("Dev Dashboard product metrics", () => {
       )
       .run("b".repeat(64), NOW);
 
-    const snapshot = new ProductMetrics(database).snapshot();
+    const sources = new MemoryFormationRepository(database);
+    const sourceId = randomUUID();
+    const quote = "周五完成陶艺";
+    sources.registerSource({
+      id: sourceId,
+      type: "chat",
+      referenceId: randomUUID(),
+      speaker: "user",
+      occurredAt: NOW,
+      content: `${quote}。后面是并未引用的整段讨论。`,
+    });
+    database
+      .prepare(
+        `INSERT INTO memory_revision_source_spans
+      (revision_id,source_id,span_start,span_end,quote) VALUES (?,?,?,?,?)`,
+      )
+      .run("revision-1", sourceId, 0, quote.length, quote);
+    database.transaction(() => sources.releaseCanonicalSource(sourceId))();
+    const metrics = new ProductMetrics(database, sources);
+    const snapshot = metrics.snapshot();
 
     expect(snapshot.memory).toEqual({
       active: 1,
       pendingCandidates: 1,
       revisions: 1,
       usages: 1,
+      canonical: {
+        presentSources: 0,
+        releasedSources: 1,
+        rawUtf16Bytes: 0,
+        quoteUtf8Bytes: Buffer.byteLength(quote, "utf8"),
+      },
     });
     expect(snapshot.storage).toMatchObject({
       activityAssetBytes: 1024,

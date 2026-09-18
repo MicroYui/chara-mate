@@ -1,3 +1,4 @@
+import { estimateInputBudget } from "../../src/main/providers/inputBudget";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -71,6 +72,14 @@ class ScriptedProvider implements ModelProvider {
   readonly requests: ModelRequest[] = [];
 
   constructor(readonly turns: Turn[]) {}
+
+  measureInput(request: ModelRequest, signal: AbortSignal) {
+    signal.throwIfAborted();
+    return Promise.resolve(this.estimateInput(request));
+  }
+  estimateInput(request: ModelRequest) {
+    return estimateInputBudget(request, request.modelId);
+  }
 
   resolveContextLimits(): Promise<ModelContextLimits> {
     return Promise.resolve({
@@ -523,7 +532,7 @@ describe("Automations Core", () => {
     const approval = fixture.runs.getLatestPendingApproval();
     expect(approval).toBeDefined();
     fixture.clock.value = "2026-08-11T00:01:00.000Z";
-    fixture.agent.resolveApproval({
+    await fixture.agent.resolveApproval({
       approvalId: approval!.id,
       decidedAt: fixture.clock.now(),
       decision: "approved",

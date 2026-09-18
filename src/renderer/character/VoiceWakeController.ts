@@ -18,6 +18,7 @@ export class VoiceWakeController {
   #activationBaseline: ActivationBaseline | undefined;
   #activationTimer: ReturnType<typeof setTimeout> | undefined;
   #detectionActive = false;
+  #detectionAbort: AbortController | undefined;
   #lastReport:
     | { readonly error?: string; readonly phase: VoiceWakeReportedPhase }
     | undefined;
@@ -67,6 +68,7 @@ export class VoiceWakeController {
   stop(): void {
     if (!this.#running) return;
     this.#running = false;
+    this.#detectionAbort?.abort();
     for (const unsubscribe of this.#unsubscribers.splice(0)) unsubscribe();
     this.#clearActivationTimer();
     void this.microphone.stop();
@@ -115,17 +117,26 @@ export class VoiceWakeController {
         void this.#report("error", message);
       },
     );
+    if (!this.#running) {
+      await this.microphone.stop();
+      return;
+    }
     await this.#report("listening");
   }
 
   async #handleDetection(): Promise<void> {
     if (!this.#running || this.#detectionActive) return;
     this.#detectionActive = true;
+    const abort = new AbortController();
+    this.#detectionAbort = abort;
     this.#clearActivationTimer();
     try {
       await this.microphone.pauseListening();
+      abort.signal.throwIfAborted();
       await this.#report("detected");
+      abort.signal.throwIfAborted();
       await this.microphone.playReadyCue();
+      abort.signal.throwIfAborted();
       const before = this.voice.getState();
       const baseline: ActivationBaseline = {
         runId: before.snapshot?.runId,
@@ -133,18 +144,22 @@ export class VoiceWakeController {
         userTranscript: before.snapshot?.userTranscript ?? "",
       };
       await this.#report("connecting");
+      abort.signal.throwIfAborted();
       if (before.snapshot?.phase === "paused") {
-        await this.voice.resumeFromWake();
+        await this.voice.resumeFromWake(abort.signal);
       } else {
         if (
           before.snapshot?.phase === "failed" ||
           before.snapshot?.phase === "interrupted"
         ) {
           const ended = await this.voice.end();
+          abort.signal.throwIfAborted();
           if (!ended) throw new Error("异常语音会话没有成功清理。");
         }
-        if (!this.voice.getState().snapshot) await this.voice.startWake();
+        if (!this.voice.getState().snapshot)
+          await this.voice.startWake(abort.signal);
       }
+      abort.signal.throwIfAborted();
       const after = this.voice.getState();
       if (!after.snapshot || after.error) {
         throw new Error(after.error?.message ?? "没有成功进入语音对话。");
@@ -152,13 +167,15 @@ export class VoiceWakeController {
       this.#activationBaseline = baseline;
       this.#observeActivation(after);
     } catch (error) {
+      if (abort.signal.aborted) return;
       await this.#report(
         "error",
         error instanceof Error ? error.message : "自动语音唤醒失败。",
       );
     } finally {
       this.#detectionActive = false;
-      this.#scheduleReconcile();
+      if (this.#detectionAbort === abort) this.#detectionAbort = undefined;
+      if (this.#running) this.#scheduleReconcile();
     }
   }
 

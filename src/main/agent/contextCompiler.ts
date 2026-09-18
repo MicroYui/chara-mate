@@ -1,10 +1,25 @@
 import type { JsonValue } from "../../shared/contracts/primitives";
+import { isDeepStrictEqual } from "node:util";
+import { IMAGE_REFERENCE_TYPE } from "./imageInput";
 import type { PlanUpdate } from "../../shared/contracts/run";
 import { isChatContextSummaryInput } from "../chat/chatContext";
-import type { ModelContextLimits, ModelUsage } from "./modelProvider";
-import { isMemoryContextInput } from "./memoryContext";
+import type {
+  InputMeasurementOptions,
+  ModelContextLimits,
+  ModelUsage,
+} from "./modelProvider";
+import {
+  retainedCognitionContextInputs,
+  materializeCognitionContextInput,
+  shareSelectedObservationBodies,
+} from "./cognitionContext";
+import {
+  estimateInputBudget,
+  fitsInputBudget,
+  type InputBudgetEstimate,
+  modelInputBudget,
+} from "../providers/inputBudget";
 
-export const CONTEXT_COMPACTION_RATIO = 0.9;
 const CURRENT_PLAN_INPUT_PREFIX =
   "Current execution plan (authoritative latest complete snapshot):";
 
@@ -31,21 +46,8 @@ export interface CompiledContext {
   readonly requestBytes: number;
 }
 
-export function resolvedInputBudget(
-  limits: ModelContextLimits,
-): number | undefined {
-  if (limits.effectiveInputTokens !== undefined) {
-    return limits.effectiveInputTokens;
-  }
-  const byContext =
-    limits.maxContextTokens === undefined ||
-    limits.maxOutputTokens === undefined
-      ? undefined
-      : limits.maxContextTokens - limits.maxOutputTokens;
-  const candidates = [limits.maxPromptTokens, byContext].filter(
-    (value): value is number => value !== undefined && value > 0,
-  );
-  return candidates.length === 0 ? undefined : Math.min(...candidates);
+export function resolvedInputBudget(limits: ModelContextLimits): number {
+  return modelInputBudget(limits);
 }
 
 export function contextRequestBytes(items: readonly JsonValue[]): number {
@@ -53,12 +55,16 @@ export function contextRequestBytes(items: readonly JsonValue[]): number {
 }
 
 export function estimatedInputTokens(
-  items: readonly JsonValue[],
-  measurement: { readonly inputTokens: number; readonly requestBytes: number },
+  estimate: InputBudgetEstimate,
+  measurement?: { readonly inputTokens: number; readonly requestBytes: number },
 ): number {
-  return (
-    (contextRequestBytes(items) / measurement.requestBytes) *
-    measurement.inputTokens
+  if (estimate.exactInputTokens !== undefined) return estimate.exactInputTokens;
+  return Math.max(
+    estimate.estimatedTokens,
+    measurement && measurement.requestBytes > 0
+      ? (estimate.wireBytes / measurement.requestBytes) *
+          measurement.inputTokens
+      : 0,
   );
 }
 
@@ -80,7 +86,14 @@ function hostStateCall(value: Readonly<Record<string, JsonValue>>): boolean {
   );
 }
 
-function latestToolBoundary(items: readonly JsonValue[]): JsonValue[] {
+export function retainedToolContextInputs(
+  items: readonly JsonValue[],
+): JsonValue[] {
+  const retained = new Set<number>();
+  const imageSources: JsonValue[] = [];
+  let latestBoundaryRetained = false;
+  let latestOtherBoundaryRetained = false;
+  let latestFailureRetained = false;
   for (let outputIndex = items.length - 1; outputIndex >= 0; outputIndex -= 1) {
     const output = record(items[outputIndex]!);
     if (output?.["type"] !== "function_call_output") continue;
@@ -88,14 +101,94 @@ function latestToolBoundary(items: readonly JsonValue[]): JsonValue[] {
     if (typeof callId !== "string") continue;
     for (let callIndex = outputIndex - 1; callIndex >= 0; callIndex -= 1) {
       const call = record(items[callIndex]!);
-      if (call?.["type"] !== "function_call" || call["call_id"] !== callId) {
+      if (call?.["type"] !== "function_call" || call["call_id"] !== callId)
         continue;
-      }
       if (hostStateCall(call)) break;
-      return [items[callIndex]!, items[outputIndex]!];
+      if (!latestFailureRetained && typeof output["output"] === "string") {
+        try {
+          const result = record(JSON.parse(output["output"]) as JsonValue);
+          if (
+            result?.["status"] === "error" ||
+            result?.["status"] === "rejected" ||
+            result?.["status"] === "cancelled"
+          ) {
+            retained.add(callIndex);
+            retained.add(outputIndex);
+            latestFailureRetained = true;
+          }
+        } catch {
+          // Unparseable text cannot establish a completed failure receipt.
+        }
+      }
+      const imageInspection =
+        call["name"] === "image.inspect" ||
+        (call["name"] === "inspect" && call["namespace"] === "image");
+      if (
+        !latestBoundaryRetained ||
+        (!imageInspection && !latestOtherBoundaryRetained)
+      ) {
+        retained.add(callIndex);
+        retained.add(outputIndex);
+        latestBoundaryRetained = true;
+      }
+      if (!imageInspection) latestOtherBoundaryRetained = true;
+      if (imageInspection) {
+        const raw = output["output"];
+        let source: JsonValue | undefined;
+        if (typeof raw === "string") {
+          try {
+            const result = record(JSON.parse(raw) as JsonValue);
+            const content = result
+              ? record(result["modelContent"] ?? null)
+              : null;
+            if (
+              result?.["status"] === "success" &&
+              content?.["loaded"] === true
+            )
+              source = content["source"];
+          } catch {
+            // A malformed receipt cannot establish an inspected image.
+          }
+        }
+        if (
+          source !== undefined &&
+          !imageSources.some((value) => isDeepStrictEqual(value, source))
+        ) {
+          for (
+            let imageIndex = items.length - 1;
+            imageIndex > outputIndex;
+            imageIndex -= 1
+          ) {
+            const message = record(items[imageIndex]!);
+            const content = message?.["content"];
+            if (
+              message?.["type"] === "message" &&
+              Array.isArray(content) &&
+              content.some((part) => {
+                const reference = record(part);
+                return (
+                  reference?.["type"] === IMAGE_REFERENCE_TYPE &&
+                  isDeepStrictEqual(reference["source"], source)
+                );
+              })
+            ) {
+              retained.add(callIndex);
+              retained.add(outputIndex);
+              retained.add(imageIndex);
+              imageSources.push(source);
+              break;
+            }
+          }
+        }
+      }
+      break;
     }
   }
-  return [];
+  // Keep successful reads across intervening Tools, in their original order.
+  // Only this checkpoint's actual references qualify; caches/history do not.
+  return [...retained]
+    .sort((left, right) => left - right)
+    .map((index) => items[index]!);
 }
 
 function currentPlanInput(plan: PlanUpdate): JsonValue {
@@ -116,31 +209,84 @@ export function isCurrentPlanContextInput(value: JsonValue): boolean {
   );
 }
 
+export type ContextInputMeasurement = (
+  input: readonly JsonValue[],
+  options?: InputMeasurementOptions,
+) => Promise<InputBudgetEstimate>;
+
+export async function shouldCompactContextInput(
+  input: readonly JsonValue[],
+  budget: number,
+  measure: ContextInputMeasurement,
+  previousUsage?: {
+    readonly inputTokens: number;
+    readonly requestBytes: number;
+  },
+): Promise<boolean> {
+  let measurement = await measure(input);
+  const fits = (value: InputBudgetEstimate) =>
+    fitsInputBudget(
+      {
+        ...value,
+        estimatedTokens: estimatedInputTokens(value, previousUsage),
+      },
+      budget,
+    );
+  if (fits(measurement)) return false;
+  if (measurement.exactInputTokens === undefined) {
+    measurement = await measure(input, { requireExact: true });
+  }
+  return !fits(measurement);
+}
+
+function measureContextInput(
+  input: readonly JsonValue[],
+): Promise<InputBudgetEstimate> {
+  return Promise.resolve(
+    estimateInputBudget(
+      shareSelectedObservationBodies(input).map(
+        materializeCognitionContextInput,
+      ),
+    ),
+  );
+}
+
 export class ContextCompiler {
-  shouldCompact(
+  async shouldCompact(
     checkpoint: ContextCheckpoint,
     limits: ModelContextLimits,
-  ): boolean {
+    measure: ContextInputMeasurement = measureContextInput,
+  ): Promise<boolean> {
     const budget = resolvedInputBudget(limits);
     const usage = checkpoint.lastUsage;
     const previousBytes = checkpoint.lastRequestBytes;
-    if (!budget || !usage || !previousBytes || previousBytes <= 0) return false;
-    const activeBytes = contextRequestBytes(checkpoint.items);
-    const estimatedTokens = (activeBytes / previousBytes) * usage.inputTokens;
-    return estimatedTokens >= budget * CONTEXT_COMPACTION_RATIO;
+    return shouldCompactContextInput(
+      checkpoint.items,
+      budget,
+      measure,
+      usage?.inputTokens !== undefined && previousBytes && previousBytes > 0
+        ? { inputTokens: usage.inputTokens, requestBytes: previousBytes }
+        : undefined,
+    );
   }
 
-  compile(
+  async compile(
     checkpoint: ContextCheckpoint,
     limits: ModelContextLimits,
     handoff: HandoffSummary,
     force = false,
-  ): CompiledContext {
-    const compacted = force || this.shouldCompact(checkpoint, limits);
+    measure: ContextInputMeasurement = measureContextInput,
+  ): Promise<CompiledContext> {
+    const compacted =
+      force || (await this.shouldCompact(checkpoint, limits, measure));
     const input = compacted
       ? this.#compact(checkpoint, handoff)
       : [...checkpoint.items];
-    return { compacted, input, requestBytes: contextRequestBytes(input) };
+    return {
+      compacted: compacted && !isDeepStrictEqual(input, checkpoint.items),
+      input,
+      requestBytes: (await measure(input)).wireBytes,
+    };
   }
 
   #compact(
@@ -165,7 +311,7 @@ export class ContextCompiler {
       `nextSteps: ${JSON.stringify(handoff.nextSteps)}`,
     ].join("\n");
     const chatContext = checkpoint.items.find(isChatContextSummaryInput);
-    const memoryContext = checkpoint.items.findLast(isMemoryContextInput);
+    const memoryContexts = retainedCognitionContextInputs(checkpoint.items);
     return [
       {
         content: handoffText,
@@ -173,8 +319,8 @@ export class ContextCompiler {
         type: "message",
       },
       ...(chatContext ? [chatContext] : []),
-      ...(memoryContext ? [memoryContext] : []),
-      ...latestToolBoundary(checkpoint.items),
+      ...memoryContexts,
+      ...retainedToolContextInputs(checkpoint.items),
       ...(checkpoint.currentPlan
         ? [currentPlanInput(checkpoint.currentPlan)]
         : []),

@@ -1,6 +1,10 @@
 import type { AppError } from "../../shared/contracts/run";
+import { ProviderError, toProviderAppError } from "../providers/providerError";
 
 export type AgentErrorCode =
+  | "AGENT.APP_SHUTTING_DOWN"
+  | "AGENT.PREPARATION_CANCELLED"
+  | "AGENT.REQUEST_IN_PROGRESS"
   | "AGENT.APPROVAL_NOT_PENDING"
   | "AGENT.ATTACHMENT_INPUT_INVALID"
   | "AGENT.CHECKPOINT_UNAVAILABLE"
@@ -24,6 +28,7 @@ export class AgentError extends Error {
 }
 
 export function toAgentAppError(error: unknown): AppError {
+  if (error instanceof ProviderError) return toProviderAppError(error);
   if (error instanceof AgentError) {
     return {
       code: error.code,

@@ -169,6 +169,12 @@ describe("Phase 2 runtime observability", () => {
     expect(snapshot.inputTokens).toBe(130);
     expect(snapshot.cachedInputTokens).toBe(43);
     expect(snapshot.outputTokens).toBe(29);
+    expect(snapshot.usageCoverage).toEqual({
+      reports: 3,
+      cachedInputTokens: 3,
+      inputTokens: 3,
+      outputTokens: 3,
+    });
     expect(snapshot.tools).toEqual([
       {
         calls: 1,
@@ -193,12 +199,75 @@ describe("Phase 2 runtime observability", () => {
     ).toHaveLength(2);
   });
 
+  it("reports known sums and per-field coverage within the selected trace window", () => {
+    const observability = fixture();
+    const outputs: RunItem["output"][] = [
+      { usage: { cachedInputTokens: 0, inputTokens: 0, outputTokens: 0 } },
+      { usage: {} },
+      { usage: { inputTokens: 7 } },
+      { usage: { outputTokens: 3 } },
+      { error: "Failed before any usage was recorded" },
+    ];
+    outputs.forEach((output, index) => {
+      observability.record(
+        envelope(8 + index, {
+          item: {
+            ...item(
+              `usage-${String(index)}`,
+              "assistant_message",
+              1,
+              undefined,
+              output,
+            ),
+            status: index === 4 ? "failed" : "completed",
+          },
+          type: "item.completed",
+        }),
+      );
+    });
+    const snapshot = observability.snapshot();
+    expect(snapshot.inputTokens).toBe(137);
+    expect(snapshot.cachedInputTokens).toBe(43);
+    expect(snapshot.outputTokens).toBe(32);
+    expect(snapshot.usageCoverage).toEqual({
+      reports: 7,
+      cachedInputTokens: 4,
+      inputTokens: 5,
+      outputTokens: 5,
+    });
+    // The failed trace exists, but an absent object is not a reported zero
+    // and this local window cannot establish an HTTP or billing denominator.
+    const failed = observability.snapshot({ status: "failed" });
+    expect(failed.traces).toHaveLength(1);
+    expect(failed.usageCoverage).toEqual({
+      reports: 0,
+      cachedInputTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    expect(
+      observability.snapshot({ toolName: "collaboration.dispatch" }),
+    ).toMatchObject({
+      inputTokens: 30,
+      cachedInputTokens: 3,
+      outputTokens: 9,
+      usageCoverage: {
+        reports: 2,
+        cachedInputTokens: 2,
+        inputTokens: 2,
+        outputTokens: 2,
+      },
+    });
+  });
+
   it("serves the read-only loopback dashboard and API filters", async () => {
     const dashboard = new DevDashboard(fixture());
     const baseUrl = await dashboard.start();
     try {
       const html = await fetch(baseUrl).then((response) => response.text());
       expect(html).toContain("CharaMate Dev Dashboard");
+      expect(html).toContain("known");
+      expect(html).toContain("response observations");
       const response = await fetch(
         new URL("/dev/api/events?toolName=file.write", baseUrl),
       );

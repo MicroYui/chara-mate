@@ -157,6 +157,13 @@ export function VoiceSettingsPanel({
     }
   };
 
+  useEffect(
+    () => () => {
+      void voiceStore.cancelPreview().catch(() => undefined);
+    },
+    [voiceStore],
+  );
+
   const preview = async () => {
     if (!persona) return;
     setPreviewing(true);

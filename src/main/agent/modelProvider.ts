@@ -1,3 +1,4 @@
+import type { InputBudgetEstimate } from "../providers/inputBudget";
 import type { JsonValue } from "../../shared/contracts/primitives";
 
 export interface ModelFunctionTool {
@@ -30,9 +31,10 @@ export interface ModelStructuredOutput {
 }
 
 export interface ModelUsage {
-  readonly cachedInputTokens: number;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
+  /** Missing means unreported; a reported zero remains zero. */
+  readonly cachedInputTokens?: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
 }
 
 export type ModelResponseStatus = "cancelled" | "completed";
@@ -54,17 +56,25 @@ export interface ModelAllowedTool {
 }
 
 export interface ModelTextDeltaEvent {
+  readonly contentIndex?: number;
   readonly delta: string;
+  readonly itemId?: string;
+  readonly outputIndex?: number;
   readonly type: "text.delta";
 }
 
 export interface ModelOutputItemEvent {
   readonly item: JsonValue;
+  readonly outputIndex?: number;
   readonly runtimeArguments?: Readonly<Record<string, JsonValue>>;
   readonly type: "output.item";
 }
 
 export interface ModelCompletedEvent {
+  /** Complete Provider output in its original order, when supplied. */
+  readonly outputEvents?: readonly ModelOutputItemEvent[];
+  /** Optional final user-visible text; raw deltas/output items are unchanged. */
+  readonly displayText?: string;
   readonly responseId: string;
   readonly status: ModelResponseStatus;
   readonly type: "response.completed";
@@ -74,7 +84,21 @@ export interface ModelCompletedEvent {
 export type ModelEvent =
   ModelTextDeltaEvent | ModelOutputItemEvent | ModelCompletedEvent;
 
+export interface InputMeasurementOptions {
+  /** Ask the same counter to adjudicate an otherwise conservative decision. */
+  readonly requireExact?: true;
+}
+
 export interface ModelProvider {
+  /** Estimate the same complete wire body used by stream; this makes no network call. */
+  estimateInput(request: ModelRequest): InputBudgetEstimate;
+  /** Measure a complete prospective request; count exactly when its estimate
+   * cannot establish that it fits. The caller owns every network operation. */
+  measureInput(
+    request: ModelRequest,
+    signal: AbortSignal,
+    options?: InputMeasurementOptions,
+  ): Promise<InputBudgetEstimate>;
   readonly supportsNativeWebSearch?: boolean;
   resolveContextLimits(
     modelId: string,
@@ -99,6 +123,9 @@ export interface ModelToolSearchCall {
 }
 
 export interface CollectedModelTurn {
+  /** Original completed assistant messages, including optional phase and annotations. */
+  readonly assistantMessages?: readonly JsonValue[];
+  readonly displayText?: string;
   readonly functionCalls: readonly ModelFunctionCall[];
   readonly outputItems: readonly JsonValue[];
   readonly responseId: string;
@@ -255,9 +282,41 @@ export async function collectModelTurn(
     throw new Error("Provider stream ended without response.completed");
   }
 
+  const finalOutputEvents = completed.outputEvents ?? outputEvents;
+  const outputItems = finalOutputEvents.map(({ item }) => item);
+  const assistantMessages = outputItems.filter((value) => {
+    const item = record(value);
+    return item?.["type"] === "message" && item["role"] === "assistant";
+  });
+  // Completed output owns message order. Delta arrival order is only a live display.
+  // Keep the existing delta-only adapter contract when no message output is supplied.
+  if (assistantMessages.length) {
+    text = assistantMessages
+      .flatMap((value) => {
+        const content = record(value)?.["content"];
+        if (!Array.isArray(content)) return [];
+        return content.flatMap((part) => {
+          const entry = record(part);
+          if (
+            entry?.["type"] === "output_text" &&
+            typeof entry["text"] === "string"
+          ) {
+            return [entry["text"]];
+          }
+          if (
+            entry?.["type"] === "refusal" &&
+            typeof entry["refusal"] === "string"
+          ) {
+            return [entry["refusal"]];
+          }
+          return [];
+        });
+      })
+      .join("");
+  }
   const functionCalls: ModelFunctionCall[] = [];
   const toolSearchCalls: ModelToolSearchCall[] = [];
-  for (const event of outputEvents) {
+  for (const event of finalOutputEvents) {
     const rawItem = event.item;
     const item = record(rawItem);
     if (!item) continue;
@@ -301,8 +360,12 @@ export async function collectModelTurn(
   }
 
   return {
+    ...(completed.displayText === undefined
+      ? {}
+      : { displayText: completed.displayText }),
+    ...(assistantMessages.length ? { assistantMessages } : {}),
     functionCalls,
-    outputItems: outputEvents.map(({ item }) => item),
+    outputItems,
     responseId: completed.responseId,
     status: completed.status,
     text,

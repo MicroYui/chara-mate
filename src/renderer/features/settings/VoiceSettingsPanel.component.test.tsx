@@ -98,7 +98,10 @@ describe("Voice Settings panel", () => {
       testConnection: vi.fn(),
     } satisfies ProviderApi;
     const preview = vi.fn().mockResolvedValue(undefined);
-    const voiceStore = { preview } as unknown as VoiceStore;
+    const voiceStore = {
+      preview,
+      cancelPreview: vi.fn().mockResolvedValue(true),
+    } as unknown as VoiceStore;
     const personaApi = {
       copy: vi.fn(),
       getLibrary: vi.fn().mockResolvedValue({

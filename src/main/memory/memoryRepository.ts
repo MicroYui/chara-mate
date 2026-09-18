@@ -9,6 +9,7 @@ import type {
   MemoryHit,
   MemoryProposalInput,
   MemoryRecord,
+  MemoryPriorDisposition,
   MemoryRevision,
   MemoryReviseRequest,
   MemorySource,
@@ -19,7 +20,17 @@ import type {
 } from "../../shared/contracts/memory";
 import type { Timestamp } from "../../shared/contracts/primitives";
 import { MemoryError } from "./memoryError";
+import { MemoryFormationRepository } from "./memoryFormationRepository";
+import { MemoryLearningRepository } from "./memoryLearningRepository";
+import { MemoryRecallRepository } from "./memoryRecallRepository";
 import { memorySearchDocument } from "./memorySearchText";
+import {
+  memoryRevisionHistoryColumns,
+  memoryRevisionHistoryCte,
+  revisionHistoryValue,
+  validatePriorDispositions,
+  type MemoryRevisionHistoryRow,
+} from "./memoryRevisionHistory";
 
 interface MemoryRow {
   claim_slot: MemoryClaimSlot | null;
@@ -39,7 +50,9 @@ interface MemoryRow {
   valid_to: string | null;
 }
 
-interface RevisionRow {
+interface RevisionRow extends MemoryRevisionHistoryRow {
+  predecessor_revision_id: string | null;
+  prior_dispositions_json: string;
   content: string;
   created_at: string;
   id: string;
@@ -108,21 +121,13 @@ export type ReviseMemoryInput = Omit<
   MemoryReviseRequest,
   "occursAt" | "timeZone"
 > & {
+  readonly predecessorRevisionId: string;
+  readonly priorDispositions: readonly MemoryPriorDisposition[];
   readonly now: Timestamp;
   readonly occursAt?: Timestamp;
   readonly revisionId: string;
   readonly timeZone?: string;
 };
-
-export interface ResolveMemoryClaimInput {
-  readonly claimSlot: MemoryClaimSlot;
-  readonly content: string;
-  readonly memoryId: string;
-  readonly now: Timestamp;
-  readonly reason: string;
-  readonly revisionId: string;
-  readonly sources: readonly MemorySource[];
-}
 
 export type ProposeMemoryInput = Omit<
   MemoryProposalInput,
@@ -237,19 +242,56 @@ function revisionSourceType(
       false,
     );
   }
-  const sourceType = sources[0]?.type;
-  if (!sourceType || sources.some((source) => source.type !== sourceType)) {
-    throw new MemoryError(
-      "MEMORY.CONFLICT",
-      "同一个 Revision 的来源类型必须一致。",
-      false,
-    );
-  }
-  return sourceType;
+  const sourceType = sources[0]!.type;
+  // A revision can synthesize evidence from a message and a tool or activity.
+  // Keep each source's actual provenance; this field only labels the revision.
+  return sources.every((source) => source.type === sourceType)
+    ? sourceType
+    : "distillation";
 }
 
 export class MemoryRepository {
-  constructor(private readonly database: Database.Database) {}
+  readonly recall: MemoryRecallRepository;
+  readonly formation: MemoryFormationRepository;
+  readonly learning: MemoryLearningRepository;
+
+  constructor(private readonly database: Database.Database) {
+    this.formation = new MemoryFormationRepository(database);
+    this.recall = new MemoryRecallRepository(database, this);
+    this.learning = new MemoryLearningRepository(database);
+  }
+
+  hasMemorySource(memoryId: string, sourceId: string): boolean {
+    return (
+      this.database
+        .prepare(
+          `SELECT 1 FROM memory_revision_sources rs
+         JOIN memory_revisions r ON r.id=rs.revision_id
+         WHERE r.memory_id=? AND rs.source_id=? LIMIT 1`,
+        )
+        .get(memoryId, sourceId) !== undefined
+    );
+  }
+
+  attachEvidence(revisionId: string, sources: readonly MemorySource[]): void {
+    // Existing support still validates the immutable source binding. The join
+    // insert is idempotent; filtering it out earlier would skip that validation.
+    this.#attachSources(revisionId, sources);
+    const types = this.database
+      .prepare(
+        `SELECT DISTINCT s.type
+         FROM memory_sources s
+         JOIN memory_revision_sources rs ON rs.source_id=s.id
+         WHERE rs.revision_id=?`,
+      )
+      .all(revisionId) as { type: MemorySourceType }[];
+    if (types.length > 1)
+      this.database
+        .prepare(
+          "UPDATE memory_revisions SET source_type='distillation' WHERE id=?",
+        )
+        .run(revisionId);
+  }
 
   getDetail(memoryId: string, includeDeleted = true): MemoryDetail | undefined {
     const row = this.database
@@ -262,13 +304,15 @@ export class MemoryRepository {
 
     const revisionRows = this.database
       .prepare(
-        `SELECT id, memory_id, content, source_type, reason,
-                important_moment, occurs_at, time_zone, created_at
-         FROM memory_revisions
-         WHERE memory_id = ?
-         ORDER BY (id = ?) DESC, created_at DESC, rowid DESC`,
+        `${memoryRevisionHistoryCte("SELECT id,memory_id FROM memory_revisions WHERE memory_id=@memoryId")}
+         SELECT r.id,r.memory_id,r.content,r.source_type,r.reason,
+                r.important_moment,r.occurs_at,r.time_zone,r.created_at,
+                r.predecessor_revision_id,r.prior_dispositions_json,${memoryRevisionHistoryColumns()}
+         FROM memory_revisions r JOIN memories m ON m.id=r.memory_id JOIN revision_history rh ON rh.id=r.id
+         WHERE r.memory_id = @memoryId
+         ORDER BY (r.id = @currentId) DESC, r.created_at DESC, r.rowid DESC`,
       )
-      .all(memoryId, row.current_revision_id) as RevisionRow[];
+      .all({ memoryId, currentId: row.current_revision_id }) as RevisionRow[];
     const sourceRows = this.database
       .prepare(
         `SELECT s.id, s.type, s.reference_id, s.label, s.created_at,
@@ -305,6 +349,13 @@ export class MemoryRepository {
     return {
       memory: mapMemory(row),
       revisions: revisionRows.map((revision): MemoryRevision => ({
+        ...revisionHistoryValue(revision),
+        priorDispositions: JSON.parse(
+          revision.prior_dispositions_json,
+        ) as MemoryPriorDisposition[],
+        ...(revision.predecessor_revision_id
+          ? { predecessorRevisionId: revision.predecessor_revision_id }
+          : {}),
         content: revision.content,
         createdAt: revision.created_at,
         id: revision.id,
@@ -414,7 +465,10 @@ export class MemoryRepository {
     return rows.map(mapMemory);
   }
 
-  hitsFor(selections: readonly MemoryHitSelection[]): MemoryHit[] {
+  hitsFor(
+    selections: readonly MemoryHitSelection[],
+    sourceLimit?: number,
+  ): MemoryHit[] {
     if (selections.length === 0) return [];
     const memoryIds = JSON.stringify([
       ...new Set(selections.map(({ memoryId }) => memoryId)),
@@ -436,25 +490,28 @@ export class MemoryRepository {
       (
         this.database
           .prepare(
-            `SELECT id, memory_id, content, source_type, reason,
-                    important_moment, occurs_at, time_zone, created_at
-             FROM memory_revisions
-             WHERE id IN (SELECT value FROM json_each(?))`,
+            `${memoryRevisionHistoryCte("SELECT id,memory_id FROM memory_revisions WHERE id IN (SELECT value FROM json_each(@revisionIds))")}
+             SELECT r.id,r.memory_id,r.content,r.source_type,r.reason,
+                    r.important_moment,r.occurs_at,r.time_zone,r.created_at,
+                    r.predecessor_revision_id,r.prior_dispositions_json,${memoryRevisionHistoryColumns()}
+             FROM memory_revisions r JOIN memories m ON m.id=r.memory_id JOIN revision_history rh ON rh.id=r.id
+             WHERE r.id IN (SELECT value FROM json_each(@revisionIds))`,
           )
-          .all(revisionIds) as RevisionRow[]
+          .all({ revisionIds }) as RevisionRow[]
       ).map((row) => [row.id, row]),
     );
     const sourcesByRevision = new Map<string, MemorySource[]>();
     const sources = this.database
       .prepare(
-        `SELECT s.id, s.type, s.reference_id, s.label, s.created_at,
-                rs.revision_id
-         FROM memory_revision_sources rs
-         JOIN memory_sources s ON s.id = rs.source_id
-         WHERE rs.revision_id IN (SELECT value FROM json_each(?))
-         ORDER BY s.created_at, s.id`,
+        `SELECT id,type,reference_id,label,created_at,revision_id FROM (
+           SELECT s.id, s.type, s.reference_id, s.label, s.created_at, rs.revision_id,
+             ROW_NUMBER() OVER (PARTITION BY rs.revision_id ORDER BY s.created_at,s.id) AS ordinal
+           FROM memory_revision_sources rs JOIN memory_sources s ON s.id=rs.source_id
+           WHERE rs.revision_id IN (SELECT value FROM json_each(@revisionIds))
+         ) WHERE @sourceLimit IS NULL OR ordinal<=@sourceLimit
+         ORDER BY created_at,id`,
       )
-      .all(revisionIds) as SourceRow[];
+      .all({ revisionIds, sourceLimit: sourceLimit ?? null }) as SourceRow[];
     for (const source of sources) {
       const values = sourcesByRevision.get(source.revision_id) ?? [];
       values.push(mapSource(source));
@@ -475,6 +532,13 @@ export class MemoryRepository {
         memory,
         rank: index + 1,
         revision: {
+          ...revisionHistoryValue(revision),
+          priorDispositions: JSON.parse(
+            revision.prior_dispositions_json,
+          ) as MemoryPriorDisposition[],
+          ...(revision.predecessor_revision_id
+            ? { predecessorRevisionId: revision.predecessor_revision_id }
+            : {}),
           content: revision.content,
           createdAt: revision.created_at,
           id: revision.id,
@@ -505,37 +569,6 @@ export class MemoryRepository {
       )
       .all() as MemoryHitSelection[];
     return this.hitsFor(selections);
-  }
-
-  stableClaimHits(): MemoryHit[] {
-    const selections = this.database
-      .prepare(
-        `SELECT mc.memory_id AS memoryId,
-                m.current_revision_id AS revisionId
-         FROM memory_claims mc
-         JOIN memories m ON m.id = mc.memory_id
-         WHERE m.status = 'active'
-           AND m.deleted_at IS NULL
-           AND m.type IN ('profile', 'preference')
-         ORDER BY mc.claim_slot, mc.memory_id`,
-      )
-      .all() as MemoryHitSelection[];
-    return this.hitsFor(selections);
-  }
-
-  countUnclaimedStableMemories(): number {
-    const row = this.database
-      .prepare(
-        `SELECT COUNT(*) AS count
-         FROM memories m
-         LEFT JOIN memory_claims mc ON mc.memory_id = m.id
-         WHERE m.status = 'active'
-           AND m.deleted_at IS NULL
-           AND m.type IN ('profile', 'preference')
-           AND mc.memory_id IS NULL`,
-      )
-      .get() as { count: number };
-    return row.count;
   }
 
   hitFor(
@@ -569,68 +602,26 @@ export class MemoryRepository {
     return this.database.transaction(() => this.#reviseMemory(input))();
   }
 
-  resolveClaim(input: ResolveMemoryClaimInput): MemoryDetail {
-    return this.database.transaction(() => {
-      const legacy = this.requireDetail(input.memoryId);
-      if (
-        legacy.memory.deletedAt ||
-        legacy.memory.status !== "active" ||
-        legacy.memory.claimSlot
-      ) {
-        throw new MemoryError(
-          "MEMORY.INVALID_STATE",
-          "只有当前有效且尚未绑定字段的旧记忆可以处理。",
-          false,
-        );
-      }
-      const owner = this.findDetailByClaimSlot(input.claimSlot);
-      if (!owner) {
-        this.#bindClaim(input.memoryId, input.claimSlot, input.now);
-        return this.#reviseMemory({
-          content: input.content,
-          memoryId: input.memoryId,
-          now: input.now,
-          reason: input.reason,
-          revisionId: input.revisionId,
-          sources: [...input.sources],
-        });
-      }
-      if (
-        owner.memory.deletedAt ||
-        owner.memory.status !== "active" ||
-        owner.memory.id === input.memoryId
-      ) {
-        throw new MemoryError(
-          "MEMORY.INVALID_STATE",
-          "这个稳定字段当前无法合并，请先处理已有记忆的状态。",
-          false,
-        );
-      }
-      const revised = this.#reviseMemory({
-        content: input.content,
-        memoryId: owner.memory.id,
-        now: input.now,
-        reason: input.reason,
-        revisionId: input.revisionId,
-        sources: [...input.sources],
-      });
-      const superseded = this.database
+  revisionIdsFor(memoryId: string): string[] {
+    return (
+      this.database
         .prepare(
-          `UPDATE memories
-           SET status = 'superseded', superseded_by_id = ?, updated_at = ?
-           WHERE id = ? AND status = 'active' AND deleted_at IS NULL`,
+          "SELECT id FROM memory_revisions WHERE memory_id=? ORDER BY id",
         )
-        .run(owner.memory.id, input.now, input.memoryId);
-      if (superseded.changes !== 1) {
-        throw new MemoryError(
-          "MEMORY.CONFLICT",
-          "旧记忆状态已变化，请刷新后重试。",
-          true,
-        );
-      }
-      this.#removeProfile(input.memoryId);
-      return revised;
-    })();
+        .all(memoryId) as { id: string }[]
+    ).map(({ id }) => id);
+  }
+
+  currentRevisionIds(revisionIds: readonly string[]): ReadonlySet<string> {
+    if (!revisionIds.length) return new Set();
+    const rows = this.database
+      .prepare(
+        `SELECT r.id FROM memory_revisions r JOIN memories m ON m.id=r.memory_id
+         WHERE r.id IN (SELECT value FROM json_each(?))
+           AND m.current_revision_id=r.id AND m.status='active' AND m.deleted_at IS NULL`,
+      )
+      .all(JSON.stringify([...new Set(revisionIds)])) as { id: string }[];
+    return new Set(rows.map(({ id }) => id));
   }
 
   setPinned(memoryId: string, pinned: boolean, now: Timestamp): MemoryDetail {
@@ -729,9 +720,10 @@ export class MemoryRepository {
         `DELETE FROM memory_sources
          WHERE id = ? AND NOT EXISTS (
            SELECT 1 FROM memory_revision_sources WHERE source_id = ?
-         )`,
+         ) AND NOT EXISTS (SELECT 1 FROM memory_work_sources WHERE source_id = ?)`,
       );
-      for (const sourceId of sourceIds) removeOrphan.run(sourceId, sourceId);
+      for (const sourceId of sourceIds)
+        removeOrphan.run(sourceId, sourceId, sourceId);
     })();
   }
 
@@ -795,28 +787,6 @@ export class MemoryRepository {
         )
         .all() as CandidateRow[]
     ).map(candidateFromRow);
-  }
-
-  listCandidateDecisions(options: {
-    readonly sourceType: MemorySourceType;
-    readonly type: MemoryType;
-  }): Array<{
-    readonly acceptedMemoryId?: string;
-    readonly candidate: MemoryCandidate;
-  }> {
-    const rows = this.database
-      .prepare(
-        `${candidateSelect}
-         WHERE c.source_type = ? AND c.type = ?
-         ORDER BY c.updated_at DESC, c.created_at DESC, c.id DESC`,
-      )
-      .all(options.sourceType, options.type) as CandidateRow[];
-    return rows.map((row) => ({
-      ...(row.accepted_memory_id
-        ? { acceptedMemoryId: row.accepted_memory_id }
-        : {}),
-      candidate: candidateFromRow(row),
-    }));
   }
 
   findPendingCandidateByContent(
@@ -1074,13 +1044,14 @@ export class MemoryRepository {
         false,
       );
     }
+    const priorDispositions = validatePriorDispositions(this.database, input);
     const sourceType = revisionSourceType(input.sources);
     this.database
       .prepare(
         `INSERT INTO memory_revisions (
            id, memory_id, content, source_type, reason,
-           important_moment, occurs_at, time_zone, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           important_moment, occurs_at, time_zone, created_at, predecessor_revision_id, prior_dispositions_json
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.revisionId,
@@ -1092,6 +1063,8 @@ export class MemoryRepository {
         input.occursAt ?? null,
         input.timeZone ?? null,
         input.now,
+        input.predecessorRevisionId,
+        JSON.stringify(priorDispositions),
       );
     this.#indexRevision(input.memoryId, input.revisionId, input.content);
     this.#attachSources(input.revisionId, input.sources);
@@ -1177,7 +1150,7 @@ export class MemoryRepository {
     );
     const attach = this.database.prepare(
       `INSERT INTO memory_revision_sources (revision_id, source_id)
-       VALUES (?, ?)`,
+       VALUES (?, ?) ON CONFLICT(revision_id,source_id) DO NOTHING`,
     );
     for (const source of sources) {
       insertSource.run(
@@ -1214,6 +1187,10 @@ export class MemoryRepository {
          VALUES (?, ?, ?)`,
       )
       .run(memorySearchDocument(content), memoryId, revisionId);
+    const revision = this.database
+      .prepare("SELECT created_at FROM memory_revisions WHERE id=?")
+      .get(revisionId) as { created_at: string };
+    this.recall.enqueueRevision(revisionId, content, revision.created_at);
   }
 
   #projectProfile(memoryId: string, revisionId: string, now: Timestamp): void {

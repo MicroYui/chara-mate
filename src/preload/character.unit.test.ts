@@ -139,7 +139,10 @@ describe("Character Window typed preload boundary", () => {
     electron.ipcRenderer.invoke.mockImplementation(
       (channel: string, input: unknown) => {
         expect(channel).toBe(VOICE_CHANNELS.quickStart);
-        expect(input).toEqual({ requestedAt: "2026-08-09T06:00:00.000Z" });
+        expect(input).toEqual({
+          requestId: "20000000-0000-4000-8000-000000000003",
+          request: { requestedAt: "2026-08-09T06:00:00.000Z" },
+        });
         return Promise.resolve({
           ok: true,
           value: {
@@ -157,7 +160,10 @@ describe("Character Window typed preload boundary", () => {
     const api = await loadApi();
 
     await expect(
-      api.voice.quickStart({ requestedAt: "2026-08-09T06:00:00.000Z" }),
+      api.voice.quickStart({
+        requestId: "20000000-0000-4000-8000-000000000003",
+        request: { requestedAt: "2026-08-09T06:00:00.000Z" },
+      }),
     ).resolves.toMatchObject({ ok: true, value: { voice: "verse" } });
   });
 

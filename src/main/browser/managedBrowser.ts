@@ -8,6 +8,9 @@ import {
   type Page,
 } from "playwright-core";
 
+import type { ActivityPerception } from "../../shared/contracts/activity";
+import { normalizeActivityPerception } from "../activity/activeApplicationSource";
+
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { BrowserComputerSettings } from "../../shared/contracts/settings";
 import type { ToolResult } from "../../shared/contracts/tool";
@@ -22,11 +25,167 @@ interface BrowserLocatorInput {
   readonly selector?: string;
 }
 
-export interface ManagedBrowserActivityState {
+export interface ManagedBrowserActivityState extends ActivityPerception {
+  readonly actor?: "agent" | "system" | "user";
   readonly action?: string;
   readonly title?: string;
   readonly url: string;
 }
+
+interface ManagedPageActivityOptions {
+  readonly binding: string;
+  readonly batchMs: number;
+  readonly maxTextLength: number;
+  readonly maxVisitedNodes: number;
+}
+
+// Serialized by Playwright: keep the function self-contained, with no module
+// closures. Observe visible text nodes, never input values or clipboard data.
+export function installManagedPageActivity(
+  options: ManagedPageActivityOptions,
+): void {
+  if (window.top !== window) return;
+  const host = window as unknown as Record<string, unknown>;
+  const prior = host["__charaMateActivity"] as { stop(): void } | undefined;
+  prior?.stop();
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let lastSignature = "";
+  let clicks = 0,
+    keystrokes = 0,
+    scrolls = 0;
+  let automated = false;
+  let pendingActor: "agent" | "system" | "user" = "system";
+  const visibleText = (): string => {
+    if (!document.body) return "";
+    const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+    );
+    const parts: string[] = [];
+    let size = 0,
+      visited = 0;
+    while (
+      visited++ < options.maxVisitedNodes &&
+      size < options.maxTextLength
+    ) {
+      const node = walker.nextNode();
+      if (!node) break;
+      const parent = node.parentElement;
+      if (
+        !parent ||
+        parent.closest(
+          "script,style,noscript,template,input,textarea,[hidden],[aria-hidden='true'],[inert]",
+        )
+      )
+        continue;
+      const style = getComputedStyle(parent);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      const box = parent.getBoundingClientRect();
+      if (
+        box.width <= 0 ||
+        box.height <= 0 ||
+        box.bottom <= 0 ||
+        box.right <= 0 ||
+        box.top >= innerHeight ||
+        box.left >= innerWidth
+      )
+        continue;
+      const text = node.textContent?.replace(/\s+/g, " ").trim();
+      if (!text) continue;
+      parts.push(text.slice(0, options.maxTextLength - size));
+      size += text.length;
+    }
+    return parts.join(" · ").slice(0, options.maxTextLength);
+  };
+  const flush = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    if (stopped || document.visibilityState === "hidden") {
+      clicks = keystrokes = scrolls = 0;
+      return;
+    }
+    const content = visibleText();
+    const signature = JSON.stringify([location.href, document.title, content]);
+    const hasInteraction = clicks + keystrokes + scrolls > 0;
+    if (signature === lastSignature && !hasInteraction) return;
+    const contentChanged = signature !== lastSignature;
+    lastSignature = signature;
+    const publish = host[options.binding];
+    if (typeof publish === "function") {
+      const send = publish as (payload: unknown) => unknown;
+      const result: unknown = send({
+        actor: automated ? "agent" : pendingActor,
+        boundary: contentChanged ? "content" : "interaction",
+        ...(content
+          ? { content: { source: "dom", scope: "viewport", text: content } }
+          : {}),
+        contentStatus: content ? "available" : "unavailable",
+        ...(hasInteraction
+          ? { interaction: { clicks, keystrokes, scrolls } }
+          : {}),
+      });
+      if (result instanceof Promise) void result.catch(() => undefined);
+    }
+    clicks = keystrokes = scrolls = 0;
+    pendingActor = automated ? "agent" : "system";
+  };
+  const schedule = () => {
+    if (stopped || timer !== undefined) return;
+    timer = setTimeout(flush, options.batchMs);
+  };
+  const interact = (event: Event) => {
+    if (stopped) return;
+    if (event.type === "pointerdown") clicks += 1;
+    if (event.type === "keydown") keystrokes += 1;
+    if (event.type === "wheel") scrolls += 1;
+    pendingActor = automated ? "agent" : "user";
+    schedule();
+  };
+  const mutations = new MutationObserver(() => {
+    if (automated) pendingActor = "agent";
+    schedule();
+  });
+  mutations.observe(document, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ["hidden", "aria-hidden", "class", "style"],
+  });
+  const eventTypes = ["pointerdown", "keydown", "wheel", "scroll", "focusin"];
+  for (const type of eventTypes)
+    document.addEventListener(type, interact, { capture: true, passive: true });
+  const stop = () => {
+    stopped = true;
+    mutations.disconnect();
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    for (const type of eventTypes)
+      document.removeEventListener(type, interact, true);
+    window.removeEventListener("pagehide", stop);
+    document.removeEventListener("visibilitychange", schedule);
+  };
+  host["__charaMateActivity"] = {
+    flush,
+    setAutomated(value: boolean) {
+      flush();
+      automated = value;
+      pendingActor = value ? "agent" : "system";
+    },
+    stop,
+  };
+  window.addEventListener("pagehide", stop, { once: true });
+  document.addEventListener("visibilitychange", schedule);
+  schedule();
+}
+
+const PAGE_ACTIVITY_OPTIONS: ManagedPageActivityOptions = {
+  binding: "__charaMatePublishActivity",
+  batchMs: 1000,
+  maxTextLength: 4096,
+  maxVisitedNodes: 5000,
+};
 
 export function bundledChromiumExecutablePath(resourcesPath: string): string {
   const developmentPath = chromium.executablePath();
@@ -123,6 +282,13 @@ export class ManagedBrowser {
       ((state: ManagedBrowserActivityState) => Promise<void>) | undefined,
   ): void {
     this.#activityObserver = observer;
+    for (const page of this.#context?.pages() ?? []) {
+      if (observer)
+        void page
+          .evaluate(installManagedPageActivity, PAGE_ACTIVITY_OPTIONS)
+          .catch(() => undefined);
+      else void this.#controlPageActivity(page, "stop");
+    }
   }
 
   async status(): Promise<BrowserComputerSettings["browser"]> {
@@ -181,9 +347,12 @@ export class ManagedBrowser {
       signal.addEventListener("abort", abort, { once: true });
       try {
         signal.throwIfAborted();
+        await this.#controlPageActivity(page, "automated", true);
         return await action(page);
       } finally {
-        await this.#publishActivity(page);
+        await this.#controlPageActivity(page, "flush");
+        await this.#publishActivity(page, { actor: "agent" });
+        await this.#controlPageActivity(page, "automated", false);
         signal.removeEventListener("abort", abort);
       }
     };
@@ -219,25 +388,86 @@ export class ManagedBrowser {
         headless: false,
       },
     );
+    const context = this.#context;
+    await context.exposeBinding(
+      PAGE_ACTIVITY_OPTIONS.binding,
+      async ({ page, frame }, value: unknown) => {
+        if (this.#context !== context || frame !== page.mainFrame()) return;
+        const rawActor =
+          value && typeof value === "object"
+            ? (value as Record<string, unknown>)["actor"]
+            : undefined;
+        const actor =
+          rawActor === "agent" || rawActor === "user" ? rawActor : "system";
+        await this.#publishActivity(page, {
+          ...normalizeActivityPerception(value),
+          actor,
+        });
+      },
+    );
+    await context.addInitScript(
+      installManagedPageActivity,
+      PAGE_ACTIVITY_OPTIONS,
+    );
     const bindPage = (page: Page) => {
-      page.on("domcontentloaded", () => void this.#publishActivity(page));
-      page.on("framenavigated", (frame) => {
-        if (frame === page.mainFrame()) void this.#publishActivity(page);
-      });
+      if (this.#activityObserver)
+        void page
+          .evaluate(installManagedPageActivity, PAGE_ACTIVITY_OPTIONS)
+          .catch(() => undefined);
     };
-    for (const page of this.#context.pages()) bindPage(page);
-    this.#context.on("page", bindPage);
+    for (const page of context.pages()) bindPage(page);
+    context.on("page", bindPage);
+    context.once("close", () => {
+      context.off("page", bindPage);
+      if (this.#context === context) this.#context = undefined;
+    });
     return this.#context;
   }
 
-  async #publishActivity(page: Page): Promise<void> {
+  async #controlPageActivity(
+    page: Page,
+    operation: "automated" | "flush" | "stop",
+    value = false,
+  ): Promise<void> {
+    try {
+      await page.evaluate(
+        ({ operation, value }) => {
+          const state = (window as unknown as Record<string, unknown>)[
+            "__charaMateActivity"
+          ] as
+            | {
+                flush(): void;
+                stop(): void;
+                setAutomated(value: boolean): void;
+              }
+            | undefined;
+          if (operation === "automated") state?.setAutomated(value);
+          else state?.[operation]();
+        },
+        { operation, value },
+      );
+    } catch {
+      /* Navigation and cancellation dispose the observed document. */
+    }
+  }
+
+  async #publishActivity(
+    page: Page,
+    perception: ActivityPerception & {
+      actor?: "agent" | "system" | "user";
+    } = {},
+  ): Promise<void> {
     const observer = this.#activityObserver;
     if (!observer || page.isClosed()) return;
     try {
       const title = await page.title();
       const url = page.url();
       if (!url || url === "about:blank") return;
-      await observer({ ...(title ? { title } : {}), url });
+      await observer({
+        ...perception,
+        ...(title ? { title: redactText(title) } : {}),
+        url,
+      });
     } catch {
       // Navigation or cancellation may close the page before metadata settles.
     }

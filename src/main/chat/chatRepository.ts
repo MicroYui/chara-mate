@@ -81,6 +81,34 @@ export interface ChatListFilter {
   status: ChatStatus;
 }
 
+export interface ChatMessageSourceReference extends Pick<
+  Message,
+  "id" | "chatId" | "runId" | "role" | "status" | "createdAt"
+> {
+  hasText: boolean;
+}
+
+// ECMAScript TrimString includes WhiteSpace and LineTerminator, unlike SQLite's
+// default trim. Keep NUL and non-whitespace invisible characters as actual text.
+const sourceTrimCharacters =
+  "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+const messageSourceProjection = `id, chat_id AS chatId, run_id AS runId,
+  role, status, created_at AS createdAt, trim(content, @trimCharacters) != '' AS hasText`;
+
+function readMessageSource(
+  row: Record<string, unknown>,
+): ChatMessageSourceReference {
+  return {
+    id: row["id"] as string,
+    chatId: row["chatId"] as string,
+    ...(row["runId"] ? { runId: row["runId"] as string } : {}),
+    role: row["role"] as Message["role"],
+    status: row["status"] as Message["status"],
+    createdAt: row["createdAt"] as string,
+    hasText: Boolean(row["hasText"]),
+  };
+}
+
 function readChat(row: ChatRow): Chat {
   return parseSchema(ChatSchema, {
     ...(row.archived_at === null ? {} : { archivedAt: row.archived_at }),
@@ -557,6 +585,75 @@ export class ChatRepository {
       )
       .all(runId) as MessageRow[];
     return rows.map(readMessage);
+  }
+
+  getMessageSourceReference(
+    id: string,
+  ): ChatMessageSourceReference | undefined {
+    const row = this.database
+      .prepare(`SELECT ${messageSourceProjection} FROM messages WHERE id = @id`)
+      .get({ id, trimCharacters: sourceTrimCharacters }) as
+      Record<string, unknown> | undefined;
+    return row ? readMessageSource(row) : undefined;
+  }
+
+  /** The same two exchanges, with no body materialization or live cursor at yield. */
+  *memoryFormationMessageReferences(
+    runId: string,
+  ): Iterable<ChatMessageSourceReference> {
+    const firstQuery = this.database
+      .prepare(`SELECT ${messageSourceProjection} FROM messages
+      WHERE run_id = @runId AND status = 'completed' ORDER BY created_at, id LIMIT 1`);
+    const nextQuery = this.database
+      .prepare(`SELECT ${messageSourceProjection} FROM messages
+      WHERE run_id = @runId AND status = 'completed'
+        AND (created_at,id) > (@createdAt,@id) ORDER BY created_at,id LIMIT 1`);
+    const firstFor = (id: string) => {
+      const row = firstQuery.get({
+        runId: id,
+        trimCharacters: sourceTrimCharacters,
+      }) as Record<string, unknown> | undefined;
+      return row ? readMessageSource(row) : undefined;
+    };
+    const nextAfter = (prior: ChatMessageSourceReference) => {
+      const row = nextQuery.get({
+        runId: prior.runId!,
+        createdAt: prior.createdAt,
+        id: prior.id,
+        trimCharacters: sourceTrimCharacters,
+      }) as Record<string, unknown> | undefined;
+      return row ? readMessageSource(row) : undefined;
+    };
+    let current = firstFor(runId);
+    if (!current) return;
+    const predecessor = this.database
+      .prepare(
+        `SELECT run_id FROM messages
+      WHERE chat_id = @chatId AND status = 'completed' AND (created_at,id) < (@createdAt,@id)
+      ORDER BY created_at DESC,id DESC LIMIT 1`,
+      )
+      .get({
+        chatId: current.chatId,
+        createdAt: current.createdAt,
+        id: current.id,
+      }) as { run_id: string | null } | undefined;
+    let prior = predecessor?.run_id ? firstFor(predecessor.run_id) : undefined;
+    while (current || prior) {
+      const takePrior =
+        prior &&
+        (!current ||
+          prior.createdAt < current.createdAt ||
+          (prior.createdAt === current.createdAt && prior.id < current.id));
+      if (takePrior && prior) {
+        const value = prior;
+        yield value;
+        prior = nextAfter(value);
+      } else if (current) {
+        const value = current;
+        yield value;
+        current = nextAfter(value);
+      }
+    }
   }
 
   getSnapshot(chatId: string): ChatPersistenceSnapshot | null {

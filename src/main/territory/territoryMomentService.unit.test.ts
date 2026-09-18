@@ -1,182 +1,199 @@
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  attachmentFixture,
+  chatFixture,
+  messageFixture,
+  runFixture,
+  runItemFixture,
+} from "../../../tests/fixtures/foundationContracts";
+import { starterTerritorySnapshot } from "../../../tests/fixtures/territoryWorld";
 import { DEFAULT_COMPANION_INITIATIVE_SETTINGS } from "../../shared/contracts/settings";
-import type { TerritoryCreateChangeCandidateRequest } from "../../shared/contracts/territoryWorld";
-import { defaultPersonaSnapshot } from "../persona/personaPresets";
+import type { Message } from "../../shared/contracts/chat";
+import type { MemoryEvidenceReference } from "../../shared/contracts/memoryRecall";
 import { TerritoryMomentService } from "./territoryMomentService";
+import type { TerritoryWorldCandidateService } from "./territoryWorldCandidateService";
 
-const now = "2026-09-01T09:00:00.000Z";
-const runId = "10000000-0000-4000-8000-000000000001";
-const chatId = "10000000-0000-4000-8000-000000000002";
-const messageId = "10000000-0000-4000-8000-000000000003";
-const attachmentId = "10000000-0000-4000-8000-000000000004";
-const candidateId = "10000000-0000-4000-8000-000000000005";
-const revisionId = "10000000-0000-4000-8000-000000000006";
-const zoneId = "10000000-0000-4000-8000-000000000007";
+const proposal = {
+  description: "紧张过后，还能抬头看见傍晚。",
+  name: "散场后的余光",
+  visualPrompt: "sunset light held by a small glass object",
+};
+
+function fixture(enabled = true) {
+  const getRun = vi.fn(() => ({ ...runFixture, status: "running" as const }));
+  const getMessage = vi.fn<(_id: string) => Message | undefined>(
+    () => messageFixture,
+  );
+  const latestUserMessageId = vi.fn<() => string>(() => messageFixture.id);
+  const getRunItem = vi.fn(() => ({
+    ...runItemFixture,
+    kind: "tool_call" as const,
+  }));
+  const toolSuppliedMemoryReferences = vi.fn<
+    () => MemoryEvidenceReference[] | undefined
+  >(() => []);
+  const getSnapshot = vi.fn(() => ({
+    chat: chatFixture,
+    messages: [messageFixture],
+    attachments: [attachmentFixture],
+  }));
+  const getCompanionInitiative = vi.fn(() => ({
+    ...DEFAULT_COMPANION_INITIATIVE_SETTINGS,
+    territoryMomentSurprisesEnabled: enabled,
+  }));
+  const createMoment = vi
+    .fn<TerritoryWorldCandidateService["createMoment"]>()
+    .mockResolvedValue({
+      candidateId: starterTerritorySnapshot.candidates[0]!.id,
+      snapshot: starterTerritorySnapshot,
+    });
+  const service = new TerritoryMomentService(
+    { getRun, getRunItem, latestUserMessageId, toolSuppliedMemoryReferences },
+    { getSnapshot, getMessage },
+    { getSnapshot: () => starterTerritorySnapshot },
+    { createMoment },
+    { getCompanionInitiative },
+    { validateEvidenceReferences: vi.fn(() => []) },
+  );
+  return {
+    createMoment,
+    getCompanionInitiative,
+    getRun,
+    getSnapshot,
+    getMessage,
+    latestUserMessageId,
+    toolSuppliedMemoryReferences,
+    service,
+  };
+}
 
 describe("TerritoryMomentService", () => {
-  it("binds a completed in-Run proposal to immutable host provenance", () => {
-    const beginCreateMoment = vi.fn(() => ({
-      completion: Promise.resolve({ candidateId, snapshot: {} }),
-      initial: { candidateId, snapshot: {} },
-    }));
-    const service = new TerritoryMomentService(
-      {
-        getRun: () => ({
-          chatId,
-          createdAt: now,
-          endedAt: now,
-          execution: { mode: "chat" },
-          id: runId,
-          latestSequence: 5,
-          persona: defaultPersonaSnapshot(now),
-          provider: {
-            apiStyle: "openai-compatible",
-            modelId: "model",
-            profileId: "10000000-0000-4000-8000-000000000008",
-            profileName: "Provider",
-          },
-          source: "text",
-          startedAt: now,
-          status: "completed",
-        }),
-        listRunItems: () => [
-          {
-            artifacts: [],
-            id: "10000000-0000-4000-8000-000000000009",
-            input: {
-              arguments: {
-                description: "紧张过后，还能抬头看见傍晚。",
-                name: "散场后的余光",
-                visualPrompt: "sunset light held by a small glass object",
-              },
-              callId: "moment-1",
-              toolName: "territory.propose_moment",
-            },
-            kind: "tool_call",
-            runId,
-            sequence: 3,
-            status: "completed",
-          },
-        ],
-        listRunsByStatus: () => [],
-      },
-      {
-        getSnapshot: () => ({
-          attachments: [
-            {
-              byteLength: 128,
-              chatId,
-              createdAt: now,
-              displayName: "sunset.jpg",
-              id: attachmentId,
-              kind: "image",
-              mediaType: "image/jpeg",
-              messageId,
-              sha256:
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              storageKey: "/private/path/sunset.jpg",
-            },
-          ],
-          chat: {
-            createdAt: now,
-            id: chatId,
-            isProvisional: false,
-            status: "active",
-            title: "分享结束",
-            updatedAt: now,
-          },
-          messages: [],
-        }),
-        listRunMessages: () => [
-          {
-            chatId,
-            content: "分享结束了",
-            createdAt: now,
-            id: messageId,
-            role: "user",
-            runId,
-            status: "completed",
-            updatedAt: now,
-          },
-        ],
-      },
-      { get: () => undefined },
-      {
-        getSnapshot: () =>
-          ({
-            world: {
-              activeZoneId: zoneId,
-              currentRevision: { id: revisionId },
-            },
-          }) as never,
-      },
-      { beginCreateMoment } as never,
-      {
-        getCompanionInitiative: () => ({
-          ...DEFAULT_COMPANION_INITIATIVE_SETTINGS,
-          territoryMomentSurprisesEnabled: true,
-        }),
-      },
-      { warn: vi.fn() },
+  it("binds the current running exchange to immutable host provenance and awaits completion", async () => {
+    const { createMoment, service } = fixture();
+    const signal = new AbortController().signal;
+    await service.createForRun(
+      runFixture.id,
+      runItemFixture.id,
+      proposal,
+      signal,
     );
-
-    expect(service.materializeCompletedRun(runId)).toBe(candidateId);
-    expect(beginCreateMoment).toHaveBeenCalledTimes(1);
-    const [momentKey, request] = beginCreateMoment.mock.calls[0] as unknown as [
-      string,
-      TerritoryCreateChangeCandidateRequest,
-    ];
+    const [momentKey, request, validate, passedSignal] =
+      createMoment.mock.calls[0]!;
     expect(momentKey).toMatch(/^[0-9a-f]{64}$/u);
+    expect(passedSignal).toBe(signal);
+    expect(validate).not.toThrow();
     expect(request).toMatchObject({
-      itemContent: {
-        description: "紧张过后，还能抬头看见傍晚。",
-        name: "散场后的余光",
-      },
+      itemContent: { name: proposal.name, description: proposal.description },
       sources: [
         {
           attachments: [
             {
-              attachmentId,
-              displayName: "sunset.jpg",
-              mediaType: "image/jpeg",
-              sha256:
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              attachmentId: attachmentFixture.id,
+              sha256: attachmentFixture.sha256,
             },
           ],
-          chatId,
+          chatId: runFixture.chatId,
           id: momentKey,
           kind: "chat_moment",
-          messageId,
+          messageId: messageFixture.id,
           momentKey,
-          runId,
+          runId: runFixture.id,
         },
       ],
     });
-    expect(JSON.stringify(request)).not.toContain("/private/path");
+    expect(JSON.stringify(request)).not.toContain(attachmentFixture.storageKey);
   });
 
-  it("keeps silence when the separate permission is disabled", () => {
-    const beginCreateMoment = vi.fn(() => {
-      throw new Error("A disabled permission must not create a candidate.");
-    });
-    const service = new TerritoryMomentService(
-      {
-        getRun: vi.fn(),
-        listRunItems: vi.fn(),
-        listRunsByStatus: () => [],
-      },
-      { getSnapshot: vi.fn(), listRunMessages: vi.fn() },
-      { get: vi.fn() },
-      { getSnapshot: vi.fn() },
-      { beginCreateMoment },
-      {
-        getCompanionInitiative: () => DEFAULT_COMPANION_INITIATIVE_SETTINGS,
-      },
-      { warn: vi.fn() },
-    );
+  it("does not create a candidate after the user has disabled surprises", async () => {
+    const { createMoment, service } = fixture(false);
+    await expect(
+      service.createForRun(
+        runFixture.id,
+        runItemFixture.id,
+        proposal,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("许可已关闭");
+    expect(createMoment).not.toHaveBeenCalled();
+  });
 
-    expect(service.materializeCompletedRun(runId)).toBeUndefined();
-    expect(beginCreateMoment).not.toHaveBeenCalled();
+  it("does not turn a message-free autonomous Run into a user chat moment", async () => {
+    const { createMoment, getMessage, service } = fixture();
+    getMessage.mockReturnValue(undefined);
+    await expect(
+      service.createForRun(
+        runFixture.id,
+        runItemFixture.id,
+        proposal,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("用户消息来源");
+    expect(createMoment).not.toHaveBeenCalled();
+  });
+
+  it.each(["permission", "message", "attachment", "steering"] as const)(
+    "rechecks %s before a generated result can be applied",
+    async (change) => {
+      const f = fixture();
+      await f.service.createForRun(
+        runFixture.id,
+        runItemFixture.id,
+        proposal,
+        new AbortController().signal,
+      );
+      if (change === "permission")
+        f.getCompanionInitiative.mockReturnValue(
+          DEFAULT_COMPANION_INITIATIVE_SETTINGS,
+        );
+      if (change === "message") f.getMessage.mockReturnValue(undefined);
+      if (change === "steering")
+        f.latestUserMessageId.mockReturnValue("new-turn");
+      if (change === "attachment")
+        f.getSnapshot.mockReturnValue({
+          chat: chatFixture,
+          messages: [messageFixture],
+          attachments: [],
+        });
+      expect(f.createMoment.mock.calls[0]![2]).toThrow();
+    },
+  );
+  it("preserves exact current and historical host references, including an empty valid set", async () => {
+    const f = fixture();
+    const references: MemoryEvidenceReference[] = [
+      {
+        memoryId: messageFixture.id,
+        revisionId: runFixture.id,
+        use: "history",
+      },
+    ];
+    f.toolSuppliedMemoryReferences.mockReturnValue(references);
+    await f.service.createForRun(
+      runFixture.id,
+      runItemFixture.id,
+      proposal,
+      new AbortController().signal,
+    );
+    expect(f.toolSuppliedMemoryReferences).toHaveBeenCalledWith(
+      runFixture.id,
+      runItemFixture.id,
+    );
+    expect(f.createMoment.mock.calls[0]![1].sources).toMatchObject([
+      { memoryRevisions: references },
+    ]);
+    expect(f.createMoment.mock.calls[0]![2]).not.toThrow();
+  });
+  it("does not create from a missing model-to-tool binding", async () => {
+    const f = fixture();
+    f.toolSuppliedMemoryReferences.mockReturnValue(undefined);
+    await expect(
+      f.service.createForRun(
+        runFixture.id,
+        runItemFixture.id,
+        proposal,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("用户消息来源");
+    expect(f.createMoment).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,7 @@
 # MEMORY-FORMATION：Chat/Agent 使用期的基础记忆形成
 
+> 2026-09-16 当前状态：以下 F2/U2 记录保留原阶段的选择与结果，已不定义 Main v21 的形成 wire 或生效规则。当前 memory.record 从实际来源窗口形成，经同一 Memory 服务提炼、比较和事务提交；create/revise/support、显式依据/观察/推断及修订历史按后续 Decision 执行。推断保持 inference，不沿用“所有推断均进入待确认候选”作为当前默认。当前入口见 MEMORY-SOURCE-INTAKE、MEMORY-SUPPORT-EVIDENCE-OPERATION、MEMORY-REVISION-LIFECYCLE 与 MEMORY-FORMATION-VALIDATION；最终质量仍待独立验收。
+
 ## 定案
 
 选择 **`F2-IN-RUN-TOOL + U2-SLOT-GUARD`**：Chat 与 Agent 的当前回答模型在最终回答前调用始终加载的 `memory.record`，Main 把用户明确陈述直接创建或修订为 active Memory，把语境推断和 Agent 执行观察写成待确认候选。profile/preference 使用闭集稳定字段，更新只能命中当前 Run 已预载且与字段一致的 Memory；缺失目标、错 ID、字段冲突和旧数据首次绑定均转候选或拒绝。来源、时间、Chat/Run reference、direct/candidate 生效和重复恢复幂等均由宿主决定。
@@ -194,3 +196,9 @@ U0/U1 实现、Arm 分支、runner、冻结 JSON 与 raw report 均只曾存在�
 生产复核发现，Context 与 `memory.record` Tool Result 暴露的 Memory/Revision UUID 会诱导模型在普通回复中复述内部标识。U2 的正确性依赖“宿主私有 allowlist”，并不依赖模型看见或复制 UUID。因此本修订把稳定字段更新改为：模型只提交 `claimSlot`、operation 和完整新内容；宿主仅当该 slot 的唯一 active owner 属于当前 Run 私有 allowlist 时解析目标并在原 Memory 上创建 Revision。内部服务调用仍可显式携带 ID 并接受原有交叉校验，模型 Tool Schema 与 Tool Result 均不再暴露 ID。
 
 无 slot 的 project/event/procedure/commitment 若没有宿主内部精确目标，继续进入 `missing_target` 候选；旧 unkeyed profile/preference 继续由 Memory 页面显式绑定或合并。确定性回归必须证明 Provider 可见 Context、`memory.search`、`memory.record` continuation 和 Run `displayOutput` 都不含内部 UUID，同时合法稳定字段改口仍命中同一 Memory Revision。
+
+### 2026-09-17：原ic02被拒提案的提交复测
+
+固定原Formation L11供给、L12真实公开提议和L13 basis失败，仅投影其两实际target、三实体及四canonical source/精确span，沿当前Service实际分段、校验和事务回放同一提议。旧控制只撤回承诺guard增量，同一units[1].semantics.basis拒绝且整批无写；当前Main一次形成无反馈，两个原Memory各增加一个Revision。旧助手承诺、active、9月1日发生时间保留，9月12–13日作为用户明确的新限定，旧承诺为retained_history；两个版本均独立PID重开与各自最终details/evidence/entities相等。
+
+实际四进程66452/66453/66456/66458于11:08:31.230–31.736Z完成且不存在。没有新Provider、4B、PFC或App调用，历史L12不再计费；这是原失败校验/持久化的针对证明，不是新语义成功率、完整旧库/检索现场或普通回应采用证明。前态明确省略其它三份比较材料及后台work/index，不以它们冒称全现场重放。当前API绑定33依赖，Main Service SHA `f8c608c0ca025da534b33ad9fc3329de9441e42c4ed3ec6c3bc498ca7853ec38`；仓外包 `ic02-retained-proposal-replay-v1`冻结 `25f7ea1dfee83616a1ad3cde8af621ff3adee397a60a6eb456203239f755d0af`。最终F若改变调用接口，整合阶段沿同提议复用该回归，不重跑全部48或增加语义实验。

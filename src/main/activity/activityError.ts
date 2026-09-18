@@ -3,6 +3,7 @@ import type { AppError } from "../../shared/contracts/run";
 export type ActivityErrorCode =
   | "ACTIVITY.DIGEST_NOT_FOUND"
   | "ACTIVITY.EPISODE_NOT_FOUND"
+  | "ACTIVITY.EVENT_NOT_FOUND"
   | "ACTIVITY.STORAGE_FAILED";
 
 export class ActivityError extends Error {

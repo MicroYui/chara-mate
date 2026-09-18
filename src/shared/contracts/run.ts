@@ -24,6 +24,7 @@ import type {
   UserInputOptionSchema,
   UserInputQuestionSchema,
   UserInputResolutionSchema,
+  InputRequestResolutionSchema,
 } from "../schemas/run";
 
 export type AppError = Static<typeof AppErrorSchema>;
@@ -40,6 +41,9 @@ export type RequestUserInputArguments = Static<
 >;
 export type UserInputAnswer = Static<typeof UserInputAnswerSchema>;
 export type UserInputResolution = Static<typeof UserInputResolutionSchema>;
+export type InputRequestResolution = Static<
+  typeof InputRequestResolutionSchema
+>;
 export type RunExecution = Static<typeof RunExecutionSchema>;
 export type RunStatus = Static<typeof RunStatusSchema>;
 export type TerminalRunStatus = Static<typeof TerminalRunStatusSchema>;

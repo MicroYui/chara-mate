@@ -19,6 +19,10 @@ interface EpisodeDraft {
   readonly sourceTypes: Set<ActivitySource>;
   startedAt: Timestamp;
   readonly summaryParts: Set<string>;
+  contentSnippet?: string;
+  clicks: number;
+  keystrokes: number;
+  scrolls: number;
   title: string;
 }
 
@@ -62,6 +66,9 @@ function startDraft(event: ActivityEvent): EpisodeDraft {
     sourceTypes: new Set(),
     startedAt: event.startedAt,
     summaryParts: new Set(),
+    clicks: 0,
+    keystrokes: 0,
+    scrolls: 0,
     title: eventLabel(event),
   };
 }
@@ -74,7 +81,22 @@ function appendEvent(draft: EpisodeDraft, event: ActivityEvent): void {
     const endedAt = event.endedAt ?? event.startedAt;
     if (endedAt > draft.endedAt) draft.endedAt = endedAt;
   }
+  if (details.source === "active_app" || details.source === "managed_browser") {
+    if (details.content)
+      draft.contentSnippet = details.content.text.slice(0, 600);
+    else if (details.contentStatus === "protected")
+      draft.summaryParts.add("当前对象为密码等受保护输入，未读取内容");
+    else if (details.contentStatus === "unavailable")
+      draft.summaryParts.add("当前对象内容局部不可读");
+    if (details.interaction) {
+      draft.clicks += details.interaction.clicks;
+      draft.keystrokes += details.interaction.keystrokes;
+      draft.scrolls += details.interaction.scrolls;
+    }
+  }
   if (details.source === "active_app") {
+    if (details.lifecycle === "launched") draft.summaryParts.add("应用启动");
+    if (details.lifecycle === "terminated") draft.summaryParts.add("应用退出");
     draft.appNames.add(details.appName);
     if (details.windowTitle) draft.summaryParts.add(details.windowTitle);
   }
@@ -107,6 +129,14 @@ function canMerge(previous: ActivityEvent, next: ActivityEvent): boolean {
 
 function summarize(draft: EpisodeDraft): string {
   const details = [...draft.summaryParts];
+  if (draft.contentSnippet)
+    details.push(`末次可读内容：${draft.contentSnippet}`);
+  const operations = [
+    draft.clicks ? `点击 ${String(draft.clicks)} 次` : "",
+    draft.keystrokes ? `按键 ${String(draft.keystrokes)} 次` : "",
+    draft.scrolls ? `滚动 ${String(draft.scrolls)} 次` : "",
+  ].filter(Boolean);
+  if (operations.length) details.push(operations.join("、"));
   return details.length > 0
     ? `${draft.title}：${details.join("；")}`
     : `${draft.title} 活动`;

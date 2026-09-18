@@ -7,7 +7,7 @@
 
 ## 当前决策
 
-选择 `T2-CLIENT-BM25` 作为未来生产单路径中 **deferred 长尾能力** 的发现协议：对于这部分能力，模型首屏只见 source/namespace 元数据与 native Tool Search 接口，CharaMate 用固定 metadata BM25（limit 8）返回 `tool_search_output`，命中后才让完整 Schema 进入上下文。它随单一 `HC-FINAL` 组合通过 H7 W2 Quality；不得保留全量 `T0-FULL` fallback、hosted search 分支、双语 ranker 开关、旧 meta functions 或用户可调 topK。固定核心能力的适用范围按下方 2026-08-28 修正执行。
+选择 `T2-CLIENT-BM25` 作为生产单路径中 **deferred 长尾能力** 的发现协议：对于这部分能力，模型首屏只见 source/namespace 元数据与 native Tool Search 接口，CharaMate 在当次可用范围内用 metadata BM25、最终最多8项返回 `tool_search_output`，命中后才让完整 Schema 进入上下文。它随单一 `HC-FINAL` 组合通过 H7 W2 Quality；不得保留全量 `T0-FULL` fallback、hosted search 分支、双语 ranker 开关、旧 meta functions 或用户可调 topK。固定核心能力的适用范围按下方2026-08-28修正执行；2026-09-16又完成[明确工具身份与范围修复](TOOL-DISCOVERY-IDENTITY-SCOPE.md)，当前随共同v21保留于Main。精确名称优先于仅在描述中提及它的工具；范围过滤先于最终截取，BM25全语料统计不变。下文D1/H7排名与分母仍属于原冻结实验，不计入这些后续修复。
 
 原 D1C 机械门会选择 `T0-FULL`，原因只有 256-Tool timing 的 end-to-end p95 ratio 单侧 95% 上界 `1.1190` 窄幅超过 CharaMate 启发式 `1.10`。完整证据同时显示：T2 在 256/512 两层业务质量非劣，512 层完整合格，input token 显著下降，且 512 的 TTFT/end-to-end 在 C16 与 C1 下方向一致。仓库 owner 因此在保留机械结论后，以带时间戳 amendment 选择 T2。当前 Decision SHA-256 为 `70a41569…e052`，selection amendment 为 `df73b622…d044`。
 

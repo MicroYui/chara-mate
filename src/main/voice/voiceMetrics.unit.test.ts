@@ -65,8 +65,59 @@ describe("Voice development metrics", () => {
       sessions: 1,
       toolContinuation: { count: 1, p50Ms: 350, p95Ms: 350 },
       tokens: { cachedInputTokens: 2, inputTokens: 10, outputTokens: 4 },
+      usageCoverage: {
+        reports: 1,
+        cachedInputTokens: 1,
+        inputTokens: 1,
+        outputTokens: 1,
+      },
       truncateAcknowledgement: { count: 1, p50Ms: 40, p95Ms: 40 },
       turns: 1,
+    });
+  });
+
+  it("counts absent, partial and zero usage separately from known token sums", () => {
+    const metrics = new VoiceMetrics();
+    expect(metrics.snapshot().usageCoverage).toEqual({
+      reports: 0,
+      cachedInputTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    metrics.responseUsage(undefined);
+    metrics.responseUsage({});
+    expect(metrics.snapshot()).toMatchObject({
+      tokens: { cachedInputTokens: 0, inputTokens: 0, outputTokens: 0 },
+      usageCoverage: {
+        reports: 2,
+        cachedInputTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+      },
+    });
+    metrics.responseUsage({
+      cachedInputTokens: 2,
+      inputTokens: 10,
+      outputTokens: 4,
+    });
+    metrics.responseUsage({
+      cachedInputTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    metrics.responseUsage({ inputTokens: 7 });
+    metrics.responseUsage({ outputTokens: 3 });
+    metrics.responseUsage({ cachedInputTokens: 5 });
+    expect(metrics.snapshot()).toMatchObject({
+      tokens: { cachedInputTokens: 7, inputTokens: 17, outputTokens: 7 },
+      usageCoverage: {
+        reports: 7,
+        cachedInputTokens: 3,
+        inputTokens: 3,
+        outputTokens: 3,
+      },
+      turns: 0,
+      sessions: 0,
     });
   });
 });

@@ -10,15 +10,24 @@ import type {
 import type { JsonValue } from "../../shared/contracts/primitives";
 import type { ProviderProfileDraft } from "../../shared/contracts/provider";
 import type {
+  InputMeasurementOptions,
   ModelContextLimits,
   ModelEvent,
   ModelFunctionTool,
+  ModelOutputItemEvent,
   ModelProvider,
   ModelRequest,
   ModelToolNamespace,
 } from "../agent/modelProvider";
 import { createClient, mapSdkError } from "./openaiProviderAdapter";
-import { ProviderError } from "./providerError";
+import { openAIResponseDisplayText } from "./openaiCitationDisplay";
+import { ProviderError, type ProviderRequestIdentity } from "./providerError";
+import {
+  estimateInputBudget,
+  fitsInputBudget,
+  modelInputBudget,
+  type InputBudgetEstimate,
+} from "./inputBudget";
 
 const SELECTED_PROMPT_CACHE_MODEL = "gpt-5.6-sol";
 const TOOL_WIRE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/u;
@@ -236,13 +245,14 @@ function readPositiveInteger(
   record: Readonly<Record<string, unknown>>,
   ...names: readonly string[]
 ): number | undefined {
+  const values: number[] = [];
   for (const name of names) {
     const value = record[name];
     if (typeof value === "number" && Number.isInteger(value) && value > 0) {
-      return value;
+      values.push(value);
     }
   }
-  return undefined;
+  return values.length ? Math.min(...values) : undefined;
 }
 
 function metadataRecord(
@@ -257,12 +267,33 @@ function readPositiveIntegerFrom(
   records: readonly (Readonly<Record<string, unknown>> | undefined)[],
   ...names: readonly string[]
 ): number | undefined {
+  const values: number[] = [];
   for (const record of records) {
     if (!record) continue;
     const value = readPositiveInteger(record, ...names);
-    if (value !== undefined) return value;
+    if (value !== undefined) values.push(value);
   }
-  return undefined;
+  return values.length ? Math.min(...values) : undefined;
+}
+
+function intersectModelLimits(
+  listed: ModelContextLimits | undefined,
+  detailed: ModelContextLimits,
+): ModelContextLimits {
+  const limits = { ...listed, ...detailed };
+  for (const key of [
+    "effectiveInputTokens",
+    "maxContextTokens",
+    "maxOutputTokens",
+    "maxPromptTokens",
+  ] as const) {
+    const first = listed?.[key];
+    const second = detailed[key];
+    if (first !== undefined && second !== undefined) {
+      limits[key] = Math.min(first, second);
+    }
+  }
+  return limits;
 }
 
 function readEffectiveContextPercent(
@@ -365,12 +396,30 @@ function eventError(event: ResponseStreamEvent): ProviderError | undefined {
 export class OpenAIResponsesModelProvider implements ModelProvider {
   readonly #client: OpenAI;
   readonly #openAICompatible: boolean;
+  readonly #profileIdentity:
+    Omit<ProviderRequestIdentity, "modelId"> | undefined;
+  readonly #contextLimits = new Map<string, ModelContextLimits>();
+  #inputCountUnsupported = false;
+  #lastInputCount:
+    { readonly wire: string; readonly inputTokens: number } | undefined;
   readonly supportsNativeWebSearch: boolean;
 
   constructor(profile: ProviderProfileDraft, apiKey: string) {
     this.#client = createClient(profile, apiKey);
     this.#openAICompatible = profile.apiStyle === "openai-compatible";
+    this.#profileIdentity = profile.id
+      ? { profileId: profile.id, apiStyle: profile.apiStyle }
+      : undefined;
     this.supportsNativeWebSearch = true;
+  }
+
+  #requestError(error: unknown, modelId: string, unavailableMessage?: string) {
+    const mapped = mapSdkError(error, unavailableMessage);
+    if (!this.#profileIdentity || mapped.requestIdentity) return mapped;
+    return new ProviderError(mapped.code, mapped.message, mapped.retryable, {
+      ...this.#profileIdentity,
+      modelId,
+    });
   }
 
   async resolveContextLimits(
@@ -388,13 +437,15 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
         listedLimits = contextLimitsFromModel(model);
         if (listedLimits.effectiveInputTokens !== undefined) {
           signal?.throwIfAborted();
+          this.#contextLimits.set(modelId, listedLimits);
           return listedLimits;
         }
         break;
       }
     } catch (error) {
       signal?.throwIfAborted();
-      if (!unsupportedModelMetadataEndpoint(error)) throw mapSdkError(error);
+      if (!unsupportedModelMetadataEndpoint(error))
+        throw this.#requestError(error, modelId);
     }
     signal?.throwIfAborted();
 
@@ -406,26 +457,109 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
         ),
       );
       signal?.throwIfAborted();
-      return { ...listedLimits, ...detailedLimits };
+      const limits = intersectModelLimits(listedLimits, detailedLimits);
+      this.#contextLimits.set(modelId, limits);
+      return limits;
     } catch (error) {
       signal?.throwIfAborted();
-      if (unsupportedModelMetadataEndpoint(error)) return listedLimits ?? {};
-      throw mapSdkError(error);
+      if (unsupportedModelMetadataEndpoint(error)) {
+        const limits = listedLimits ?? {};
+        this.#contextLimits.set(modelId, limits);
+        return limits;
+      }
+      throw this.#requestError(error, modelId);
     }
   }
 
-  async *stream(
-    request: ModelRequest,
+  async #measureInput(
+    body: ResponseCreateParamsStreaming & {
+      input: ResponseInput;
+      instructions: string;
+      model: string;
+    },
     signal: AbortSignal,
-  ): AsyncIterable<ModelEvent> {
+    requireExact: boolean,
+  ): Promise<{ measurement: InputBudgetEstimate; budget: number }> {
+    signal.throwIfAborted();
+    const limits =
+      this.#contextLimits.get(body.model) ??
+      (await this.resolveContextLimits(body.model, signal));
+    const budget = modelInputBudget(
+      limits,
+      body.max_output_tokens ?? undefined,
+    );
+    signal.throwIfAborted();
+    const estimate = estimateInputBudget(body, body.model);
+    // These are all token-bearing fields in this adapter's final wire. Output
+    // reserve is intentionally excluded from the cache key and rechecked above.
+    const countBody = {
+      input: body.input,
+      instructions: body.instructions,
+      model: body.model,
+      ...(body.parallel_tool_calls === undefined
+        ? {}
+        : { parallel_tool_calls: body.parallel_tool_calls }),
+      ...(body.text === undefined ? {} : { text: body.text }),
+      ...(body.tool_choice === undefined
+        ? {}
+        : { tool_choice: body.tool_choice }),
+      ...(body.tools === undefined ? {} : { tools: body.tools }),
+    };
+    const wire = JSON.stringify(countBody);
+    if (this.#lastInputCount?.wire === wire) {
+      return {
+        measurement: {
+          ...estimate,
+          exactInputTokens: this.#lastInputCount.inputTokens,
+        },
+        budget,
+      };
+    }
+    if (!requireExact && fitsInputBudget(estimate, budget)) {
+      return { measurement: estimate, budget };
+    }
+    if (!this.#inputCountUnsupported) {
+      try {
+        const count = await this.#client.responses.inputTokens.count(
+          countBody,
+          { maxRetries: 0, signal },
+        );
+        signal.throwIfAborted();
+        if (
+          count.object !== "response.input_tokens" ||
+          !Number.isSafeInteger(count.input_tokens) ||
+          count.input_tokens < 0
+        ) {
+          throw new ProviderError(
+            "PROVIDER.REQUEST_FAILED",
+            "Provider 返回了无效的输入 Token 计数。",
+            false,
+          );
+        }
+        // No in-flight sharing: each count belongs to its caller's signal. A
+        // cancelled or invalid response never replaces the last completed result.
+        this.#lastInputCount = { wire, inputTokens: count.input_tokens };
+        return {
+          measurement: { ...estimate, exactInputTokens: count.input_tokens },
+          budget,
+        };
+      } catch (error) {
+        signal.throwIfAborted();
+        if (!unsupportedModelMetadataEndpoint(error)) throw error;
+        this.#inputCountUnsupported = true;
+      }
+    }
+    return { measurement: estimate, budget };
+  }
+
+  #requestBody(request: ModelRequest) {
     const tools = requestTools(
       request.toolNamespaces,
       this.supportsNativeWebSearch && request.nativeWebSearch === true,
     );
-    const toolReferences = runtimeToolReferenceMap(request.toolNamespaces);
     const useSelectedPromptCache =
       this.#openAICompatible && request.modelId === SELECTED_PROMPT_CACHE_MODEL;
-    const body = {
+    return {
       input: request.input.map(wireInputValue) as unknown as ResponseInput,
       instructions: request.instructions,
       ...(request.maxOutputTokens === undefined
@@ -468,35 +602,114 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
             tools,
           }),
     } satisfies ResponseCreateParamsStreaming;
+  }
+
+  estimateInput(request: ModelRequest) {
+    return estimateInputBudget(this.#requestBody(request), request.modelId);
+  }
+
+  async measureInput(
+    request: ModelRequest,
+    signal: AbortSignal,
+    options?: InputMeasurementOptions,
+  ): Promise<InputBudgetEstimate> {
+    signal.throwIfAborted();
+    // Own the complete body across awaits; later caller mutation cannot change
+    // what the completed count describes or what final generation will send.
+    const body = structuredClone(this.#requestBody(request));
+    try {
+      const result = await this.#measureInput(
+        body,
+        signal,
+        options?.requireExact === true,
+      );
+      signal.throwIfAborted();
+      return result.measurement;
+    } catch (error) {
+      signal.throwIfAborted();
+      throw this.#requestError(error, body.model);
+    }
+  }
+
+  async *stream(
+    request: ModelRequest,
+    signal: AbortSignal,
+  ): AsyncIterable<ModelEvent> {
+    const body = structuredClone(this.#requestBody(request));
+    const toolReferences = runtimeToolReferenceMap(request.toolNamespaces);
+    const outputEvent = (
+      value: unknown,
+      outputIndex?: number,
+    ): ModelOutputItemEvent => {
+      const item = runtimeOutputItem(value);
+      const runtimeArguments = runtimeFunctionArguments(item, toolReferences);
+      return {
+        item,
+        ...(outputIndex === undefined ? {} : { outputIndex }),
+        ...(runtimeArguments === undefined ? {} : { runtimeArguments }),
+        type: "output.item",
+      };
+    };
 
     try {
-      const stream = await this.#client.responses.create(body, { signal });
+      const { measurement, budget } = await this.#measureInput(
+        body,
+        signal,
+        true,
+      );
+      signal.throwIfAborted();
+      if (!fitsInputBudget(measurement, budget)) {
+        throw new ProviderError(
+          "PROVIDER.CONTEXT_LIMIT_EXCEEDED",
+          measurement.exactInputTokens !== undefined
+            ? `本次完整输入为 ${measurement.exactInputTokens} Token，超过 ${budget} Token 上限，请缩短内容或先整理历史。`
+            : measurement.unknownKinds.length > 0
+              ? "Provider 不支持精确输入计数，当前附件或不透明上下文无法可靠计入预算。请改用较短的文本或支持输入计数的 Provider。"
+              : `完整请求接近或超过 ${budget} Token 输入预算，且 Provider 不支持精确计数。请减少附件或历史，或改用支持精确输入计数的 Provider。`,
+          false,
+        );
+      }
+      const stream = await this.#client.responses.create(body, {
+        maxRetries: 0,
+        signal,
+      });
       for await (const event of stream) {
         const error = eventError(event);
         if (error) throw error;
         if (event.type === "response.output_text.delta") {
-          yield { delta: event.delta, type: "text.delta" };
-        } else if (event.type === "response.output_item.done") {
-          const item = runtimeOutputItem(event.item);
-          const runtimeArguments = runtimeFunctionArguments(
-            item,
-            toolReferences,
-          );
           yield {
-            item,
-            ...(runtimeArguments === undefined ? {} : { runtimeArguments }),
-            type: "output.item",
+            contentIndex: event.content_index,
+            delta: event.delta,
+            itemId: event.item_id,
+            outputIndex: event.output_index,
+            type: "text.delta",
           };
+        } else if (event.type === "response.output_item.done") {
+          yield outputEvent(event.item, event.output_index);
         } else if (event.type === "response.completed") {
           const usage = event.response.usage;
+          const inputTokens = usage?.input_tokens;
+          const outputTokens = usage?.output_tokens;
+          const cachedInputTokens = usage?.input_tokens_details?.cached_tokens;
+          const displayText = openAIResponseDisplayText(event.response.output);
           yield {
+            ...(displayText === undefined ? {} : { displayText }),
+            ...(event.response.output === undefined
+              ? {}
+              : {
+                  outputEvents: event.response.output.map((item, outputIndex) =>
+                    outputEvent(item, outputIndex),
+                  ),
+                }),
             responseId: event.response.id,
             status: "completed",
             type: "response.completed",
             usage: {
-              cachedInputTokens: usage?.input_tokens_details.cached_tokens ?? 0,
-              inputTokens: usage?.input_tokens ?? 0,
-              outputTokens: usage?.output_tokens ?? 0,
+              ...(typeof cachedInputTokens === "number"
+                ? { cachedInputTokens }
+                : {}),
+              ...(typeof inputTokens === "number" ? { inputTokens } : {}),
+              ...(typeof outputTokens === "number" ? { outputTokens } : {}),
             },
           };
         }
@@ -507,7 +720,11 @@ export class OpenAIResponsesModelProvider implements ModelProvider {
           ? signal.reason
           : new DOMException("Operation was aborted", "AbortError");
       }
-      throw mapSdkError(error, "该 Provider 不支持所需 Responses 能力。");
+      throw this.#requestError(
+        error,
+        body.model,
+        "该 Provider 不支持所需 Responses 能力。",
+      );
     }
   }
 }

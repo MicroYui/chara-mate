@@ -11,12 +11,11 @@ import {
   MemoryListResponseSchema,
   MemoryMutationResponseSchema,
   MemoryPurgeResponseSchema,
-  MemoryResolveClaimRequestSchema,
   MemoryReviseRequestSchema,
   MemorySetPinnedRequestSchema,
 } from "../../shared/schemas/memory";
 import { parseSchema } from "../../shared/schemas/validation";
-import { MemoryError, toMemoryAppError } from "./memoryError";
+import { toMemoryAppError } from "./memoryError";
 import type { MemoryService } from "./memoryService";
 
 export function registerMemoryIpc(service: MemoryService): () => void {
@@ -53,16 +52,6 @@ export function registerMemoryIpc(service: MemoryService): () => void {
   ipcMain.handle(MEMORY_CHANNELS.create, (_event, input) => {
     try {
       const request = parseSchema(MemoryCreateRequestSchema, input);
-      if (
-        (request.type === "profile" || request.type === "preference") &&
-        !request.claimSlot
-      ) {
-        throw new MemoryError(
-          "MEMORY.CONFLICT",
-          "手动新建画像或偏好时请选择稳定字段。",
-          false,
-        );
-      }
       return parseSchema(MemoryMutationResponseSchema, {
         ok: true,
         value: service.create(request),
@@ -81,21 +70,6 @@ export function registerMemoryIpc(service: MemoryService): () => void {
       return parseSchema(MemoryMutationResponseSchema, {
         ok: true,
         value: service.revise(request),
-      });
-    } catch (error) {
-      return parseSchema(MemoryMutationResponseSchema, {
-        error: toMemoryAppError(error),
-        ok: false,
-      });
-    }
-  });
-
-  ipcMain.handle(MEMORY_CHANNELS.resolveClaim, (_event, input) => {
-    try {
-      const request = parseSchema(MemoryResolveClaimRequestSchema, input);
-      return parseSchema(MemoryMutationResponseSchema, {
-        ok: true,
-        value: service.resolveClaim(request),
       });
     } catch (error) {
       return parseSchema(MemoryMutationResponseSchema, {

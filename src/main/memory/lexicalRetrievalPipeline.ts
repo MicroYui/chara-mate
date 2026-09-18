@@ -141,8 +141,8 @@ export class LexicalRetrievalPipeline implements RetrievalPipeline {
     if (match) candidateClauses.push("memory_fts MATCH @match");
     const score = match ? ", bm25(memory_fts) AS relevance" : "";
     const order = match
-      ? "relevance ASC, c.pinned_at IS NOT NULL DESC, c.importance DESC, c.confidence DESC, c.last_accessed_at DESC, c.updated_at DESC, c.memory_id"
-      : "c.pinned_at IS NOT NULL DESC, c.importance DESC, c.confidence DESC, c.last_accessed_at DESC, c.updated_at DESC, c.memory_id";
+      ? "relevance ASC, c.pinned_at IS NOT NULL DESC, c.importance DESC, c.confidence DESC, c.updated_at DESC, c.memory_id"
+      : "c.pinned_at IS NOT NULL DESC, c.importance DESC, c.confidence DESC, c.updated_at DESC, c.memory_id";
     const limitClause = limit === undefined ? "" : "LIMIT @limit";
     const rows = this.database
       .prepare(

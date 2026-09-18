@@ -63,36 +63,44 @@ export class Bm25SearchIndex<TValue> {
           ) / this.#documents.length;
   }
 
-  search(query: string, limit = 8): TValue[] {
+  search(
+    query: string,
+    limit = 8,
+    eligibleIds?: ReadonlySet<string>,
+  ): TValue[] {
     const tokens = [...new Set(tokenizeToolMetadata(query))];
     const count = this.#documents.length;
     if (tokens.length === 0 || count === 0) return [];
 
-    return this.#documents
-      .map((document) => {
-        let score = 0;
-        for (const token of tokens) {
-          const frequency = document.frequencies.get(token) ?? 0;
-          if (frequency === 0) continue;
-          const containing = this.#documentFrequency.get(token) ?? 0;
-          const inverseFrequency = Math.log(
-            1 + (count - containing + 0.5) / (containing + 0.5),
-          );
-          const lengthNormalization =
-            frequency +
-            K1 * (1 - B + (B * document.length) / this.#averageLength);
-          score +=
-            inverseFrequency * ((frequency * (K1 + 1)) / lengthNormalization);
-        }
-        return { document, score };
-      })
-      .filter(({ score }) => score > 0)
-      .sort(
-        (left, right) =>
-          right.score - left.score ||
-          left.document.id.localeCompare(right.document.id),
-      )
-      .slice(0, Math.max(0, Math.min(8, limit)))
-      .map(({ document }) => document.value);
+    return (
+      this.#documents
+        // Eligibility narrows results, not the corpus statistics used to rank them.
+        .filter((document) => eligibleIds?.has(document.id) ?? true)
+        .map((document) => {
+          let score = 0;
+          for (const token of tokens) {
+            const frequency = document.frequencies.get(token) ?? 0;
+            if (frequency === 0) continue;
+            const containing = this.#documentFrequency.get(token) ?? 0;
+            const inverseFrequency = Math.log(
+              1 + (count - containing + 0.5) / (containing + 0.5),
+            );
+            const lengthNormalization =
+              frequency +
+              K1 * (1 - B + (B * document.length) / this.#averageLength);
+            score +=
+              inverseFrequency * ((frequency * (K1 + 1)) / lengthNormalization);
+          }
+          return { document, score };
+        })
+        .filter(({ score }) => score > 0)
+        .sort(
+          (left, right) =>
+            right.score - left.score ||
+            left.document.id.localeCompare(right.document.id),
+        )
+        .slice(0, Math.max(0, Math.min(8, limit)))
+        .map(({ document }) => document.value)
+    );
   }
 }

@@ -274,4 +274,31 @@ describe("VoiceWakeController", () => {
     expect(fixture.startWake).not.toHaveBeenCalled();
     fixture.controller.stop();
   });
+
+  it("does not start Voice after a stopped wake cue returns late", async () => {
+    const fixture = createFixture();
+    let release!: () => void;
+    let entered!: () => void;
+    const enteredCue = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fixture.playReadyCue.mockImplementationOnce(() => {
+      entered();
+      return cue;
+    });
+    fixture.controller.start();
+    await flushMicrotasks();
+    fixture.detect();
+    await enteredCue;
+    fixture.controller.stop();
+    release();
+    await flushMicrotasks();
+    expect(fixture.startWake).not.toHaveBeenCalled();
+    expect(fixture.resumeFromWake).not.toHaveBeenCalled();
+    expect(fixture.reports).not.toContain("connecting");
+    expect(fixture.reports).not.toContain("error");
+  });
 });

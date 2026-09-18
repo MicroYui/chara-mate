@@ -36,9 +36,43 @@ async function launch(userDataDirectory: string) {
       CHARAMATE_USER_DATA_DIR: userDataDirectory,
     },
   });
-  const page = await findMainWindow(application);
-  await expect(page.getByRole("region", { name: "Chats" })).toBeVisible();
-  return { application, page };
+  const child = application.process();
+  const output: string[] = [];
+  const captureOutput = (data: Buffer) => output.push(data.toString());
+  child.stdout?.on("data", captureOutput);
+  child.stderr?.on("data", captureOutput);
+  try {
+    const page = await findMainWindow(application);
+    await expect(page.getByRole("region", { name: "Chats" })).toBeVisible();
+    return { application, page };
+  } catch (error) {
+    const state = await application
+      .evaluate(({ app, BrowserWindow }) => ({
+        ready: app.isReady(),
+        windows: BrowserWindow.getAllWindows().map((window) => ({
+          id: window.id,
+          title: window.getTitle(),
+          visible: window.isVisible(),
+          destroyed: window.isDestroyed(),
+        })),
+      }))
+      .catch((stateError: unknown) => ({ error: String(stateError) }));
+    await test.info().attach("electron-startup-failure", {
+      body: JSON.stringify({ pid: child.pid, state, output }),
+      contentType: "application/json",
+    });
+    // launch owns this application until it returns it to the caller.
+    await application.close().catch(async (closeError: unknown) => {
+      await test.info().attach("electron-startup-close-failure", {
+        body: String(closeError),
+        contentType: "text/plain",
+      });
+    });
+    throw error;
+  } finally {
+    child.stdout?.off("data", captureOutput);
+    child.stderr?.off("data", captureOutput);
+  }
 }
 
 async function openTerritory(page: Page): Promise<void> {
@@ -138,7 +172,10 @@ test("persists the World contract, lifecycle and immutable restore", async () =>
     );
 
     const restored = await first.page.evaluate(async (revisionId) => {
+      const snapshot = await window.charaMate.territory.getSnapshot();
+      if (!snapshot.ok) throw new Error(snapshot.error.code);
       const response = await window.charaMate.territory.restoreRevision({
+        expectedCurrentRevisionId: snapshot.value.world.currentRevision.id,
         revisionId,
       });
       return response.ok

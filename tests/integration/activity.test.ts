@@ -9,8 +9,12 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  visualFrameFixture,
+  visualSurfaceFixture,
+} from "../../src/main/activity/activityVisual.fixture";
 import { ActivityAssetStore } from "../../src/main/activity/activityAssetStore";
 import { ActivityRepository } from "../../src/main/activity/activityRepository";
 import { ActivityService } from "../../src/main/activity/activityService";
@@ -29,9 +33,18 @@ afterEach(() => {
     rmSync(root, { force: true, recursive: true });
 });
 
-function harness(now = "2026-08-10T12:00:00.000Z") {
-  const root = mkdtempSync(path.join(os.tmpdir(), "charamate-activity-"));
-  roots.push(root);
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function harness(now = "2026-08-10T12:00:00.000Z", existingRoot?: string) {
+  const root =
+    existingRoot ?? mkdtempSync(path.join(os.tmpdir(), "charamate-activity-"));
+  if (!existingRoot) roots.push(root);
   const database = openApplicationDatabase(path.join(root, "app.sqlite"));
   const memoryRepository = new MemoryRepository(database);
   const retrieval: RetrievalPipeline = {
@@ -48,31 +61,17 @@ function harness(now = "2026-08-10T12:00:00.000Z") {
   const repository = new ActivityRepository(database);
   repository.initialize(clock.now());
   const assets = new ActivityAssetStore(path.join(root, "activity-assets"));
-  const captureCalls: unknown[] = [];
-  const captureBytes = Buffer.from("activity-screenshot-png");
   const service = new ActivityService(
     repository,
     memory,
     assets,
-    {
-      capturePrimaryDisplay: (options) => {
-        captureCalls.push(options);
-        return Promise.resolve({
-          bytes: captureBytes,
-          height: 1,
-          mediaType: "image/png" as const,
-          width: 1,
-        });
-      },
-    },
     ids,
     clock,
     "Asia/Shanghai",
   );
+  service.setSourceRetentionGuard(() => new Set());
   return {
     assets,
-    captureBytes,
-    captureCalls,
     clock,
     database,
     memory,
@@ -82,21 +81,571 @@ function harness(now = "2026-08-10T12:00:00.000Z") {
   };
 }
 
+function recordEditorDays(service: ActivityService, days: readonly string[]) {
+  for (const day of days) {
+    service.recordEvent(
+      {
+        appName: "Visual Studio Code",
+        source: "active_app",
+        windowTitle: `private-project-${day}`,
+      },
+      "user",
+      `2026-08-${day}T01:00:00.000Z`,
+      `2026-08-${day}T02:00:00.000Z`,
+    );
+  }
+}
+
 describe("Activity persistence and distillation", () => {
-  it("captures Activity screenshots at logical resolution without re-encoding", async () => {
-    const { captureBytes, captureCalls, database, root, service } = harness();
+  it("keeps native collection completion distinct from database receipt time", () => {
+    const { database, service } = harness("2026-09-16T04:00:01.000Z");
+    const id = service.startEvent(
+      {
+        source: "active_app",
+        appName: "Synthetic fixture",
+        boundary: "interaction",
+        inputOrigin: "hid_reported",
+        interaction: { clicks: 1, keystrokes: 0, scrolls: 0 },
+      },
+      "unknown",
+      "2026-09-16T04:00:00.500Z",
+    );
+    expect(service.getEvent(id!)).toMatchObject({
+      actor: "unknown",
+      startedAt: "2026-09-16T04:00:00.500Z",
+      details: { inputOrigin: "hid_reported" },
+    });
+    expect(
+      database
+        .prepare("SELECT created_at FROM activity_events WHERE id = ?")
+        .get(id),
+    ).toEqual({ created_at: "2026-09-16T04:00:01.000Z" });
+    database.close();
+  });
 
-    await service.captureScreenshot("user");
+  it("persists fine-grained semantic events through redaction and keeps system events out of user patterns", () => {
+    const { clock, database, service } = harness();
+    const id = service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Notes",
+        windowTitle: "work.md",
+        boundary: "content",
+        contentStatus: "available",
+        content: {
+          source: "accessibility",
+          scope: "focused_element",
+          text: "Plan: access_token=synthetic-secret",
+        },
+        interaction: { clicks: 1, keystrokes: 10, scrolls: 2 },
+      },
+      "user",
+    );
+    expect(id).toBeTypeOf("string");
+    clock.advance(1000);
+    service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Notes",
+        boundary: "interaction",
+        contentStatus: "protected",
+        content: {
+          source: "accessibility",
+          scope: "focused_element",
+          text: "synthetic-password-value",
+        },
+        interaction: { clicks: 0, keystrokes: 20, scrolls: 0 },
+      },
+      "user",
+    );
+    service.recordEvent(
+      {
+        source: "managed_browser",
+        domain: "example.com",
+        url: "https://example.com/docs",
+        boundary: "content",
+        content: { source: "dom", scope: "viewport", text: "自动刷新内容" },
+      },
+      "system",
+    );
+    const raw = JSON.stringify(
+      database.prepare("SELECT * FROM activity_events").all(),
+    );
+    expect(raw).toContain("focused_element");
+    expect(raw).not.toContain("synthetic-secret");
+    expect(raw).not.toContain("synthetic-password-value");
+    clock.advance(9 * 60_000);
+    service.distill();
+    const snapshot = service.getSnapshot("2026-08-10");
+    expect(
+      snapshot.episodes.some(({ summary }) => summary.includes("按键 10 次")),
+    ).toBe(true);
+    expect(
+      snapshot.episodes.some(({ summary }) => summary.includes("未读取内容")),
+    ).toBe(true);
+    expect(
+      snapshot.episodes.some(
+        ({ actor, summary }) =>
+          actor === "system" && summary.includes("自动刷新内容"),
+      ),
+    ).toBe(true);
+    database.close();
+  });
 
-    expect(captureCalls).toEqual([{ resolution: "logical" }]);
+  it("persists a consumed source-bound visual without putting PNG bytes into event state", async () => {
+    const { database, root, service } = harness();
+    const eventId = service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Synthetic fixture",
+        surface: visualSurfaceFixture,
+        visualStatus: "available",
+      },
+      "user",
+    )!;
+    service.setVisualContext({
+      actor: "user",
+      surface: visualSurfaceFixture,
+      eventId,
+    });
+    const frame = await visualFrameFixture();
+    const captured = await service.recordVisualFrame(frame, "foreground");
+    expect(captured?.event.details.visual.surface).toEqual(
+      visualSurfaceFixture,
+    );
+    expect(JSON.stringify(captured)).not.toContain(
+      frame.bytes.toString("base64"),
+    );
     const row = database
-      .prepare(
-        "SELECT storage_key FROM activity_assets ORDER BY created_at DESC LIMIT 1",
-      )
+      .prepare("SELECT storage_key FROM activity_assets")
       .get() as { storage_key: string };
     expect(
       readFileSync(path.join(root, "activity-assets", row.storage_key)),
-    ).toEqual(captureBytes);
+    ).toEqual(frame.bytes);
+    expect(
+      await service.resolveVisualEvidence(captured!.reference),
+    ).toMatchObject({ status: "available", bytes: frame.bytes });
+    database.close();
+  });
+
+  it("resolves a raw source by exact event ID before and after aggregation, using local calendar date", () => {
+    const { database, service, clock } = harness("2026-08-10T20:00:00.000Z");
+    const id = service.recordEvent(
+      { source: "active_app", appName: "Synthetic fixture" },
+      "user",
+    )!;
+    expect(service.resolveEventReference(id)).toMatchObject({
+      date: "2026-08-11",
+      event: { id },
+    });
+    expect(service.resolveEventReference(id).episodeId).toBeUndefined();
+    clock.advance(10 * 60_000);
+    service.distill();
+    const reference = service.resolveEventReference(id);
+    expect(reference.episodeId).toBeTypeOf("string");
+    expect(service.getEpisode(reference.episodeId!).id).toBe(
+      reference.episodeId,
+    );
+    expect(() => service.resolveEventReference(reference.episodeId!)).toThrow(
+      "不存在",
+    );
+    database.prepare("DELETE FROM activity_events WHERE id = ?").run(id);
+    expect(() => service.resolveEventReference(id)).toThrow("不存在");
+    database.close();
+  });
+
+  it("consumes the latest image without publishing a recursive attention event and reuses exact unchanged content", async () => {
+    const { database, service } = harness();
+    const eventId = service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Synthetic fixture",
+        surface: visualSurfaceFixture,
+      },
+      "user",
+    )!;
+    service.setVisualContext({
+      actor: "user",
+      surface: visualSurfaceFixture,
+      eventId,
+    });
+    const frame = await visualFrameFixture();
+    service.setVisualFrameSupplier(() => Promise.resolve(frame));
+    const published = vi.fn();
+    service.setEventListener(published);
+    const first = await service.consumeLatestVisualEvidence();
+    const second = await service.consumeLatestVisualEvidence();
+    expect(first?.event.details.visual.trigger).toBe("frame");
+    expect(second?.event.id).toBe(first?.event.id);
+    expect(
+      database.prepare("SELECT COUNT(*) AS n FROM activity_assets").get(),
+    ).toEqual({ n: 1 });
+    expect(published).not.toHaveBeenCalled();
+    database.close();
+  });
+
+  it("forwards changed-frame metadata only for the current actor and surface, without recording frames", () => {
+    const { database, service } = harness();
+    const eventId = service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Synthetic fixture",
+        surface: visualSurfaceFixture,
+      },
+      "user",
+    )!;
+    service.setVisualContext({
+      actor: "user",
+      surface: visualSurfaceFixture,
+      eventId,
+    });
+    const listener = vi.fn();
+    service.setVisualChangeListener(listener);
+    const change = {
+      actor: "user" as const,
+      surface: visualSurfaceFixture,
+      capturedAt: "2026-08-10T12:00:00.000Z",
+      sequence: 3,
+    };
+    service.notifyVisualChanged(change);
+    expect(service.isCurrentVisualSource(change)).toBe(true);
+    expect(service.isCurrentVisualSource({ ...change, actor: "agent" })).toBe(
+      false,
+    );
+    expect(
+      service.isCurrentVisualSource({
+        ...change,
+        surface: { ...visualSurfaceFixture, epoch: "old" },
+      }),
+    ).toBe(false);
+    service.notifyVisualChanged({ ...change, actor: "agent" });
+    service.notifyVisualChanged({
+      ...change,
+      surface: { ...visualSurfaceFixture, epoch: "old" },
+    });
+    service.setPaused(true);
+    expect(service.isCurrentVisualSource(change)).toBe(false);
+    service.notifyVisualChanged(change);
+    expect(listener).toHaveBeenCalledExactlyOnceWith(change);
+    expect(
+      database.prepare("SELECT COUNT(*) AS n FROM activity_events").get(),
+    ).toEqual({ n: 1 });
+    expect(
+      database.prepare("SELECT COUNT(*) AS n FROM activity_assets").get(),
+    ).toEqual({ n: 0 });
+    database.close();
+  });
+
+  it("rejects expired and changed image references, including a removed local PNG", async () => {
+    const { database, service, root } = harness();
+    const eventId = service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Synthetic fixture",
+        surface: visualSurfaceFixture,
+      },
+      "user",
+    )!;
+    service.setVisualContext({
+      actor: "user",
+      surface: visualSurfaceFixture,
+      eventId,
+    });
+    const observation = (await service.recordVisualFrame(
+      await visualFrameFixture(),
+      "foreground",
+    ))!;
+    expect(
+      await service.resolveVisualEvidence({
+        ...observation.reference,
+        contentRevision: "different",
+      }),
+    ).toEqual({ status: "unavailable", reason: "source_changed" });
+    rmSync(
+      path.join(root, "activity-assets", observation.event.details.storageKey),
+    );
+    expect(await service.resolveVisualEvidence(observation.reference)).toEqual({
+      status: "unavailable",
+      reason: "asset_missing",
+    });
+    database
+      .prepare("DELETE FROM activity_events WHERE id = ?")
+      .run(observation.event.id);
+    expect(await service.resolveVisualEvidence(observation.reference)).toEqual({
+      status: "unavailable",
+      reason: "source_missing",
+    });
+    database.close();
+  });
+
+  it("removes an in-flight PNG when the source epoch changes before persistence", async () => {
+    const { database, service, assets, root } = harness();
+    const eventId = service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Synthetic fixture",
+        surface: visualSurfaceFixture,
+      },
+      "user",
+    )!;
+    service.setVisualContext({
+      actor: "user",
+      surface: visualSurfaceFixture,
+      eventId,
+    });
+    const original = assets.save.bind(assets);
+    let release!: () => void;
+    const deferred = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let wrote!: () => void;
+    const written = new Promise<void>((resolve) => {
+      wrote = resolve;
+    });
+    vi.spyOn(assets, "save").mockImplementation(async (...args) => {
+      const record = await original(...args);
+      wrote();
+      await deferred;
+      return record;
+    });
+    const capture = service.recordVisualFrame(
+      await visualFrameFixture(),
+      "foreground",
+    );
+    await written;
+    service.setVisualContext(undefined);
+    release();
+    expect(await capture).toBeUndefined();
+    expect(
+      database.prepare("SELECT COUNT(*) AS n FROM activity_assets").get(),
+    ).toEqual({ n: 0 });
+    await expect(
+      (await import("node:fs/promises")).readdir(
+        path.join(root, "activity-assets"),
+      ),
+    ).resolves.toEqual([]);
+    database.close();
+  });
+
+  it("serializes reclamation after a new PNG and its source commit", async () => {
+    const { database, service, assets } = harness();
+    const eventId = service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Synthetic fixture",
+        surface: visualSurfaceFixture,
+      },
+      "user",
+    )!;
+    service.setVisualContext({
+      actor: "user",
+      surface: visualSurfaceFixture,
+      eventId,
+    });
+    const written = deferred();
+    const release = deferred();
+    const save = assets.save.bind(assets);
+    vi.spyOn(assets, "save").mockImplementation(async (...args) => {
+      const record = await save(...args);
+      written.resolve();
+      await release.promise;
+      return record;
+    });
+    const capture = service.recordVisualFrame(
+      await visualFrameFixture(),
+      "foreground",
+    );
+    await written.promise;
+    let completed = false;
+    const cleanup = service.cleanup(false).then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    release.resolve();
+    const observation = (await capture)!;
+    await cleanup;
+    expect(
+      (await service.resolveVisualEvidence(observation.reference)).status,
+    ).toBe("available");
+    database.close();
+  });
+
+  it("keeps an old asset while a queued observation adds a current reference", async () => {
+    const { database, service, repository, clock } = harness();
+    const observe = async (epoch: string, sequence: number) => {
+      const surface = { ...visualSurfaceFixture, epoch };
+      const eventId = service.recordEvent(
+        { source: "active_app", appName: "Synthetic fixture", surface },
+        "user",
+      )!;
+      service.setVisualContext({ actor: "user", surface, eventId });
+      const frame = await visualFrameFixture(sequence);
+      return service.recordVisualFrame(
+        {
+          ...frame,
+          visual: {
+            ...frame.visual,
+            surface,
+            capturedAt: clock.now(),
+            receivedAt: clock.now(),
+          },
+        },
+        "foreground",
+      );
+    };
+    const first = (await observe("old", 1))!;
+    database
+      .prepare("UPDATE activity_events SET distilled_at = ? WHERE id = ?")
+      .run(clock.now(), first.event.id);
+    clock.advance(8 * 86_400_000);
+    const find = repository.findAssetByHash.bind(repository);
+    let cleanup: Promise<unknown> | undefined;
+    vi.spyOn(repository, "findAssetByHash").mockImplementation((hash) => {
+      const asset = find(hash);
+      cleanup = service.cleanup(false);
+      return asset;
+    });
+    const second = (await observe("current", 2))!;
+    await cleanup;
+    expect(second.reference.artifactId).toBe(first.reference.artifactId);
+    expect((await service.resolveVisualEvidence(second.reference)).status).toBe(
+      "available",
+    );
+    database.close();
+  });
+
+  it("orders episode deletion after a pending shared-asset reference", async () => {
+    const { database, service, repository, clock } = harness();
+    const observe = async (epoch: string, sequence: number) => {
+      const surface = { ...visualSurfaceFixture, epoch };
+      const eventId = service.recordEvent(
+        { source: "active_app", appName: "Synthetic fixture", surface },
+        "user",
+      )!;
+      service.setVisualContext({ actor: "user", surface, eventId });
+      const frame = await visualFrameFixture(sequence);
+      return service.recordVisualFrame(
+        {
+          ...frame,
+          visual: {
+            ...frame.visual,
+            surface,
+            capturedAt: clock.now(),
+            receivedAt: clock.now(),
+          },
+        },
+        "foreground",
+      );
+    };
+    const first = (await observe("old", 1))!;
+    clock.advance(10 * 60_000);
+    service.distill();
+    const oldEpisode = service.resolveEventReference(first.event.id).episodeId!;
+    clock.advance(86_400_000);
+    const find = repository.findAssetByHash.bind(repository);
+    let deletion: Promise<unknown> | undefined;
+    vi.spyOn(repository, "findAssetByHash").mockImplementation((hash) => {
+      const asset = find(hash);
+      deletion = service.deleteEpisode(oldEpisode);
+      return asset;
+    });
+    const second = (await observe("current", 2))!;
+    await deletion;
+    expect(service.getEvent(first.event.id)).toBeUndefined();
+    expect(second.reference.artifactId).toBe(first.reference.artifactId);
+    expect((await service.resolveVisualEvidence(second.reference)).status).toBe(
+      "available",
+    );
+    database.close();
+  });
+
+  it("invalidates in-flight pixels immediately and waits for reclamation on clear", async () => {
+    const { database, service, assets, root } = harness();
+    const eventId = service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Synthetic fixture",
+        surface: visualSurfaceFixture,
+      },
+      "user",
+    )!;
+    service.setVisualContext({
+      actor: "user",
+      surface: visualSurfaceFixture,
+      eventId,
+    });
+    const written = deferred(),
+      release = deferred();
+    const save = assets.save.bind(assets);
+    vi.spyOn(assets, "save").mockImplementation(async (...args) => {
+      const record = await save(...args);
+      written.resolve();
+      await release.promise;
+      return record;
+    });
+    const capture = service.recordVisualFrame(
+      await visualFrameFixture(),
+      "foreground",
+    );
+    await written.promise;
+    const cleanup = service.cleanup(false);
+    const clear = service.stopVisualCapture();
+    release.resolve();
+    expect(await capture).toBeUndefined();
+    await Promise.all([cleanup, clear]);
+    expect(
+      database.prepare("SELECT count(*) n FROM activity_assets").get(),
+    ).toEqual({ n: 0 });
+    await expect(
+      (await import("node:fs/promises")).readdir(
+        path.join(root, "activity-assets"),
+      ),
+    ).resolves.toEqual([]);
+    database.close();
+  });
+
+  it("keeps a deduplicated PNG while another episode or an undistilled source still references it", async () => {
+    const { database, service, clock, repository, root } = harness();
+    async function observe(epoch: string, sequence: number) {
+      const surface = { ...visualSurfaceFixture, epoch };
+      const eventId = service.recordEvent(
+        { source: "active_app", appName: "Synthetic fixture", surface },
+        "user",
+      )!;
+      service.setVisualContext({ actor: "user", surface, eventId });
+      const frame = await visualFrameFixture(sequence);
+      return (await service.recordVisualFrame(
+        {
+          ...frame,
+          visual: {
+            ...frame.visual,
+            surface,
+            capturedAt: clock.now(),
+            receivedAt: clock.now(),
+          },
+        },
+        "foreground",
+      ))!;
+    }
+    const first = await observe("first", 1);
+    clock.advance(10 * 60_000);
+    service.distill();
+    const episodeId = service.resolveEventReference(first.event.id).episodeId!;
+    clock.advance(8 * 24 * 60 * 60_000);
+    const second = await observe("second", 2);
+    expect(second.reference.artifactId).toBe(first.reference.artifactId);
+    const plan = await repository.cleanup(clock.now(), false, () => new Set());
+    expect(plan.storageKeys).toEqual([]);
+    await service.deleteEpisode(episodeId);
+    expect(
+      existsSync(
+        path.join(root, "activity-assets", second.event.details.storageKey),
+      ),
+    ).toBe(true);
+    expect(await service.resolveVisualEvidence(second.reference)).toMatchObject(
+      { status: "available" },
+    );
     database.close();
   });
 
@@ -252,189 +801,331 @@ describe("Activity persistence and distillation", () => {
     database.close();
   });
 
-  it("searches compact Activity observations and proposes a two-Weekly-Digest stable pattern", () => {
-    const { database, memory, service } = harness("2026-08-24T12:00:00.000Z");
-    for (const day of ["04", "11", "18"]) {
-      service.recordEvent(
-        {
-          appName: "Visual Studio Code",
-          source: "active_app",
-          windowTitle: `private-project-${day}`,
-        },
-        "user",
-        `2026-08-${day}T01:00:00.000Z`,
-        `2026-08-${day}T02:00:00.000Z`,
-      );
-    }
-    service.recordEvent(
-      { appName: "Terminal", source: "active_app" },
-      "agent",
-      "2026-08-18T03:00:00.000Z",
-      "2026-08-18T04:00:00.000Z",
-    );
-
-    service.distill();
-
-    const result = service.search({ query: "private-project" });
-    expect(result).toMatchObject({
-      observedBehaviorOnly: true,
-      patterns: [
-        {
-          activeDays: 3,
-          episodeCount: 3,
-          kind: "app",
-          label: "Visual Studio Code",
-          totalMinutes: 180,
-        },
-      ],
-    });
-    expect(JSON.stringify(result.patterns)).not.toContain("private-project");
-    const candidate = memory.list({}).candidates[0]!;
-    const weeklyIds = new Set(
-      database
-        .prepare("SELECT id FROM activity_digests WHERE kind = 'weekly'")
-        .all()
-        .map((row) => (row as { id: string }).id),
-    );
-    expect(candidate).toMatchObject({
-      content:
-        "用户在多个自然周持续使用 Visual Studio Code。这是观察到的使用习惯，不等同于用户明确表达的偏好。",
-      sourceType: "activity",
-      type: "activity_digest",
-    });
-    expect(candidate.sourceIds).toHaveLength(2);
-    expect(candidate.sourceIds.every((id) => weeklyIds.has(id))).toBe(true);
-    expect(candidate.sourceLabels.join(" ")).not.toContain("private-project");
-    database.close();
-  });
-
-  it("refreshes one pending stable pattern to the latest two weeks without accumulating sources", () => {
-    const { clock, database, memory, service } = harness(
-      "2026-08-17T12:00:00.000Z",
-    );
-    for (const day of ["04", "11"]) {
-      service.recordEvent(
-        { appName: "Visual Studio Code", source: "active_app" },
-        "user",
-        `2026-08-${day}T01:00:00.000Z`,
-        `2026-08-${day}T02:00:00.000Z`,
-      );
-    }
-    service.distill();
-    const original = memory.list({}).candidates[0]!;
-    expect(original.sourceIds).toHaveLength(2);
-
-    clock.advance(7 * 86_400_000);
-    service.recordEvent(
-      { appName: "Visual Studio Code", source: "active_app" },
-      "user",
-      "2026-08-18T01:00:00.000Z",
-      "2026-08-18T02:00:00.000Z",
-    );
-    service.distill();
-
-    const refreshed = memory.list({}).candidates;
-    expect(refreshed).toHaveLength(1);
-    expect(refreshed[0]?.id).not.toBe(original.id);
-    expect(refreshed[0]?.sourceIds).toHaveLength(2);
-    expect(refreshed[0]?.sourceIds).not.toContain(original.sourceIds[0]);
-    expect(
-      database
-        .prepare(
-          `SELECT COUNT(*) AS count
-           FROM activity_digests
-           WHERE candidate_ids_json LIKE ?`,
-        )
-        .get(`%${refreshed[0]!.id}%`),
-    ).toEqual({ count: 2 });
-    database.close();
-  });
-
-  it("offers one user-confirmed compact revision for an accepted legacy Activity Memory", () => {
-    const { database, memory, service } = harness("2026-08-24T12:00:00.000Z");
-    const legacy = memory.propose({
-      confidence: 0.6,
-      content: "过去 18 个不同日期，用户累计使用 Visual Studio Code 920 分钟。",
-      importance: 0.5,
-      novelty: 1,
-      reason: "Activity 跨日证据归纳：Visual Studio Code",
-      sourceIds: [
-        "81000000-0000-4000-8000-000000000001",
-        "81000000-0000-4000-8000-000000000002",
-      ],
-      sourceLabels: ["旧 Episode 1", "旧 Episode 2"],
-      sourceType: "activity",
-      type: "activity_digest",
-    });
-    const accepted = memory.acceptCandidate(legacy.id);
-    for (const day of ["11", "18"]) {
-      service.recordEvent(
-        { appName: "Visual Studio Code", source: "active_app" },
-        "user",
-        `2026-08-${day}T01:00:00.000Z`,
-        `2026-08-${day}T02:00:00.000Z`,
-      );
-    }
-
-    service.distill();
-
-    const replacement = memory.list({}).candidates[0]!;
-    expect(replacement).toMatchObject({
-      claimOperation: "replace",
-      supersedesMemoryId: accepted.memory.id,
-    });
-    expect(replacement.sourceIds).toHaveLength(2);
-    const revised = memory.acceptCandidate(replacement.id);
-    expect(revised.memory.id).toBe(accepted.memory.id);
-    expect(
-      revised.revisions.find(
-        ({ id }) => id === revised.memory.currentRevisionId,
-      )?.content,
-    ).toBe(
-      "用户在多个自然周持续使用 Visual Studio Code。这是观察到的使用习惯，不等同于用户明确表达的偏好。",
-    );
-
-    service.distill();
-    expect(memory.list({}).candidates).toEqual([]);
-    database.close();
-  });
-
-  it("keeps a rejected stable Activity pattern suppressed across label casing changes", () => {
-    const { clock, database, memory, service } = harness(
+  it("keeps multiweek Activity searchable with Daily and Weekly Digests without creating Memory candidates", () => {
+    const { database, memory, repository, service } = harness(
       "2026-08-24T12:00:00.000Z",
     );
-    for (const day of ["11", "18"]) {
+    try {
+      recordEditorDays(service, ["04", "11", "18"]);
       service.recordEvent(
-        { appName: "Visual Studio Code", source: "active_app" },
-        "user",
-        `2026-08-${day}T01:00:00.000Z`,
-        `2026-08-${day}T02:00:00.000Z`,
+        { appName: "Terminal", source: "active_app" },
+        "agent",
+        "2026-08-18T03:00:00.000Z",
+        "2026-08-18T04:00:00.000Z",
       );
+      service.distill();
+
+      const result = service.search({ query: "private-project" });
+      expect(result).toMatchObject({
+        observedBehaviorOnly: true,
+        patterns: [
+          {
+            actor: "user",
+            activeDays: 3,
+            episodeCount: 3,
+            kind: "app",
+            label: "Visual Studio Code",
+            totalMinutes: 180,
+          },
+        ],
+      });
+      expect(JSON.stringify(result.patterns)).not.toContain("private-project");
+      const digests = repository.listDigests(
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-25T00:00:00.000Z",
+      );
+      expect(digests.filter(({ kind }) => kind === "daily")).toHaveLength(3);
+      expect(digests.filter(({ kind }) => kind === "weekly")).toHaveLength(3);
+      for (const digest of digests) {
+        expect(service.getDigest(digest.id)).toEqual(digest);
+        expect(digest.summary).toContain("Visual Studio Code");
+        expect(digest.candidateIds).toEqual([]);
+      }
+      expect(memory.list({}).candidates).toEqual([]);
+      expect(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM memory_candidates")
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      database.close();
     }
-    service.distill();
-    const candidate = memory.list({}).candidates[0]!;
-    memory.rejectCandidate(candidate.id);
+  });
 
-    service.distill();
-    clock.advance(7 * 86_400_000);
-    service.recordEvent(
-      { appName: "visual studio code", source: "active_app" },
-      "user",
-      "2026-08-25T01:00:00.000Z",
-      "2026-08-25T02:00:00.000Z",
-    );
-    service.distill();
+  it("keeps repeated cross-day distillation and a reopened service free of new candidates", async () => {
+    const first = harness("2026-08-17T12:00:00.000Z");
+    let digests: ReturnType<ActivityRepository["listDigests"]>;
+    try {
+      recordEditorDays(first.service, ["04", "11"]);
+      first.service.distill();
+      first.service.distill();
+      first.clock.advance(7 * 86_400_000);
+      recordEditorDays(first.service, ["18"]);
+      first.service.distill();
+      digests = first.repository.listDigests(
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-26T00:00:00.000Z",
+      );
+      expect(digests.filter(({ kind }) => kind === "weekly")).toHaveLength(3);
+      expect(first.memory.list({}).candidates).toEqual([]);
+    } finally {
+      first.database.close();
+    }
 
-    expect(memory.list({}).candidates).toEqual([]);
-    expect(
-      database
-        .prepare(
-          `SELECT COUNT(*) AS count FROM memory_candidates
-           WHERE reason = ?`,
-        )
-        .get(candidate.reason),
-    ).toEqual({ count: 1 });
-    database.close();
+    const reopened = harness("2026-08-25T12:00:00.000Z", first.root);
+    try {
+      await reopened.service.initialize();
+      reopened.service.distill();
+      reopened.service.distill();
+      expect(
+        reopened.repository.listDigests(
+          "2026-08-01T00:00:00.000Z",
+          "2026-08-26T00:00:00.000Z",
+        ),
+      ).toEqual(digests);
+      expect(
+        reopened.service.search({ query: "Visual Studio Code" }).patterns,
+      ).toEqual([expect.objectContaining({ activeDays: 3, episodeCount: 3 })]);
+      expect(reopened.memory.list({}).candidates).toEqual([]);
+      expect(
+        reopened.database
+          .prepare("SELECT COUNT(*) AS count FROM memory_candidates")
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      reopened.database.close();
+    }
+  });
+
+  it("preserves accepted Activity Memory revisions and actual sources through later weeks and service rebuild", async () => {
+    const initial = (() => {
+      const first = harness();
+      try {
+        recordEditorDays(first.service, ["04", "06"]);
+        first.service.distill();
+        const oldEpisodes = ["04", "06"].map(
+          (day) => first.service.getSnapshot(`2026-08-${day}`).episodes[0]!,
+        );
+        const legacy = first.memory.propose({
+          confidence: 0.6,
+          content: "过去两个日期，用户累计使用 Visual Studio Code 120 分钟。",
+          importance: 0.5,
+          novelty: 1,
+          reason: "Activity 跨日证据归纳：Visual Studio Code",
+          sourceIds: oldEpisodes.map(({ id }) => id),
+          sourceLabels: oldEpisodes.map(({ summary }) => summary),
+          sourceType: "activity",
+          type: "activity_digest",
+        });
+        const accepted = first.memory.acceptCandidate(legacy.id);
+        const acceptedCandidate = first.database
+          .prepare("SELECT * FROM memory_candidates WHERE id = ?")
+          .get(legacy.id);
+        first.clock.advance(14 * 86_400_000);
+        recordEditorDays(first.service, ["11", "18"]);
+        first.service.distill();
+        first.service.distill();
+        expect(first.memory.get(accepted.memory.id)).toEqual(accepted);
+        expect(first.memory.list({}).candidates).toEqual([]);
+        return { root: first.root, oldEpisodes, accepted, acceptedCandidate };
+      } finally {
+        first.database.close();
+      }
+    })();
+
+    const { oldEpisodes, accepted, acceptedCandidate } = initial;
+    const reopened = harness("2026-08-25T12:00:00.000Z", initial.root);
+    try {
+      await reopened.service.initialize();
+      expect(reopened.memory.get(accepted.memory.id)).toEqual(accepted);
+      expect(
+        accepted.sources.map(({ referenceId }) => referenceId).sort(),
+      ).toEqual(oldEpisodes.map(({ id }) => id).sort());
+      for (const episode of oldEpisodes) {
+        expect(reopened.service.getEpisode(episode.id)).toEqual(episode);
+      }
+      expect(reopened.memory.list({}).candidates).toEqual([]);
+      expect(
+        reopened.database.prepare("SELECT * FROM memory_candidates").all(),
+      ).toEqual([acceptedCandidate]);
+    } finally {
+      reopened.database.close();
+    }
+  });
+
+  it("preserves stored pending and rejected Activity candidates without refresh and retains user decisions", async () => {
+    const initial = (() => {
+      const first = harness();
+      try {
+        recordEditorDays(first.service, ["04"]);
+        first.service.distill();
+        const digest = first.service
+          .getSnapshot("2026-08-04")
+          .digests.find(({ kind }) => kind === "weekly")!;
+        const propose = (label: string) =>
+          first.memory.propose({
+            confidence: 0.6,
+            content: `旧活动来源中出现 ${label}。`,
+            importance: 0.5,
+            novelty: 1,
+            reason: `Activity 跨日证据归纳：${label}`,
+            sourceIds: [digest.id],
+            sourceLabels: [digest.title],
+            sourceType: "activity",
+            type: "activity_digest",
+          });
+        const pending = propose("Visual Studio Code");
+        const rejected = first.memory.rejectCandidate(propose("Safari").id);
+        const laterRejected = propose("Notes");
+        const stored = first.database
+          .prepare("SELECT * FROM memory_candidates ORDER BY id")
+          .all();
+        first.clock.advance(14 * 86_400_000);
+        recordEditorDays(first.service, ["11", "18"]);
+        first.service.distill();
+        expect(
+          first.database
+            .prepare("SELECT * FROM memory_candidates ORDER BY id")
+            .all(),
+        ).toEqual(stored);
+        return {
+          root: first.root,
+          digest,
+          pending,
+          rejected,
+          laterRejected,
+          stored,
+        };
+      } finally {
+        first.database.close();
+      }
+    })();
+
+    const { digest, pending, rejected, laterRejected, stored } = initial;
+    const reopened = harness("2026-08-25T12:00:00.000Z", initial.root);
+    try {
+      await reopened.service.initialize();
+      expect(
+        reopened.database
+          .prepare("SELECT * FROM memory_candidates ORDER BY id")
+          .all(),
+      ).toEqual(stored);
+      expect(
+        reopened.memory
+          .list({})
+          .candidates.map(({ id }) => id)
+          .sort(),
+      ).toEqual([pending.id, laterRejected.id].sort());
+      const accepted = reopened.memory.acceptCandidate(pending.id);
+      expect(accepted.revisions[0]?.content).toBe(pending.content);
+      expect(accepted.sources[0]?.referenceId).toBe(digest.id);
+      expect(reopened.service.getDigest(digest.id)).toEqual(digest);
+      expect(reopened.memory.rejectCandidate(laterRejected.id).status).toBe(
+        "rejected",
+      );
+      expect(
+        reopened.database
+          .prepare(
+            "SELECT status, updated_at FROM memory_candidates WHERE id = ?",
+          )
+          .get(rejected.id),
+      ).toEqual({ status: "rejected", updated_at: rejected.updatedAt });
+      expect(reopened.memory.list({}).candidates).toEqual([]);
+      expect(
+        reopened.database
+          .prepare("SELECT COUNT(*) AS count FROM memory_candidates")
+          .get(),
+      ).toEqual({ count: 3 });
+    } finally {
+      reopened.database.close();
+    }
+  });
+
+  it("reads historical Digest candidate links and removes only pending candidates when their Episode is deleted", async () => {
+    const initial = (() => {
+      const first = harness();
+      try {
+        recordEditorDays(first.service, ["04"]);
+        first.service.distill();
+        const snapshot = first.service.getSnapshot("2026-08-04");
+        const episode = snapshot.episodes[0]!;
+        const digest = snapshot.digests.find(({ kind }) => kind === "weekly")!;
+        const proposal = {
+          confidence: 0.6,
+          content: "一段已保存的活动观察。",
+          importance: 0.5,
+          novelty: 1,
+          reason: "Activity 跨日证据归纳：Visual Studio Code",
+          sourceIds: [digest.id],
+          sourceLabels: [digest.title],
+          sourceType: "activity" as const,
+          type: "activity_digest" as const,
+        };
+        const acceptedCandidate = first.memory.propose(proposal);
+        const accepted = first.memory.acceptCandidate(acceptedCandidate.id);
+        const pending = first.memory.propose({
+          ...proposal,
+          content: "一段待确认的活动观察。",
+        });
+        // Stored links from the removed producer: fixture data, not a new writer API.
+        const candidateIds = [acceptedCandidate.id, pending.id];
+        first.database
+          .prepare(
+            "UPDATE activity_digests SET candidate_ids_json = ? WHERE id = ?",
+          )
+          .run(JSON.stringify(candidateIds), digest.id);
+        return {
+          root: first.root,
+          episode,
+          digest,
+          acceptedCandidate,
+          accepted,
+          pending,
+          candidateIds,
+        };
+      } finally {
+        first.database.close();
+      }
+    })();
+
+    const {
+      episode,
+      digest,
+      acceptedCandidate,
+      accepted,
+      pending,
+      candidateIds,
+    } = initial;
+    const reopened = harness("2026-08-11T12:00:00.000Z", initial.root);
+    try {
+      await reopened.service.initialize();
+      expect(reopened.service.getDigest(digest.id).candidateIds).toEqual(
+        candidateIds,
+      );
+      expect(
+        reopened.service
+          .getSnapshot("2026-08-04")
+          .digests.find(({ id }) => id === digest.id)?.candidateIds,
+      ).toEqual(candidateIds);
+      await reopened.service.deleteEpisode(episode.id);
+      expect(reopened.memory.get(accepted.memory.id)).toEqual(accepted);
+      expect(
+        reopened.database
+          .prepare("SELECT status FROM memory_candidates WHERE id = ?")
+          .get(acceptedCandidate.id),
+      ).toEqual({ status: "accepted" });
+      expect(
+        reopened.database
+          .prepare("SELECT id FROM memory_candidates WHERE id = ?")
+          .get(pending.id),
+      ).toBeUndefined();
+      expect(reopened.memory.list({}).candidates).toEqual([]);
+      expect(() => reopened.service.getEpisode(episode.id)).toThrow(
+        "找不到这段活动",
+      );
+    } finally {
+      reopened.database.close();
+    }
   });
 
   it("keeps different windows in the same application as separate Episodes", () => {
@@ -568,6 +1259,139 @@ describe("Activity persistence and distillation", () => {
         )
         .get(),
     ).toEqual({ status: "completed" });
+    database.close();
+  });
+
+  it("preserves real sources during initialization until retention owners are ready", async () => {
+    const { assets, clock, database, repository, service } = harness();
+    const eventId = service.recordEvent(
+      {
+        source: "active_app",
+        appName: "Synthetic fixture",
+        surface: visualSurfaceFixture,
+      },
+      "user",
+    )!;
+    service.setVisualContext({
+      actor: "user",
+      surface: visualSurfaceFixture,
+      eventId,
+    });
+    const captured = (await service.recordVisualFrame(
+      await visualFrameFixture(),
+      "foreground",
+    ))!;
+    clock.advance(40 * 86_400_000);
+    service.setSourceRetentionGuard(undefined);
+
+    await service.initialize();
+    const result = await service.cleanup();
+
+    expect(result).toMatchObject({ deletedAssets: 0, deletedEvents: 0 });
+    expect(service.getEvent(eventId)).toBeDefined();
+    expect(service.getEvent(captured.event.id)).toBeDefined();
+    const asset = repository.getAsset(captured.reference.artifactId)!;
+    expect(existsSync(assets.resolve(asset))).toBe(true);
+    expect(service.resolveEventReference(eventId).episodeId).toBeDefined();
+    expect(
+      await service.resolveVisualEvidence(captured.reference),
+    ).toMatchObject({ status: "available" });
+    database.close();
+  });
+
+  it("protects a pending source and its shared PNG across capacity and age cleanup, then releases them", async () => {
+    const { assets, clock, database, repository, service } = harness();
+    async function observe(epoch: string) {
+      const surface = { ...visualSurfaceFixture, epoch };
+      const eventId = service.recordEvent(
+        { source: "active_app", appName: "Synthetic fixture", surface },
+        "user",
+      )!;
+      service.setVisualContext({ actor: "user", surface, eventId });
+      const frame = await visualFrameFixture();
+      const observation = (await service.recordVisualFrame(
+        {
+          ...frame,
+          visual: {
+            ...frame.visual,
+            surface,
+            capturedAt: clock.now(),
+            receivedAt: clock.now(),
+          },
+        },
+        "foreground",
+      ))!;
+      return { ...observation, eventId };
+    }
+    const first = await observe("first");
+    clock.advance(86_400_000);
+    const second = await observe("second");
+    expect(first.reference.artifactId).toBe(second.reference.artifactId);
+    clock.advance(86_400_000);
+    service.distill();
+    // Simulate the storage accounting pressure, without allocating a 600 MiB test file.
+    database
+      .prepare("UPDATE activity_assets SET byte_length = ? WHERE id = ?")
+      .run(600 * 1024 * 1024, first.reference.artifactId);
+    const retained = new Set([first.eventId, second.event.id]);
+    const guard = vi.fn(
+      (ids: readonly string[]) => new Set(ids.filter((id) => retained.has(id))),
+    );
+    service.setSourceRetentionGuard(guard);
+
+    const pressured = await service.cleanup(false);
+    expect(pressured).toMatchObject({ deletedAssets: 0, deletedEvents: 0 });
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(new Set(guard.mock.calls[0]![0])).toEqual(
+      new Set([first.event.id, second.event.id]),
+    );
+    expect(await service.resolveVisualEvidence(second.reference)).toMatchObject(
+      { status: "available" },
+    );
+
+    clock.advance(40 * 86_400_000);
+    const aged = await service.cleanup(false);
+    expect(aged).toMatchObject({ deletedAssets: 0, deletedEvents: 2 });
+    expect(service.getEvent(first.eventId)).toBeDefined();
+    expect(service.getEvent(second.event.id)).toBeDefined();
+    expect(service.getEvent(first.event.id)).toBeUndefined();
+    expect(service.getEvent(second.eventId)).toBeUndefined();
+    const assetPath = assets.resolve(
+      repository.getAsset(second.reference.artifactId)!,
+    );
+    expect(existsSync(assetPath)).toBe(true);
+
+    // Canonical downstream snapshots are now durable; the integration owner releases protection.
+    retained.clear();
+    const released = await service.cleanup(false);
+    expect(released).toMatchObject({ deletedAssets: 1, deletedEvents: 2 });
+    expect(existsSync(assetPath)).toBe(false);
+    expect(await service.resolveVisualEvidence(second.reference)).toMatchObject(
+      { status: "unavailable", reason: "source_missing" },
+    );
+    database.close();
+  });
+
+  it("leaves original sources intact when the downstream retention lookup fails", async () => {
+    const { database, service } = harness();
+    const eventId = service.recordEvent(
+      { source: "active_app", appName: "Synthetic fixture" },
+      "user",
+      "2026-07-01T10:00:00.000Z",
+      "2026-07-01T10:30:00.000Z",
+    )!;
+    service.distill();
+    service.setSourceRetentionGuard(() => {
+      throw new Error("Source owner is unavailable");
+    });
+
+    await expect(service.cleanup(false)).rejects.toThrow(
+      "Source owner is unavailable",
+    );
+    expect(service.getEvent(eventId)).toBeDefined();
+    expect(database.prepare("SELECT status FROM retention_runs").get()).toEqual(
+      { status: "failed" },
+    );
     database.close();
   });
 

@@ -1,3 +1,4 @@
+import { companionModelReply } from "../fixtures/companionModel";
 import { mkdtemp, rm } from "node:fs/promises";
 import {
   createServer,
@@ -127,7 +128,9 @@ function activeSessionId(instructions: string): string {
   const marker = "concrete activity or matter: ";
   const offset = instructions.lastIndexOf(marker);
   if (offset < 0) throw new Error("Missing companionship context marker");
-  const context = JSON.parse(instructions.slice(offset + marker.length)) as {
+  const context = JSON.parse(
+    instructions.slice(offset + marker.length).split("\n")[0] ?? "",
+  ) as {
     activeSession?: { id?: string } | null;
   };
   const id = context.activeSession?.id;
@@ -139,6 +142,17 @@ async function startFakeProvider(seedSessionId: string) {
   const bodies: string[] = [];
   let mainStep = 0;
   const server = createServer((request, response) => {
+    if (request.url?.endsWith("/responses/input_tokens")) {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: "Input token count is not supported by this fixture",
+          },
+        }),
+      );
+      return;
+    }
     if (request.method === "GET") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
@@ -159,14 +173,9 @@ async function startFakeProvider(seedSessionId: string) {
         writeSse(response, finalAnswer(responseId, '{"candidates":[]}'));
         return;
       }
-      if (body.includes("charamate_companion_initiative")) {
-        writeSse(
-          response,
-          finalAnswer(
-            responseId,
-            '{"action":"none","chatTitle":null,"grounding":null,"journeyId":null}',
-          ),
-        );
+      const companionReply = companionModelReply(body);
+      if (companionReply !== undefined) {
+        writeSse(response, finalAnswer(responseId, companionReply));
         return;
       }
       if (body.includes("Generate one concise chat title")) {

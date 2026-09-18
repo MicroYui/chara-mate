@@ -101,6 +101,57 @@ function chatService(
 }
 
 describe("Phase 1 Chat Data and Run event persistence", () => {
+  it("commits a Run reservation with its first event and publishes only after commit", async () => {
+    const { database } = await createDatabase();
+    new ChatRepository(database).insertChat(chatFixture);
+    database.exec(
+      "CREATE TABLE test_run_reservation (key TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id)) STRICT",
+    );
+    const repository = new RunRepository(database);
+    const publish = vi.fn(() => {
+      expect(database.inTransaction).toBe(false);
+      expect(
+        database
+          .prepare(
+            "SELECT run_id FROM test_run_reservation WHERE key = 'decision'",
+          )
+          .get(),
+      ).toEqual({ run_id: FIXTURE_IDS.run });
+    });
+    const events = new RunEventService(repository, { publish });
+    const input = envelope(1, { type: "run.started", run: startedRun() });
+    expect(() =>
+      events.append(input, (runId) => {
+        expect(database.inTransaction).toBe(true);
+        database
+          .prepare("INSERT INTO test_run_reservation VALUES ('decision', ?)")
+          .run(runId);
+        throw new Error("stale decision");
+      }),
+    ).toThrow("stale decision");
+    expect(repository.getRun(FIXTURE_IDS.run)).toBeUndefined();
+    expect(
+      database
+        .prepare("SELECT COUNT(*) AS count FROM test_run_reservation")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(publish).not.toHaveBeenCalled();
+    const bind = (runId: string) => {
+      database
+        .prepare(
+          "INSERT OR IGNORE INTO test_run_reservation VALUES ('decision', ?)",
+        )
+        .run(runId);
+    };
+    events.append(input, bind);
+    events.append(input, bind);
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(
+      repository.replay({ streamId: FIXTURE_IDS.run, afterSequence: 0 }).events,
+    ).toHaveLength(1);
+    database.close();
+  });
+
   it("creates the first-message fallback and never overwrites a user rename", async () => {
     const { database } = await createDatabase();
     const changed = vi.fn();

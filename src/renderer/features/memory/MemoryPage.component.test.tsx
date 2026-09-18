@@ -12,6 +12,7 @@ import type {
   MemoryApi,
   MemoryDetail,
   MemoryHit,
+  MemoryHistoryStatus,
   MemorySnapshot,
 } from "../../../shared/contracts/memory";
 import { starterTerritorySnapshot } from "../../../../tests/fixtures/territoryWorld";
@@ -51,6 +52,8 @@ const hit: MemoryHit = {
     content: "用户偏爱安静且有插座的咖啡馆。",
     createdAt: NOW,
     id: REVISION_ID,
+    historyStatus: "current",
+    priorDispositions: [],
     memoryId: MEMORY_ID,
     reason: "用户明确说明",
     sourceIds: [],
@@ -117,10 +120,7 @@ function makeApi() {
     ok: true,
     value: detail,
   });
-  const resolveClaim = vi.fn<MemoryApi["resolveClaim"]>().mockResolvedValue({
-    ok: true,
-    value: detail,
-  });
+
   const api: MemoryApi = {
     acceptCandidate,
     archive: vi.fn().mockResolvedValue({ ok: true, value: detail }),
@@ -135,7 +135,6 @@ function makeApi() {
       ok: true,
       value: { ...snapshot.candidates[0]!, status: "rejected" as const },
     }),
-    resolveClaim,
     restore,
     revise,
     setPinned: vi.fn().mockResolvedValue({ ok: true, value: detail }),
@@ -146,117 +145,41 @@ function makeApi() {
     create,
     get,
     list,
-    resolveClaim,
     restore,
     revise,
   };
 }
 
 describe("MemoryPage", () => {
-  it("requires a stable slot when manually creating a preference", async () => {
+  it("creates a preference from its content without requiring internal fields", async () => {
     const { api, create } = makeApi();
     render(<MemoryPage api={api} onOpenTerritory={() => undefined} />);
-
     fireEvent.click(await screen.findByRole("button", { name: "新记忆" }));
     expect(screen.getByLabelText("新记忆类型")).toHaveValue("preference");
-    fireEvent.change(screen.getByLabelText("新记忆稳定字段"), {
-      target: { value: "preference.media" },
-    });
+    expect(screen.queryByLabelText("新记忆稳定字段")).toBeNull();
     fireEvent.change(screen.getByLabelText("新记忆内容"), {
       target: { value: "用户喜欢科幻电影。" },
     });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-
-    await waitFor(() =>
-      expect(create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          claimSlot: "preference.media",
-          content: "用户喜欢科幻电影。",
-          type: "preference",
-        }),
-      ),
-    );
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      content: "用户喜欢科幻电影。",
+      type: "preference",
+    });
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty("claimSlot");
   });
 
-  it("binds an unkeyed legacy preference only after explicit confirmation", async () => {
-    const { api, resolveClaim } = makeApi();
+  it("shows a formed preference as an editable memory without a binding task", async () => {
+    const { api } = makeApi();
     render(<MemoryPage api={api} onOpenTerritory={() => undefined} />);
-
     fireEvent.click(
       await screen.findByRole("button", { name: /用户偏爱安静且有插座/u }),
     );
-    expect(await screen.findByText(/旧版未绑定记录/u)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("旧记忆稳定字段"), {
-      target: { value: "preference.hobbies" },
-    });
-    fireEvent.change(screen.getByLabelText("稳定字段确认内容"), {
-      target: { value: "用户喜欢探访安静且有插座的咖啡馆。" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "确认绑定" }));
-
-    await waitFor(() =>
-      expect(resolveClaim).toHaveBeenCalledWith({
-        claimSlot: "preference.hobbies",
-        content: "用户喜欢探访安静且有插座的咖啡馆。",
-        memoryId: MEMORY_ID,
-      }),
+    expect(await screen.findByLabelText("编辑记忆内容")).toHaveValue(
+      hit.revision.content,
     );
-  });
-
-  it("shows both records and submits a complete explicit merge", async () => {
-    const { api, list, resolveClaim } = makeApi();
-    const ownerHit: MemoryHit = {
-      ...hit,
-      memory: {
-        ...hit.memory,
-        claimSlot: "preference.hobbies",
-        currentRevisionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc",
-        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
-      },
-      revision: {
-        ...hit.revision,
-        content: "用户喜欢玩 CS2。",
-        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc",
-        memoryId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
-      },
-    };
-    const ownerDetail: MemoryDetail = {
-      memory: ownerHit.memory,
-      revisions: [ownerHit.revision],
-      sources: [],
-      usages: [],
-    };
-    list.mockImplementation((request) =>
-      Promise.resolve({
-        ok: true,
-        value: request.claimSlot
-          ? { candidates: [], memories: [ownerHit], profile: [] }
-          : snapshot,
-      }),
-    );
-    resolveClaim.mockResolvedValue({ ok: true, value: ownerDetail });
-    render(<MemoryPage api={api} onOpenTerritory={() => undefined} />);
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: /用户偏爱安静且有插座/u }),
-    );
-    expect(await screen.findByText("现有字段内容")).toBeVisible();
-    expect(screen.getByText("用户喜欢玩 CS2。")).toBeVisible();
-    expect(screen.getByText("这条旧记忆")).toBeVisible();
-    fireEvent.change(screen.getByLabelText("稳定字段确认内容"), {
-      target: {
-        value: "用户喜欢玩 CS2，也喜欢探访安静且有插座的咖啡馆。",
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "确认合并" }));
-
-    await waitFor(() =>
-      expect(resolveClaim).toHaveBeenCalledWith({
-        claimSlot: "preference.hobbies",
-        content: "用户喜欢玩 CS2，也喜欢探访安静且有插座的咖啡馆。",
-        memoryId: MEMORY_ID,
-      }),
-    );
+    expect(screen.queryByText(/旧版未绑定记录/u)).toBeNull();
+    expect(screen.queryByRole("heading", { name: "绑定稳定字段" })).toBeNull();
   });
 
   it("creates an idempotent Territory candidate from the selected Memory", async () => {
@@ -396,6 +319,8 @@ describe("MemoryPage", () => {
     const oldRevision = {
       ...hit.revision,
       content: "用户过去偏爱热闹的咖啡馆。",
+      historyStatus: "retained_history" as const,
+      historyStatusRevisionId: REVISION_ID,
       createdAt: "2026-08-07T12:00:00.000Z",
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       sourceIds: [sourceId],
@@ -476,7 +401,7 @@ describe("MemoryPage", () => {
     expect(onOpenSource).toHaveBeenCalledWith(source);
   });
 
-  it("shows when and how a Revision was read", async () => {
+  it("distinguishes retrieval from context references in a Revision history", async () => {
     const { api, get } = makeApi();
     get.mockResolvedValue({
       ok: true,
@@ -490,6 +415,13 @@ describe("MemoryPage", () => {
             revisionId: REVISION_ID,
             usedAt: NOW,
           },
+          {
+            consumer: "context",
+            id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+            memoryId: MEMORY_ID,
+            revisionId: REVISION_ID,
+            usedAt: NOW,
+          },
         ],
       },
     });
@@ -498,13 +430,54 @@ describe("MemoryPage", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /用户偏爱安静且有插座/ }),
     );
-    expect(await screen.findByText("memory.search")).toBeVisible();
+    expect(await screen.findByText("检索返回")).toBeVisible();
+    expect(screen.getByText("提供给回答上下文")).toBeVisible();
     const usages = screen
-      .getByRole("heading", { name: "被使用记录" })
+      .getByRole("heading", { name: "检索与上下文引用记录" })
       .closest("section");
     if (!usages) throw new Error("Missing Memory usage section");
     expect(
-      within(usages).getByText(/用户偏爱安静且有插座的咖啡馆/u),
+      within(usages).getAllByText(/用户偏爱安静且有插座的咖啡馆/u),
+    ).toHaveLength(2);
+  });
+
+  it.each([
+    ["retained_history", "当时的记录，后来发生了变化。"],
+    ["corrected", "这条旧记录后来被纠正，不作为真实经历使用。"],
+    ["unresolved", "这条旧记录尚不能确认为真实经历，仅供回看。"],
+  ] as const)("explains %s in a revision timeline", async (status, label) => {
+    const { api, get } = makeApi();
+    const historyStatus: MemoryHistoryStatus = status;
+    get.mockResolvedValue({
+      ok: true,
+      value: {
+        ...detail,
+        revisions: [
+          hit.revision,
+          {
+            ...hit.revision,
+            id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            content: "原先记录用户喜欢热闹的咖啡馆。",
+            historyStatus,
+            historyStatusRevisionId: REVISION_ID,
+          },
+        ],
+      },
+    });
+    render(<MemoryPage api={api} onOpenTerritory={() => undefined} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /用户偏爱安静/ }),
+    );
+    const timeline = (
+      await screen.findByRole("heading", { name: "Revision 时间线" })
+    ).closest("section");
+    if (!timeline) throw new Error("Missing revision timeline");
+    expect(within(timeline).getByText(label)).toBeVisible();
+    expect(
+      within(timeline).getByText(`后续说明：${hit.revision.content}`),
+    ).toBeVisible();
+    expect(
+      within(timeline).getByText("原先记录用户喜欢热闹的咖啡馆。"),
     ).toBeVisible();
   });
 
@@ -513,6 +486,8 @@ describe("MemoryPage", () => {
     const historicalRevision = {
       ...hit.revision,
       content: "用户过去偏爱热闹的咖啡馆。",
+      historyStatus: "retained_history" as const,
+      historyStatusRevisionId: REVISION_ID,
       createdAt: "2026-08-07T12:00:00.000Z",
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
     };

@@ -1,54 +1,32 @@
+import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import type { StartRunRequest } from "../../shared/contracts/agent";
-import type { Chat, Message } from "../../shared/contracts/chat";
+import type { Chat } from "../../shared/contracts/chat";
 import type {
   MemoryDetail,
   MemoryHit,
   MemorySnapshot,
   MemoryType,
 } from "../../shared/contracts/memory";
-import type { PersonaSnapshot } from "../../shared/contracts/persona";
-import type { ProactiveConversationBubble } from "../../shared/contracts/pet";
-import type { ProviderSnapshot } from "../../shared/contracts/provider";
-import type { Run } from "../../shared/contracts/run";
-import type { RunEventEnvelope } from "../../shared/contracts/ipc";
+import type { CognitionEvidenceInput } from "../../shared/contracts/cognition";
 import { CURRENT_SCHEMA_SQL } from "../db/schema/current";
-import { defaultPersonaSnapshot } from "../persona/personaPresets";
-import type {
-  CompanionInitiativeRecord,
-  NewCompanionInitiativeRecord,
-} from "./companionInitiativeRepository";
+import { PersonaRepository } from "../persona/personaRepository";
+import { CognitionRepository } from "../cognition/cognitionRepository";
+import { opportunityIsCurrent } from "../cognition/cognitionProjection";
 import { ProactiveOpportunityRepository } from "./proactiveOpportunityRepository";
 import {
   proactiveOpportunityEvaluateAt,
   ProactiveOpportunityService,
-  type ProactiveOpportunityDecider,
-  type ProactiveOpportunityEvaluation,
-  type ProactiveOpportunityRunLauncher,
 } from "./proactiveOpportunityService";
-
 const CREATED_AT = "2026-09-01T00:00:00.000Z";
 const OCCURS_AT = "2026-09-02T07:00:00.000Z";
 const EVALUATE_AT = "2026-09-02T06:30:00.000Z";
-const COMPLETED_AT = "2026-09-02T06:31:00.000Z";
 const CHAT_ID = "11111111-1111-4111-8111-111111111111";
 const MEMORY_ID = "22222222-2222-4222-8222-222222222222";
 const REVISION_ID = "33333333-3333-4333-8333-333333333333";
 const SOURCE_ID = "44444444-4444-4444-8444-444444444444";
-const RUN_ID = "55555555-5555-4555-8555-555555555555";
-const MESSAGE_ID = "66666666-6666-4666-8666-666666666666";
-const PROFILE_ID = "77777777-7777-4777-8777-777777777777";
-const MISSING_RUN_ID = "88888888-8888-4888-8888-888888888888";
-
-const provider: ProviderSnapshot = {
-  apiStyle: "openai-compatible",
-  modelId: "test-chat-model",
-  profileId: PROFILE_ID,
-  profileName: "Test provider",
-};
-
+const databases: Database.Database[] = [];
+afterEach(() => databases.splice(0).forEach((database) => database.close()));
 interface MemoryOptions {
   readonly importantMoment?: boolean;
   readonly occursAt?: string;
@@ -81,6 +59,8 @@ function memoryDetail(options: MemoryOptions = {}): MemoryDetail {
         importantMoment: options.importantMoment ?? true,
         memoryId: MEMORY_ID,
         reason: "用户明确说明",
+        priorDispositions: [],
+        historyStatus: "current",
         sourceIds: [SOURCE_ID],
         sourceType: "chat",
         ...(occursAt && timeZone ? { occursAt, timeZone } : {}),
@@ -117,88 +97,25 @@ function chat(): Chat {
   };
 }
 
-function run(
-  status: Run["status"],
-  persona: PersonaSnapshot,
-  endedAt?: string,
-): Run {
-  return {
-    chatId: CHAT_ID,
-    createdAt: EVALUATE_AT,
-    ...(endedAt ? { endedAt } : {}),
-    execution: { mode: "chat" },
-    id: RUN_ID,
-    latestSequence: status === "completed" ? 3 : 1,
-    persona,
-    provider,
-    source: "text",
-    startedAt: EVALUATE_AT,
-    status,
-  };
-}
-
-function completedEnvelope(completedRun: Run): RunEventEnvelope {
-  return {
-    event: { run: completedRun, type: "run.completed" },
-    occurredAt: COMPLETED_AT,
-    sequence: 3,
-    streamId: completedRun.id,
-  };
-}
-
-interface LaunchRecord {
-  readonly options: Parameters<
-    ProactiveOpportunityRunLauncher["startAssistantInitiated"]
-  >[1];
-  readonly request: StartRunRequest;
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
-
-const databases: Database.Database[] = [];
-
-afterEach(() => {
-  for (const database of databases.splice(0)) database.close();
-});
-
-function harness(input?: {
-  readonly decision?: ProactiveOpportunityEvaluation["decision"];
-  readonly decisionPromise?: Promise<ProactiveOpportunityEvaluation>;
-  readonly detail?: MemoryDetail;
-  readonly enabled?: boolean;
-  readonly otherActiveRun?: boolean;
-  readonly otherActiveRunOnStart?: boolean;
-  readonly projectWithoutDesktopBubble?: boolean;
-}) {
+function harness(input?: { detail?: MemoryDetail; enabled?: boolean }) {
   const database = new Database(":memory:");
   databases.push(database);
   database.exec(CURRENT_SCHEMA_SQL);
   const repository = new ProactiveOpportunityRepository(database);
+  const cognition = new CognitionRepository(database, {
+    readBudgetBytes: 32_768,
+  });
+  const personas = new PersonaRepository(database);
+  personas.initialize(CREATED_AT);
+  let now = CREATED_AT;
   let currentDetail = input?.detail ?? memoryDetail();
   let enabled = input?.enabled ?? true;
-  let otherActiveRun = input?.otherActiveRun ?? false;
-  let now = CREATED_AT;
-  let idSequence = 1;
-  let outstandingBubble = false;
-  const currentPersona = defaultPersonaSnapshot(CREATED_AT);
-  const currentChat = chat();
+  let chatActive = true;
   database
     .prepare(
-      `INSERT INTO chats (id, title, status, created_at, updated_at)
-       VALUES (?, ?, 'active', ?, ?)`,
+      "INSERT INTO chats (id,title,status,created_at,updated_at) VALUES (?,?,'active',?,?)",
     )
-    .run(
-      currentChat.id,
-      currentChat.title,
-      currentChat.createdAt,
-      currentChat.updatedAt,
-    );
+    .run(CHAT_ID, "Presentation", CREATED_AT, CREATED_AT);
   const persistMemoryDetail = (detail: MemoryDetail) => {
     const revision = detail.revisions.find(
       ({ id }) => id === detail.memory.currentRevisionId,
@@ -273,682 +190,251 @@ function harness(input?: {
         );
     })();
   };
+
   persistMemoryDetail(currentDetail);
-  const runById = new Map<string, Run>();
-  const completedMessageByRun = new Map<
-    string,
-    { readonly content: string; readonly id: string }
-  >();
-  const launches: LaunchRecord[] = [];
-  const bubbles: ProactiveConversationBubble[] = [];
-  const historyRecords: CompanionInitiativeRecord[] = [];
+  const ingest = vi.fn((evidence: CognitionEvidenceInput) => {
+    cognition.ingest(evidence, now);
+  });
   const warn = vi.fn();
-  const listMessages = vi.fn<() => Message[]>(() => []);
-  const recordAccepted = vi.fn((record: NewCompanionInitiativeRecord) => {
-    historyRecords.unshift({
-      ...record,
-      outcome: "accepted",
-      updatedAt: record.acceptedAt,
-    });
-  });
-  const projectMessage = vi.fn((bubble: ProactiveConversationBubble) => {
-    if (input?.projectWithoutDesktopBubble) return true;
-    outstandingBubble = true;
-    bubbles.push(bubble);
-    return true;
-  });
-  const decide = vi.fn(
-    (
-      _evidence: Parameters<ProactiveOpportunityDecider["decide"]>[0],
-      _signal: AbortSignal,
-    ) => {
-      void _evidence;
-      void _signal;
-      return (
-        input?.decisionPromise ??
-        Promise.resolve({
-          decision: input?.decision ?? {
-            action: "send",
-            grounding: "用户此前说这场分享让自己有点紧张",
-          },
-          provider,
-        })
-      );
-    },
-  );
-  const decider: ProactiveOpportunityDecider = { decide };
-  const startAssistantInitiated = vi.fn(
-    (
-      request: StartRunRequest,
-      options: Parameters<
-        ProactiveOpportunityRunLauncher["startAssistantInitiated"]
-      >[1],
-    ) => {
-      launches.push({ options, request });
-      const startedRun = run("running", options.persona);
-      database
-        .prepare(
-          `INSERT INTO runs (
-             id, chat_id, execution_json, persona_json, provider_json, source,
-             status, latest_sequence, created_at, started_at
-           ) VALUES (?, ?, ?, ?, ?, 'text', 'running', 1, ?, ?)`,
-        )
-        .run(
-          startedRun.id,
-          startedRun.chatId,
-          JSON.stringify(startedRun.execution),
-          JSON.stringify(startedRun.persona),
-          JSON.stringify(startedRun.provider),
-          startedRun.createdAt,
-          startedRun.startedAt,
-        );
-      runById.set(startedRun.id, startedRun);
-      if (input?.otherActiveRunOnStart) otherActiveRun = true;
-      options.onStarted?.(startedRun);
-      return Promise.resolve(startedRun);
-    },
-  );
-  const cancel = vi.fn(
-    (_request: Parameters<ProactiveOpportunityRunLauncher["cancel"]>[0]) => {
-      void _request;
-      return Promise.resolve({ outcome: "accepted" });
-    },
-  );
-  const agent: ProactiveOpportunityRunLauncher = {
-    cancel,
-    startAssistantInitiated,
-  };
-  const service = new ProactiveOpportunityService(
+  const options = {
     repository,
-    {
-      get: (memoryId) => {
-        if (memoryId !== currentDetail.memory.id) {
-          throw new Error("Memory not found");
-        }
+    memory: {
+      get: (id: string) => {
+        if (id !== MEMORY_ID) throw new Error("Missing");
         return currentDetail;
       },
-      list: ({ type }): MemorySnapshot => ({
+      list: ({ type }: { type: "event" | "commitment" }): MemorySnapshot => ({
         candidates: [],
+        profile: [],
         memories:
           currentDetail.memory.type === type ? [memoryHit(currentDetail)] : [],
-        profile: [],
       }),
     },
-    {
-      getChat: (chatId) => (chatId === CHAT_ID ? currentChat : undefined),
-      listMessages,
+    chats: {
+      getChat: (id: string) =>
+        id === CHAT_ID
+          ? {
+              ...chat(),
+              status: chatActive ? ("active" as const) : ("archived" as const),
+            }
+          : undefined,
     },
-    {
-      getRun: (runId) => runById.get(runId),
-      readCompletedAssistantMessage: (runId) =>
-        completedMessageByRun.get(runId),
-    },
-    decider,
-    agent,
-    {
-      hasOutstandingBubble: () => outstandingBubble,
-      projectMessage,
-    },
-    {
-      listRecent: () => historyRecords,
-      recordAccepted,
-    },
-    {
+    cognition: { ingest },
+    personas,
+    ids: { generate: randomUUID },
+    clock: { now: () => now },
+    logger: { warn },
+    policy: {
       getCompanionInitiative: () => ({
+        level: "balanced" as const,
         importantMomentOutreachEnabled: enabled,
-        importantMomentOutreachPrompted: enabled,
-        level: "lively",
-        quietHours: {
-          enabled: false,
-          endMinute: 8 * 60,
-          startMinute: 22 * 60,
-        },
-        territoryMomentSurprisesEnabled: false,
-        territoryMomentSurprisesPrompted: false,
+        importantMomentOutreachPrompted: true,
+        territoryMomentSurprisesEnabled: true,
+        territoryMomentSurprisesPrompted: true,
+        quietHours: { enabled: false, startMinute: 0, endMinute: 0 },
       }),
     },
-    { hasActiveSession: () => false },
-    { getActiveSnapshot: () => currentPersona },
-    {
-      generate: () =>
-        `99999999-9999-4999-8999-${String(idSequence++).padStart(12, "0")}`,
-    },
-    { now: () => now },
-    { warn },
-    () => false,
-    () => otherActiveRun,
-    () => true,
-    () => 12 * 60,
-  );
-
+  };
+  const service = new ProactiveOpportunityService(options);
   return {
-    bubbles,
-    cancel,
-    completeRun: (content = "要准备上场了吗？放轻松，照你的节奏来。") => {
-      const completedRun = run("completed", currentPersona, COMPLETED_AT);
-      database
-        .prepare(
-          `UPDATE runs
-           SET status = 'completed', latest_sequence = 3, ended_at = ?
-           WHERE id = ?`,
-        )
-        .run(COMPLETED_AT, completedRun.id);
-      database
-        .prepare(
-          `INSERT INTO messages (
-             id, chat_id, run_id, role, status, content, created_at, updated_at
-           ) VALUES (?, ?, ?, 'assistant', 'completed', ?, ?, ?)`,
-        )
-        .run(
-          MESSAGE_ID,
-          CHAT_ID,
-          completedRun.id,
-          content,
-          COMPLETED_AT,
-          COMPLETED_AT,
-        );
-      runById.set(completedRun.id, completedRun);
-      completedMessageByRun.set(completedRun.id, {
-        content,
-        id: MESSAGE_ID,
-      });
-      return completedRun;
-    },
-    currentPersona,
-    decide,
-    historyRecords,
-    launches,
-    projectMessage,
-    recordAccepted,
-    repository,
-    runById,
     service,
-    startAssistantInitiated,
-    setDetail: (detail: MemoryDetail) => {
-      persistMemoryDetail(detail);
-      currentDetail = detail;
+    repository,
+    cognition,
+    ingest,
+    warn,
+    options,
+    personaId: personas.getActiveSnapshot().personaId,
+    setNow: (value: string) => {
+      now = value;
     },
     setEnabled: (value: boolean) => {
       enabled = value;
     },
-    setNow: (value: string) => {
-      now = value;
+    setChatActive: (value: boolean) => {
+      chatActive = value;
     },
-    setOtherActiveRun: (value: boolean) => {
-      otherActiveRun = value;
+    setDetail: (value: MemoryDetail) => {
+      currentDetail = value;
+      persistMemoryDetail(value);
     },
-    storeRunWithoutReaderVisibility: (runId: string) => {
-      database
-        .prepare(
-          `INSERT INTO runs (
-             id, chat_id, execution_json, persona_json, provider_json, source,
-             status, latest_sequence, created_at, started_at
-           ) VALUES (?, ?, ?, ?, ?, 'text', 'running', 1, ?, ?)`,
-        )
-        .run(
-          runId,
-          CHAT_ID,
-          JSON.stringify({ mode: "chat" }),
-          JSON.stringify(currentPersona),
-          JSON.stringify(provider),
-          EVALUATE_AT,
-          EVALUATE_AT,
-        );
-    },
-    warn,
   };
 }
 
-describe("proactiveOpportunityEvaluateAt", () => {
-  it("schedules one evaluation exactly 30 minutes before the event", () => {
+describe("important-moment source feeding the single Cognition runtime", () => {
+  it("preserves the selected thirty-minute consideration time", () => {
     expect(proactiveOpportunityEvaluateAt(OCCURS_AT)).toBe(EVALUATE_AT);
-    expect(proactiveOpportunityEvaluateAt("not-a-time")).toBeUndefined();
-  });
-});
-
-describe("ProactiveOpportunityService", () => {
-  it("creates only one opportunity for a future important event after permission", () => {
-    const fixture = harness({ enabled: false });
-
-    fixture.service.reconcileAll();
-    expect(fixture.repository.listOpen()).toEqual([]);
-
-    fixture.setEnabled(true);
-    fixture.service.handlePermissionChanged(true);
-    fixture.service.reconcileAll();
-
-    expect(fixture.repository.listOpen()).toEqual([
-      expect.objectContaining({
-        evaluateAt: EVALUATE_AT,
-        sourceMemoryId: MEMORY_ID,
-        sourceRevisionId: REVISION_ID,
-        state: "pending",
-        targetChatId: CHAT_ID,
-      }),
-    ]);
+    expect(proactiveOpportunityEvaluateAt("invalid")).toBeUndefined();
   });
 
-  it("reopens the same future opportunity after category permission is restored", () => {
-    const fixture = harness();
-    fixture.service.reconcileAll();
-    const original = fixture.repository.listOpen()[0]!;
-
-    fixture.setEnabled(false);
-    fixture.service.handlePermissionChanged(false);
-    expect(fixture.repository.get(original.id)?.state).toBe("cancelled");
-
-    fixture.setEnabled(true);
-    fixture.service.handlePermissionChanged(true);
-
-    expect(fixture.repository.listOpen()).toEqual([
-      expect.objectContaining({
-        id: original.id,
-        sourceRevisionId: REVISION_ID,
-        state: "pending",
-      }),
-    ]);
-  });
-
-  it("reopens the same future opportunity when an archived Memory is restored", () => {
-    const fixture = harness();
-    fixture.service.reconcileAll();
-    const original = fixture.repository.listOpen()[0]!;
-
-    fixture.setDetail(memoryDetail({ status: "archived" }));
-    fixture.service.handleMemoryChanged(MEMORY_ID);
-    expect(fixture.repository.get(original.id)?.state).toBe("cancelled");
-
-    fixture.setDetail(memoryDetail({ status: "active" }));
-    fixture.service.handleMemoryChanged(MEMORY_ID);
-
-    expect(fixture.repository.listOpen()).toEqual([
-      expect.objectContaining({ id: original.id, state: "pending" }),
-    ]);
-  });
-
-  it("skips unauthorized or late events and cancels an old opportunity on reschedule or cancellation", () => {
-    const unauthorized = harness({ enabled: false });
-    unauthorized.service.reconcileAll();
-    expect(unauthorized.repository.listOpen()).toEqual([]);
-
-    const late = harness();
-    late.setNow("2026-09-02T06:40:00.000Z");
-    late.service.reconcileAll();
-    expect(late.repository.listOpen()).toEqual([]);
-
-    const exactLead = harness();
-    exactLead.setNow(EVALUATE_AT);
-    exactLead.service.reconcileAll();
-    expect(exactLead.repository.listOpen()).toEqual([
-      expect.objectContaining({ evaluateAt: EVALUATE_AT, state: "pending" }),
-    ]);
-
-    const changed = harness();
-    changed.service.reconcileAll();
-    const original = changed.repository.listOpen()[0]!;
-    const revisedId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    changed.setDetail(
-      memoryDetail({
-        occursAt: "2026-09-02T08:00:00.000Z",
-        revisionId: revisedId,
-      }),
-    );
-    changed.service.handleMemoryChanged(MEMORY_ID);
-
-    expect(changed.repository.get(original.id)?.state).toBe("cancelled");
-    expect(changed.repository.listOpen()).toEqual([
-      expect.objectContaining({
-        evaluateAt: "2026-09-02T07:30:00.000Z",
-        sourceRevisionId: revisedId,
-        state: "pending",
-      }),
-    ]);
-
-    const cancelledId = changed.repository.listOpen()[0]!.id;
-    changed.setDetail(
-      memoryDetail({
-        importantMoment: false,
-        occursAt: "",
-        revisionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        timeZone: "",
-      }),
-    );
-    changed.service.handleMemoryChanged(MEMORY_ID);
-
-    expect(changed.repository.get(cancelledId)?.state).toBe("cancelled");
-    expect(changed.repository.listOpen()).toEqual([]);
-  });
-
-  it("consumes a due opportunity silently when the semantic gate chooses none", async () => {
-    const fixture = harness({
-      decision: { action: "none", grounding: null },
-    });
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-
-    await fixture.service.runDue();
-    await fixture.service.runDue();
-
-    expect(fixture.decide).toHaveBeenCalledTimes(1);
-    expect(fixture.startAssistantInitiated).not.toHaveBeenCalled();
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      outcome: "silent",
-      state: "resolved",
-    });
-  });
-
-  it("consumes a due opportunity silently while another Run is active", async () => {
-    const fixture = harness({ otherActiveRun: true });
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-
-    await fixture.service.runDue();
-
-    expect(fixture.decide).not.toHaveBeenCalled();
-    expect(fixture.startAssistantInitiated).not.toHaveBeenCalled();
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      outcome: "silent",
-      state: "resolved",
-    });
-  });
-
-  it("uses the source Chat, no tools, and current Persona, then projects and records the completed Run once", async () => {
-    const fixture = harness();
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-
-    await fixture.service.runDue();
-
-    expect(fixture.launches).toHaveLength(1);
-    expect(fixture.launches[0]!.request).toMatchObject({
+  it("publishes an actual memory revision once, without an independent model, Run or delivery outcome", async () => {
+    const h = harness();
+    h.service.initialize();
+    expect(h.service.earliestNextRunAt()).toBe(EVALUATE_AT);
+    h.setNow("2026-09-02T06:29:59.999Z");
+    await h.service.runDue();
+    expect(h.ingest).not.toHaveBeenCalled();
+    h.setNow(EVALUATE_AT);
+    await h.service.runDue();
+    await h.service.runDue();
+    expect(h.ingest).toHaveBeenCalledTimes(1);
+    expect(h.ingest.mock.calls[0]![0]).toMatchObject({
+      actor: "system",
+      kind: "observation",
       chatId: CHAT_ID,
-      execution: { mode: "chat" },
-      providerProfileId: PROFILE_ID,
-    });
-    expect(fixture.launches[0]!.request.attachments).toEqual([]);
-    expect(fixture.launches[0]!.options.toolNames).toEqual([]);
-    expect(fixture.launches[0]!.options.persona).toBe(fixture.currentPersona);
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      runId: RUN_ID,
-      state: "evaluating",
-    });
-
-    fixture.setNow(COMPLETED_AT);
-    const completedRun = fixture.completeRun();
-    const envelope = completedEnvelope(completedRun);
-    fixture.service.observeRun(envelope);
-    fixture.service.observeRun(envelope);
-
-    expect(fixture.bubbles).toEqual([
-      expect.objectContaining({
-        chatId: CHAT_ID,
-        id: RUN_ID,
-        kind: "continuation",
-        messageId: MESSAGE_ID,
-      }),
-    ]);
-    expect(fixture.recordAccepted).toHaveBeenCalledTimes(1);
-    expect(fixture.recordAccepted).toHaveBeenCalledWith(
-      expect.objectContaining({
-        acceptedAt: COMPLETED_AT,
-        id: RUN_ID,
-        kind: "continuation",
-        sourceKind: "memory_event",
-      }),
-    );
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      messageId: MESSAGE_ID,
-      outcome: "delivered",
-      state: "resolved",
-    });
-  });
-
-  it("uses an Android-accepted projection in the global initiative cooldown without claiming OS display", async () => {
-    const fixture = harness({ projectWithoutDesktopBubble: true });
-    const resolve = vi.spyOn(fixture.repository, "resolve");
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-    await fixture.service.runDue();
-
-    fixture.setNow(COMPLETED_AT);
-    const completedRun = fixture.completeRun();
-    fixture.service.observeRun(completedEnvelope(completedRun));
-
-    expect(fixture.bubbles).toEqual([]);
-    expect(fixture.recordAccepted).toHaveBeenCalledWith(
-      expect.objectContaining({
-        acceptedAt: COMPLETED_AT,
-        id: RUN_ID,
-        message: "要准备上场了吗？放轻松，照你的节奏来。",
-        sourceKind: "memory_event",
-      }),
-    );
-    expect(fixture.recordAccepted.mock.invocationCallOrder[0]).toBeLessThan(
-      resolve.mock.invocationCallOrder[0]!,
-    );
-
-    fixture.setDetail(
-      memoryDetail({
-        occursAt: "2026-09-02T07:10:00.000Z",
-        revisionId: "33333333-3333-4333-8333-333333333334",
-      }),
-    );
-    fixture.service.handleMemoryChanged(MEMORY_ID);
-    fixture.setNow("2026-09-02T06:40:00.000Z");
-    await fixture.service.runDue();
-
-    expect(fixture.decide).toHaveBeenCalledTimes(1);
-    expect(fixture.launches).toHaveLength(1);
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      outcome: "silent",
-      state: "resolved",
-    });
-  });
-
-  it("keeps an accepted projection recoverable until initiative history is persisted", async () => {
-    const fixture = harness({ projectWithoutDesktopBubble: true });
-    const historyError = new Error("initiative history unavailable");
-    fixture.recordAccepted.mockImplementationOnce(() => {
-      throw historyError;
-    });
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-    await fixture.service.runDue();
-
-    fixture.setNow(COMPLETED_AT);
-    const completedRun = fixture.completeRun();
-    fixture.service.observeRun(completedEnvelope(completedRun));
-
-    expect(fixture.recordAccepted).toHaveBeenCalledTimes(1);
-    expect(fixture.projectMessage).toHaveBeenCalledTimes(1);
-    expect(fixture.historyRecords).toEqual([]);
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      runId: RUN_ID,
-      state: "evaluating",
-    });
-    expect(fixture.warn).toHaveBeenCalledWith(
-      "PROACTIVE_OPPORTUNITY_HISTORY_WRITE_ERROR",
-      expect.objectContaining({ error: historyError }),
-    );
-
-    fixture.service.initialize();
-
-    expect(fixture.recordAccepted).toHaveBeenCalledTimes(2);
-    expect(fixture.projectMessage).toHaveBeenCalledTimes(2);
-    expect(fixture.projectMessage.mock.calls[1]).toEqual(
-      fixture.projectMessage.mock.calls[0],
-    );
-    expect(fixture.historyRecords).toHaveLength(1);
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      messageId: MESSAGE_ID,
-      outcome: "delivered",
-      state: "resolved",
-    });
-  });
-
-  it("keeps the completed Chat message as delivered when a later active Run suppresses only the bubble", async () => {
-    const fixture = harness();
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-    await fixture.service.runDue();
-
-    fixture.setNow(COMPLETED_AT);
-    const completedRun = fixture.completeRun();
-    fixture.setOtherActiveRun(true);
-    fixture.service.observeRun(completedEnvelope(completedRun));
-
-    expect(fixture.bubbles).toEqual([]);
-    expect(fixture.recordAccepted).not.toHaveBeenCalled();
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      messageId: MESSAGE_ID,
-      outcome: "delivered",
-      state: "resolved",
-    });
-  });
-
-  it("cancels and resolves an unbound launch when another Run wins the onStarted race", async () => {
-    const fixture = harness({ otherActiveRunOnStart: true });
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-
-    await fixture.service.runDue();
-
-    expect(fixture.cancel).toHaveBeenCalledWith({
-      requestedAt: EVALUATE_AT,
-      runId: RUN_ID,
-    });
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      outcome: "silent",
-      state: "resolved",
-    });
-    expect(fixture.service.isBusy()).toBe(false);
-  });
-
-  it("leaves a completed shutdown-race Run evaluating for startup projection recovery", async () => {
-    const fixture = harness();
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-    await fixture.service.runDue();
-
-    fixture.service.shutdown();
-    fixture.setNow(COMPLETED_AT);
-    const completedRun = fixture.completeRun();
-    fixture.service.observeRun(completedEnvelope(completedRun));
-
-    expect(fixture.bubbles).toEqual([]);
-    expect(fixture.recordAccepted).not.toHaveBeenCalled();
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      runId: RUN_ID,
-      state: "evaluating",
-    });
-  });
-
-  it("recovers a completed evaluating Run before resolving its message delivery", async () => {
-    const fixture = harness();
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-    await fixture.service.runDue();
-
-    fixture.setNow(COMPLETED_AT);
-    fixture.completeRun();
-    fixture.service.initialize();
-
-    expect(fixture.bubbles).toEqual([
-      expect.objectContaining({ messageId: MESSAGE_ID }),
-    ]);
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      messageId: MESSAGE_ID,
-      outcome: "delivered",
-      state: "resolved",
-    });
-  });
-
-  it("cancels a bound proactive Run when its Memory revision is cancelled or category permission is disabled", async () => {
-    const revised = harness();
-    revised.service.reconcileAll();
-    revised.setNow(EVALUATE_AT);
-    await revised.service.runDue();
-    const revisedOpportunity =
-      revised.repository.findLatestForMemory(MEMORY_ID)!;
-
-    revised.setDetail(
-      memoryDetail({
-        importantMoment: false,
-        occursAt: "",
-        revisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        timeZone: "",
-      }),
-    );
-    revised.service.handleMemoryChanged(MEMORY_ID);
-
-    expect(revised.cancel).toHaveBeenCalledWith({
-      requestedAt: EVALUATE_AT,
-      runId: RUN_ID,
-    });
-    expect(revised.repository.get(revisedOpportunity.id)?.state).toBe(
-      "cancelled",
-    );
-
-    const disabled = harness();
-    disabled.service.reconcileAll();
-    disabled.setNow(EVALUATE_AT);
-    await disabled.service.runDue();
-    const disabledOpportunity =
-      disabled.repository.findLatestForMemory(MEMORY_ID)!;
-
-    disabled.setEnabled(false);
-    disabled.service.handlePermissionChanged(false);
-
-    expect(disabled.cancel).toHaveBeenCalledWith({
-      requestedAt: EVALUATE_AT,
-      runId: RUN_ID,
-    });
-    expect(disabled.repository.get(disabledOpportunity.id)?.state).toBe(
-      "cancelled",
-    );
-  });
-
-  it("does not launch after shutdown while the decider is pending and releases the claim for startup recovery", async () => {
-    const pendingDecision = deferred<ProactiveOpportunityEvaluation>();
-    const fixture = harness({ decisionPromise: pendingDecision.promise });
-    fixture.service.reconcileAll();
-    fixture.setNow(EVALUATE_AT);
-
-    const due = fixture.service.runDue();
-    expect(fixture.decide).toHaveBeenCalledTimes(1);
-
-    fixture.service.shutdown();
-    pendingDecision.resolve({
-      decision: {
-        action: "send",
-        grounding: "用户此前说这场分享让自己有点紧张",
+      source: { kind: "memory", id: MEMORY_ID, revision: REVISION_ID },
+      opportunity: {
+        targetChatId: CHAT_ID,
+        evaluateAt: EVALUATE_AT,
+        occursAt: OCCURS_AT,
+        status: "due",
       },
-      provider,
     });
-    await due;
-
-    expect(fixture.startAssistantInitiated).not.toHaveBeenCalled();
-    expect(fixture.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
-      state: "pending",
-    });
-    expect(fixture.repository.earliestPendingAt()).toBe(EVALUATE_AT);
-  });
-
-  it("marks a restored evaluating opportunity failed when its bound Run is missing", () => {
-    const fixture = harness();
-    fixture.service.reconcileAll();
-    const opportunity = fixture.repository.claimNextDue(EVALUATE_AT)!;
-    fixture.storeRunWithoutReaderVisibility(MISSING_RUN_ID);
-    fixture.repository.attachRun(opportunity.id, MISSING_RUN_ID, EVALUATE_AT);
-    fixture.setNow(EVALUATE_AT);
-
-    fixture.service.initialize();
-
-    expect(fixture.repository.get(opportunity.id)).toMatchObject({
-      outcome: "failed",
-      runId: MISSING_RUN_ID,
+    expect(h.repository.findLatestForMemory(MEMORY_ID)).toMatchObject({
       state: "resolved",
     });
-    expect(fixture.repository.listOpen()).toEqual([]);
+    expect(h.repository.findLatestForMemory(MEMORY_ID)).not.toHaveProperty(
+      "outcome",
+    );
+    expect(h.service.earliestNextRunAt()).toBeUndefined();
+  });
+
+  it("does not create catch-up signals from newly formed late or vague memories", () => {
+    const h = harness();
+    h.setNow("2026-09-02T06:45:00.000Z");
+    h.service.initialize();
+    expect(h.repository.listOpen()).toEqual([]);
+    const vague = harness({ detail: memoryDetail({ importantMoment: false }) });
+    vague.service.initialize();
+    expect(vague.repository.listOpen()).toEqual([]);
+  });
+
+  it("recovers an already pending window on restart, but expires it when the event passed", async () => {
+    const h = harness();
+    h.service.initialize();
+    h.service.shutdown();
+    h.setNow("2026-09-02T06:45:00.000Z");
+    const restarted = new ProactiveOpportunityService(h.options);
+    restarted.initialize();
+    await restarted.runDue();
+    expect(
+      h.ingest.mock.calls.filter(
+        ([item]) => item.opportunity?.status === "due",
+      ),
+    ).toHaveLength(1);
+    h.setNow(OCCURS_AT);
+    await restarted.runDue();
+    expect(h.ingest.mock.calls.at(-1)![0].opportunity?.status).toBe(
+      "cancelled",
+    );
+    expect(h.repository.findLatestForMemory(MEMORY_ID)?.state).toBe(
+      "cancelled",
+    );
+  });
+
+  it("cancels a published cue on source revision change and schedules only the new explicit time", async () => {
+    const h = harness();
+    h.service.initialize();
+    h.setNow(EVALUATE_AT);
+    await h.service.runDue();
+    const revised = memoryDetail({
+      revisionId: randomUUID(),
+      occursAt: "2026-09-03T07:00:00.000Z",
+    });
+    h.setDetail(revised);
+    h.service.handleMemoryChanged(MEMORY_ID);
+    h.service.handleMemoryChanged(MEMORY_ID);
+    expect(
+      h.ingest.mock.calls.filter(
+        ([item]) => item.opportunity?.status === "cancelled",
+      ),
+    ).toHaveLength(1);
+    expect(h.service.earliestNextRunAt()).toBe("2026-09-03T06:30:00.000Z");
+  });
+
+  it("revokes category permission after publication and allows pre-window re-enablement", async () => {
+    const h = harness();
+    h.service.initialize();
+    h.setEnabled(false);
+    h.service.handlePermissionChanged(false);
+    expect(h.repository.findLatestForMemory(MEMORY_ID)?.state).toBe(
+      "cancelled",
+    );
+    h.setEnabled(true);
+    h.service.handlePermissionChanged(true);
+    h.setNow(EVALUATE_AT);
+    await h.service.runDue();
+    expect(h.ingest.mock.calls.at(-1)![0].opportunity?.status).toBe("due");
+    h.setEnabled(false);
+    h.service.handlePermissionChanged(false);
+    expect(h.repository.findLatestForMemory(MEMORY_ID)?.state).toBe(
+      "cancelled",
+    );
+    const snapshot = h.cognition.getSnapshot(h.personaId, EVALUATE_AT);
+    const due = snapshot.evidence.find(
+      (item) => item.opportunity?.status === "due",
+    )!;
+    expect(opportunityIsCurrent(due, snapshot, EVALUATE_AT)).toBe(false);
+  });
+
+  it("keeps failed publication recoverable without an immediate polling loop", async () => {
+    const h = harness();
+    h.service.initialize();
+    h.setNow(EVALUATE_AT);
+    h.ingest.mockImplementationOnce(() => {
+      throw new Error("Synthetic persistence failure");
+    });
+    await h.service.runDue();
+    expect(h.warn).toHaveBeenCalledOnce();
+    expect(h.repository.findLatestForMemory(MEMORY_ID)?.state).toBe(
+      "evaluating",
+    );
+    expect(h.service.earliestNextRunAt()).toBeUndefined();
+    h.service.shutdown();
+    const restarted = new ProactiveOpportunityService(h.options);
+    restarted.initialize();
+    await restarted.runDue();
+    expect(
+      h.cognition
+        .getSnapshot(h.personaId, EVALUATE_AT)
+        .evidence.filter((item) => item.opportunity?.status === "due"),
+    ).toHaveLength(1);
+  });
+
+  it("deduplicates a crash after Cognition persistence but before source marking", async () => {
+    const h = harness();
+    h.service.initialize();
+    h.setNow(EVALUATE_AT);
+    vi.spyOn(h.repository, "markPublished").mockImplementationOnce(() => {
+      throw new Error("Synthetic crash");
+    });
+    await h.service.runDue();
+    const restarted = new ProactiveOpportunityService(h.options);
+    restarted.initialize();
+    await restarted.runDue();
+    expect(
+      h.cognition
+        .getSnapshot(h.personaId, EVALUATE_AT)
+        .evidence.filter((item) => item.opportunity?.status === "due"),
+    ).toHaveLength(1);
+    expect(h.repository.findLatestForMemory(MEMORY_ID)?.state).toBe("resolved");
+  });
+
+  it("does not publish after shutdown or into an archived Chat", async () => {
+    const h = harness();
+    h.service.initialize();
+    h.service.shutdown();
+    h.setNow(EVALUATE_AT);
+    await h.service.runDue();
+    expect(h.ingest).not.toHaveBeenCalled();
+    const archived = harness();
+    archived.service.initialize();
+    archived.setChatActive(false);
+    archived.setNow(EVALUATE_AT);
+    await archived.service.runDue();
+    expect(
+      archived.ingest.mock.calls.every(
+        ([item]) => item.opportunity?.status === "cancelled",
+      ),
+    ).toBe(true);
   });
 });

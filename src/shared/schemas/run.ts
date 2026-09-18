@@ -208,6 +208,24 @@ export const UserInputResolutionSchema = Type.Union([
   ),
 ]);
 
+// Internal completion of a material request. The public answer IPC still accepts
+// only UserInputResolutionSchema; observed context is never a user answer.
+export const InputRequestResolutionSchema = Type.Union([
+  UserInputResolutionSchema,
+  Type.Object(
+    {
+      status: Type.Literal("context_available"),
+      resolvedAt: TimestampSchema,
+      attemptId: EntityIdSchema,
+      evidenceIds: Type.Array(EntityIdSchema, {
+        minItems: 1,
+        uniqueItems: true,
+      }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
 export const RunItemSchema = Type.Object(
   {
     artifacts: Type.Array(ArtifactReferenceSchema),

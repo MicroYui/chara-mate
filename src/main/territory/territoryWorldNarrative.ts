@@ -139,6 +139,12 @@ export function territorySourceItemContent(input: {
   readonly name: string;
   readonly sourceText: string;
 }): TerritoryItemContent {
+  if (input.kind === "character_creation") {
+    return {
+      name: shortTheme(input.name),
+      description: poeticFallback(shortTheme(input.name)),
+    };
+  }
   if (input.kind === "activity_digest") {
     const subject = activitySubject(input.sourceText);
     return {

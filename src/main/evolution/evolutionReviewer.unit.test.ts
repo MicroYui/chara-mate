@@ -1,3 +1,4 @@
+import { estimateInputBudget } from "../providers/inputBudget";
 import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
@@ -28,6 +29,14 @@ class TextQueueProvider implements ModelProvider {
   readonly requests: ModelRequest[] = [];
 
   constructor(private readonly responses: string[]) {}
+
+  measureInput(request: ModelRequest, signal: AbortSignal) {
+    signal.throwIfAborted();
+    return Promise.resolve(this.estimateInput(request));
+  }
+  estimateInput(request: ModelRequest) {
+    return estimateInputBudget(request, request.modelId);
+  }
 
   resolveContextLimits(): Promise<ModelContextLimits> {
     return Promise.resolve({});

@@ -20,6 +20,7 @@ import type {
   MemoryClaimSlot,
   MemoryDetail,
   MemoryHit,
+  MemoryHistoryStatus,
   MemoryListRequest,
   MemorySnapshot,
   MemorySource,
@@ -49,6 +50,7 @@ const sourceTypes: ReadonlyArray<{
   { label: "Chat", value: "chat" },
   { label: "Voice", value: "voice" },
   { label: "Activity", value: "activity" },
+  { label: "桌面观察", value: "activity_event" },
   { label: "工具", value: "tool" },
   { label: "用户编辑", value: "user_edit" },
   { label: "蒸馏", value: "distillation" },
@@ -86,12 +88,13 @@ const claimSlotLabel = new Map<MemoryClaimSlot, string>([
   ["preference.schedule", "时间安排"],
   ["preference.tools", "工具"],
 ]);
-const claimSlots = [...claimSlotLabel.keys()];
-
-function claimSlotsForType(type: MemoryType): readonly MemoryClaimSlot[] {
-  if (type !== "profile" && type !== "preference") return [];
-  return claimSlots.filter((slot) => slot.startsWith(`${type}.`));
-}
+const historyStatusLabel: Readonly<Record<MemoryHistoryStatus, string | null>> =
+  {
+    current: null,
+    retained_history: "当时的记录，后来发生了变化。",
+    corrected: "这条旧记录后来被纠正，不作为真实经历使用。",
+    unresolved: "这条旧记录尚不能确认为真实经历，仅供回看。",
+  };
 
 function currentContent(hit: MemoryHit): string {
   return hit.revision.content;
@@ -149,21 +152,12 @@ export function MemoryPage({
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");
   const [draftType, setDraftType] = useState<MemoryType>("preference");
-  const [draftClaimSlot, setDraftClaimSlot] =
-    useState<MemoryClaimSlot>("preference.hobbies");
-  const [resolveClaimSlot, setResolveClaimSlot] =
-    useState<MemoryClaimSlot>("preference.hobbies");
-  const [resolveClaimOwner, setResolveClaimOwner] = useState<MemoryHit | null>(
-    null,
-  );
-  const [resolveClaimDraft, setResolveClaimDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const detailSequence = useRef(0);
   const focusedMemoryRef = useRef<string | null>(null);
   const loadSequence = useRef(0);
-  const resolveClaimSequence = useRef(0);
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
 
@@ -319,9 +313,6 @@ export function MemoryPage({
     setBusy(true);
     try {
       const response = await api.create({
-        ...(draftType === "profile" || draftType === "preference"
-          ? { claimSlot: draftClaimSlot }
-          : {}),
         confidence: 1,
         content,
         importance: 0.5,
@@ -337,36 +328,6 @@ export function MemoryPage({
       } else setError(response.error.message);
     } catch {
       setError("新记忆没有保存，请重试。");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const resolveLegacyClaim = async () => {
-    const content = resolveClaimDraft.trim();
-    if (!detail || !content || busy) return;
-    setBusy(true);
-    try {
-      const response = await api.resolveClaim({
-        claimSlot: resolveClaimSlot,
-        content,
-        memoryId: detail.memory.id,
-      });
-      if (response.ok) {
-        resolveClaimSequence.current += 1;
-        setSelectedId(response.value.memory.id);
-        setDetail(response.value);
-        setDraft(
-          response.value.revisions.find(
-            ({ id }) => id === response.value.memory.currentRevisionId,
-          )?.content ?? "",
-        );
-        setResolveClaimOwner(null);
-        setResolveClaimDraft("");
-        await load();
-      } else setError(response.error.message);
-    } catch {
-      setError("旧记忆字段没有更新，请重试。");
     } finally {
       setBusy(false);
     }
@@ -444,56 +405,6 @@ export function MemoryPage({
   const canAddToTerritory = Boolean(
     !historical && detail && !detail.memory.deletedAt,
   );
-  const canResolveClaim = Boolean(
-    canEdit &&
-    detail &&
-    !detail.memory.claimSlot &&
-    (detail.memory.type === "profile" || detail.memory.type === "preference"),
-  );
-
-  useEffect(() => {
-    if (!canResolveClaim || !detail || !activeRevision) {
-      resolveClaimSequence.current += 1;
-      setResolveClaimOwner(null);
-      setResolveClaimDraft("");
-      return;
-    }
-    const availableSlots = claimSlotsForType(detail.memory.type);
-    if (!availableSlots.includes(resolveClaimSlot)) {
-      setResolveClaimSlot(availableSlots[0]!);
-      return;
-    }
-    const sequence = ++resolveClaimSequence.current;
-    void api
-      .list({ claimSlot: resolveClaimSlot, status: "active" })
-      .then((response) => {
-        if (sequence !== resolveClaimSequence.current) return;
-        if (!response.ok) {
-          setError(response.error.message);
-          return;
-        }
-        const owner =
-          response.value.memories.find(
-            ({ memory }) => memory.id !== detail.memory.id,
-          ) ?? null;
-        setResolveClaimOwner(owner);
-        setResolveClaimDraft(
-          owner
-            ? `${owner.revision.content}\n${activeRevision.content}`
-            : activeRevision.content,
-        );
-      })
-      .catch(() => {
-        if (sequence === resolveClaimSequence.current)
-          setError("无法读取稳定字段的现有记忆，请重试。");
-      });
-    return () => {
-      if (sequence === resolveClaimSequence.current) {
-        resolveClaimSequence.current += 1;
-      }
-    };
-  }, [activeRevision, api, canResolveClaim, detail, resolveClaimSlot]);
-
   return (
     <section className={styles["page"]}>
       <div className={styles["toolbar"]}>
@@ -576,7 +487,6 @@ export function MemoryPage({
             setDetail(null);
             setDraft("");
             setDraftType("preference");
-            setDraftClaimSlot("preference.hobbies");
           }}
         >
           <Plus aria-hidden="true" size={15} /> 新记忆
@@ -719,8 +629,6 @@ export function MemoryPage({
                   onChange={(event) => {
                     const nextType = event.currentTarget.value as MemoryType;
                     setDraftType(nextType);
-                    const availableSlots = claimSlotsForType(nextType);
-                    if (availableSlots[0]) setDraftClaimSlot(availableSlots[0]);
                   }}
                 >
                   {memoryTypes.map((item) => (
@@ -729,23 +637,6 @@ export function MemoryPage({
                     </option>
                   ))}
                 </select>
-                {draftType === "profile" || draftType === "preference" ? (
-                  <select
-                    aria-label="新记忆稳定字段"
-                    value={draftClaimSlot}
-                    onChange={(event) =>
-                      setDraftClaimSlot(
-                        event.currentTarget.value as MemoryClaimSlot,
-                      )
-                    }
-                  >
-                    {claimSlotsForType(draftType).map((slot) => (
-                      <option key={slot} value={slot}>
-                        {claimSlotLabel.get(slot)}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
                 <textarea
                   autoFocus
                   aria-label="新记忆内容"
@@ -778,6 +669,9 @@ export function MemoryPage({
                         : `更新于 ${dateLabel(detail.memory.updatedAt)}`}{" "}
                       · {sourceLabel.get(activeRevision.sourceType)}
                     </p>
+                    {historyStatusLabel[activeRevision.historyStatus] && (
+                      <p>{historyStatusLabel[activeRevision.historyStatus]}</p>
+                    )}
                   </div>
                   <div className={styles["actions"]}>
                     <button
@@ -855,56 +749,6 @@ export function MemoryPage({
                     </button>
                   </div>
                 </section>
-                {canResolveClaim ? (
-                  <section className={styles["editor"]}>
-                    <h3>绑定稳定字段</h3>
-                    <p className={styles["claimNote"]}>
-                      这是一条旧版未绑定记录。请选择字段并确认完整内容；系统不会自动猜测。
-                    </p>
-                    <select
-                      aria-label="旧记忆稳定字段"
-                      value={resolveClaimSlot}
-                      onChange={(event) =>
-                        setResolveClaimSlot(
-                          event.currentTarget.value as MemoryClaimSlot,
-                        )
-                      }
-                    >
-                      {claimSlotsForType(detail.memory.type).map((slot) => (
-                        <option key={slot} value={slot}>
-                          {claimSlotLabel.get(slot)}
-                        </option>
-                      ))}
-                    </select>
-                    {resolveClaimOwner ? (
-                      <div className={styles["claimComparison"]}>
-                        <div>
-                          <span>现有字段内容</span>
-                          <strong>{resolveClaimOwner.revision.content}</strong>
-                        </div>
-                        <div>
-                          <span>这条旧记忆</span>
-                          <strong>{activeRevision.content}</strong>
-                        </div>
-                      </div>
-                    ) : null}
-                    <textarea
-                      aria-label="稳定字段确认内容"
-                      value={resolveClaimDraft}
-                      onChange={(event) =>
-                        setResolveClaimDraft(event.currentTarget.value)
-                      }
-                    />
-                    <button
-                      className={styles["primaryButton"]}
-                      disabled={busy || !resolveClaimDraft.trim()}
-                      type="button"
-                      onClick={() => void resolveLegacyClaim()}
-                    >
-                      {resolveClaimOwner ? "确认合并" : "确认绑定"}
-                    </button>
-                  </section>
-                ) : null}
                 <section className={styles["editor"]}>
                   <h3>当前内容</h3>
                   <textarea
@@ -954,6 +798,22 @@ export function MemoryPage({
                         <span />
                         <div>
                           <strong>{revision.content}</strong>
+                          {historyStatusLabel[revision.historyStatus] && (
+                            <p>{historyStatusLabel[revision.historyStatus]}</p>
+                          )}
+                          {revision.historyStatusRevisionId && (
+                            <small>
+                              {(() => {
+                                const clarification = detail.revisions.find(
+                                  ({ id }) =>
+                                    id === revision.historyStatusRevisionId,
+                                );
+                                return clarification
+                                  ? `后续说明：${clarification.content}`
+                                  : "后续修订中有对此记录的说明。";
+                              })()}
+                            </small>
+                          )}
                           <small>
                             {dateLabel(revision.createdAt)} · {revision.reason}{" "}
                             · {sourceLabel.get(revision.sourceType)}
@@ -961,7 +821,8 @@ export function MemoryPage({
                               ? ` · ${revisionSources
                                   .map(
                                     (source) =>
-                                      source.label ?? source.referenceId,
+                                      source.label ??
+                                      dateTimeLabel(source.createdAt),
                                   )
                                   .join("、")}`
                               : ""}
@@ -978,12 +839,15 @@ export function MemoryPage({
                       const openable =
                         onOpenSource &&
                         (source.type === "activity" ||
+                          source.type === "activity_event" ||
                           source.type === "chat" ||
                           source.type === "voice");
                       const content = (
                         <>
                           <strong>{sourceLabel.get(source.type)}</strong>
-                          <span>{source.label ?? source.referenceId}</span>
+                          <span>
+                            {source.label ?? dateTimeLabel(source.createdAt)}
+                          </span>
                           {openable ? (
                             <ChevronRight aria-hidden="true" size={13} />
                           ) : null}
@@ -992,7 +856,7 @@ export function MemoryPage({
                       return openable ? (
                         <button
                           key={source.id}
-                          aria-label={`${sourceLabel.get(source.type)} ${source.label ?? source.referenceId}`}
+                          aria-label={`${sourceLabel.get(source.type)} ${source.label ?? dateTimeLabel(source.createdAt)}`}
                           type="button"
                           onClick={() => onOpenSource?.(source)}
                         >
@@ -1007,14 +871,14 @@ export function MemoryPage({
                   )}
                 </section>
                 <section className={styles["usages"]}>
-                  <h3>被使用记录</h3>
+                  <h3>检索与上下文引用记录</h3>
                   {detail.usages.length ? (
                     detail.usages.map((usage) => (
                       <div key={usage.id}>
                         <strong>
                           {usage.consumer === "context"
-                            ? "上下文装配"
-                            : "memory.search"}
+                            ? "提供给回答上下文"
+                            : "检索返回"}
                         </strong>
                         <span>
                           {dateTimeLabel(usage.usedAt)} ·{" "}
@@ -1025,7 +889,7 @@ export function MemoryPage({
                       </div>
                     ))
                   ) : (
-                    <p>这条记忆还没有被模型读取。</p>
+                    <p>还没有检索或上下文引用记录。</p>
                   )}
                 </section>
               </>

@@ -8,7 +8,8 @@ import {
   type ResolveApprovalRequest,
   type ResolveUserInputRequest,
   type ResumeRunRequest,
-  type StartRunRequest,
+  type StartRunSubmissionRequest,
+  type CancelStartRequest,
   type SteerRunRequest,
 } from "../shared/contracts/agent";
 import {
@@ -49,7 +50,6 @@ import {
   type MemoryCreateRequest,
   type MemoryIdRequest,
   type MemoryListRequest,
-  type MemoryResolveClaimRequest,
   type MemoryReviseRequest,
   type MemorySetPinnedRequest,
 } from "../shared/contracts/memory";
@@ -64,6 +64,7 @@ import {
 import {
   ACTIVITY_CHANNELS,
   type ActivityApi,
+  type ActivityEventReferenceRequest,
   type ActivityCleanupRequest,
   type ActivityEpisodeIdRequest,
   type ActivitySetPausedRequest,
@@ -165,7 +166,9 @@ import {
   ResumeRunRequestSchema,
   RunCancelResponseSchema,
   RunMutationResponseSchema,
-  StartRunRequestSchema,
+  StartRunSubmissionRequestSchema,
+  CancelStartRequestSchema,
+  CancelStartResponseSchema,
   StartRunResponseSchema,
   SteerRunRequestSchema,
   PendingApprovalRequestSchema,
@@ -199,7 +202,6 @@ import {
   MemoryListResponseSchema,
   MemoryMutationResponseSchema,
   MemoryPurgeResponseSchema,
-  MemoryResolveClaimRequestSchema,
   MemoryReviseRequestSchema,
   MemorySetPinnedRequestSchema,
 } from "../shared/schemas/memory";
@@ -213,6 +215,8 @@ import {
 import {
   ActivityCleanupRequestSchema,
   ActivityCleanupResponseSchema,
+  ActivityEventReferenceRequestSchema,
+  ActivityEventReferenceResponseSchema,
   ActivityEpisodeIdRequestSchema,
   ActivityEpisodeResponseSchema,
   ActivitySetPausedRequestSchema,
@@ -421,6 +425,14 @@ const journeyApi: JourneyApi = Object.freeze({
 });
 
 const agentApi: AgentApi = Object.freeze({
+  cancelStart: async (input: CancelStartRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      CancelStartResponseSchema,
+      await ipcRenderer.invoke(
+        AGENT_CHANNELS.cancelStart,
+        parseSchemaWithoutCodeGeneration(CancelStartRequestSchema, input),
+      ),
+    ),
   cancel: async (input: RunCancelRequest) =>
     parseSchemaWithoutCodeGeneration(
       RunCancelResponseSchema,
@@ -461,12 +473,15 @@ const agentApi: AgentApi = Object.freeze({
         parseSchemaWithoutCodeGeneration(ResumeRunRequestSchema, input),
       ),
     ),
-  start: async (input: StartRunRequest) =>
+  start: async (input: StartRunSubmissionRequest) =>
     parseSchemaWithoutCodeGeneration(
       StartRunResponseSchema,
       await ipcRenderer.invoke(
         AGENT_CHANNELS.start,
-        parseSchemaWithoutCodeGeneration(StartRunRequestSchema, input),
+        parseSchemaWithoutCodeGeneration(
+          StartRunSubmissionRequestSchema,
+          input,
+        ),
       ),
     ),
   steer: async (input: SteerRunRequest) =>
@@ -1300,16 +1315,6 @@ const memoryApi: MemoryApi = Object.freeze({
       await ipcRenderer.invoke(MEMORY_CHANNELS.rejectCandidate, request),
     );
   },
-  resolveClaim: async (input: MemoryResolveClaimRequest) => {
-    const request = parseSchemaWithoutCodeGeneration(
-      MemoryResolveClaimRequestSchema,
-      input,
-    );
-    return parseSchemaWithoutCodeGeneration(
-      MemoryMutationResponseSchema,
-      await ipcRenderer.invoke(MEMORY_CHANNELS.resolveClaim, request),
-    );
-  },
   restore: async (input: MemoryIdRequest) => {
     const request = parseSchemaWithoutCodeGeneration(
       MemoryIdRequestSchema,
@@ -1401,6 +1406,17 @@ const activityApi: ActivityApi = Object.freeze({
       await ipcRenderer.invoke(
         ACTIVITY_CHANNELS.deleteEpisode,
         parseSchemaWithoutCodeGeneration(ActivityEpisodeIdRequestSchema, input),
+      ),
+    ),
+  resolveEventReference: async (input: ActivityEventReferenceRequest) =>
+    parseSchemaWithoutCodeGeneration(
+      ActivityEventReferenceResponseSchema,
+      await ipcRenderer.invoke(
+        ACTIVITY_CHANNELS.resolveEventReference,
+        parseSchemaWithoutCodeGeneration(
+          ActivityEventReferenceRequestSchema,
+          input,
+        ),
       ),
     ),
   getEpisode: async (input: ActivityEpisodeIdRequest) =>

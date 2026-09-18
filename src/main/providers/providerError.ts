@@ -1,4 +1,9 @@
 import type { AppError } from "../../shared/contracts/run";
+import type { ProviderSnapshot } from "../../shared/contracts/provider";
+
+export type ProviderRequestIdentity = Readonly<
+  Pick<ProviderSnapshot, "profileId" | "apiStyle" | "modelId">
+>;
 
 export type ProviderErrorCode =
   | "PROVIDER.AUTHENTICATION_FAILED"
@@ -14,6 +19,7 @@ export type ProviderErrorCode =
   | "PROVIDER.SECRET_STORAGE_UNAVAILABLE"
   | "PROVIDER.STORAGE_FAILED"
   | "PROVIDER.TIMEOUT"
+  | "PROVIDER.UNAVAILABLE"
   | "PROVIDER.UNREACHABLE";
 
 export class ProviderError extends Error {
@@ -21,6 +27,7 @@ export class ProviderError extends Error {
     readonly code: ProviderErrorCode,
     message: string,
     readonly retryable: boolean,
+    readonly requestIdentity?: ProviderRequestIdentity,
   ) {
     super(message);
     this.name = "ProviderError";

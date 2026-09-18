@@ -23,7 +23,7 @@ import type {
 } from "../../../shared/contracts/territoryWorld";
 import { territoryAssetUrl } from "../../../shared/pure/territoryAsset";
 import {
-  rotatedTerritorySize,
+  territoryInstanceLayout,
   transformTerritoryPixelPoint,
 } from "../../../shared/pure/territoryWorldGeometry";
 import {
@@ -170,63 +170,6 @@ function applyQuarterTurn(
   else if (rotation === 270) container.position.set(0, bounds.width);
 }
 
-function transformedOrigin(
-  instance: TerritoryInstance,
-  instances: ReadonlyMap<string, TerritoryInstance>,
-  definitions: ReadonlyMap<string, TerritoryDefinition>,
-  seen = new Set<string>(),
-): { readonly x: number; readonly y: number } | null {
-  if (seen.has(instance.id)) return null;
-  seen.add(instance.id);
-  if (instance.placement.kind === "zone") {
-    return {
-      x:
-        instance.placement.point.x * TERRITORY_WORLD_UNIT_PX +
-        instance.placement.offsetPx.x,
-      y:
-        instance.placement.point.y * TERRITORY_WORLD_UNIT_PX +
-        instance.placement.offsetPx.y,
-    };
-  }
-  if (instance.placement.kind !== "attachment") return null;
-  const placement = instance.placement;
-  const parent = instances.get(placement.parentInstanceId);
-  if (!parent || parent.placement.kind === "collection") return null;
-  const parentDefinition = definitions.get(definitionKey(parent.definition));
-  const definition = definitions.get(definitionKey(instance.definition));
-  if (!parentDefinition || !definition) return null;
-  const anchor = parentDefinition.anchors.find(
-    ({ id }) => id === placement.anchorId,
-  );
-  if (!anchor || definition.placement.mode !== "attachment") return null;
-  const parentOrigin = transformedOrigin(parent, instances, definitions, seen);
-  if (!parentOrigin) return null;
-  const parentAnchor = transformTerritoryPixelPoint(
-    anchor.anchorPx,
-    parentDefinition.visual.sizePx,
-    parent.placement.flipped,
-    parent.placement.rotation,
-  );
-  const attachmentAnchor = transformTerritoryPixelPoint(
-    definition.placement.attachmentAnchorPx,
-    definition.visual.sizePx,
-    instance.placement.flipped,
-    instance.placement.rotation,
-  );
-  return {
-    x:
-      parentOrigin.x +
-      parentAnchor.x -
-      attachmentAnchor.x +
-      placement.offsetPx.x,
-    y:
-      parentOrigin.y +
-      parentAnchor.y -
-      attachmentAnchor.y +
-      placement.offsetPx.y,
-  };
-}
-
 function visualDepth(
   instance: TerritoryInstance,
   definition: TerritoryDefinition,
@@ -247,15 +190,15 @@ function visualDepth(
     const parentDefinition = parent
       ? definitions.get(definitionKey(parent.definition))
       : undefined;
-    const parentOrigin = parent
-      ? transformedOrigin(parent, instances, definitions)
+    const parentLayout = parent
+      ? territoryInstanceLayout(parent, instances, definitions)
       : null;
-    if (parent && parentDefinition && parentOrigin) {
+    if (parent && parentDefinition && parentLayout?.status === "available") {
       return (
         visualDepth(
           parent,
           parentDefinition,
-          parentOrigin,
+          parentLayout.originPx,
           instances,
           definitions,
           seen,
@@ -628,8 +571,13 @@ export function PixiTerritoryWorldCanvas({
             definitionKey(instance.definition),
           );
           if (!definition || !visibleLayers.has(definition.layer)) continue;
-          const origin = transformedOrigin(instance, instances, definitions);
-          if (!origin) continue;
+          const layout = territoryInstanceLayout(
+            instance,
+            instances,
+            definitions,
+          );
+          if (layout.status !== "available") continue;
+          const origin = layout.originPx;
           const outer = new Container();
           const rotated = new Container();
           const content = new Container();
@@ -670,13 +618,7 @@ export function PixiTerritoryWorldCanvas({
             definitions,
           );
 
-          const rotatedSize =
-            instance.placement.kind === "collection"
-              ? definition.visual.sizePx
-              : rotatedTerritorySize(
-                  definition.visual.sizePx,
-                  instance.placement.rotation,
-                );
+          const rotatedSize = layout.sizePx;
           const hitArea = new Rectangle(
             0,
             0,

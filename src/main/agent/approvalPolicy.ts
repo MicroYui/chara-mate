@@ -8,6 +8,17 @@ import { TERRITORY_MOMENT_SURPRISES_TOOL_NAME } from "../journey/territoryMoment
 import { TERRITORY_PROPOSE_MOMENT_TOOL_NAME } from "../territory/territoryMomentTool";
 import { COLLABORATION_DISPATCH_TOOL_NAME } from "./collaborationTool";
 
+export const CHAT_INTERNAL_TOOL_NAMES = new Set([
+  MEMORY_FORMATION_TOOL_NAME,
+  COMPANIONSHIP_UPDATE_TOOL_NAME,
+  IMPORTANT_MOMENT_OUTREACH_TOOL_NAME,
+  TERRITORY_MOMENT_SURPRISES_TOOL_NAME,
+  TERRITORY_PROPOSE_MOMENT_TOOL_NAME,
+  "companion.life",
+  "territory.act",
+  "territory.generate_item",
+]);
+
 export function toolAllowedInExecution(
   execution: RunExecution,
   descriptor: ToolDescriptor,
@@ -17,11 +28,7 @@ export function toolAllowedInExecution(
     return execution.mode === "agent";
   }
   return (
-    descriptor.name === MEMORY_FORMATION_TOOL_NAME ||
-    descriptor.name === COMPANIONSHIP_UPDATE_TOOL_NAME ||
-    descriptor.name === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME ||
-    descriptor.name === TERRITORY_MOMENT_SURPRISES_TOOL_NAME ||
-    descriptor.name === TERRITORY_PROPOSE_MOMENT_TOOL_NAME ||
+    CHAT_INTERNAL_TOOL_NAMES.has(descriptor.name) ||
     execution.mode === "agent" ||
     (descriptor.effect === "read" && descriptor.idempotency === "idempotent")
   );
@@ -32,15 +39,7 @@ export function requiresApproval(
   descriptor: ToolDescriptor,
 ): boolean {
   if (descriptor.name === VOICE_END_TOOL_NAME) return false;
-  if (
-    descriptor.name === MEMORY_FORMATION_TOOL_NAME ||
-    descriptor.name === COMPANIONSHIP_UPDATE_TOOL_NAME ||
-    descriptor.name === IMPORTANT_MOMENT_OUTREACH_TOOL_NAME ||
-    descriptor.name === TERRITORY_MOMENT_SURPRISES_TOOL_NAME ||
-    descriptor.name === TERRITORY_PROPOSE_MOMENT_TOOL_NAME
-  ) {
-    return false;
-  }
+  if (CHAT_INTERNAL_TOOL_NAMES.has(descriptor.name)) return false;
   if (execution.mode === "chat" || descriptor.effect === "read") return false;
   if (execution.approvalMode === "full_access") return false;
   if (execution.approvalMode === "auto_approve") {

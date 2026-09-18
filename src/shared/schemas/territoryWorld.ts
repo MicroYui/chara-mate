@@ -1,6 +1,7 @@
 import { Type, type TSchema } from "@sinclair/typebox";
 
 import { AppErrorSchema } from "./error";
+import { MemoryEvidenceReferenceSchema } from "./memoryRecall";
 import {
   EntityIdSchema,
   NonBlankStringSchema,
@@ -367,13 +368,8 @@ export const TerritoryChatMomentAttachmentSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const TerritoryChatMomentMemoryRevisionSchema = Type.Object(
-  {
-    memoryId: EntityIdSchema,
-    revisionId: EntityIdSchema,
-  },
-  { additionalProperties: false },
-);
+export const TerritoryChatMomentMemoryRevisionSchema =
+  MemoryEvidenceReferenceSchema;
 
 export const TerritoryChatMomentPersonaRefSchema = Type.Object(
   {
@@ -400,10 +396,23 @@ export const TerritoryChatMomentSourceSnapshotSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const TerritoryCharacterCreationSourceSnapshotSchema = Type.Object(
+  {
+    id: EntityIdSchema,
+    kind: Type.Literal("character_creation"),
+    label: NonBlankStringSchema,
+    occurredAt: TimestampSchema,
+    personaRef: TerritoryChatMomentPersonaRefSchema,
+    runId: EntityIdSchema,
+  },
+  { additionalProperties: false },
+);
+
 export const TerritorySourceSnapshotSchema = Type.Union([
   TerritoryMemorySourceSnapshotSchema,
   TerritoryActivityDigestSourceSnapshotSchema,
   TerritoryChatMomentSourceSnapshotSchema,
+  TerritoryCharacterCreationSourceSnapshotSchema,
 ]);
 
 const transformProperties = {
@@ -514,6 +523,73 @@ export const TerritoryPetActionTargetSchema = Type.Union([
   ),
 ]);
 
+export const TerritoryInstanceLayoutSchema = Type.Union([
+  Type.Object(
+    {
+      status: Type.Literal("available"),
+      rootInstanceId: TerritoryInstanceIdSchema,
+      rootGridPoint: TerritoryGridPointSchema,
+      originPx: TerritoryPixelPointSchema,
+      sizePx: TerritoryPositiveSizeSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      status: Type.Literal("unavailable"),
+      reason: Type.Union([
+        Type.Literal("missing_definition"),
+        Type.Literal("missing_parent"),
+        Type.Literal("missing_anchor"),
+        Type.Literal("invalid_attachment"),
+        Type.Literal("cyclic_attachment"),
+        Type.Literal("unplaced"),
+      ]),
+      referenceId: NonBlankStringSchema,
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const TerritoryObservationNodeSchema = Type.Object(
+  {
+    instanceId: TerritoryInstanceIdSchema,
+    definition: TerritoryDefinitionRefSchema,
+    placement: TerritoryInstancePlacementSchema,
+    content: Type.Union([
+      Type.Object(
+        {
+          status: Type.Literal("available"),
+          name: NonBlankStringSchema,
+          description: NonBlankStringSchema,
+          layer: TerritoryLayerSchema,
+          anchors: TerritoryDefinitionSchema.properties.anchors,
+          visual: Type.Object(
+            {
+              sizePx: TerritoryPositiveSizeSchema,
+              attachmentAnchorPx: Type.Union([
+                TerritoryPixelPointSchema,
+                Type.Null(),
+              ]),
+            },
+            { additionalProperties: false },
+          ),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          status: Type.Literal("unavailable"),
+          reason: Type.Literal("missing_definition"),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
+    layout: TerritoryInstanceLayoutSchema,
+  },
+  { additionalProperties: false },
+);
+
 export const TerritoryPetAffordanceSchema = Type.Object(
   {
     actions: Type.Array(TerritoryPetActionSchema, {
@@ -523,10 +599,7 @@ export const TerritoryPetAffordanceSchema = Type.Object(
     capabilities: Type.Array(TerritoryCapabilitySchema, {
       uniqueItems: true,
     }),
-    description: NonBlankStringSchema,
     instanceId: TerritoryInstanceIdSchema,
-    name: NonBlankStringSchema,
-    point: TerritoryGridPointSchema,
     reachable: Type.Boolean(),
   },
   { additionalProperties: false },
@@ -534,6 +607,7 @@ export const TerritoryPetAffordanceSchema = Type.Object(
 
 export const TerritoryPetActionObservationSchema = Type.Object(
   {
+    nodes: Type.Array(TerritoryObservationNodeSchema),
     pet: TerritoryPetStateSchema,
     revisionId: TerritoryWorldRevisionIdSchema,
     targets: Type.Array(TerritoryPetAffordanceSchema),
@@ -856,7 +930,10 @@ export const TerritoryCommitChangeSetRequestSchema = Type.Object(
 );
 
 export const TerritoryRestoreRevisionRequestSchema = Type.Object(
-  { revisionId: TerritoryWorldRevisionIdSchema },
+  {
+    expectedCurrentRevisionId: TerritoryWorldRevisionIdSchema,
+    revisionId: TerritoryWorldRevisionIdSchema,
+  },
   { additionalProperties: false },
 );
 

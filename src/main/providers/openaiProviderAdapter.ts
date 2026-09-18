@@ -118,6 +118,17 @@ export function mapSdkError(
       false,
     );
   }
+  if (
+    error instanceof APIError &&
+    error.status !== undefined &&
+    error.status >= 500
+  ) {
+    return new ProviderError(
+      "PROVIDER.UNAVAILABLE",
+      `Provider 服务暂时不可用（HTTP ${String(error.status)}），请稍后重试。`,
+      true,
+    );
+  }
 
   return new ProviderError(
     "PROVIDER.REQUEST_FAILED",

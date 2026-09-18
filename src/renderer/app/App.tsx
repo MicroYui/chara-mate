@@ -16,7 +16,12 @@ import type {
   PetDescriptor,
   PetLibrarySnapshot,
 } from "../../shared/contracts/pet";
-import { chatsUiReducer, initialChatsUiState } from "../features/chats/state";
+import {
+  chatsUiReducer,
+  initialChatsUiState,
+  readModelSelection,
+  writeModelSelection,
+} from "../features/chats/state";
 import { ChatDomainStore } from "../features/chats/chatStore";
 import { projectChatSnapshot } from "../features/chats/projection";
 import { VoiceStore } from "../features/voice/voiceStore";
@@ -49,6 +54,7 @@ export function App() {
   const [foundationLoadAttempt, setFoundationLoadAttempt] = useState(0);
   const [uiState, dispatch] = useReducer(chatsUiReducer, undefined, () => ({
     ...initialChatsUiState,
+    modelId: readModelSelection(),
     sidebarCollapsed: readSidebarCollapsed(window.localStorage),
   }));
   const [backgroundScheme, setBackgroundScheme] = useState<BackgroundScheme>(
@@ -83,7 +89,14 @@ export function App() {
   const focusedApprovalId = useRef<string | undefined>(undefined);
   const openedVoiceChatId = useRef<string | null>(null);
   const routedTogetherSessionId = useRef<string | null>(null);
-  const sendPending = useRef(false);
+  const sendPending = useRef<{
+    readonly requestId: string;
+    chatId: string | null;
+    cancelled: boolean;
+  } | null>(null);
+  const [pendingSendChatId, setPendingSendChatId] = useState<
+    string | null | undefined
+  >(undefined);
   const chatStore = useMemo(
     () =>
       new ChatDomainStore(
@@ -406,15 +419,15 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (chatDomain.models.some(({ id }) => id === uiState.modelId)) {
-      return;
-    }
-    dispatch({
-      modelId:
-        chatDomain.models.length === 1 ? chatDomain.models[0]?.id : undefined,
-      type: "model.changed",
-    });
-  }, [chatDomain.models, uiState.modelId]);
+    // An initial empty list or a failed refresh is not evidence of deletion.
+    if (chatDomain.modelsStatus !== "ready") return;
+    if (chatDomain.models.some(({ id }) => id === uiState.modelId)) return;
+    const modelId =
+      chatDomain.models.length === 1 ? chatDomain.models[0]?.id : undefined;
+    if (modelId === uiState.modelId) return;
+    writeModelSelection(modelId);
+    dispatch({ modelId, type: "model.changed" });
+  }, [chatDomain.models, chatDomain.modelsStatus, uiState.modelId]);
 
   const hasActiveRun = Boolean(
     chatDomain.activeSnapshot?.runs.some(
@@ -426,13 +439,22 @@ export function App() {
     ),
   );
 
+  const hasPendingSend =
+    pendingSendChatId !== undefined &&
+    pendingSendChatId === uiState.activeChatId;
+  const hasPendingPreparation = Boolean(
+    uiState.activeChatId &&
+    chatDomain.pendingChatIds.includes(uiState.activeChatId),
+  );
+  const hasRunningInteraction =
+    hasActiveRun || hasPendingSend || hasPendingPreparation;
   useEffect(() => {
-    if (hasActiveRun && uiState.composerPhase === "idle") {
+    if (hasRunningInteraction && uiState.composerPhase === "idle") {
       dispatch({ phase: "running", type: "composer.phase-changed" });
-    } else if (!hasActiveRun && uiState.composerPhase !== "idle") {
+    } else if (!hasRunningInteraction && uiState.composerPhase !== "idle") {
       dispatch({ phase: "idle", type: "composer.phase-changed" });
     }
-  }, [hasActiveRun, uiState.composerPhase]);
+  }, [hasRunningInteraction, uiState.composerPhase]);
 
   useEffect(() => {
     const chatId = voice.snapshot?.chatId;
@@ -496,16 +518,26 @@ export function App() {
     const model = chatDomain.models.find(({ id }) => id === uiState.modelId);
     if (!model || sendPending.current) return;
     const content = uiState.draft.trim() || "请处理这些附件。";
-    sendPending.current = true;
+    const pending = {
+      requestId: crypto.randomUUID(),
+      chatId: uiState.activeChatId,
+      cancelled: false,
+    };
+    sendPending.current = pending;
+    setPendingSendChatId(pending.chatId);
     dispatch({ phase: "running", type: "composer.phase-changed" });
     try {
       let chatId = uiState.activeChatId;
       if (!chatId) {
         const created = await chatStore.create(content);
         chatId = created.id;
+        pending.chatId = chatId;
+        setPendingSendChatId(chatId);
         dispatch({ chatId, type: "chat.selected" });
       }
+      if (pending.cancelled) return;
       await chatStore.submit({
+        requestId: pending.requestId,
         attachments: uiState.composerAttachments.map((attachment) => ({
           artifactId: attachment.id,
           ...(attachment.byteLength === undefined
@@ -540,7 +572,10 @@ export function App() {
     } catch {
       dispatch({ phase: "idle", type: "composer.phase-changed" });
     } finally {
-      sendPending.current = false;
+      if (sendPending.current === pending) {
+        sendPending.current = null;
+        setPendingSendChatId(undefined);
+      }
     }
   };
 
@@ -575,7 +610,11 @@ export function App() {
       customBackgroundColors={customBackgroundColors}
       themePreference={themePreference}
       chatDomain={chatDomain}
-      dispatch={dispatch}
+      dispatch={(action) => {
+        if (action.type === "model.changed")
+          writeModelSelection(action.modelId);
+        dispatch(action);
+      }}
       foundation={foundation.snapshot}
       focusTerritoryCandidateId={territoryCandidateNavigation}
       journeyError={journeyError}
@@ -657,9 +696,14 @@ export function App() {
       onRunSend={() => void sendRun()}
       onRunStop={() => {
         const chatId = uiState.activeChatId;
-        if (!chatId) return;
+        const pending = sendPending.current;
+        if (!chatId && pending?.chatId !== null) return;
         dispatch({ phase: "stopping", type: "composer.phase-changed" });
-        void chatStore.cancelActive(chatId).catch(() => undefined);
+        if (pending && pending.chatId === chatId) pending.cancelled = true;
+        if (chatId)
+          void chatStore.cancelActive(chatId).catch(() => {
+            dispatch({ phase: "running", type: "composer.phase-changed" });
+          });
       }}
       onVoiceEnd={() => void voiceStore.end()}
       onVoiceMutedChange={(muted) => void voiceStore.setMuted(muted)}

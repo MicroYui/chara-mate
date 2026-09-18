@@ -11,6 +11,7 @@ import type {
   TerritoryInstance,
   TerritoryMovePetRequest,
   TerritoryMovePetResult,
+  TerritoryObservationNode,
   TerritoryPerformPetActionRequest,
   TerritoryPetAction,
   TerritoryPetActionObservation,
@@ -21,6 +22,7 @@ import type {
   TerritoryZoneView,
 } from "../../shared/contracts/territoryWorld";
 import type { Clock } from "../../shared/pure/clock";
+import { territoryInstanceLayout } from "../../shared/pure/territoryWorldGeometry";
 import {
   blockedTerritoryWorldCells,
   findTerritoryWorldPath,
@@ -101,26 +103,54 @@ export class TerritoryWorldService {
         definition,
       ]),
     );
-    const targets = view.instances.flatMap((instance) => {
-      const definition = definitions.get(definitionKey(instance.definition));
-      if (!definition || definition.capabilities.length === 0) return [];
-      const root = this.resolvePlacedRoot(view, instance);
-      if (!root) return [];
-      const rootDefinition = definitions.get(definitionKey(root.definition));
-      if (!rootDefinition || root.placement.kind !== "zone") return [];
+    const instances = new Map(
+      view.instances.map((instance) => [instance.id, instance]),
+    );
+    const nodes: TerritoryObservationNode[] = [...instances.values()].map(
+      (instance) => {
+        const definition = definitions.get(definitionKey(instance.definition));
+        return {
+          instanceId: instance.id,
+          definition: { ...instance.definition },
+          placement: instance.placement,
+          content: definition
+            ? {
+                status: "available",
+                name: definition.name,
+                description: definition.description,
+                layer: definition.layer,
+                anchors: definition.anchors,
+                visual: {
+                  sizePx: definition.visual.sizePx,
+                  attachmentAnchorPx:
+                    definition.placement.mode === "attachment"
+                      ? definition.placement.attachmentAnchorPx
+                      : null,
+                },
+              }
+            : { status: "unavailable", reason: "missing_definition" },
+          layout: territoryInstanceLayout(instance, instances, definitions),
+        };
+      },
+    );
+    const targets = nodes.flatMap((node) => {
+      const definition = definitions.get(definitionKey(node.definition));
+      if (
+        !definition ||
+        definition.capabilities.length === 0 ||
+        node.layout.status !== "available"
+      )
+        return [];
       return [
         {
           actions: actionsForDefinition(definition),
           capabilities: [...definition.capabilities],
-          description: definition.description,
-          instanceId: instance.id,
-          name: definition.name,
-          point: { ...root.placement.point },
+          instanceId: node.instanceId,
           reachable: Boolean(
             this.planPetMove(
               snapshot,
               {
-                interactionInstanceId: instance.id,
+                interactionInstanceId: node.instanceId,
                 requireExactPoint: true,
               },
               { view, zone },
@@ -130,6 +160,7 @@ export class TerritoryWorldService {
       ];
     });
     return {
+      nodes,
       pet: snapshot.pet,
       revisionId: snapshot.world.currentRevision.id,
       targets,
@@ -228,6 +259,7 @@ export class TerritoryWorldService {
     return this.repository.restoreRevision(
       request.revisionId,
       this.clock.now(),
+      request.expectedCurrentRevisionId,
     );
   }
 
@@ -670,6 +702,10 @@ export class TerritoryWorldService {
   applyCandidate(
     request: TerritoryCandidateIdRequest,
   ): TerritoryCandidateMutationResult {
+    const candidate = this.repository
+      .getSnapshot()
+      .candidates.find(({ id }) => id === request.candidateId);
+    if (candidate) this.candidates?.assertSourcesValid(candidate.sources);
     return {
       candidateId: request.candidateId,
       snapshot: this.repository.applyCandidate(

@@ -97,6 +97,7 @@ export const MemorySourceTypeSchema = Type.Union([
   Type.Literal("chat"),
   Type.Literal("voice"),
   Type.Literal("activity"),
+  Type.Literal("activity_event"),
   Type.Literal("tool"),
   Type.Literal("user_edit"),
   Type.Literal("distillation"),
@@ -150,7 +151,30 @@ export const MemoryRecordSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const MemoryHistoricalDispositionSchema = Type.Union([
+  Type.Literal("retained_history"),
+  Type.Literal("corrected"),
+  Type.Literal("unresolved"),
+]);
+
+export const MemoryPriorDispositionSchema = Type.Object(
+  {
+    revisionId: EntityIdSchema,
+    disposition: MemoryHistoricalDispositionSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const MemoryHistoryStatusSchema = Type.Union([
+  Type.Literal("current"),
+  ...MemoryHistoricalDispositionSchema.anyOf,
+]);
+
 export const MemoryRevisionSchema = withOptionalEventTime({
+  predecessorRevisionId: Type.Optional(EntityIdSchema),
+  priorDispositions: Type.Array(MemoryPriorDispositionSchema),
+  historyStatus: MemoryHistoryStatusSchema,
+  historyStatusRevisionId: Type.Optional(EntityIdSchema),
   content: NonBlankStringSchema,
   createdAt: TimestampSchema,
   id: EntityIdSchema,
@@ -241,15 +265,6 @@ export const MemoryCreateRequestSchema = withOptionalEventTime({
   validFrom: Type.Optional(TimestampSchema),
   validTo: Type.Optional(TimestampSchema),
 });
-
-export const MemoryResolveClaimRequestSchema = Type.Object(
-  {
-    claimSlot: MemoryClaimSlotSchema,
-    content: NonBlankStringSchema,
-    memoryId: EntityIdSchema,
-  },
-  { additionalProperties: false },
-);
 
 export const MemoryReviseRequestSchema = withMutableEventTime({
   confidence: Type.Optional(Type.Number({ maximum: 1, minimum: 0 })),

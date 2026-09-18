@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  TerritoryDefinition,
   TerritoryInstance,
   TerritoryWorldChangeSet,
   TerritoryWorldState,
@@ -291,6 +292,7 @@ describe("Territory World persistence", () => {
     const restored = repository.restoreRevision(
       territoryWorldFixtureIds.revision,
       "2026-08-13T09:05:00.000Z",
+      committed.world.currentRevision.id,
     );
     expect(restored.world.currentRevision).toMatchObject({
       id: revisionIds[1],
@@ -394,6 +396,7 @@ describe("Territory World persistence", () => {
     snapshot = repository.restoreRevision(
       territoryWorldFixtureIds.revision,
       "2026-08-13T09:04:00.000Z",
+      snapshot.world.currentRevision.id,
     );
     expect(snapshot.collection.map((item) => item.id)).not.toContain(
       starterCollectionInstance.id,
@@ -574,11 +577,321 @@ describe("Territory World persistence", () => {
       expect.objectContaining({
         actions: ["move", "observe", "react"],
         instanceId: territoryWorldFixtureIds.lampInstance,
-        point: { x: 6, y: 4 },
         reachable: true,
       }),
     );
+    expect(
+      observation.nodes.find(
+        ({ instanceId }) =>
+          instanceId === territoryWorldFixtureIds.lampInstance,
+      ),
+    ).toMatchObject({
+      instanceId: territoryWorldFixtureIds.lampInstance,
+      definition: { id: "starter.amber-lamp", revision: 1 },
+      placement: {
+        kind: "attachment",
+        parentInstanceId: territoryWorldFixtureIds.deskInstance,
+        anchorId: "top",
+      },
+      layout: {
+        status: "available",
+        rootInstanceId: territoryWorldFixtureIds.deskInstance,
+        rootGridPoint: { x: 6, y: 4 },
+        originPx: { x: 202, y: 94 },
+        sizePx: { width: 28, height: 36 },
+      },
+    });
+    expect(
+      observation.nodes.map(({ instanceId }) => instanceId).sort(),
+    ).toEqual(starterPlacedInstances.map(({ id }) => id).sort());
+    expect(
+      observation.targets.some(
+        ({ instanceId }) =>
+          instanceId === territoryWorldFixtureIds.floorInstance,
+      ),
+    ).toBe(false);
     database.close();
+  });
+
+  it("supplies the complete placed Zone and distinct wall-anchor layouts without making the wall actionable", async () => {
+    const { database, repository } = await createRepository(
+      createStarterTerritoryWorldSeed("2026-08-13T08:00:00.000Z"),
+    );
+    try {
+      const service = new TerritoryWorldService(
+        repository,
+        new FakeClock("2026-08-13T10:00:00.000Z"),
+      );
+      const observation = service.observePetActions();
+      const snapshot = repository.getSnapshot();
+      const view = repository.getZoneView({
+        revisionId: observation.revisionId,
+        zoneId: observation.zone.id,
+      });
+      expect(
+        observation.nodes.map(({ instanceId }) => instanceId).sort(),
+      ).toEqual(view.instances.map(({ id }) => id).sort());
+      expect(
+        new Set(observation.nodes.map(({ instanceId }) => instanceId)).size,
+      ).toBe(observation.nodes.length);
+      expect(
+        observation.nodes.some(({ instanceId }) =>
+          snapshot.collection.some(({ id }) => id === instanceId),
+        ),
+      ).toBe(false);
+      const wall = observation.nodes.find(
+        ({ definition }) => definition.id === "starter.cabin-wall",
+      )!;
+      const photo = observation.nodes.find(
+        ({ definition, placement }) =>
+          definition.id === "starter.photo-frame" &&
+          placement.kind === "attachment" &&
+          placement.anchorId === "left-gallery",
+      )!;
+      const clock = observation.nodes.find(
+        ({ definition }) => definition.id === "starter.slow-clock",
+      )!;
+      expect(wall.content.status).toBe("available");
+      if (wall.content.status !== "available")
+        throw new Error("wall definition unavailable");
+      expect(wall.content.anchors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "left-gallery",
+            anchorPx: { x: 180, y: 136 },
+          }),
+          expect.objectContaining({
+            id: "right-gallery",
+            anchorPx: { x: 878, y: 132 },
+          }),
+        ]),
+      );
+      expect(
+        observation.targets.some(
+          ({ instanceId }) => instanceId === wall.instanceId,
+        ),
+      ).toBe(false);
+      expect(photo.layout).toEqual({
+        status: "available",
+        rootInstanceId: wall.instanceId,
+        rootGridPoint: { x: 0, y: 0 },
+        originPx: { x: 138, y: 76 },
+        sizePx: { width: 48, height: 64 },
+      });
+      expect(clock.layout).toEqual({
+        status: "available",
+        rootInstanceId: wall.instanceId,
+        rootGridPoint: { x: 0, y: 0 },
+        originPx: { x: 746, y: 88 },
+        sizePx: { width: 72, height: 72 },
+      });
+      expect(photo.placement).toMatchObject({
+        kind: "attachment",
+        parentInstanceId: wall.instanceId,
+        anchorId: "left-gallery",
+        offsetPx: { x: -18, y: 0 },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it.each(["missing_definition", "missing_parent"] as const)(
+    "retains an unreadable %s projection without invented layout or reachability",
+    async (reason) => {
+      const { database, repository } = await createRepository();
+      try {
+        const view = repository.getZoneView({
+          revisionId: territoryWorldFixtureIds.revision,
+          zoneId: territoryWorldFixtureIds.zone,
+        });
+        // Inject an incomplete read projection; the persisted source remains intact.
+        const read = vi.spyOn(repository, "getZoneView").mockReturnValue({
+          ...view,
+          definitions:
+            reason === "missing_definition"
+              ? view.definitions.filter(({ id }) => id !== "starter.amber-lamp")
+              : view.definitions,
+          instances:
+            reason === "missing_parent"
+              ? view.instances.filter(
+                  ({ id }) => id !== territoryWorldFixtureIds.deskInstance,
+                )
+              : view.instances,
+        });
+        const service = new TerritoryWorldService(
+          repository,
+          new FakeClock("2026-08-13T10:00:00.000Z"),
+        );
+        const observation = service.observePetActions();
+        const node = observation.nodes.find(
+          ({ instanceId }) =>
+            instanceId === territoryWorldFixtureIds.lampInstance,
+        )!;
+        expect(node.definition).toEqual({
+          id: "starter.amber-lamp",
+          revision: 1,
+        });
+        expect(node.placement).toMatchObject({
+          kind: "attachment",
+          parentInstanceId: territoryWorldFixtureIds.deskInstance,
+        });
+        expect(node.content.status).toBe(
+          reason === "missing_definition" ? "unavailable" : "available",
+        );
+        expect(node.layout).toMatchObject({ status: "unavailable", reason });
+        expect(node.layout).not.toHaveProperty("originPx");
+        expect(node.layout).not.toHaveProperty("rootGridPoint");
+        expect(
+          observation.targets.some(
+            ({ instanceId }) => instanceId === node.instanceId,
+          ),
+        ).toBe(false);
+        read.mockRestore();
+        expect(
+          service
+            .observePetActions()
+            .nodes.find(({ instanceId }) => instanceId === node.instanceId)
+            ?.layout.status,
+        ).toBe("available");
+      } finally {
+        database.close();
+      }
+    },
+  );
+
+  it("rereads nested layout and Definition versions after a real parent transform while rejecting an old action revision", async () => {
+    const graphSeed = structuredClone(seed);
+    const desk = graphSeed.state.instances.find(
+      ({ id }) => id === territoryWorldFixtureIds.deskInstance,
+    )!;
+    const lamp = graphSeed.state.instances.find(
+      ({ id }) => id === territoryWorldFixtureIds.lampInstance,
+    )!;
+    if (desk.placement.kind !== "zone" || lamp.placement.kind !== "attachment")
+      throw new Error("Invalid fixture");
+    desk.placement = {
+      ...desk.placement,
+      point: { x: 2, y: 3 },
+      offsetPx: { x: 5, y: -3 },
+      flipped: true,
+      rotation: 90,
+    };
+    lamp.placement = {
+      ...lamp.placement,
+      offsetPx: { x: 3, y: -4 },
+      flipped: true,
+      rotation: 90,
+    };
+    const deskDefinition = graphSeed.definitions.find(
+      ({ id }) => id === desk.definition.id,
+    )!;
+    deskDefinition.capabilities = [];
+    const lampDefinition = graphSeed.definitions.find(
+      ({ id }) => id === lamp.definition.id,
+    )!;
+    lampDefinition.transforms.rotations = [0, 90, 180, 270];
+    lampDefinition.anchors = [
+      {
+        id: "top",
+        kind: "tabletop",
+        anchorPx: { x: 6, y: 8 },
+        maxItemSizePx: { width: 96, height: 48 },
+      },
+    ];
+    const child: TerritoryInstance = {
+      ...lamp,
+      id: "30000000-0000-4000-8000-000000000007",
+      placement: {
+        ...lamp.placement,
+        parentInstanceId: lamp.id,
+        flipped: false,
+        rotation: 180,
+        offsetPx: { x: -2, y: 5 },
+      },
+    };
+    graphSeed.state.instances.push(child);
+    const { database, repository } = await createRepository(graphSeed);
+    try {
+      const service = new TerritoryWorldService(
+        repository,
+        new FakeClock("2026-08-13T10:00:00.000Z"),
+      );
+      const before = service.observePetActions();
+      expect(
+        before.targets.some(({ instanceId }) => instanceId === desk.id),
+      ).toBe(false);
+      expect(
+        before.nodes.find(({ instanceId }) => instanceId === lamp.id)?.layout,
+      ).toMatchObject({
+        originPx: { x: 118, y: 123 },
+        sizePx: { width: 36, height: 28 },
+      });
+      expect(
+        before.nodes.find(({ instanceId }) => instanceId === child.id)?.layout,
+      ).toMatchObject({ originPx: { x: 130, y: 150 } });
+      const nextDefinition: TerritoryDefinition = {
+        ...deskDefinition,
+        revision: 2,
+        anchors: [
+          { ...deskDefinition.anchors[0]!, anchorPx: { x: 74, y: 34 } },
+        ],
+      };
+      service.commitChangeSet({
+        changeSet: {
+          ...changeSet({
+            changeId: "61000000-0000-4000-8000-000000000002",
+            kind: "definition.put",
+            definition: nextDefinition,
+          }),
+          mutations: [
+            {
+              changeId: "61000000-0000-4000-8000-000000000002",
+              kind: "definition.put",
+              definition: nextDefinition,
+            },
+            {
+              changeId: "61000000-0000-4000-8000-000000000003",
+              kind: "instance.put",
+              instance: {
+                ...desk,
+                definition: { id: desk.definition.id, revision: 2 },
+                placement: { ...desk.placement, point: { x: 3, y: 3 } },
+              },
+            },
+          ],
+        },
+      });
+      const after = service.observePetActions();
+      expect(after.revisionId).not.toBe(before.revisionId);
+      expect(
+        after.nodes.find(({ instanceId }) => instanceId === desk.id)?.definition
+          .revision,
+      ).toBe(2);
+      expect(
+        after.nodes.find(({ instanceId }) => instanceId === lamp.id)?.layout,
+      ).toMatchObject({
+        rootGridPoint: { x: 3, y: 3 },
+        originPx: { x: 142, y: 121 },
+      });
+      expect(
+        after.nodes.find(({ instanceId }) => instanceId === child.id)?.layout,
+      ).toMatchObject({ originPx: { x: 154, y: 148 } });
+      expect(
+        before.nodes.find(({ instanceId }) => instanceId === child.id)?.layout,
+      ).toMatchObject({ originPx: { x: 130, y: 150 } });
+      expect(() =>
+        service.performPetAction({
+          action: "observe",
+          expectedRevisionId: before.revisionId,
+          target: { kind: "instance", instanceId: lamp.id },
+        }),
+      ).toThrowError(
+        expect.objectContaining({ code: "TERRITORY.REVISION_CONFLICT" }),
+      );
+    } finally {
+      database.close();
+    }
   });
 
   it("performs explicit sit and sleep actions, rejects stale revisions and never reports a blocked point as reached", async () => {

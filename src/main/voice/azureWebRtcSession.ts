@@ -22,7 +22,41 @@ export interface RealtimeSessionIssuer {
   issue(
     runtime: RealtimeProviderRuntime,
     options: AzureRealtimeSessionOptions,
+    signal: AbortSignal,
   ): Promise<VoicePreviewConnection>;
+}
+
+/** The same non-secret session payload is checked by Main and sent by this issuer. */
+export function realtimeSessionRequest(
+  model: string,
+  options: AzureRealtimeSessionOptions,
+) {
+  return {
+    session: {
+      audio: {
+        input: {
+          transcription: {
+            model: "whisper-1",
+            prompt:
+              "简体中文, English, CharaMate, Chat, Agent, Settings, Voice, Model, Provider, Realtime, Azure OpenAI",
+          },
+          turn_detection: {
+            create_response: false,
+            interrupt_response: true,
+            type: "server_vad",
+          },
+        },
+        output: { voice: options.voice },
+      },
+      instructions: options.instructions,
+      model,
+      output_modalities: ["audio"],
+      parallel_tool_calls: false,
+      tool_choice: "auto",
+      tools: options.tools ?? [],
+      type: "realtime",
+    },
+  } as const;
 }
 
 type Fetch = typeof fetch;
@@ -118,7 +152,9 @@ export class AzureWebRtcSessionIssuer implements RealtimeSessionIssuer {
   async issue(
     runtime: RealtimeProviderRuntime,
     options: AzureRealtimeSessionOptions,
+    signal: AbortSignal,
   ): Promise<VoicePreviewConnection> {
+    signal.throwIfAborted();
     const endpointValue = runtime.profile.realtimeEndpoint;
     const model = runtime.profile.realtimeModel;
     if (!endpointValue || !model) {
@@ -134,41 +170,18 @@ export class AzureWebRtcSessionIssuer implements RealtimeSessionIssuer {
       response = await this.fetchImplementation(
         endpoint(base, "client_secrets"),
         {
-          body: JSON.stringify({
-            session: {
-              audio: {
-                input: {
-                  transcription: {
-                    model: "whisper-1",
-                    prompt:
-                      "简体中文, English, CharaMate, Chat, Agent, Settings, Voice, Model, Provider, Realtime, Azure OpenAI",
-                  },
-                  turn_detection: {
-                    create_response: false,
-                    interrupt_response: true,
-                    type: "server_vad",
-                  },
-                },
-                output: { voice: options.voice },
-              },
-              instructions: options.instructions,
-              model,
-              output_modalities: ["audio"],
-              parallel_tool_calls: false,
-              tool_choice: "auto",
-              tools: options.tools ?? [],
-              type: "realtime",
-            },
-          }),
+          body: JSON.stringify(realtimeSessionRequest(model, options)),
           headers: {
             "api-key": runtime.apiKey,
             "content-type": "application/json",
           },
           method: "POST",
           redirect: "manual",
+          signal,
         },
       );
     } catch (error) {
+      signal.throwIfAborted();
       if (error instanceof ProviderError) throw error;
       throw new ProviderError(
         "PROVIDER.UNREACHABLE",
@@ -176,8 +189,14 @@ export class AzureWebRtcSessionIssuer implements RealtimeSessionIssuer {
         true,
       );
     }
-    if (!response.ok) throw await requestError(response);
+    signal.throwIfAborted();
+    if (!response.ok) {
+      const error = await requestError(response);
+      signal.throwIfAborted();
+      throw error;
+    }
     const body = (await response.json()) as ClientSecretResponse;
+    signal.throwIfAborted();
     if (typeof body.value !== "string" || !body.value.trim()) {
       throw new ProviderError(
         "PROVIDER.REQUEST_FAILED",

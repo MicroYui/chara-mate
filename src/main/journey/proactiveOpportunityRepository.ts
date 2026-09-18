@@ -98,15 +98,6 @@ export class ProactiveOpportunityRepository {
     return row ? readOpportunity(row) : undefined;
   }
 
-  findByRunId(runId: string): ProactiveOpportunity | undefined {
-    const row = this.database
-      .prepare(
-        `SELECT ${COLUMNS} FROM proactive_opportunities WHERE run_id = ?`,
-      )
-      .get(runId) as ProactiveOpportunityRow | undefined;
-    return row ? readOpportunity(row) : undefined;
-  }
-
   findLatestForMemory(memoryId: string): ProactiveOpportunity | undefined {
     const row = this.database
       .prepare(
@@ -126,21 +117,8 @@ export class ProactiveOpportunityRepository {
         .prepare(
           `SELECT ${COLUMNS}
            FROM proactive_opportunities
-           WHERE state IN ('pending', 'evaluating')
+           WHERE state IN ('pending', 'evaluating') OR (state = 'resolved' AND outcome IS NULL)
            ORDER BY evaluate_at, id`,
-        )
-        .all() as ProactiveOpportunityRow[]
-    ).map(readOpportunity);
-  }
-
-  listEvaluating(): ProactiveOpportunity[] {
-    return (
-      this.database
-        .prepare(
-          `SELECT ${COLUMNS}
-           FROM proactive_opportunities
-           WHERE state = 'evaluating'
-           ORDER BY claimed_at, id`,
         )
         .all() as ProactiveOpportunityRow[]
     ).map(readOpportunity);
@@ -196,42 +174,6 @@ export class ProactiveOpportunityRepository {
     return readOpportunity(row);
   }
 
-  cancelOpenForMemory(
-    memoryId: string,
-    now: string,
-    exceptRevisionId?: string,
-  ): number {
-    const result = exceptRevisionId
-      ? this.database
-          .prepare(
-            `UPDATE proactive_opportunities
-             SET state = 'cancelled', outcome = NULL, resolved_at = ?, updated_at = ?
-             WHERE source_memory_id = ?
-               AND source_revision_id <> ?
-               AND state IN ('pending', 'evaluating')`,
-          )
-          .run(now, now, memoryId, exceptRevisionId)
-      : this.database
-          .prepare(
-            `UPDATE proactive_opportunities
-             SET state = 'cancelled', outcome = NULL, resolved_at = ?, updated_at = ?
-             WHERE source_memory_id = ?
-               AND state IN ('pending', 'evaluating')`,
-          )
-          .run(now, now, memoryId);
-    return result.changes;
-  }
-
-  cancelAllOpen(now: string): number {
-    return this.database
-      .prepare(
-        `UPDATE proactive_opportunities
-         SET state = 'cancelled', outcome = NULL, resolved_at = ?, updated_at = ?
-         WHERE state IN ('pending', 'evaluating')`,
-      )
-      .run(now, now).changes;
-  }
-
   resetUnstartedEvaluations(now: string): number {
     return this.database
       .prepare(
@@ -240,20 +182,6 @@ export class ProactiveOpportunityRepository {
          WHERE state = 'evaluating' AND run_id IS NULL`,
       )
       .run(now).changes;
-  }
-
-  releaseForRetry(id: string, now: string): boolean {
-    return (
-      this.database
-        .prepare(
-          `UPDATE proactive_opportunities
-           SET state = 'pending', outcome = NULL, run_id = NULL,
-               message_id = NULL, claimed_at = NULL, resolved_at = NULL,
-               updated_at = ?
-           WHERE id = ? AND state = 'evaluating'`,
-        )
-        .run(now, id).changes === 1
-    );
   }
 
   reopenCancelled(
@@ -303,33 +231,28 @@ export class ProactiveOpportunityRepository {
     })();
   }
 
-  attachRun(id: string, runId: string, now: string): boolean {
+  /** The source was persisted in Cognition. No delivery outcome is implied. */
+  markPublished(id: string, now: string): boolean {
     return (
       this.database
         .prepare(
           `UPDATE proactive_opportunities
-           SET run_id = ?, updated_at = ?
-           WHERE id = ? AND state = 'evaluating' AND run_id IS NULL`,
+      SET state = 'resolved', outcome = NULL, resolved_at = ?, updated_at = ?
+      WHERE id = ? AND state = 'evaluating'`,
         )
-        .run(runId, now, id).changes === 1
+        .run(now, now, id).changes === 1
     );
   }
 
-  resolve(
-    id: string,
-    outcome: ProactiveOpportunityOutcome,
-    now: string,
-    messageId?: string,
-  ): boolean {
+  cancel(id: string, now: string): boolean {
     return (
       this.database
         .prepare(
           `UPDATE proactive_opportunities
-           SET state = 'resolved', outcome = ?, message_id = ?,
-               resolved_at = ?, updated_at = ?
-           WHERE id = ? AND state = 'evaluating'`,
+      SET state = 'cancelled', outcome = NULL, resolved_at = ?, updated_at = ?
+      WHERE id = ? AND (state IN ('pending','evaluating') OR (state = 'resolved' AND outcome IS NULL))`,
         )
-        .run(outcome, messageId ?? null, now, now, id).changes === 1
+        .run(now, now, id).changes === 1
     );
   }
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { territoryInstanceLayout } from "../../src/shared/pure/territoryWorldGeometry";
+
 import type {
   TerritoryInstance,
   TerritorySourceSnapshot,
@@ -32,6 +34,7 @@ import {
   starterTerritoryAssetPack,
   starterPlacedInstances,
   starterTerritorySnapshot,
+  starterTerritoryDefinitions,
   starterTerritoryZoneView,
   territoryWorldFixtureIds,
 } from "../fixtures/territoryWorld";
@@ -65,16 +68,47 @@ describe("Territory World contracts", () => {
     "accepts typed Territory observations, actions and renderer events through %s",
     (parse) => {
       const observation = {
+        nodes: starterPlacedInstances.map((instance) => {
+          const definition = starterTerritoryDefinitions.find(
+            ({ id }) => id === instance.definition.id,
+          )!;
+          return {
+            instanceId: instance.id,
+            definition: instance.definition,
+            placement: instance.placement,
+            content: {
+              status: "available" as const,
+              name: definition.name,
+              description: definition.description,
+              layer: definition.layer,
+              anchors: definition.anchors,
+              visual: {
+                sizePx: definition.visual.sizePx,
+                attachmentAnchorPx:
+                  definition.placement.mode === "attachment"
+                    ? definition.placement.attachmentAnchorPx
+                    : null,
+              },
+            },
+            layout: territoryInstanceLayout(
+              instance,
+              new Map(starterPlacedInstances.map((value) => [value.id, value])),
+              new Map(
+                starterTerritoryDefinitions.map((value) => [
+                  `${value.id}@${String(value.revision)}`,
+                  value,
+                ]),
+              ),
+            ),
+          };
+        }),
         pet: starterTerritorySnapshot.pet,
         revisionId: territoryWorldFixtureIds.revision,
         targets: [
           {
             actions: ["move", "observe", "react"],
             capabilities: ["light", "inspectable"],
-            description: "会在暮色里留下一圈暖光的小灯。",
             instanceId: territoryWorldFixtureIds.lampInstance,
-            name: "琥珀桌灯",
-            point: { x: 6, y: 4 },
             reachable: true,
           },
         ],
@@ -87,6 +121,44 @@ describe("Territory World contracts", () => {
       expect(parse(TerritoryPetActionObservationSchema, observation)).toEqual(
         observation,
       );
+      expect(() =>
+        parse(TerritoryPetActionObservationSchema, {
+          ...observation,
+          targets: [{ ...observation.targets[0], point: { x: 6, y: 4 } }],
+        }),
+      ).toThrow();
+      const unavailable = {
+        ...observation,
+        nodes: [
+          {
+            ...observation.nodes[0],
+            content: { status: "unavailable", reason: "missing_definition" },
+            layout: {
+              status: "unavailable",
+              reason: "missing_definition",
+              referenceId: "starter.cabin-floor",
+            },
+          },
+        ],
+        targets: [],
+      };
+      expect(parse(TerritoryPetActionObservationSchema, unavailable)).toEqual(
+        unavailable,
+      );
+      expect(() =>
+        parse(TerritoryPetActionObservationSchema, {
+          ...unavailable,
+          nodes: [
+            {
+              ...unavailable.nodes[0],
+              layout: {
+                ...unavailable.nodes[0]!.layout,
+                originPx: { x: 0, y: 0 },
+              },
+            },
+          ],
+        }),
+      ).toThrow();
       expect(
         parse(TerritoryPerformPetActionRequestSchema, {
           action: "react",

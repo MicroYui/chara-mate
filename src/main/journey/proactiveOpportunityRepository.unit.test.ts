@@ -79,10 +79,11 @@ describe("ProactiveOpportunityRepository", () => {
     expect(repository.claimNextDue(input.evaluateAt)?.state).toBe("evaluating");
     expect(repository.claimNextDue(input.evaluateAt)).toBeUndefined();
 
-    repository.cancelOpenForMemory(
-      input.sourceMemoryId,
-      "2026-09-01T00:01:00.000Z",
-    );
+    expect(repository.markPublished(input.id, input.evaluateAt)).toBe(true);
+    expect(repository.get(input.id)).toMatchObject({ state: "resolved" });
+    expect(repository.get(input.id)).not.toHaveProperty("outcome");
+    expect(repository.listOpen().map(({ id }) => id)).toEqual([input.id]);
+    repository.cancel(input.id, "2026-09-01T00:01:00.000Z");
     expect(
       repository.reopenCancelled(input.id, {
         evaluateAt: input.evaluateAt,

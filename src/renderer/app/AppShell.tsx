@@ -948,9 +948,11 @@ export function AppShell({
   voiceStore,
   voiceError,
 }: AppShellProps) {
-  const [activityTarget, setActivityTarget] = useState<{
-    readonly episodeId: string;
-  } | null>(null);
+  const [activityTarget, setActivityTarget] = useState<
+    | { readonly focusEpisodeId: string }
+    | { readonly focusEventId: string }
+    | null
+  >(null);
   const [memoryTargetId, setMemoryTargetId] = useState<string | null>(null);
   const [territoryTargetId, setTerritoryTargetId] = useState<string | null>(
     null,
@@ -986,8 +988,13 @@ export function AppShell({
   const openMemorySource = (source: MemorySource) => {
     if (source.type === "activity") {
       setActivityTarget({
-        episodeId: source.referenceId,
+        focusEpisodeId: source.referenceId,
       });
+      dispatch({ page: "activity", type: "page.selected" });
+      return;
+    }
+    if (source.type === "activity_event") {
+      setActivityTarget({ focusEventId: source.referenceId });
       dispatch({ page: "activity", type: "page.selected" });
       return;
     }
@@ -1140,9 +1147,7 @@ export function AppShell({
             />
           ) : state.activePage === "activity" ? (
             <ActivityPage
-              {...(activityTarget
-                ? { focusEpisodeId: activityTarget.episodeId }
-                : {})}
+              {...(activityTarget ?? {})}
               onFocusConsumed={consumeActivityTarget}
               onOpenTerritory={openTerritoryCandidate}
             />

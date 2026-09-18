@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { composerAttachmentFixtures } from "./fixtures";
-import { chatsFixtureUiReducer, initialChatsFixtureUiState } from "./state";
+import {
+  chatsFixtureUiReducer,
+  initialChatsFixtureUiState,
+  readModelSelection,
+  writeModelSelection,
+} from "./state";
 
 describe("Chats fixture UI state", () => {
   it("keeps the draft when switching between Chat and Agent", () => {
@@ -102,5 +108,36 @@ describe("Chats fixture UI state", () => {
       isDraftChat: false,
       searchQuery: "",
     });
+  });
+});
+
+describe("local Composer model preference", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+  });
+
+  it("keeps the exact Provider and model identity and clears only this preference", () => {
+    window.localStorage.setItem("chara-mate.theme", "dark");
+    writeModelSelection("provider-a::gpt-6-astra");
+    expect(readModelSelection()).toBe("provider-a::gpt-6-astra");
+    writeModelSelection(undefined);
+    expect(readModelSelection()).toBeUndefined();
+    expect(window.localStorage.getItem("chara-mate.theme")).toBe("dark");
+  });
+
+  it("tolerates unavailable storage reads and writes", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("storage full");
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+    expect(readModelSelection()).toBeUndefined();
+    expect(() => writeModelSelection("provider-a::gpt-6-astra")).not.toThrow();
+    expect(() => writeModelSelection(undefined)).not.toThrow();
   });
 });

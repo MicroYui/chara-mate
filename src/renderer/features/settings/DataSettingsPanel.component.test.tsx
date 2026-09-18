@@ -56,6 +56,7 @@ function createApis() {
   const activityApi = {
     cleanup: cleanupActivity,
     deleteEpisode: vi.fn(),
+    resolveEventReference: vi.fn(),
     getEpisode: vi.fn(),
     getSnapshot: vi.fn(),
     setPaused: vi.fn(),

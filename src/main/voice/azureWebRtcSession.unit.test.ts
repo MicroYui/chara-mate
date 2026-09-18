@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { RealtimeProviderRuntime } from "../providers/providerService";
-import { AzureWebRtcSessionIssuer } from "./azureWebRtcSession";
+import {
+  AzureWebRtcSessionIssuer,
+  realtimeSessionRequest,
+} from "./azureWebRtcSession";
 
 const PROFILE_ID = "10000000-0000-4000-8000-000000000001";
 
@@ -40,18 +43,22 @@ describe("Azure GA WebRTC session issuer", () => {
     const issuer = new AzureWebRtcSessionIssuer(fetchImplementation);
 
     await expect(
-      issuer.issue(runtime(), {
-        instructions: "自然、简洁地说中文。",
-        tools: [
-          {
-            description: "查询天气",
-            name: "weather_lookup",
-            parameters: { additionalProperties: false, type: "object" },
-            type: "function",
-          },
-        ],
-        voice: "verse",
-      }),
+      issuer.issue(
+        runtime(),
+        {
+          instructions: "自然、简洁地说中文。",
+          tools: [
+            {
+              description: "查询天气",
+              name: "weather_lookup",
+              parameters: { additionalProperties: false, type: "object" },
+              type: "function",
+            },
+          ],
+          voice: "verse",
+        },
+        new AbortController().signal,
+      ),
     ).resolves.toEqual({
       callsUrl: "https://unit.openai.azure.com/openai/v1/realtime/calls",
       clientSecret: "ephemeral",
@@ -98,6 +105,20 @@ describe("Azure GA WebRTC session issuer", () => {
       },
     });
     expect(JSON.stringify(requestBody)).toContain("简体中文");
+    expect(requestBody).toEqual(
+      realtimeSessionRequest("gpt-realtime-2.1", {
+        instructions: "自然、简洁地说中文。",
+        tools: [
+          {
+            description: "查询天气",
+            name: "weather_lookup",
+            parameters: { additionalProperties: false, type: "object" },
+            type: "function",
+          },
+        ],
+        voice: "verse",
+      }),
+    );
   });
 
   it("rejects non-GA and non-HTTPS endpoints before networking", async () => {
@@ -105,10 +126,14 @@ describe("Azure GA WebRTC session issuer", () => {
     const issuer = new AzureWebRtcSessionIssuer(fetchImplementation);
 
     await expect(
-      issuer.issue(runtime("wss://unit.openai.azure.com/openai/realtime"), {
-        instructions: "自然说话。",
-        voice: "verse",
-      }),
+      issuer.issue(
+        runtime("wss://unit.openai.azure.com/openai/realtime"),
+        {
+          instructions: "自然说话。",
+          voice: "verse",
+        },
+        new AbortController().signal,
+      ),
     ).rejects.toMatchObject({ code: "PROVIDER.INVALID_CONFIGURATION" });
     expect(fetchImplementation).not.toHaveBeenCalled();
   });
@@ -129,12 +154,47 @@ describe("Azure GA WebRTC session issuer", () => {
     const issuer = new AzureWebRtcSessionIssuer(fetchImplementation);
 
     await expect(
-      issuer.issue(runtime(), {
-        instructions: "自然说话。",
-        voice: "verse",
-      }),
+      issuer.issue(
+        runtime(),
+        {
+          instructions: "自然说话。",
+          voice: "verse",
+        },
+        new AbortController().signal,
+      ),
     ).rejects.toThrow(
       "invalid_value · session.tools[0].parameters · Unsupported tool schema",
     );
   });
+});
+
+it("passes the owned signal to fetch and rejects a late client secret after cancellation", async () => {
+  let started!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let release!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    release = resolve;
+  });
+  const request = vi.fn<typeof fetch>((_url, init) => {
+    expect(init?.signal).toBe(abort.signal);
+    started();
+    return pending;
+  });
+  const abort = new AbortController();
+  const result = new AzureWebRtcSessionIssuer(request).issue(
+    runtime(),
+    { instructions: "自然说话", voice: "verse" },
+    abort.signal,
+  );
+  const observed = result.catch((error: unknown) => error);
+  await entered;
+  abort.abort(new Error("cancelled by caller"));
+  release(
+    new Response(
+      JSON.stringify({ expires_at: 1_786_190_460, value: "late-secret" }),
+    ),
+  );
+  expect(await observed).toBe(abort.signal.reason);
 });

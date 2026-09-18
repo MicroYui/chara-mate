@@ -154,6 +154,32 @@ export const VoicePreviewRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const VoiceStartSubmissionSchema = Type.Object(
+  { requestId: EntityIdSchema, request: VoiceStartRequestSchema },
+  { additionalProperties: false },
+);
+export const VoiceQuickStartSubmissionSchema = Type.Object(
+  { requestId: EntityIdSchema, request: VoiceQuickStartRequestSchema },
+  { additionalProperties: false },
+);
+export const VoicePreviewSubmissionSchema = Type.Object(
+  { requestId: EntityIdSchema, request: VoicePreviewRequestSchema },
+  { additionalProperties: false },
+);
+export const VoiceCancelStartRequestSchema = Type.Object(
+  { requestId: EntityIdSchema },
+  { additionalProperties: false },
+);
+export const VoiceCancelStartResultSchema = Type.Object(
+  {
+    outcome: Type.Union([
+      Type.Literal("accepted"),
+      Type.Literal("not_pending"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
 export const VoiceSessionRequestSchema = Type.Object(
   { sessionId: EntityIdSchema },
   { additionalProperties: false },
@@ -176,6 +202,28 @@ export const VoicePausedRequestSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const VoicePausedSubmissionSchema = Type.Union([
+  Type.Object(
+    {
+      request: Type.Intersect([
+        VoicePausedRequestSchema,
+        Type.Object({ paused: Type.Literal(true) }),
+      ]),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      requestId: EntityIdSchema,
+      request: Type.Intersect([
+        VoicePausedRequestSchema,
+        Type.Object({ paused: Type.Literal(false) }),
+      ]),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 export const VoiceHistoryMessageSchema = Type.Object(
   {
@@ -226,9 +274,9 @@ export const VoiceConnectionStageSchema = Type.Union([
 ]);
 
 const voiceUsageProperties = {
-  cachedInputTokens: Type.Integer({ minimum: 0 }),
-  inputTokens: Type.Integer({ minimum: 0 }),
-  outputTokens: Type.Integer({ minimum: 0 }),
+  cachedInputTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+  inputTokens: Type.Optional(Type.Integer({ minimum: 0 })),
+  outputTokens: Type.Optional(Type.Integer({ minimum: 0 })),
 };
 
 export const VoiceDriverEventSchema = Type.Union([
@@ -338,6 +386,7 @@ export const VoiceDriverEventSchema = Type.Union([
     {
       generation: Type.Integer({ minimum: 1 }),
       responseId: NonBlankStringSchema,
+      requestId: Type.Optional(NonBlankStringSchema),
       type: Type.Literal("response.started"),
     },
     { additionalProperties: false },
@@ -442,6 +491,10 @@ export const VoiceDriverEventRequestSchema = Type.Object(
 
 export const VoiceClientCommandSchema = Type.Union([
   Type.Object(
+    { requestId: EntityIdSchema, type: Type.Literal("preparation.cancel") },
+    { additionalProperties: false },
+  ),
+  Type.Object(
     {
       enabled: Type.Boolean(),
       sessionId: EntityIdSchema,
@@ -535,6 +588,9 @@ function operationResponse<TValue extends TSchema>(value: TValue) {
   ]);
 }
 
+export const VoiceCancelStartResponseSchema = operationResponse(
+  VoiceCancelStartResultSchema,
+);
 export const VoiceStartResponseSchema = operationResponse(
   VoiceConnectionSchema,
 );

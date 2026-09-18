@@ -68,6 +68,7 @@ function momentSource(momentKey: string): TerritoryChatMomentSourceSnapshot {
       {
         memoryId: "82000000-0000-4000-8000-000000000003",
         revisionId: "82000000-0000-4000-8000-000000000004",
+        use: "current",
       },
     ],
     messageId: "82000000-0000-4000-8000-000000000005",
