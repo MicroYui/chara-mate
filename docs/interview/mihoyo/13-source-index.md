@@ -179,8 +179,14 @@ E01–E34 的首次访问日期为 2026-10-19 至 2026-10-20；E35–E36 于 10 
 | E54 | Zhang 等，[Ask Less, Ask Better v1](https://arxiv.org/html/2610.24411v1)，2026-10-17；10-27读取 | 已读注意力成本、记忆辅助自检、对照／消融、结果及限制；英语模拟用户证据不能当中文陪伴体验 |
 | E55 | OpenTelemetry，[Traces](https://opentelemetry.io/docs/concepts/signals/traces/)，2026-10-27 | 已读span、event、上下文及异步links；借鉴关联结构，不代表项目已安装或上线OTel |
 | E56 | OpenAI，[Evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices)，2026-10-27 | 已读持续评测、数据来源、人工校准与按阶段定位；文档示例阈值不作为项目标准 |
+| E57 | Cormack 等，[RRF 作者公开论文](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf)，SIGIR 2009；2026-10-30 读取 | 核对排名倒数求和公式及 pilot 固定 k=60；第 20 章计算为教学例子，不是新的项目实验 |
+| E58 | Character.AI，[Smarter Memory for Smarter Chats](https://blog.character.ai/memory/)，2026-05-21；10-30 读取 | Story Memory、固定重要消息与自动 Facts 的公开交互；不据此推断内部检索或长期陪伴效果 |
+| E59 | OpenAI，[Models](https://developers.openai.com/api/docs/models)，2026-10-30 | 核对当前目录的 Realtime 2.1；本项目实际部署另据源码和历史验收，用户已确认 2.5 是记忆误差 |
+| E60 | Microsoft，[Realtime WebRTC](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/realtime-audio-webrtc)，2026-10-30 | 复核客户端连接与原生音频路径的相关说明；具体字段与已完成验证以当前 Azure 适配器和 Decision 为准 |
+| E61 | Lu 等，[Proactive Agent v3](https://arxiv.org/abs/2410.12361v3)，2024-12-03；10-30 复核摘要 | 主动任务预测、接受／拒绝标签与评估；不把其基准成绩当作本项目真人体验 |
+| E62 | Du 等，[流式 ProactiveBench v1](https://arxiv.org/abs/2609.12658v1)，2026-09-11；10-30 复核摘要 | 连续响应／沉默、时机窗口、遗漏与重复；本章引用固定 v1，页面另列 v2；与 E61 的同名数据集区分 |
 
-未使用新闻转载或论坛评论替代技术实现的主要依据。外部资料到第 09、14、16–19 章设计的延伸均是我们的推论；E51的整页读取限制单独保留。论文只声明实际阅读的相关部分，不把摘要说成全文审计。
+未使用新闻转载或论坛评论替代技术实现的主要依据。外部资料到第 09、14、16–20 章设计的延伸均是我们的推论；E51的整页读取限制单独保留。论文只声明实际阅读的相关部分，不把摘要说成全文审计。
 
 获取边界也保留：CLS 原 PDF 在前轮超时，本轮经作者网站成功取得；部分网页的 Markdown 被浏览工具拒绝后，以同站点公开 Markdown 读取；Codex GitHub API 限流、Git 连接失败后，改由公开仓库页确认提交并读取固定版本原始文件。F.E.A.R. 2006 原 PDF 未取得，不把 GDC 简介称为完整原稿；深入 GOAP 机制依据本轮读到的 2015 Monolith 讲义。
 
@@ -245,6 +251,18 @@ Python 教学演算的 7 项断言通过：两张 Kappa 表分别为 0.70 与 -1
 本轮新增一手来源E44–E56，复核E28；保留论文版本、阅读范围和API整页读取限制。没有取得仓外原始实验并重新运行，没有进行真人听审或长期用户研究。未运行verify:offline、build、Electron E2E、package或付费模型，也未安装依赖、改生产代码／合同／测试／数据库／锁文件。
 
 git diff --check与文档独立检查通过。编写阶段验收时，面试目录整体尚未跟踪，因此不能仅靠git diff检查其内容，本轮单独遍历了所有22份材料；既有侧边问答正文未改。以上记录对应提交前的文档验收。
+
+### 5.4 2026-10-30：四条优化故事
+
+新增第 20 章，把记忆、语音、认知注意与主动陪伴各写成第一人称口述稿，并展开起点、失败定位、研究启发、实现、历史实验和补证方案。同步 README、学习安排和四项闭卷练习；用户已确认酒会只记得“超类脑”概念，“陪伴又不打扰”是自己提出的问题，语音版本为 gpt-realtime-2.1。没有代写对方的回答，也没有把待做实验写成已取得的成绩。
+
+本轮文档检查通过：23 份 Markdown、574 次本地引用、182 张表、10 个可解析 JSON、80 个不同外部 URL；一级标题唯一、围栏闭合、空白与字符检查通过。第 20 章主节 0–5 连续，四个专题各有 8／9／10／9 个小节，E01–E62 连续。源码定位检查覆盖 11 个文件、42 个片段，另有 3 项教学计算断言；这些检查验证引用与演算，不替代产品运行测试。检查脚本通过标准输入运行，未增加仓库脚本或依赖。
+
+基线为 9df3c06a377868062a79d2272c99087bfcae79c7；相对前轮 8e50d50f47fd961fbed9174d76f145a5e22b58d1 的 src 差异为空。历史实验按 Decision 与验收记录核对，没有重新访问全部仓外原始证据，没有重跑实验。特别保留：28 问未检验第三路的增益；7 个必要证据槽不是 7 个独立问题；Appraisal 的行为结果有小幅优势而整体验收与复杂度不支持保留；语音早期六个时延数不是 Azure STT/TTS 与 Realtime 的配对比较；48 个主动场景不是 48 位真人。
+
+新补来源 E57–E62，并复核第 20 章使用的官方语音、Dot 页面及相关论文摘要或正文片段，未统一探测全部旧外链。本轮 CLS 作者 PDF 请求超时，使用 PubMed 摘要核对基本主张并沿用既有章节的阅读记录；不把本次摘要复核称为重新读完全文。Dot 与 2026 年 10 月的 Ask Less 作为后续复盘与改进依据，不倒推成 9 月代码的原始来源。
+
+git diff --check 与文档独立空白检查通过。未运行 verify:offline、build、Electron E2E、package、真实模型或 benchmark；本轮仅改面试文档和 STATUS，不改代码、合同、数据库、依赖、算法默认值或既有 Decision，未提交或推送。个人学习验收仍未执行。
 
 ## 6. 以后更新材料的方法
 
